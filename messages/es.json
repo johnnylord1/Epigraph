@@ -59,6 +59,8 @@
   "firstRun_shell_continue": "Continuar",
   "firstRun_shell_back": "Volver",
   "firstRun_shell_cancel": "Cancelar configuración",
+  "firstRun_shell_skip": "Omitir configuración",
+  "firstRun_shell_serverUnavailable": "El servidor no responde",
   "firstRun_shell_returnRestore": "Volver a la restauración",
   "firstRun_shell_finish": "Finalizar configuración",
   "firstRun_shell_openLibrary": "Abrir biblioteca",

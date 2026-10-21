@@ -59,6 +59,8 @@
   "firstRun_shell_continue": "继续",
   "firstRun_shell_back": "返回",
   "firstRun_shell_cancel": "取消设置",
+  "firstRun_shell_skip": "跳过设置",
+  "firstRun_shell_serverUnavailable": "服务器无响应",
   "firstRun_shell_returnRestore": "返回恢复",
   "firstRun_shell_finish": "完成设置",
   "firstRun_shell_openLibrary": "打开书库",

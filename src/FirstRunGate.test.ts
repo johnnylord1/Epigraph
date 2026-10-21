@@ -51,13 +51,16 @@ vi.mock("./lib/setup/firstRunDiscoveryWorkflow", async (importOriginal) => {
   };
 });
 
-const cleanInstall = vi.hoisted(() => ({ counts: [0, 0, 0, 0] }));
+const cleanInstall = vi.hoisted(() => ({ counts: [0, 0, 0, 0], fail: false }));
 vi.mock("./lib/firstRunCleanInstall", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/firstRunCleanInstall")>();
   return {
     ...actual,
     createProductionCleanInstallProbe: () => ({
-      countComics: async () => cleanInstall.counts[0],
+      countComics: async () => {
+        if (cleanInstall.fail) throw new Error("server not answering");
+        return cleanInstall.counts[0];
+      },
       countBooks: async () => cleanInstall.counts[1],
       countNovels: async () => cleanInstall.counts[2],
       countSourceSetup: async () => cleanInstall.counts[3],
@@ -86,6 +89,7 @@ describe("first-run startup gate", () => {
     store.runtimeResolvedLocalProfileId = null;
     store.runtimeServerUrl = null;
     cleanInstall.counts = [0, 0, 0, 0];
+    cleanInstall.fail = false;
   });
   afterEach(() => cleanup());
 
@@ -183,6 +187,27 @@ describe("first-run startup gate", () => {
     resolveRuntime();
     await waitFor(() => expect(document.querySelector(".first-run-shell")).not.toBeNull());
     expect(JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.status).toBe("pending");
+  });
+
+  it("offers to skip setup when the server does not answer at launch", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(createFirstRunState()));
+    cleanInstall.fail = true;
+    resolveRuntime();
+    render(Layout);
+    await waitFor(() => expect(document.querySelector(".first-run-shell")).not.toBeNull());
+    expect(document.querySelector(".first-run-notice")?.textContent).toContain("Server not responding");
+    await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    await waitFor(() => expect(document.querySelector(".epigraph-app-shell")).not.toBeNull());
+    expect(JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.status).toBe("complete");
+  });
+
+  it("shows no skip action when the server answers with an empty app", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(createFirstRunState()));
+    resolveRuntime();
+    render(Layout);
+    await waitFor(() => expect(document.querySelector(".first-run-shell")).not.toBeNull());
+    expect(screen.queryByRole("button", { name: "Skip setup" })).toBeNull();
+    expect(document.querySelector(".first-run-notice")).toBeNull();
   });
 
   it("keeps setup the user started over from Settings, even on an app with data", async () => {

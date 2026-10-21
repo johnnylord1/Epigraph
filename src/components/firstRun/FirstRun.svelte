@@ -52,8 +52,13 @@
   import { createProductionFirstRunSourcesWorkflow } from "../../lib/setup/firstRunSourcesWorkflow";
   import { createProductionFirstRunTrackerWorkflow } from "../../lib/tracking/firstRunTrackerWorkflow";
 
-  interface Props { onComplete?: () => void; initialState?: FirstRunState }
-  let { onComplete = () => {}, initialState }: Props = $props();
+  interface Props {
+    onComplete?: () => void;
+    initialState?: FirstRunState;
+    /** The launch check could not reach the server, so the app may already hold data. */
+    serverUnavailable?: boolean;
+  }
+  let { onComplete = () => {}, initialState, serverUnavailable = false }: Props = $props();
 
   type ContentType = "manga" | "novels";
 
@@ -265,6 +270,13 @@
     onComplete();
   }
 
+  /** Leaves setup when the server did not answer: the app opens as it is. */
+  function skipSetup() {
+    firstRun = completeFirstRunState(firstRun);
+    persistFirstRun();
+    onComplete();
+  }
+
   function advance(step: FirstRunStep) {
     if (!canAdvance) return;
     setFirstRunStep(step);
@@ -307,7 +319,10 @@
   complete={firstRun.step === "complete"}
   subtitle={$_("firstRun.shell.initialSetup")}
   progressLabel={$_("firstRun.shell.setupProgress")}
-  cancel={firstRun.cancellable ? { label: $_("firstRun.shell.cancel"), onCancel: cancelSetup } : undefined}
+  cancel={firstRun.cancellable
+    ? { label: $_("firstRun.shell.cancel"), onCancel: cancelSetup }
+    : serverUnavailable ? { label: $_("firstRun.shell.skip"), onCancel: skipSetup } : undefined}
+  notice={serverUnavailable && !firstRun.cancellable ? $_("firstRun.shell.serverUnavailable") : undefined}
 >
   {#key firstRun.step}
   <article class="first-run-page" data-page={firstRun.step} out:depart={{ direction }}>

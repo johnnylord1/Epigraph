@@ -59,6 +59,8 @@
   "firstRun_shell_continue": "続ける",
   "firstRun_shell_back": "戻る",
   "firstRun_shell_cancel": "設定をキャンセル",
+  "firstRun_shell_skip": "設定をスキップ",
+  "firstRun_shell_serverUnavailable": "サーバーが応答しません",
   "firstRun_shell_returnRestore": "復元に戻る",
   "firstRun_shell_finish": "セットアップを完了",
   "firstRun_shell_openLibrary": "ライブラリを開く",

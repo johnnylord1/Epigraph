@@ -59,6 +59,8 @@
   "firstRun_shell_continue": "Continue",
   "firstRun_shell_back": "Back",
   "firstRun_shell_cancel": "Cancel setup",
+  "firstRun_shell_skip": "Skip setup",
+  "firstRun_shell_serverUnavailable": "Server not responding",
   "firstRun_shell_returnRestore": "Return to restore",
   "firstRun_shell_finish": "Finish setup",
   "firstRun_shell_openLibrary": "Open library",

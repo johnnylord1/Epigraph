@@ -29,6 +29,8 @@
   // Setup pending at launch waits until the app is known to be empty: an app that already holds
   // works, sources or repositories opens as it is, and setup is marked done without showing it.
   let firstRunLaunchCheck = $state(firstRunPendingAtLaunch && !readFirstRunReopenedByUser());
+  // The check could not reach the server: setup opens with a way to skip it.
+  let firstRunServerUnavailable = $state(false);
   // The shell that replaces a finished setup arrives as it does behind the splash.
   let firstRunShown = false;
   $effect(() => {
@@ -72,6 +74,7 @@
         } catch {}
         firstRunPending = readFirstRunPending();
       }
+      firstRunServerUnavailable = content === "unknown";
       firstRunLaunchCheck = false;
     }).catch((error) => {
       console.warn("Could not check whether the app already holds data.", error);
@@ -455,7 +458,7 @@
   <div class="first-run-layout" aria-busy="true"></div>
 {:else if firstRunPending}
   <div class="first-run-layout" out:handOver>
-    <FirstRun onComplete={() => (firstRunPending = false)} />
+    <FirstRun serverUnavailable={firstRunServerUnavailable} onComplete={() => (firstRunPending = false)} />
     {@render detailSurface()}
   </div>
 {:else}

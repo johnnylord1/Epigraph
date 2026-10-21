@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Component, Snippet } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { Check, X } from "phosphor-svelte";
+  import { Check, WarningCircle, X } from "phosphor-svelte";
   import epigraphMark from "../../assets/epigraph-splash-mark.png";
   import { pointerEffects, prefersReducedMotion } from "../../lib/motion/firstRunMotion";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
@@ -21,10 +21,12 @@
     progressLabel: string;
     /** Shown when setup was started from inside the app: leaves it and returns to the app. */
     cancel?: { label: string; onCancel: () => void };
+    /** A short warning beside the titlebar actions. */
+    notice?: string;
     children: Snippet;
   }
 
-  let { progress, activeProgressIndex, complete = false, subtitle, progressLabel, cancel, children }: Props = $props();
+  let { progress, activeProgressIndex, complete = false, subtitle, progressLabel, cancel, notice, children }: Props = $props();
 
   let nav = $state<HTMLElement>();
   let list = $state<HTMLOListElement>();
@@ -191,6 +193,9 @@
       <small>{subtitle}</small>
     </div>
     <div class="first-run-titlebar-actions">
+      {#if notice}
+        <span class="first-run-notice" role="status"><WarningCircle size={16} />{notice}</span>
+      {/if}
       {#if cancel}
         <button class="fr-btn first-run-cancel" type="button" onclick={cancel.onCancel}><X size={16} />{cancel.label}</button>
       {/if}
@@ -282,6 +287,15 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+
+  .first-run-notice {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-warning, var(--text-secondary));
+    font-size: var(--text-sm, 13px);
+    font-weight: 500;
   }
 
   .first-run-mark {
