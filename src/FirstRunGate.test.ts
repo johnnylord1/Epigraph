@@ -89,9 +89,15 @@ describe("first-run startup gate", () => {
   });
   afterEach(() => cleanup());
 
+  function resolveRuntime() {
+    store.runtimeResolvedLocalProfileId = "default" as NonNullable<typeof store.runtimeResolvedLocalProfileId>;
+    store.runtimeServerUrl = "http://127.0.0.1:4567";
+  }
+
   it("opens the normal shell after completing setup and keeps it on the next mount", async () => {
+    resolveRuntime();
     render(Layout);
-    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     await fireEvent.click(screen.getByRole("button", { name: "Set up from scratch" }));
     const install = await screen.findByRole("button", { name: "Install Test extension" });
     await waitFor(() => expect(install.hasAttribute("disabled")).toBe(false));
@@ -117,7 +123,9 @@ describe("first-run startup gate", () => {
   it("keeps the existing manga detail reachable during first-run discovery", async () => {
     localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify({ ...createFirstRunState(), step: "discover", path: "fresh" }));
     store.navPage = "search";
+    resolveRuntime();
     render(Layout);
+    await waitFor(() => expect(document.querySelector(".first-run-shell")).not.toBeNull());
     store.activeManga = { id: 1, title: "Test manga" } as NonNullable<typeof store.activeManga>;
     expect(await screen.findByRole("heading", { name: "Test series detail" })).toBeTruthy();
   });
@@ -154,6 +162,35 @@ describe("first-run startup gate", () => {
     window.dispatchEvent(new Event(FIRST_RUN_REOPENED_EVENT));
     await waitFor(() => expect(document.querySelector(".first-run-shell")).not.toBeNull());
     expect(document.querySelector<HTMLElement>(".first-run-page")?.dataset.page).toBe("theme");
+  });
+
+  it("never shows setup at launch when the app already holds a work or a source", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(createFirstRunState()));
+    cleanInstall.counts = [0, 0, 0, 2];
+    render(Layout);
+    expect(document.querySelector(".first-run-shell")).toBeNull();
+    resolveRuntime();
+    await waitFor(() => expect(document.querySelector(".epigraph-app-shell")).not.toBeNull());
+    expect(document.querySelector(".first-run-shell")).toBeNull();
+    expect(JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.status).toBe("complete");
+    expect(JSON.parse(localStorage.getItem(FIRST_RUN_CONTENT_PROFILES_KEY) ?? "null")).toEqual(["default"]);
+  });
+
+  it("shows setup at launch once the app is known to be empty", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(createFirstRunState()));
+    render(Layout);
+    expect(document.querySelector(".first-run-shell")).toBeNull();
+    resolveRuntime();
+    await waitFor(() => expect(document.querySelector(".first-run-shell")).not.toBeNull());
+    expect(JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.status).toBe("pending");
+  });
+
+  it("keeps setup the user started over from Settings, even on an app with data", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify({ ...createFirstRunState(), cancellable: true }));
+    cleanInstall.counts = [3, 0, 0, 1];
+    resolveRuntime();
+    render(Layout);
+    expect(document.querySelector(".first-run-shell")).not.toBeNull();
   });
 
   it("keeps the app open when it still holds a work or a source", async () => {

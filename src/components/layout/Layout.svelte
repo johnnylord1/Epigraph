@@ -8,7 +8,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
   import type { NavPage } from "../../store/state.svelte";
-  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPending as readFirstRunMarker } from "../../lib/firstRun";
+  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPending as readFirstRunMarker, readFirstRunReopenedByUser, writeCompletedFirstRunMarker } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
   import { enterView, fadeOutView, handOver, playShellEntrance } from "../../lib/motion/motion";
 
@@ -24,11 +24,15 @@
     backupRestoreLaunchIntent = null,
   }: Props = $props();
 
-  let firstRunPending = $state(readFirstRunPending());
+  const firstRunPendingAtLaunch = readFirstRunPending();
+  let firstRunPending = $state(firstRunPendingAtLaunch);
+  // Setup pending at launch waits until the app is known to be empty: an app that already holds
+  // works, sources or repositories opens as it is, and setup is marked done without showing it.
+  let firstRunLaunchCheck = $state(firstRunPendingAtLaunch && !readFirstRunReopenedByUser());
   // The shell that replaces a finished setup arrives as it does behind the splash.
   let firstRunShown = false;
   $effect(() => {
-    if (firstRunPending) firstRunShown = true;
+    if (firstRunPending && !firstRunLaunchCheck) firstRunShown = true;
   });
   function arriveAfterFirstRun(node: HTMLElement) {
     if (!firstRunShown) return;
@@ -39,6 +43,42 @@
   function readFirstRunPending() {
     return readFirstRunMarker(hadPersistedStoreAtStartup);
   }
+
+  const FIRST_RUN_LAUNCH_CHECK_TIMEOUT_MS = 15000;
+  $effect(() => {
+    if (!firstRunLaunchCheck) return;
+    if (!firstRunPending || backupAuditPlan || backupRestoreLaunchIntent) {
+      firstRunLaunchCheck = false;
+      return;
+    }
+    const profileId = store.runtimeResolvedLocalProfileId;
+    const serverUrl = store.runtimeServerUrl;
+    if (!profileId || !serverUrl) return;
+    let cancelled = false;
+    void import("../../lib/firstRunCleanInstall").then(async ({
+      createProductionCleanInstallProbe, readInstallContent, rememberProfileContent,
+    }) => {
+      // A server that never answers leaves the app as unknown, and unknown opens setup as before.
+      const content = await Promise.race([
+        readInstallContent(createProductionCleanInstallProbe({ profileId, serverUrl })),
+        new Promise<"unknown">((resolve) => setTimeout(() => resolve("unknown"), FIRST_RUN_LAUNCH_CHECK_TIMEOUT_MS)),
+      ]);
+      if (cancelled) return;
+      if (content === "content") {
+        try {
+          writeCompletedFirstRunMarker(localStorage);
+          rememberProfileContent(localStorage, profileId);
+          cleanInstallCheckedScope = `${profileId}::${serverUrl}`;
+        } catch {}
+        firstRunPending = readFirstRunPending();
+      }
+      firstRunLaunchCheck = false;
+    }).catch((error) => {
+      console.warn("Could not check whether the app already holds data.", error);
+      if (!cancelled) firstRunLaunchCheck = false;
+    });
+    return () => { cancelled = true; };
+  });
 
   // Setup also opens again when a profile that held works or sources since setup now holds
   // nothing at all, as after its data was cleared. It never repeats for an app left empty.
@@ -335,7 +375,10 @@
   });
 
   onMount(() => {
-    const syncFirstRunPending = () => { firstRunPending = readFirstRunPending(); };
+    const syncFirstRunPending = () => {
+      firstRunLaunchCheck = false;
+      firstRunPending = readFirstRunPending();
+    };
     window.addEventListener(FIRST_RUN_COMPLETED_EVENT, syncFirstRunPending);
     window.addEventListener(FIRST_RUN_REOPENED_EVENT, syncFirstRunPending);
     queueMicrotask(() => {
@@ -408,7 +451,9 @@
   {/if}
 {/snippet}
 
-{#if firstRunPending}
+{#if firstRunPending && firstRunLaunchCheck}
+  <div class="first-run-layout" aria-busy="true"></div>
+{:else if firstRunPending}
   <div class="first-run-layout" out:handOver>
     <FirstRun onComplete={() => (firstRunPending = false)} />
     {@render detailSurface()}

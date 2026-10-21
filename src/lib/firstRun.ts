@@ -62,6 +62,15 @@ export function readFirstRunPending(hasExistingStore: boolean): boolean {
   }
 }
 
+/** Setup the user started over from Settings: it opens as asked, even on an app that holds data. */
+export function readFirstRunReopenedByUser(): boolean {
+  try {
+    return JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.cancellable === true;
+  } catch {
+    return false;
+  }
+}
+
 export function createFirstRunState(): FirstRunState {
   return {
     version: FIRST_RUN_VERSION,
