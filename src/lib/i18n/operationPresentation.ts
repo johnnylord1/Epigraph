@@ -29,7 +29,11 @@ register("outcomes.refreshFailed", ["MANGA_RESTORED_LOCAL_REFRESH_FAILED"]);
 register("outcomes.categories", ["invalid-category", "unresolved-category-novel", "RESTORE_NOVEL_CATEGORIES_UNRESOLVED"]);
 register("outcomes.skipped", ["optional-payload-omitted", "payload-not-selected", "skipped"]);
 register("outcomes.statePreserved", ["CURRENT_STATE_PRESERVED"]);
-register("outcomes.warning", ["NOVEL_IDENTITY_AMBIGUOUS", "DESTINATION_ID_COLLISION", "CHAPTER_IDENTITY_AMBIGUOUS", "CHAPTER_REFERENCE_UNRESOLVED", "LOCATOR_REMAP_UNSUPPORTED"]);
+register("outcomes.novelSkipped", ["NOVEL_IDENTITY_AMBIGUOUS", "DESTINATION_ID_COLLISION", "CHAPTER_IDENTITY_AMBIGUOUS"]);
+register("outcomes.historyUnresolved", ["CHAPTER_REFERENCE_UNRESOLVED"]);
+register("outcomes.positionApproximate", ["LOCATOR_REMAP_UNSUPPORTED"]);
+register("outcomes.coversMissing", ["missing-cover-file", "unsupported-cover-format", "cover-write-failed"]);
+register("outcomes.bookFileMissing", ["missing-asset-file", "metadata-only-book"]);
 register("outcomes.cancelled", ["cancelled", "RESTORE_CANCELLED"]);
 register("outcomes.succeeded", ["succeeded", "success"]);
 

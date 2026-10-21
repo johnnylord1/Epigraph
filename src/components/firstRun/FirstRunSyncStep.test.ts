@@ -180,7 +180,7 @@ describe("FirstRunSyncStep", () => {
 
     await choosePin("000000");
 
-    expect(await screen.findByText("That code doesn't match. Check it on the other computer.")).toBeTruthy();
+    expect(await screen.findByText("That code doesn't match. Check it on the other device.")).toBeTruthy();
     expect(sync.connect).not.toHaveBeenCalled();
     expect(screen.getByText("Enter the code from OFFICE-PC")).toBeTruthy();
   });

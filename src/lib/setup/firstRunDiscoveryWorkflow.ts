@@ -67,6 +67,8 @@ export interface FirstRunDiscoveryWorkflow {
   readonly loading: boolean;
   readonly saving: boolean;
   readonly error: string | null;
+  /** Names of the sources that failed during the last load, so the step can say which one is down. */
+  readonly failedSources: readonly string[];
   loadPopular(): Promise<void>;
   search(query: string): Promise<void>;
   addToLibrary(id: string): Promise<boolean>;
@@ -111,6 +113,7 @@ export function createFirstRunDiscoveryWorkflow(
   let items: FirstRunWorkCard[] = [];
   let loading = false;
   let error: string | null = null;
+  let failedSources: string[] = [];
   let generation = 0;
   let disposed = false;
   let disposal: Promise<void> | null = null;
@@ -132,6 +135,7 @@ export function createFirstRunDiscoveryWorkflow(
     const currentGeneration = ++generation;
     loading = true;
     error = null;
+    failedSources = [];
     notify();
     try {
       const [mangaSourcesResult, novelSourcesResult] = await Promise.allSettled([
@@ -145,6 +149,7 @@ export function createFirstRunDiscoveryWorkflow(
       const novelSources = novelSourcesResult.status === "fulfilled"
         ? novelSourcesResult.value.slice(0, MAX_SOURCES_PER_KIND)
         : [];
+      const taskSources = [...mangaSources, ...novelSources];
       const tasks: Array<() => Promise<{ source: FirstRunDiscoverySource; kind: FirstRunDiscoveryKind; results: FirstRunDiscoveryResult[] }>> = [
         ...mangaSources.map((source) => async () => ({ source, kind: "manga" as const, results: await dependencies.findManga(source, query) })),
         ...novelSources.map((source) => async () => ({ source, kind: "novel" as const, results: await dependencies.findNovels(source, query) })),
@@ -183,6 +188,7 @@ export function createFirstRunDiscoveryWorkflow(
       items = nextItems;
 
       const failures = settled.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+      failedSources = [...new Set(settled.flatMap((result, index) => result.status === "rejected" ? [taskSources[index].name] : []))];
       const sourceLoadFailures = [mangaSourcesResult, novelSourcesResult]
         .filter((result): result is PromiseRejectedResult => result.status === "rejected");
       if (tasks.length === 0 && sourceLoadFailures.length > 0) {
@@ -210,6 +216,7 @@ export function createFirstRunDiscoveryWorkflow(
     get loading() { return loading; },
     get saving() { return pendingAdds.size > 0; },
     get error() { return error; },
+    get failedSources() { return failedSources; },
     loadPopular: () => trackedLoad(null),
     search: (query) => trackedLoad(query.trim() || null),
     addToLibrary(id) {

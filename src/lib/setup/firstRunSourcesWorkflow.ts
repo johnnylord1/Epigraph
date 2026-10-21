@@ -189,6 +189,38 @@ export function buildFirstRunMangaExtensions(extensions: readonly ExtensionRef[]
     .sort(compareFirstRunExtensions);
 }
 
+const MULTI_LANGUAGE_VALUES = new Set(["all", "multi", "multilingual", "multiple"]);
+
+/** Extensions that cover several languages stay visible whichever language is picked. */
+export function isMultiLanguageExtension(lang: string): boolean {
+  return MULTI_LANGUAGE_VALUES.has(lang.trim().toLowerCase());
+}
+
+/** The distinct languages of a catalog, multi-language entries left out since they always show. */
+export function firstRunExtensionLanguages(extensions: readonly FirstRunExtension[]): string[] {
+  return [...new Set(extensions.map((extension) => extension.lang.trim()).filter((lang) => lang && !isMultiLanguageExtension(lang)))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+/**
+ * Comic catalogs use codes ("pt-BR") and LNReader uses names ("Português"), so both the code and the
+ * language's own and English names count as a match for the app locale.
+ */
+export function extensionLanguageMatchesLocale(lang: string, locale: string): boolean {
+  const value = lang.trim().toLowerCase();
+  const base = locale.trim().toLowerCase().split(/[-_]/)[0];
+  if (!value || !base) return false;
+  if (value.split(/[-_]/)[0] === base) return true;
+  for (const displayLocale of [base, "en"]) {
+    try {
+      if (new Intl.DisplayNames([displayLocale], { type: "language" }).of(base)?.toLowerCase() === value) return true;
+    } catch {
+      // An unknown locale has no display name to compare.
+    }
+  }
+  return false;
+}
+
 export function visibleFirstRunExtensions(extensions: readonly FirstRunExtension[], showNsfw: boolean): FirstRunExtension[] {
   return showNsfw ? [...extensions] : extensions.filter((extension) => !extension.nsfw || extension.installed);
 }

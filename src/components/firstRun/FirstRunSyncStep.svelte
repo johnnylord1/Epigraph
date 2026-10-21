@@ -25,9 +25,11 @@
     onReadyChange?: (ready: boolean) => void;
     onBack?: () => void;
     onContinue?: () => void;
+    /** Leaves sync for later (Settings › Sync) and carries on with a fresh setup. */
+    onSkip?: () => void;
   }
 
-  let { profileId = null, onReadyChange = () => {}, onBack = () => {}, onContinue = () => {} }: Props = $props();
+  let { profileId = null, onReadyChange = () => {}, onBack = () => {}, onContinue = () => {}, onSkip }: Props = $props();
 
   type Stage = "scan" | "code" | "approval" | "syncing" | "done" | "rejected";
   const PIN_LENGTH = 6;
@@ -440,6 +442,7 @@
 <div class="fr-footer">
   <button class="fr-btn" type="button" disabled={connecting} onclick={onBack}><ArrowLeft class="fr-arrow-back" size={16} />{$_("firstRun.shell.back")}</button>
   <span class="fr-spacer"></span>
+  {#if onSkip && !(ready || otherWaysReady)}<button class="fr-btn" type="button" disabled={connecting} onclick={onSkip}>{$_("firstRun.sync.doLater")}</button>{/if}
   <button class="fr-btn fr-btn--primary fr-sync-continue" type="button" disabled={!(ready || otherWaysReady)} onclick={onContinue}>{$_("firstRun.shell.continue")}<ArrowRight class="fr-arrow-next" size={16} /></button>
 </div>
 

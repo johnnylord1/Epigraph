@@ -193,7 +193,8 @@ export function mergeNovelDetailIntoLibraryState(
     };
   });
 
-  const newChapterEntries = nextChapters
+  // The first chapter list for a novel (just added or restored) is its catalog, not new releases.
+  const newChapterEntries = previousChapterCount === 0 ? [] : nextChapters
     .filter((chapter) => !existingByPath.has(chapter.path))
     .map((chapter): RefreshedNovelChapter => ({
       novelId: detail.id,

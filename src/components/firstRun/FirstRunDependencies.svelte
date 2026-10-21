@@ -14,16 +14,19 @@
   // First Run informs instead of asking: everything listed here is installed by "Restore all".
   type ItemState = "pending" | "working" | "done" | "failed";
   // Icons in the order to try: a repository can name an icon it no longer hosts.
-  type Item = { key: string; name: string; detail: string; icons: string[]; state: ItemState };
+  // A failed row says why (a message key), so "not installed" is never left unexplained.
+  type Item = { key: string; name: string; detail: string; icons: string[]; state: ItemState; reason?: string };
   type MangaSession = Awaited<ReturnType<typeof createProductionMangaDependencySession>>;
   type NovelSession = Awaited<ReturnType<typeof createProductionNovelDependencySession>>;
   type NovelPlugin = NovelDependencyPlan["plugins"][number];
 
-  let { entries, disabled = false, choices = {}, onChoices = () => {} }: {
+  let { entries, disabled = false, choices = {}, onChoices = () => {}, onCounts = () => {} }: {
     entries: BackupWorkflowFile[];
     disabled?: boolean;
     choices?: Record<string, MangaRestoreChoices>;
     onChoices?: (key: string, choices: MangaRestoreChoices) => void;
+    /** What this list shows, so the review totals count the same rows. */
+    onCounts?: (counts: { repositories: number; extensions: number }) => void;
   } = $props();
 
   let repositories = $state<Item[]>([]);
@@ -39,6 +42,9 @@
   onMount(() => { void prepare().then(describe).catch(() => {}); });
 
   const total = $derived(repositories.length + extensions.length + plugins.length);
+  $effect(() => {
+    if (!checking) onCounts({ repositories: repositories.length, extensions: extensions.length + plugins.length });
+  });
   const choosable = $derived(Object.entries(mangaPlans).flatMap(([key, plan]) => plan.sources
     .filter(source => source.candidates.some(candidate => candidate.sourceId !== source.orphanSourceId))
     .map(source => ({ key, source }))));
@@ -72,9 +78,11 @@
     }
     list.push({ ...item, state: "pending" });
   }
-  function mark(list: Item[], key: string, state: ItemState) {
+  function mark(list: Item[], key: string, state: ItemState, reason?: string) {
     const item = list.find(entry => entry.key === key);
-    if (item) item.state = state;
+    if (!item) return;
+    item.state = state;
+    item.reason = state === "failed" ? reason : undefined;
   }
 
   async function prepare() {
@@ -159,16 +167,21 @@
       try {
         const added = await session.addRepositories(missing);
         plan = added.plan;
-        missing.forEach(url => mark(repositories, extensionStoreKey(url), added.failed.includes(url) ? "failed" : "done"));
+        missing.forEach(url => mark(repositories, extensionStoreKey(url), added.failed.includes(url) ? "failed" : "done", "firstRun.backup.repositoryUnavailable"));
       } catch (error) {
         console.warn("[first-run] repositories not added", error);
-        missing.forEach(url => mark(repositories, extensionStoreKey(url), "failed"));
+        missing.forEach(url => mark(repositories, extensionStoreKey(url), "failed", "firstRun.backup.repositoryUnavailable"));
       }
     }
-    // The catalog preview is replaced by what the restore actually needs once its repositories are known.
+    // Catalog previews the added repositories cannot install stay listed, with the reason, so the
+    // totals shown before the restore still add up afterwards.
     const installable = installableExtensions(plan);
     const keep = new Set(installable.map(extension => extension.packageName));
-    extensions = extensions.filter(item => item.state !== "pending" || keep.has(item.key));
+    for (const item of extensions) {
+      if (item.state !== "pending" || keep.has(item.key)) continue;
+      const installed = plan.extensions.some(extension => extension.packageName === item.key && extension.isInstalled);
+      mark(extensions, item.key, installed ? "done" : "failed", "firstRun.backup.extensionUnavailable");
+    }
     for (const extension of installable) {
       upsert(extensions, { key: extension.packageName, name: extensionName(extension.name ?? extension.packageName), detail: languageLabel(extension.language), icons: icons(extension.iconUrl) });
       mark(extensions, extension.packageName, "working");
@@ -185,7 +198,7 @@
       }
       for (const extension of installable) {
         const now = plan.extensions.find(candidate => candidate.packageName === extension.packageName);
-        mark(extensions, extension.packageName, now?.isInstalled ? "done" : "failed");
+        mark(extensions, extension.packageName, now?.isInstalled ? "done" : "failed", "firstRun.backup.installFailed");
       }
     }
     mangaPlans[key] = plan;
@@ -202,13 +215,13 @@
       const result = await session.apply({ repositoryUrls: urls, plugins: approvals });
       for (const plugin of pending) {
         const ready = result.plan.plugins.find(candidate => candidate.pluginId === plugin.pluginId)?.status === "ready";
-        mark(plugins, plugin.pluginId, ready ? "done" : "failed");
+        mark(plugins, plugin.pluginId, ready ? "done" : "failed", "firstRun.backup.installFailed");
       }
       urls.forEach(url => mark(repositories, url, "done"));
     } catch (error) {
       console.warn("[first-run] novel plugins not installed", error);
-      pending.forEach(plugin => mark(plugins, plugin.pluginId, "failed"));
-      urls.forEach(url => mark(repositories, url, "failed"));
+      pending.forEach(plugin => mark(plugins, plugin.pluginId, "failed", "firstRun.backup.installFailed"));
+      urls.forEach(url => mark(repositories, url, "failed", "firstRun.backup.repositoryUnavailable"));
     }
   }
 
@@ -256,14 +269,14 @@
       <p class="dep-label"><span>{label}</span><b>{items.length}</b></p>
       <ul class="dep-grid">
         {#each items as item (item.key)}
-          <li class="dep-item" class:is-working={item.state === "working"} class:is-failed={item.state === "failed"} title={item.state === "failed" ? $_("firstRun.backup.notInstalled") : item.name}>
+          <li class="dep-item" class:is-working={item.state === "working"} class:is-failed={item.state === "failed"} title={item.state === "failed" ? `${$_("firstRun.backup.notInstalled")}: ${$_(item.reason ?? "firstRun.backup.installFailed")}` : item.name}>
             {#if kind === "repository" && !item.icons.length}
               <span class="dep-icon dep-icon--glyph"><GitBranch size={16} /></span>
             {:else}
               <img class="dep-icon" src={resolveServiceIconUrl(item.icons[0], { kind: "extension" })} alt="" loading="lazy" decoding="async"
                 onerror={event => nextIcon(event, item, kind)} />
             {/if}
-            <span class="dep-copy"><strong>{item.name}</strong>{#if item.detail}<small>{item.detail}</small>{/if}</span>
+            <span class="dep-copy"><strong>{item.name}</strong>{#if item.state === "failed"}<small class="dep-reason">{$_(item.reason ?? "firstRun.backup.installFailed")}</small>{:else if item.detail}<small>{item.detail}</small>{/if}</span>
             {#if item.state === "done"}<CheckCircle class="dep-state dep-state--done" size={16} weight="fill" />
             {:else if item.state === "failed"}<WarningCircle class="dep-state dep-state--failed" size={16} weight="fill" />{/if}
           </li>
@@ -319,6 +332,7 @@
   .dep-copy strong, .dep-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dep-copy strong { color: var(--text-primary); font-size: 13px; font-weight: 600; }
   .dep-copy small { color: var(--text-muted); font-size: 11px; }
+  .dep-copy .dep-reason { color: var(--color-warning, var(--color-danger)); }
   .dep-item :global(.dep-state) { flex: none; }
   .dep-item :global(.dep-state--done) { color: var(--color-success); }
   .dep-item :global(.dep-state--failed) { color: var(--color-warning, var(--color-danger)); }

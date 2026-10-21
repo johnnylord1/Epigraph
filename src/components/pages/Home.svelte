@@ -20,6 +20,8 @@
     type NovelReadingHistoryItem,
   } from "../../lib/novels/libraryState";
   import type { PersistedNovelLibraryState } from "../../lib/novels/domain";
+  import { loadNovelRepositoryState } from "../../lib/novels/repositoryState";
+  import { novelRestoreRuntimeState } from "../../lib/backup/novelsRestoreProvisioning";
   import {
     loadTrackingProviderInventory,
     loadNativeTrackedTitleKeys,
@@ -53,6 +55,7 @@
   import type { BookEntry, BookProgress } from "../../lib/books/types";
   import type { Manga, Category, Source, Tracker, Extension } from "../../lib/types";
   import { summarizeReadingWeek } from "../../lib/history/week";
+  import { summarizeArchive } from "../../lib/history/archive";
   import RecentActivity from "../layout/RecentActivity.svelte";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import ActivityButton from "../layout/ActivityButton.svelte";
@@ -482,7 +485,12 @@
     store.contentSetupVersion;
     store.activeNovelReader;
     void loadNovelLibraryState(scope).then((state) => { novelLibraryState = state; });
+    // Novel plugins are sources too; without them a novels-only setup reads as "no sources".
+    void loadNovelRepositoryState(scope)
+      .then((state) => { novelSourceCount = novelRestoreRuntimeState(state).installedPluginIds.length; })
+      .catch(() => { novelSourceCount = 0; });
   });
+  let novelSourceCount = $state(0);
   const novelHistory = $derived(novelLibraryState ? getNovelReadingHistory(novelLibraryState) : []);
   // One item per novel: its newest chapter, plus how many other chapters of it were read.
   const latestNovelReads = $derived((() => {
@@ -781,16 +789,6 @@
     }),
   );
   const stats = $derived(store.readingStats);
-  const archiveLibraryTitleCount = $derived(libraryManga.length + libraryBooks.length);
-  const archiveReadTitleCount = $derived.by(() => {
-    const mangaIds = new Set(store.history.map((entry) => entry.mangaId));
-    const bookIds = new Set(
-      store.bookProgress
-        .filter((progress) => progress.progressPercent > 0)
-        .map((progress) => progress.bookId),
-    );
-    return mangaIds.size + bookIds.size;
-  });
   // "This week" is the last seven days, today included.
   function weekStartMs(): number {
     const start = new Date();
@@ -902,8 +900,16 @@
     return [...mangaRows, ...bookRows].slice(0, 2);
   })());
 
-  const archiveFinishedCount = $derived(Math.max(stats.totalMangaRead, archiveReadTitleCount));
-  const archiveTotalCount = $derived(Math.max(archiveLibraryTitleCount, archiveReadTitleCount, stats.totalMangaRead));
+  const archive = $derived(summarizeArchive({
+    manga: libraryManga,
+    finishedMangaIds: finishedIds,
+    bookCount: libraryBooks.length,
+    finishedBookCount: completedBooks.length,
+    novels: novelLibraryState,
+    loggedChaptersRead: stats.totalChaptersRead,
+  }));
+  const archiveFinishedCount = $derived(archive.finished);
+  const archiveTotalCount = $derived(archive.titles);
   const archiveCompletionRatio = $derived(
     archiveTotalCount > 0 ? Math.round((archiveFinishedCount / archiveTotalCount) * 100) : 0,
   );
@@ -972,12 +978,13 @@
   const activeDownloadCount = $derived(store.activeDownloads.filter((item) => item.state === "DOWNLOADING").length);
   const queuedDownloadCount = $derived(store.activeDownloads.filter((item) => item.state === "QUEUED").length);
   const pausedDownloadCount = $derived(store.activeDownloads.filter((item) => item.state === "PAUSED").length);
-  const sourceReadyCount = $derived.by(() => {
+  const comicSourceReadyCount = $derived.by(() => {
     const count = setupState && "usableSourceCount" in setupState ? setupState.usableSourceCount : null;
     return count ?? visibleHomeSources.length;
   });
+  const sourceReadyCount = $derived(comicSourceReadyCount + novelSourceCount);
   const hiddenHomeSourceCount = $derived(
-    Math.max(dedupeSources(homeSources, store.settings.preferredExtensionLang || "en").length, sourceReadyCount) - visibleHomeSources.length,
+    Math.max(dedupeSources(homeSources, store.settings.preferredExtensionLang || "en").length, comicSourceReadyCount) - visibleHomeSources.length,
   );
   const browseSourcesSummary = $derived(
     sourceReadyCount > 0
@@ -1371,7 +1378,7 @@
             <section class="home-card home-side-card">
               <h3 class="home-side-card__title">{$_("home.sections.archive")}</h3>
               <div class="home-side-card__metric">
-                <strong>{stats.totalChaptersRead}</strong>
+                <strong>{archive.chaptersRead}</strong>
                 <small>{$_("home.metrics.chaptersRead")}</small>
               </div>
               <div class="home-side-card__separator"></div>
@@ -1390,7 +1397,7 @@
                   <small>{$_("home.metrics.titles")}</small>
                 </div>
                 <div>
-                  <strong>{setupState?.usableSourceCount ?? 0}</strong>
+                  <strong>{sourceReadyCount}</strong>
                   <small>{$_("home.metrics.sources")}</small>
                 </div>
               </div>

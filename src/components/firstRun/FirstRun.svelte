@@ -415,6 +415,7 @@
           onReadyChange={(ready) => (syncReady = ready)}
           onBack={goBack}
           onContinue={() => advance("trackers")}
+          onSkip={() => setFirstRunPath("fresh", "sources")}
         />
 
       {:else if firstRun.path === "backup" && (firstRun.step === "backup" || firstRun.step === "sources")}
@@ -454,6 +455,7 @@
           requiredKinds={[]}
           onBack={goBack}
           onContinue={() => setFirstRunStep("trackers")}
+          onSkip={() => setFirstRunStep("trackers")}
         />
 
       {:else if firstRun.step === "trackers"}

@@ -273,7 +273,7 @@ test.each([{ width: 1280, height: 800 }, { width: 800, height: 600 }])(
     expect(getComputedStyle(grid).gridTemplateColumns.split(" ")).toHaveLength(width === 800 ? 4 : 7);
     expect(container.querySelector(".work-card")!.getBoundingClientRect().width).toBeLessThanOrEqual(192);
     expect(container.querySelector<HTMLElement>(".first-run-page")!.scrollWidth).toBeLessThanOrEqual(width);
-    expect(screen.getByRole("button", { name: "Concluir configuração" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Concluir configuração" }).hasAttribute("disabled")).toBe(false);
     console.info("Discovery screenshot:", await page.screenshot());
     await page.getByRole("button", { name: "Adicionar The quiet forest", exact: true }).click();
     await waitFor(() => expect(screen.getByRole("button", { name: "Concluir configuração" }).hasAttribute("disabled")).toBe(false));

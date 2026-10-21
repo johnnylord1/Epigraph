@@ -44,6 +44,7 @@
   let loading = $state(true);
   let saving = $state(false);
   let error = $state<{ cause: unknown; fallback: string } | null>(null);
+  let failedSources = $state<readonly string[]>([]);
   let mounted = false;
   let addedCount = $derived(items.filter((item) => item.inLibrary).length);
   let counter = $state<HTMLElement>();
@@ -80,6 +81,15 @@
     loading = workflow.loading;
     saving = workflow.saving;
     error = workflow.error ? { cause: workflow.error, fallback: "firstRun.discover.loadError" } : null;
+    failedSources = [...workflow.failedSources];
+  }
+
+  /* A failed source is named, so a single broken site is not mistaken for the whole step failing. */
+  function noticeText(t: typeof $_): string {
+    if (failedSources.length && error?.fallback !== "firstRun.discover.addError") {
+      return t("firstRun.discover.sourcesFailed", { sources: failedSources.join(", ") });
+    }
+    return error ? operationError(error.cause, error.fallback, t) : "";
   }
 
   async function loadPopular() {
@@ -147,10 +157,10 @@
   </label>
 </form>
 
-{#if error}
+{#if error || failedSources.length}
   <div class="fr-error" role="alert">
     <WarningCircle size={18} />
-    <span>{operationError(error.cause, error.fallback, $_)}</span>
+    <span>{noticeText($_)}</span>
     <button class="fr-link" type="button" disabled={loading || saving} onclick={retry}>{$_("firstRun.discover.retry")}</button>
   </div>
 {/if}

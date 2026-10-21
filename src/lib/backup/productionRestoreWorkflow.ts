@@ -236,7 +236,8 @@ export function createProductionRestoreWorkflow(options: ProductionRestoreOption
       replaceBooksState(preserveNovelCategoriesForBooksRestore({ categories: store.settings.booksCategories,
         assignments: store.settings.booksCategoryAssignments }, restored, novels.entries.map(novel => novel.id)));
       await store.persistRestoredBooks();
-      warnings[id] = restored.issues.map(issue => issue.message);
+      // Codes, not the English diagnostic text, so each note can be told apart and translated.
+      warnings[id] = restored.issues.map(issue => issue.code);
     } else if (kind === "app") {
       const restored = await runtime.parseEpigraphAppPayload(new Uint8Array(bytes));
       assertTarget();

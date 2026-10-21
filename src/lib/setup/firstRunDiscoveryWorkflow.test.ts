@@ -66,6 +66,19 @@ describe("first-run discovery workflow", () => {
     await Promise.all([loading, disposing, workflow.dispose()]);
     expect(events).toEqual(["a", "b", "done:a", "done:b", "disposed"]);
   });
+  it("names the sources that failed while keeping results from the others", async () => {
+    const workflow = createFirstRunDiscoveryWorkflow(dependencies({
+      loadNovelSources: async () => [{ id: "royal", name: "Royal Road" }, { id: "central", name: "Central Novel" }],
+      findNovels: async (source) => {
+        if (source.id === "central") throw new Error("Cannot read properties of undefined (reading 'split')");
+        return [{ id: "royal:a", path: "a", title: "Royal title", coverUrl: null, inLibrary: false }];
+      },
+    }));
+    await workflow.loadPopular();
+    expect(workflow.items.some((item) => item.title === "Royal title")).toBe(true);
+    expect(workflow.failedSources).toEqual(["Central Novel"]);
+    expect(workflow.error).toBeNull();
+  });
   it("shows novels alongside a large manga result set", async () => {
     const workflow = createFirstRunDiscoveryWorkflow(dependencies({
       findManga: async () => Array.from({ length: 30 }, (_, id) => ({ id, title: `Manga ${id}`, coverUrl: null, inLibrary: false })),

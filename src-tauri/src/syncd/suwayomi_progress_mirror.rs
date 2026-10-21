@@ -358,7 +358,7 @@ async fn mirror_profile(
         };
         if needs_comic_history_write(state, &scope_id, &entity_id, &patch).await? {
             let _writer_guard = state.mutation_gate.lock().await;
-            let outcome = db::apply_comic_history_mutation(
+            let outcome = db::apply_mirrored_comic_history_mutation(
                 &state.pool,
                 &session,
                 &scope_id,

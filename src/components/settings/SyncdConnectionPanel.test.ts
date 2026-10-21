@@ -149,7 +149,7 @@ describe("SyncdConnectionPanel", () => {
     expect(within(dialog).getByTestId("syncd-pairing-view").hidden).toBe(false);
     expect(within(dialog).getByTestId("syncd-details-view").hidden).toBe(true);
     expect(within(dialog).queryByTestId("syncd-options-view")).toBeNull();
-    expect(within(dialog).getByText("Pair a desktop")).toBeTruthy();
+    expect(within(dialog).getByText("Pair a device")).toBeTruthy();
 
     await fireEvent.click(within(dialog).getByTestId("syncd-modal-details"));
     expect(within(dialog).getByTestId("syncd-details-view").hidden).toBe(false);

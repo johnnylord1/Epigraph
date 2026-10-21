@@ -673,6 +673,33 @@ exports.default = {
     ]);
   });
 
+  it("keeps the requested url on a Cloudflare page rebuilt after the challenge check", async () => {
+    tauriFetchMock.mockReset();
+    vi.stubGlobal("localStorage", { getItem: () => null });
+    tauriFetchMock.mockResolvedValueOnce(new Response("<html><head><title>Central</title></head><body></body></html>", {
+      status: 200,
+      headers: { server: "cloudflare", "content-type": "text/html" },
+    }));
+
+    const popular = await readNovelPluginPopular({
+      pluginId: "lightnovelwp-like",
+      artifactUrl: "https://example.com/lightnovelwp.js",
+      pluginSource: `
+const { fetchApi } = require("@libs/fetch");
+exports.default = {
+  id: "lightnovelwp-like",
+  async popularNovels() {
+    const response = await fetchApi("https://central.example/series/?page=1");
+    return [{ name: response.url.split("/")[2], path: "/series/a" }];
+  },
+};
+`,
+      pageNo: 1,
+    });
+
+    expect(popular.results).toMatchObject([{ name: "central.example", path: "/series/a" }]);
+  });
+
   it("detects a challenge interstitial served with a successful status", async () => {
     tauriFetchMock.mockReset();
     vi.stubGlobal("localStorage", { getItem: () => null });

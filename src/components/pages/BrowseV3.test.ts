@@ -995,6 +995,15 @@ describe("BrowseV3", () => {
     });
   });
 
+  test("opens on Books when only novel sources are installed", async () => {
+    mangaSourcesMock.splice(0, mangaSourcesMock.length);
+    render(BrowseV3);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Books" }).classList.contains("is-active")).toBe(true);
+    });
+  });
+
   test("opens a source novel with its stable source and path identity", async () => {
     browseStore.searchBrowseContentType = "novels";
     browseStore.searchPrefill = "Novel Result";

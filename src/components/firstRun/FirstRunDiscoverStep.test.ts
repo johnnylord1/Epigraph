@@ -85,7 +85,7 @@ it("shows a retryable empty/error state without blocking setup", async () => {
   });
   render(FirstRunDiscoverStep, { props: { workflow } });
 
-  expect((await screen.findByRole("alert")).textContent).toContain(translate("firstRun.discover.loadError"));
+  expect((await screen.findByRole("alert")).textContent).toContain(translate("firstRun.discover.sourcesFailed", { sources: "Broken" }));
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(false);
 });

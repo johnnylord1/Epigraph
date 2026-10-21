@@ -985,7 +985,11 @@
   let pendingContentType = $state<"manga" | "novels" | null>(null);
   const shownContentType = $derived(pendingContentType ?? activeContentType);
 
+  // Set once the user or another screen picks Comics or Books, so the first-load default never overrides it.
+  let contentTypeChosen = false;
+
   function pickContentType(next: "manga" | "novels") {
+    contentTypeChosen = true;
     if (shownContentType === next) return;
     pendingContentType = next;
     afterPaint(() => {
@@ -1429,6 +1433,7 @@
       const prefill = store.searchPrefill;
       const nextContentType = store.searchBrowseContentType;
       untrack(() => {
+        contentTypeChosen = true;
         if (activeContentType !== nextContentType) {
           activeContentType = nextContentType;
           resetContentTypeTransientState();
@@ -1468,6 +1473,17 @@
       } else {
         console.warn("Could not refresh novel sources for Browse.", novelSources.reason);
         allNovelSources = [];
+      }
+      // A setup with novel plugins and no comic source opens on Novels instead of an empty Comics tab.
+      if (
+        !sourcesRefreshCompleted
+        && !contentTypeChosen
+        && activeContentType === "manga"
+        && mangaSources.status === "fulfilled"
+        && allSources.length === 0
+        && allNovelSources.some((source) => source.enabled)
+      ) {
+        selectContentType("novels");
       }
     } catch (error) {
       console.error(error);

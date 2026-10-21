@@ -243,9 +243,8 @@ describe("FirstRun", () => {
     const onComplete = vi.fn();
     render(FirstRun, { props: { onComplete, initialState: { ...createFirstRunState(), step: "complete", path: "sync" } } });
 
-    const getStarted = screen.getByRole("button", { name: "Get started" });
-    expect(getStarted.hasAttribute("disabled")).toBe(false);
-    await fireEvent.click(getStarted);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Get started" }).hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     expect(onComplete).toHaveBeenCalledOnce();
   });
 

@@ -739,12 +739,14 @@ async function readResponseText(response: Response): Promise<string> {
   return decodeBytesWithCharset(bytes, preferredCharset);
 }
 
-function wrapRuntimeResponse(response: Response): Response {
+// A Response rebuilt from text has an empty url; plugins such as LightNovelWP compare hostnames of the
+// final url, so fall back to the url that was requested.
+function wrapRuntimeResponse(response: Response, requestedUrl: string): Response {
   const wrapped = {
     ok: response.ok,
     status: response.status,
     statusText: response.statusText,
-    url: response.url,
+    url: response.url || requestedUrl,
     redirected: response.redirected,
     type: response.type,
     headers: response.headers,
@@ -801,17 +803,17 @@ function createFetchShim() {
         if (!settings.enabled) {
           throw new Error("Source challenge requires FlareSolverr recovery for this LNReader source.");
         }
-        return wrapRuntimeResponse(await requestViaFlareSolverr(url, init, settings));
+        return wrapRuntimeResponse(await requestViaFlareSolverr(url, init, settings), url);
       }
 
       return wrapRuntimeResponse(new Response(text, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
-      }));
+      }), response.url || url);
     }
 
-    return wrapRuntimeResponse(response);
+    return wrapRuntimeResponse(response, url);
   };
 
   return {

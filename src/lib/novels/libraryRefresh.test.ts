@@ -168,6 +168,15 @@ describe("novel library refresh", () => {
     });
   });
 
+  it("does not report a novel's first chapter list as new chapters", () => {
+    const empty = { ...state(), chapters: [] };
+
+    const merged = mergeNovelDetailIntoLibraryState(empty, entry(), detail(), 1234);
+
+    expect(merged.newChapters).toEqual([]);
+    expect(merged.state.chapters).toHaveLength(2);
+  });
+
   it("filters only ongoing novels when requested", () => {
     expect(shouldRefreshNovelEntry(entry("Ongoing"), { onlyOngoing: true })).toBe(true);
     expect(shouldRefreshNovelEntry(entry("Releasing"), { onlyOngoing: true })).toBe(true);

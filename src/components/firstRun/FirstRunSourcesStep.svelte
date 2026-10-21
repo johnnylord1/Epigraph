@@ -1,12 +1,15 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { _ } from "../../lib/i18n/runtime";
+  import { _, appliedAppLanguage } from "../../lib/i18n/runtime";
   import { operationError, restoreNote } from "../../lib/i18n/operationPresentation";
   import { ArrowLeft, ArrowRight, ArrowClockwise, Check, DownloadSimple, Info, Link, MagnifyingGlass, Plus, WarningCircle } from "phosphor-svelte";
   import { arrive, findByData, flash, pulse } from "../../lib/motion/firstRunMotion";
   import FirstRunTitle from "./FirstRunTitle.svelte";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
+    extensionLanguageMatchesLocale,
+    firstRunExtensionLanguages,
+    isMultiLanguageExtension,
     visibleFirstRunExtensions,
     type FirstRunRepository,
     type FirstRunSourceKind,
@@ -20,6 +23,8 @@
     backupExtensionIds?: Record<string, readonly string[]>;
     onBack?: () => void;
     onContinue?: () => void;
+    /** Lets a fresh setup move on without sources; they can be added later in Settings. */
+    onSkip?: () => void;
   }
 
   let {
@@ -28,6 +33,7 @@
     backupExtensionIds = {},
     onBack = () => {},
     onContinue = () => {},
+    onSkip,
   }: Props = $props();
 
   let kind = $state<FirstRunSourceKind>(untrack(() => requiredKinds[0] ?? "manga"));
@@ -171,9 +177,29 @@
   const visibleRepositories = $derived(repositories.filter((repository) => repository.kind === kind));
   const hasNsfwExtensions = $derived(visibleRepositories.some((repository) => repository.extensions.some((extension) => extension.nsfw)));
 
+  const languageOptions = $derived(firstRunExtensionLanguages(visibleRepositories.flatMap((repository) => visibleFirstRunExtensions(repository.extensions, showNsfw))));
+  let chosenLanguage = $state<string | null>(null);
+  // Until a language is picked, large catalogs open on the app language; a restore keeps everything visible.
+  const language = $derived.by(() => {
+    if (chosenLanguage !== null && (chosenLanguage === "" || languageOptions.includes(chosenLanguage))) return chosenLanguage;
+    if (Object.keys(backupExtensionIds).length > 0) return "";
+    const locale = appliedAppLanguage() ?? (typeof navigator === "undefined" ? "en" : navigator.language);
+    return languageOptions.find((lang) => extensionLanguageMatchesLocale(lang, locale)) ?? "";
+  });
+
+  function languageLabel(lang: string): string {
+    if (!/^[a-z]{2,3}([-_][a-z0-9]{2,4})?$/i.test(lang)) return lang;
+    try {
+      return new Intl.DisplayNames([appliedAppLanguage() ?? "en"], { type: "language" }).of(lang.replace("_", "-")) ?? lang;
+    } catch {
+      return lang;
+    }
+  }
+
   function filteredExtensions(repository: FirstRunRepository) {
     const query = extensionQuery.trim().toLowerCase();
     return visibleFirstRunExtensions(repository.extensions, showNsfw)
+      .filter((extension) => !language || extension.lang.trim() === language || isMultiLanguageExtension(extension.lang))
       .filter((extension) => !query || `${extension.name} ${extension.lang} ${extension.id}`.toLowerCase().includes(query));
   }
 
@@ -212,6 +238,12 @@
   <div class="catalog-tools" data-enter>
     {#if visibleRepositories.length > 0}
       <label class="fr-field extension-search"><MagnifyingGlass size={16} /><input type="search" value={extensionQuery} aria-label={$_("firstRun.sources.search")} placeholder={$_("firstRun.sources.searchPlaceholder")} oninput={(event) => { extensionQuery = event.currentTarget.value; visibleCounts = {}; }} /></label>
+    {/if}
+    {#if languageOptions.length > 1}
+      <select class="language-filter" aria-label={$_("firstRun.sources.language")} value={language} onchange={(event) => { chosenLanguage = event.currentTarget.value; visibleCounts = {}; }}>
+        <option value="">{$_("firstRun.sources.allLanguages")}</option>
+        {#each languageOptions as lang (lang)}<option value={lang}>{languageLabel(lang)}</option>{/each}
+      </select>
     {/if}
     {#if hasNsfwExtensions}
       <button class="fr-switch nsfw-toggle" type="button" role="switch" aria-checked={showNsfw} aria-label={$_("firstRun.sources.showNsfw")} title={$_("firstRun.sources.showNsfwHint")} disabled={working} onclick={toggleNsfw}>
@@ -271,7 +303,9 @@
 
 <div class="fr-footer">
   <button class="fr-btn" type="button" disabled={working || loading} onclick={() => { if (!working && !loading) onBack(); }}><ArrowLeft class="fr-arrow-back" size={16} /> {$_("firstRun.sources.back")}</button>
+  {#if !ready && !loading && onSkip}<small class="footer-hint">{$_("firstRun.sources.needsExtension")}</small>{/if}
   <span class="fr-spacer"></span>
+  {#if !ready && onSkip}<button class="fr-btn" type="button" disabled={working || loading} onclick={onSkip}>{$_("firstRun.sources.doLater")}</button>{/if}
   <button class="fr-btn fr-btn--primary fr-sources-continue" type="button" disabled={!ready || working || loading} onclick={continueSetup}>{$_("firstRun.sources.continue")} <ArrowRight class="fr-arrow-next" size={16} /></button>
 </div>
 
@@ -280,6 +314,9 @@
   .repo-field { flex: 1 1 320px; }
   .catalog-tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
   .extension-search { flex: 1 1 280px; }
+  .language-filter { flex: none; max-width: 220px; min-height: 38px; padding: 0 12px; border: 0; border-radius: 10px; color: var(--text-primary); background: var(--fr-surface-strong); font: inherit; font-size: 13px; }
+  .language-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .footer-hint { min-width: 0; color: var(--text-muted); font-size: 12px; line-height: 1.4; }
   .nsfw-badge { margin-left: 6px; padding: 2px 6px; border-radius: 6px; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); font-size: 10px; font-style: normal; font-weight: 800; }
   .repository-list { display: grid; gap: 10px; margin-top: 12px; }
   .repository header { display: flex; align-items: center; gap: 10px; padding: 12px 8px 6px; }

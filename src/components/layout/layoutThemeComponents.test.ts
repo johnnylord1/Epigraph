@@ -84,6 +84,33 @@ describe("layout theme components", () => {
     expect(document.querySelector(".activity-badge")).toBeTruthy();
   });
 
+  test("does not count history from before a profile was first opened as new activity", () => {
+    const previousProfileId = store.runtimeResolvedLocalProfileId;
+    store.runtimeResolvedLocalProfileId = "restored-profile";
+    store.history = [{
+      mangaId: 1,
+      mangaTitle: "Restored",
+      chapterId: 1,
+      chapterName: "Chapter 1",
+      thumbnailUrl: "",
+      readAt: Date.now() - 60_000,
+    }];
+
+    try {
+      render(ActivityButton);
+
+      expect(screen.getByRole("button", { name: "Recent activity" })).toBeTruthy();
+      expect(document.querySelector(".activity-badge")).toBeNull();
+    } finally {
+      store.runtimeResolvedLocalProfileId = previousProfileId;
+      try {
+        localStorage.removeItem("epigraph.home.activity.lastSeenReadAt:restored-profile");
+      } catch {
+        // jsdom without a localstorage file rejects access.
+      }
+    }
+  });
+
   test("keeps migrated layout components free of direct color functions", () => {
     for (const file of MIGRATED_LAYOUT_FILES) {
       expect(readRepoFile(file), `${file} should use layout tokens instead of direct colors`).not.toMatch(DIRECT_COLOR_PATTERN);

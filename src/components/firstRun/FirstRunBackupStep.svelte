@@ -69,6 +69,19 @@
   let restoreWarnings = $state<string[]>([]);
   let completedResult = $state<RestoredResult | null>(null);
   let summary = $derived(workflow.summarize(files));
+  // Per-file counts double up what several backups share; the dependency list is what gets installed.
+  let dependencyCounts = $state<{ repositories: number; extensions: number } | null>(null);
+  let repositoryTotal = $derived(dependencyCounts?.repositories ?? summary.repositoryCount);
+  let extensionTotal = $derived(dependencyCounts?.extensions ?? summary.extensionCount);
+  // The same note from many titles is shown once, with how many it affected.
+  let warningNotes = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const warning of restoreWarnings) {
+      const note = restoreNote(warning, $_);
+      counts.set(note, (counts.get(note) ?? 0) + 1);
+    }
+    return [...counts].map(([note, count]) => ({ note, count }));
+  });
   let readyFiles = $derived(files.filter((file) => file.status === "ready"));
   let restoreProgress = $derived(
     readyFiles.length === 0
@@ -128,7 +141,7 @@
         needsSourceKinds: summary.needsSourceKinds,
         sourceTypes: summary.libraryKinds.filter((kind): kind is BackupSourceKind => kind === "manga" || kind === "novels"),
       };
-      restoreWarnings = [...new Set(Object.values(workflow.warnings?.() ?? {}).flat())];
+      restoreWarnings = Object.values(workflow.warnings?.() ?? {}).flat();
       if (restoreWarnings.length === 0) onRestored(completedResult);
     } catch (error) {
       files = [...files];
@@ -200,14 +213,14 @@
   <p class="fr-lede">{$_("firstRun.backup.reviewLede")}</p>
   <div class="summary-strip">
     <div><strong aria-label={String(summary.workCount)} use:countUp={summary.workCount}></strong><span>{$_("firstRun.backup.titles")}</span></div>
-    <div><strong aria-label={String(summary.repositoryCount)} use:countUp={summary.repositoryCount}></strong><span>{$_("firstRun.backup.repositories")}</span></div>
-    <div><strong aria-label={String(summary.extensionCount)} use:countUp={summary.extensionCount}></strong><span>{$_("firstRun.backup.extensions")}</span></div>
+    <div><strong aria-label={String(repositoryTotal)} use:countUp={repositoryTotal}></strong><span>{$_("firstRun.backup.repositories")}</span></div>
+    <div><strong aria-label={String(extensionTotal)} use:countUp={extensionTotal}></strong><span>{$_("firstRun.backup.extensions")}</span></div>
     <div><strong aria-label={String(summary.conflictCount)} use:countUp={summary.conflictCount}></strong><span>{$_("firstRun.backup.conflicts")}</span></div>
   </div>
 
   <ul class="review-list">
     <li><CheckCircle size={20} /><strong>{$_("firstRun.backup.library")}</strong><span>{libraryKindsLabel()}</span></li>
-    <li><Archive size={20} /><strong>{$_("firstRun.backup.dependencies")}</strong><span>{$_("firstRun.backup.dependencyCount", { repositories: summary.repositoryCount, extensions: summary.extensionCount })}</span></li>
+    <li><Archive size={20} /><strong>{$_("firstRun.backup.dependencies")}</strong><span>{$_("firstRun.backup.dependencyCount", { repositories: repositoryTotal, extensions: extensionTotal })}</span></li>
     <li><GitMerge size={20} /><strong>{$_("firstRun.backup.merge")}</strong><span>{$_("firstRun.backup.overlapCount", { count: summary.conflictCount })}</span></li>
   </ul>
 
@@ -225,6 +238,7 @@
   {#if readyFiles.some(file => file.libraryKinds.includes("manga") || file.libraryKinds.includes("novels"))}
     <FirstRunDependencies bind:this={dependencies} entries={readyFiles} choices={mangaChoices}
       disabled={working || completedResult !== null}
+      onCounts={(counts) => { dependencyCounts = counts; }}
       onChoices={(key, choices) => {
         if (!workflow.setMangaChoices) throw Error("RESTORE_CHOICES_UNAVAILABLE");
         workflow.setMangaChoices(choices, key); mangaChoices[key] = choices;
@@ -241,7 +255,7 @@
   {/if}
   {#if restoreError}<div class="fr-error restore-error" role="alert"><WarningCircle size={18} /><span>{operationError(restoreError, "firstRun.backup.restoreError", $_)}</span></div>{/if}
   {#if restoreWarnings.length > 0}
-    <div class="restore-progress" role="status"><ul>{#each restoreWarnings as warning}<li>{restoreNote(warning, $_)}</li>{/each}</ul></div>
+    <div class="restore-progress" role="status"><ul>{#each warningNotes as { note, count } (note)}<li>{note}{#if count > 1} <b class="note-count">({count})</b>{/if}</li>{/each}</ul></div>
   {/if}
 
   <div class="fr-footer">
@@ -309,6 +323,7 @@
   .progress-track i.is-done::after { animation: none; opacity: 0; }
   .restore-error { margin: 14px 0 0; }
   .restore-progress ul { margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: 12.5px; }
+  .note-count { color: var(--text-muted); font-weight: 600; font-variant-numeric: tabular-nums; }
   @keyframes backup-bob { 50% { transform: translateY(-5px); } }
   @keyframes backup-sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
   @media (max-width: 680px) {

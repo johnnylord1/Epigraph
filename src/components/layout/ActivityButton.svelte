@@ -58,6 +58,30 @@
     markActivitySeen();
   }
 
+  // A profile seen here for the first time starts from now: restored or synced history is not "new" activity.
+  $effect(() => {
+    const key = activitySeenStorageKey;
+    const profileResolved = Boolean(store.runtimeResolvedLocalProfileId);
+    let stored: number | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      stored = raw === null ? null : Number(raw);
+    } catch {
+      stored = null;
+    }
+    if (stored !== null && Number.isFinite(stored)) {
+      lastActivitySeenAt = stored;
+      return;
+    }
+    lastActivitySeenAt = profileResolved ? Date.now() : 0;
+    if (!profileResolved) return;
+    try {
+      localStorage.setItem(key, String(lastActivitySeenAt));
+    } catch {
+      // Some test/private contexts expose localStorage but reject access.
+    }
+  });
+
   onMount(() => {
     function syncActivitySeen(event: Event) {
       const seenAt = Number((event as CustomEvent<number>).detail);
@@ -70,13 +94,6 @@
       const seenAt = Number(event.newValue ?? 0);
       if (!Number.isFinite(seenAt)) return;
       lastActivitySeenAt = Math.max(lastActivitySeenAt, seenAt);
-    }
-
-    try {
-      const storedLastSeen = Number(localStorage.getItem(activitySeenStorageKey) ?? 0);
-      lastActivitySeenAt = Number.isFinite(storedLastSeen) ? storedLastSeen : 0;
-    } catch {
-      lastActivitySeenAt = 0;
     }
 
     window.addEventListener(ACTIVITY_SEEN_EVENT, syncActivitySeen);

@@ -19,12 +19,17 @@
   line-height: 1.55;
 }
 
+/* The actions stay pinned to the bottom of the page, so long lists never hide Continue below the fold. */
 .first-run-shell .fr-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 10px;
   margin-top: auto;
-  padding-top: 20px;
+  padding: 20px 0 2px;
+  background: linear-gradient(to bottom, transparent, var(--component-app-bg) 16px);
 }
 .first-run-shell .fr-footer .fr-spacer { flex: 1; }
 

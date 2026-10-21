@@ -7096,6 +7096,59 @@ pub async fn apply_comic_history_mutation(
     event_clock: Option<&EventClock>,
     retention_window: Duration,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
+    apply_comic_history_mutation_inner(
+        pool,
+        session,
+        scope_id,
+        entity_id,
+        patch,
+        client_lamport,
+        event_clock,
+        retention_window,
+        true,
+    )
+    .await
+}
+
+/// History read from Suwayomi itself. Projecting it back would rewrite `lastPageRead`, and
+/// Suwayomi stamps `lastReadAt` with the current time on that write, so every restored or
+/// mirrored read would look like it happened just now.
+pub async fn apply_mirrored_comic_history_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicHistoryPatch,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    apply_comic_history_mutation_inner(
+        pool,
+        session,
+        scope_id,
+        entity_id,
+        patch,
+        client_lamport,
+        event_clock,
+        retention_window,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_comic_history_mutation_inner(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicHistoryPatch,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+    project_to_suwayomi: bool,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, ComicHistoryRow>(
         r#"
@@ -7216,16 +7269,18 @@ pub async fn apply_comic_history_mutation(
     .execute(&mut *tx)
     .await?;
 
-    enqueue_comic_history_projection_in_tx(
-        &mut tx,
-        scope_id,
-        entity_id,
-        &merged,
-        patch,
-        server_version,
-        applied_at_ms,
-    )
-    .await?;
+    if project_to_suwayomi {
+        enqueue_comic_history_projection_in_tx(
+            &mut tx,
+            scope_id,
+            entity_id,
+            &merged,
+            patch,
+            server_version,
+            applied_at_ms,
+        )
+        .await?;
+    }
 
     if let Some(clock) = event_clock {
         upsert_event_clock_in_tx(
@@ -10925,6 +10980,64 @@ mod tests {
         assert_eq!(variables["mangaId"], 7);
         assert_eq!(variables["ids"], json!([11]));
         assert_eq!(variables["lastPageRead"], 5);
+    }
+
+    #[tokio::test]
+    async fn mirrored_comic_history_never_echoes_back_to_suwayomi() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "epigraph-core-mirror".to_string(),
+            device_id: "epigraph-core-mirror".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let entity_id = "comic.history::suwayomi:profile:main:manga:7";
+        let patch = ComicHistoryPatch {
+            portable_work_ref: None,
+            portable_chapter_ref: None,
+            history_id: entity_id.to_string(),
+            comic_id: "suwayomi:profile:main:manga:7".to_string(),
+            chapter_id: "suwayomi:profile:main:chapter:11".to_string(),
+            page_index: 12,
+            page_count: Some(20),
+            progress_percent: 0.6,
+            read_at_ms: 1_600_000_000_000,
+        };
+
+        assert!(matches!(
+            apply_mirrored_comic_history_mutation(
+                &pool,
+                &session,
+                "comics:profile:main",
+                entity_id,
+                &patch,
+                0,
+                None,
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Applied(_)
+        ));
+        let read_at_ms: i64 =
+            sqlx::query_scalar("SELECT read_at_ms FROM comic_history WHERE history_id = ?")
+                .bind(entity_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let projection_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM suwayomi_projection_outbox")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(read_at_ms, 1_600_000_000_000);
+        assert_eq!(projection_count, 0);
     }
 
     #[tokio::test]
