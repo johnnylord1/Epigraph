@@ -31,6 +31,12 @@
   let nav = $state<HTMLElement>();
   let list = $state<HTMLOListElement>();
   let sky = $state<HTMLCanvasElement>();
+  let skyGlows = $state<HTMLElement>();
+  // A little under 1000/30 so a 60 Hz display draws every second frame.
+  const FRAME_MS = 31;
+  // Each glow is painted once into a box this size and only moved and scaled afterwards.
+  const GLOW_BOX = 256;
+  const GLOW_ALPHA = [0.055, 0.03];
   let highlight = $state({ left: 0, width: 0, visible: false });
 
   function handleTitlebarPointerDown(event: PointerEvent) {
@@ -70,10 +76,12 @@
   });
 
   /* Quiet ambient light behind the steps, tinted by the theme accent. It stops when the app idles,
-     the window hides or reduced motion is requested. */
+     the window hides or reduced motion is requested. The glows are layers the compositor moves; only
+     the stars are drawn. */
   $effect(() => {
     const canvas = sky;
-    if (!canvas) return;
+    const glowLayer = skyGlows;
+    if (!canvas || !glowLayer) return;
     const context = canvas.getContext("2d");
     if (!context) return;
     let frame = 0;
@@ -84,6 +92,7 @@
     let tint = "";
     let light = false;
     let stars: { x: number; y: number; r: number; phase: number; speed: number }[] = [];
+    const glowSpots = [...glowLayer.children] as HTMLElement[];
     const started = performance.now();
     const target = { x: 0.8, y: 0.1 };
     const position = { x: 0.8, y: 0.1 };
@@ -96,9 +105,12 @@
       const scale = surface.startsWith("color(") ? 255 : 1;
       const background = (surface.match(/\d+(\.\d+)?/g) ?? ["0", "0", "0"]).slice(0, 3).map((channel) => Number(channel) * scale);
       light = (background[0] * 299 + background[1] * 587 + background[2] * 114) / 1000 > 140;
+      const strength = light ? 0.45 : 1;
+      glowSpots.forEach((spot, index) => { spot.style.opacity = String(GLOW_ALPHA[index] * strength); });
     };
     const resize = () => {
-      const ratio = Math.min(devicePixelRatio || 1, 2);
+      // The faint stars look the same at one pixel per CSS pixel, at a quarter of the fill.
+      const ratio = 1;
       width = canvas.clientWidth;
       height = canvas.clientHeight;
       canvas.width = Math.max(1, Math.round(width * ratio));
@@ -112,7 +124,14 @@
         speed: 0.3 + Math.random() * 0.9,
       }));
     };
+    let drawn = -Infinity;
     const draw = (now: number) => {
+      // The sky drifts slowly: 30 frames a second is enough and leaves the rest of each frame to the page.
+      if (running && now - drawn < FRAME_MS) {
+        frame = requestAnimationFrame(draw);
+        return;
+      }
+      drawn = now;
       const t = (now - started) / 1000;
       const step = Math.max(0, Math.min(activeProgressIndex, 4));
       target.x = 0.12 + step * 0.19;
@@ -120,19 +139,14 @@
       position.x += (target.x - position.x) * 0.025;
       position.y += (target.y - position.y) * 0.025;
       context.clearRect(0, 0, width, height);
-      const strength = light ? 0.45 : 1;
-      const glows: [number, number, number, number][] = [
-        [position.x + Math.sin(t * 0.12) * 0.04, position.y + Math.cos(t * 0.1) * 0.03, 0.5, 0.055],
-        [1 - position.x * 0.7 + Math.cos(t * 0.08) * 0.04, 0.95 - position.y * 0.3, 0.42, 0.03],
+      const glows: [number, number, number][] = [
+        [position.x + Math.sin(t * 0.12) * 0.04, position.y + Math.cos(t * 0.1) * 0.03, 0.5],
+        [1 - position.x * 0.7 + Math.cos(t * 0.08) * 0.04, 0.95 - position.y * 0.3, 0.42],
       ];
-      for (const [x, y, radius, alpha] of glows) {
-        const gradient = context.createRadialGradient(x * width, y * height, 0, x * width, y * height, radius * Math.max(width, height));
-        gradient.addColorStop(0, tint);
-        gradient.addColorStop(1, "transparent");
-        context.globalAlpha = alpha * strength;
-        context.fillStyle = gradient;
-        context.fillRect(0, 0, width, height);
-      }
+      glows.forEach(([x, y, radius], index) => {
+        const size = radius * Math.max(width, height) * 2;
+        glowSpots[index].style.transform = `translate(${(x * width - size / 2).toFixed(1)}px, ${(y * height - size / 2).toFixed(1)}px) scale(${(size / GLOW_BOX).toFixed(3)})`;
+      });
       context.fillStyle = tint;
       if (!light) {
         for (const star of stars) {
@@ -179,6 +193,7 @@
 </script>
 
 <main class="first-run-shell" use:pointerEffects>
+  <div class="first-run-sky-glows" bind:this={skyGlows} aria-hidden="true"><i></i><i></i></div>
   <canvas class="first-run-sky" bind:this={sky} aria-hidden="true"></canvas>
   <!-- svelte-ignore a11y_no_static_element_interactions: dragging an empty desktop titlebar is a native window interaction. -->
   <header
@@ -248,6 +263,26 @@
     color: var(--text-primary);
     background: var(--component-app-bg);
     font-family: var(--font-ui, inherit);
+  }
+
+  .first-run-sky-glows {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    color: var(--accent);
+  }
+  .first-run-sky-glows i {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 256px;
+    height: 256px;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, currentColor, transparent);
+    opacity: 0;
+    transform-origin: 0 0;
+    will-change: transform;
   }
 
   .first-run-sky {

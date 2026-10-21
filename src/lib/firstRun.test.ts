@@ -18,7 +18,6 @@ const EMPTY_READINESS = {
   syncConnected: false,
   backupRestored: false,
   sourcesConfigured: false,
-  hasLibraryContent: false,
 };
 
 describe("first-run launch gate", () => {
@@ -129,8 +128,11 @@ describe("first-run completion gates", () => {
     expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "sync", path: "sync" }, EMPTY_READINESS)).toBe(false);
     expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "backup", path: "backup" }, EMPTY_READINESS)).toBe(false);
     expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "sources", path: "fresh" }, EMPTY_READINESS)).toBe(false);
-    expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "discover", path: "fresh" }, EMPTY_READINESS)).toBe(false);
-    expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "complete", path: "fresh" }, EMPTY_READINESS)).toBe(false);
+  });
+
+  it("never requires a library title to finish", () => {
+    expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "discover", path: "fresh" }, EMPTY_READINESS)).toBe(true);
+    expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "complete", path: "fresh" }, EMPTY_READINESS)).toBe(true);
   });
 
   it("unlocks each guarded task only from its production readiness fact", () => {
@@ -145,14 +147,6 @@ describe("first-run completion gates", () => {
     expect(canAdvanceFirstRun(
       { ...createFirstRunState(), step: "sources", path: "fresh" },
       { ...EMPTY_READINESS, sourcesConfigured: true },
-    )).toBe(true);
-    expect(canAdvanceFirstRun(
-      { ...createFirstRunState(), step: "discover", path: "fresh" },
-      { ...EMPTY_READINESS, hasLibraryContent: true },
-    )).toBe(true);
-    expect(canAdvanceFirstRun(
-      { ...createFirstRunState(), step: "complete", path: "fresh" },
-      { ...EMPTY_READINESS, hasLibraryContent: true },
     )).toBe(true);
   });
 

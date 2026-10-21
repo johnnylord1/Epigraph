@@ -26,7 +26,6 @@
 
   interface Props {
     workflow?: FirstRunDiscoveryWorkflow;
-    initialHasLibrary?: boolean;
     onLibraryChange?: (hasLibrary: boolean) => void;
     onBack?: () => void;
     onContinue?: () => void;
@@ -34,7 +33,6 @@
 
   let {
     workflow = createProductionFirstRunDiscoveryWorkflow(),
-    initialHasLibrary = false,
     onLibraryChange = () => {},
     onBack = () => {},
     onContinue = () => {},
@@ -47,8 +45,6 @@
   let saving = $state(false);
   let error = $state<{ cause: unknown; fallback: string } | null>(null);
   let mounted = false;
-  let hasAdded = $state(false);
-  let ready = $derived(initialHasLibrary || hasAdded || items.some((item) => item.inLibrary));
   let addedCount = $derived(items.filter((item) => item.inLibrary).length);
   let counter = $state<HTMLElement>();
   let counterBump = $state(false);
@@ -108,7 +104,6 @@
     try {
       const confirmed = await workflow.addToLibrary(item.id);
       if (!mounted || !confirmed) return;
-      hasAdded = true;
       onLibraryChange(true);
       celebrateAdd(button);
     } catch (cause) {
@@ -205,7 +200,7 @@
 <div class="fr-footer">
   <button class="fr-btn" type="button" disabled={loading || saving} onclick={onBack}><ArrowLeft class="fr-arrow-back" size={16} /> {$_("firstRun.discover.back")}</button>
   <span class="fr-spacer"></span>
-  <button class="fr-btn fr-btn--primary fr-discover-finish" type="button" disabled={loading || saving || !ready} onclick={onContinue}>{$_("firstRun.discover.finish")} <ArrowRight class="fr-arrow-next" size={16} /></button>
+  <button class="fr-btn fr-btn--primary fr-discover-finish" type="button" disabled={saving} onclick={onContinue}>{$_("firstRun.discover.finish")} <ArrowRight class="fr-arrow-next" size={16} /></button>
 </div>
 
 <style>

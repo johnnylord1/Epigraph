@@ -1,9 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { page } from "@vitest/browser/context";
+import { page, userEvent } from "@vitest/browser/context";
 import { createFirstRunState } from "../../lib/firstRun";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 import { applyAppLanguage } from "../../lib/i18n/runtime";
+import { setAnimationPreference } from "../../lib/motion/motion";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null), convertFileSrc: (path: string) => path }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}), emit: vi.fn(async () => {}), emitTo: vi.fn(async () => {}) }));
@@ -135,10 +136,9 @@ test("theme previews represent the palette actually applied by each choice", asy
     const primaryButton = screen.getByRole("button", { name: "Continue" });
     const primaryFill = getComputedStyle(primaryButton, "::before").backgroundColor;
     expect(contrastRatio(getComputedStyle(primaryButton).color, primaryFill), `${label} primary contrast`).toBeGreaterThanOrEqual(4.5);
-    const swatches = [...choice.querySelectorAll(".theme-swatches i")];
-    for (const [index, token] of ["--bg-base", "--bg-raised", "--accent", "--text-primary"].entries()) {
+    for (const [selector, token] of [[".theme-swatches", "--bg-base"], [".swatch-side", "--bg-raised"], [".swatch-accent", "--accent"], [".swatch-text", "--text-primary"]]) {
       tokenProbe.style.backgroundColor = `var(${token})`;
-      expect(getComputedStyle(swatches[index]).backgroundColor, `${label} ${token}`).toBe(getComputedStyle(tokenProbe).backgroundColor);
+      expect(getComputedStyle(choice.querySelector(selector)!).backgroundColor, `${label} ${token}`).toBe(getComputedStyle(tokenProbe).backgroundColor);
     }
   }
 });
@@ -328,26 +328,44 @@ test("uses the same page and chrome palette as the app for all built-in themes",
 });
 
 test.each([{ width: 1280, height: 800 }, { width: 1920, height: 1080 }])(
-  "keeps setup choices compact without shrinking the workspace at $width × $height",
+  "sizes setup choices to the workspace at $width × $height",
   async ({ width, height }) => {
     await page.viewport(width, height);
     const { container } = render(FirstRun, { props: { initialState: createFirstRunState() } });
     const headingSize = parseFloat(getComputedStyle(screen.getByRole("heading", { level: 1 })).fontSize);
     expect(headingSize).toBeGreaterThanOrEqual(28);
     expect(headingSize).toBeLessThanOrEqual(34);
+    // Theme previews grow into the page height, but stay miniatures on large screens.
     for (const choice of container.querySelectorAll(".theme-option")) {
-      expect(choice.getBoundingClientRect().height).toBeLessThanOrEqual(144);
-      expect(choice.querySelector(".theme-swatches")!.getBoundingClientRect().height).toBeLessThanOrEqual(96);
+      expect(choice.getBoundingClientRect().height).toBeLessThanOrEqual(340);
+      expect(choice.querySelector(".theme-swatches")!.getBoundingClientRect().height).toBeGreaterThanOrEqual(150);
     }
     expect(container.querySelector(".first-run-page-inner")!.getBoundingClientRect().width).toBeGreaterThan(width * .85);
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    // Entry choices are one row of equal cards that stay compact next to the workspace.
+    // Entry choices are one row of equal cards that fill the page up to a bounded height.
     const cards = [...container.querySelectorAll(".entry-list button")].map((choice) => choice.getBoundingClientRect());
     expect(cards).toHaveLength(3);
     for (const card of cards) {
-      expect(card.height).toBeLessThanOrEqual(200);
+      expect(card.height).toBeGreaterThanOrEqual(300);
+      expect(card.height).toBeLessThanOrEqual(560);
       expect(Math.abs(card.top - cards[0].top)).toBeLessThanOrEqual(1);
       expect(Math.abs(card.height - cards[0].height)).toBeLessThanOrEqual(1);
     }
   },
 );
+
+test("a click during the theme reveal still reaches the theme under the pointer", async () => {
+  setAnimationPreference(true);
+  try {
+    const { container } = render(FirstRun, { props: { initialState: createFirstRunState() } });
+    const [first, second] = [...container.querySelectorAll<HTMLButtonElement>(".theme-option[aria-pressed='false']")];
+    await userEvent.click(first);
+    // While the reveal plays the browser hit-tests the root element, not the card under the pointer.
+    const rect = second.getBoundingClientRect();
+    await waitFor(() => expect(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)).toBe(document.documentElement));
+    await userEvent.click(second, { force: true });
+    await waitFor(() => expect(second.getAttribute("aria-pressed")).toBe("true"));
+  } finally {
+    setAnimationPreference(null);
+  }
+});

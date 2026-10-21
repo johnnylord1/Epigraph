@@ -23,7 +23,6 @@ export interface FirstRunReadiness {
   syncConnected: boolean;
   backupRestored: boolean;
   sourcesConfigured: boolean;
-  hasLibraryContent: boolean;
 }
 
 export interface FirstRunSourceSetupSnapshot {
@@ -169,9 +168,6 @@ export function canAdvanceFirstRun(
       return readiness.backupRestored || state.backupRestored === true;
     case "sources":
       return (state.path === "backup" && !state.backupRestored) || readiness.sourcesConfigured;
-    case "discover":
-    case "complete":
-      return readiness.hasLibraryContent;
     default:
       return true;
   }

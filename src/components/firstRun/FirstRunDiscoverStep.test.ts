@@ -17,7 +17,7 @@ it("blocks search and navigation while a novel is being saved", async () => {
     findNovels: async () => [{ id: "novel", path: "/novel", title: "Pending novel", coverUrl: null, inLibrary: false }],
     addManga: async () => {}, addNovel: () => pending,
   });
-  render(FirstRunDiscoverStep, { props: { workflow, initialHasLibrary: true } });
+  render(FirstRunDiscoverStep, { props: { workflow } });
   await fireEvent.click(await screen.findByRole("button", { name: "Add Pending novel" }));
   for (const name of ["Back", "Finish setup", "Search"]) expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);
   release();
@@ -41,7 +41,7 @@ it("resolves manga covers through the current server and refreshes a failed imag
   await waitFor(() => expect(container.querySelector<HTMLImageElement>(".cover img")!.hidden).toBe(false));
 });
 
-it("uses the compact discovery surface and unlocks completion only after a real Library write", async () => {
+it("uses the compact discovery surface and lets setup finish with or without a Library write", async () => {
   const addManga = vi.fn(async () => {});
   const workflow = createFirstRunDiscoveryWorkflow({
     loadMangaSources: async () => [{ id: "source", name: "MangaDex" }],
@@ -60,7 +60,7 @@ it("uses the compact discovery surface and unlocks completion only after a real 
   expect(screen.getByRole("heading", { name: "Add titles to your library" })).toBeTruthy();
   expect(container.querySelector(".browse-topbar, .root--embedded, .rail, .n-topbar")).toBeNull();
   expect(await screen.findByText("Popular title")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(false);
 
   await fireEvent.input(screen.getByRole("searchbox", { name: "Search titles" }), { target: { value: "Search" } });
   await fireEvent.click(screen.getByRole("button", { name: "Search" }));
@@ -74,7 +74,7 @@ it("uses the compact discovery surface and unlocks completion only after a real 
   expect(onContinue).toHaveBeenCalledOnce();
 });
 
-it("shows a retryable empty/error state without unlocking setup", async () => {
+it("shows a retryable empty/error state without blocking setup", async () => {
   const workflow = createFirstRunDiscoveryWorkflow({
     loadMangaSources: async () => [{ id: "source", name: "Broken" }],
     loadNovelSources: async () => [],
@@ -87,5 +87,5 @@ it("shows a retryable empty/error state without unlocking setup", async () => {
 
   expect((await screen.findByRole("alert")).textContent).toContain(translate("firstRun.discover.loadError"));
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(false);
 });

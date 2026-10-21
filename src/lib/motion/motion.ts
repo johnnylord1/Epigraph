@@ -583,9 +583,34 @@ export function playShellEntrance(root: ParentNode | null | undefined) {
   enterView(page, { delay: 180, y: 16, blur: 8 });
 }
 
+type ViewTransition = { ready: Promise<void>; finished: Promise<void>; skipTransition: () => void };
 type ViewTransitionDocument = Document & {
-  startViewTransition?: (update: () => void | Promise<void>) => { ready: Promise<void> };
+  startViewTransition?: (update: () => void | Promise<void>) => ViewTransition;
 };
+
+/**
+ * While a view transition plays, the browser hit-tests the root element instead of the page, so a
+ * click on another control would be lost. The transition ends there and the click goes on to the
+ * control under the pointer.
+ */
+function forwardClicksDuring(transition: ViewTransition) {
+  const root = document.documentElement;
+  const onClick = (event: MouseEvent) => {
+    if (event.target !== root) return;
+    event.stopPropagation();
+    const init: MouseEventInit = { bubbles: true, cancelable: true, composed: true, button: event.button, clientX: event.clientX, clientY: event.clientY };
+    transition.skipTransition();
+    const forward = () => {
+      const target = document.elementFromPoint(event.clientX, event.clientY);
+      if (!target || target === root || target.closest(":disabled, [inert]")) return;
+      target.dispatchEvent(new MouseEvent("click", init));
+    };
+    transition.finished.then(forward, forward);
+  };
+  const stop = () => removeEventListener("click", onClick, true);
+  addEventListener("click", onClick, true);
+  transition.finished.then(stop, stop);
+}
 
 /** Applies a theme change as a circle that grows from the pointer; falls back to an instant swap. */
 export function revealThemeChange(apply: () => void | Promise<void>, origin?: { x: number; y: number }) {
@@ -596,6 +621,7 @@ export function revealThemeChange(apply: () => void | Promise<void>, origin?: { 
   }
   try {
     const transition = doc.startViewTransition(() => apply());
+    forwardClicksDuring(transition);
     const radius = Math.hypot(Math.max(origin.x, innerWidth - origin.x), Math.max(origin.y, innerHeight - origin.y));
     transition.ready.then(() => {
       document.documentElement.animate(

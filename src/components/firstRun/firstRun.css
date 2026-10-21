@@ -373,7 +373,8 @@ html[data-epigraph-reduced-motion="true"] .first-run-shell *::after {
 }
 
 /* Theme choices grow in as a circle from the pointer (see revealThemeChange). The snapshot
-   overlay lets clicks through to the live page, so the next choice is never held back. */
+   overlay stays transparent to the pointer; a click during the reveal ends it and goes on to the
+   choice under the pointer. */
 ::view-transition {
   pointer-events: none;
 }

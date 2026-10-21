@@ -9,6 +9,17 @@ import FirstRun from "./FirstRun.svelte";
 import { createProductionFirstRunBackupWorkflow } from "../../lib/backup/firstRunBackupWorkflow";
 
 const sourcesMock = vi.hoisted(() => ({ restoreInstallsExtensions: false }));
+const serverLibrary = vi.hoisted(() => ({ comicCount: null as number | null }));
+
+vi.mock("../../lib/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/client")>()),
+  gql: vi.fn(async (query: string) => {
+    if (query.includes("FirstRunComicLibraryCount") && serverLibrary.comicCount !== null) {
+      return { mangas: { totalCount: serverLibrary.comicCount } };
+    }
+    throw new Error("No server in unit tests");
+  }),
+}));
 
 vi.mock("../settings/SyncdConnectionPanel.svelte", () => import("../../test/fixtures/FirstRunSurface.svelte"));
 vi.mock("../pages/SourcesView.svelte", () => import("../../test/fixtures/FirstRunSurface.svelte"));
@@ -140,6 +151,7 @@ describe("FirstRun", () => {
     vi.mocked(createProductionFirstRunBackupWorkflow).mockClear();
     resetNovelLibraryStateCacheForTests();
     sourcesMock.restoreInstallsExtensions = false;
+    serverLibrary.comicCount = null;
   });
 
   afterEach(() => { cleanup(); applyAppLanguage("en"); vi.restoreAllMocks(); });
@@ -227,14 +239,14 @@ describe("FirstRun", () => {
     expect(screen.getByRole("heading", { name: "Select your backups." })).toBeTruthy();
   });
 
-  it("does not complete without a library title", async () => {
+  it("completes without a library title", async () => {
     const onComplete = vi.fn();
     render(FirstRun, { props: { onComplete, initialState: { ...createFirstRunState(), step: "complete", path: "sync" } } });
 
     const getStarted = screen.getByRole("button", { name: "Get started" });
-    expect(getStarted.hasAttribute("disabled")).toBe(true);
+    expect(getStarted.hasAttribute("disabled")).toBe(false);
     await fireEvent.click(getStarted);
-    expect(onComplete).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledOnce();
   });
 
   it("persists completion after a title exists", async () => {
@@ -388,15 +400,14 @@ describe("FirstRun", () => {
     expect(screen.getByRole("heading", { name: translate("ui_backupRestored") })).toBeTruthy();
   });
 
-  it("unlocks discovery when a novel is saved before Library has ever mounted", async () => {
+  it("lets discovery finish empty and counts a novel saved before Library has ever mounted", async () => {
     render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "discover", path: "fresh" } } });
-    expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(true);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(false));
     await saveNovelLibraryState(normalizeNovelLibraryState({ entries: [
       { id: "novel-1", title: "First novel", path: "/novel/1", source: {} },
     ] }), { profileId: "main" });
     bumpContentSetupVersion();
     expect(store.searchNovelLibraryEntries).toEqual([]);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(false));
     cleanup();
     render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "complete", path: "backup" } } });
     await waitFor(() => expect(screen.getByRole("button", { name: "Get started" }).hasAttribute("disabled")).toBe(false));
@@ -428,13 +439,20 @@ describe("FirstRun", () => {
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
   });
 
-  it("locks discovery again when changing from a populated profile to an empty one", async () => {
-    await saveNovelLibraryState(normalizeNovelLibraryState({ entries: [
-      { id: "novel-1", title: "First novel", path: "/novel/1", source: {} },
-    ] }), { profileId: "main" });
-    render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "discover", path: "fresh" } } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(false));
-    store.runtimeResolvedLocalProfileId = "new-empty-profile";
-    await waitFor(() => expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(true));
+  it("skips discovery when the server library already has synced titles", async () => {
+    serverLibrary.comicCount = 950;
+    render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "trackers", path: "sync" } } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue without a tracker" }).hasAttribute("disabled")).toBe(false));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await fireEvent.click(screen.getByRole("button", { name: "Continue without a tracker" }));
+    expect(await screen.findByRole("heading", { name: "Everything is ready" })).toBeTruthy();
+  });
+
+  it("offers discovery when the profile has no titles", async () => {
+    serverLibrary.comicCount = 0;
+    render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "trackers", path: "sync" } } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue without a tracker" }).hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(screen.getByRole("button", { name: "Continue without a tracker" }));
+    expect(await screen.findByRole("heading", { name: "Add titles to your library" })).toBeTruthy();
   });
 });

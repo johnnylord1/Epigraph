@@ -63,10 +63,30 @@
     }
   }
 
+  /* A login made on a paired device reaches this Suwayomi through the Core a few seconds later, so the
+     list re-reads itself quietly while the step is open. It waits while a login sheet is in use. */
+  async function refreshQuietly() {
+    if (!mounted || loading || busy || opening || active || document.hidden) return;
+    try {
+      await workflow.load();
+      if (mounted && !loading && !busy && !active && !workflow.loadError) providers = [...workflow.providers];
+    } catch {
+      // The visible retry keeps owning load errors.
+    }
+  }
+
   onMount(() => {
     mounted = true;
     void refresh();
-    return () => { mounted = false; stopCapture(); };
+    const timer = setInterval(() => { void refreshQuietly(); }, 5000);
+    const onFocus = () => { void refreshQuietly(); };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      stopCapture();
+    };
   });
 
   async function begin(provider: FirstRunTrackerProvider) {

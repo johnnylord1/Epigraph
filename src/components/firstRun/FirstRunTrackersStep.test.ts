@@ -55,6 +55,30 @@ it("renders compact tracker rows, only connects after user input, and permits sk
   expect(onContinue).toHaveBeenCalledOnce();
 });
 
+it("shows a login that arrives from a paired device while the step is open", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    let connected = false;
+    const workflow = createFirstRunTrackerWorkflow({
+      loadTrackers: async () => [{ id: "2", name: "AniList", iconUrl: null, authMode: "oauth" as const, authUrl: "https://oauth.test", connected }],
+      loginOAuth: vi.fn(),
+      loginCredentials: vi.fn(),
+      logoutTracker: vi.fn(),
+      loadHardcover: () => ({ connected: false, username: null }),
+      connectHardcover: vi.fn(),
+      disconnectHardcover: vi.fn(),
+    });
+    render(FirstRunTrackersStep, { props: { workflow } });
+    expect(await screen.findByRole("button", { name: "Connect AniList" })).toBeTruthy();
+
+    connected = true;
+    await vi.advanceTimersByTimeAsync(5000);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Disconnect AniList" })).toBeTruthy());
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("captures native OAuth automatically once and releases its listeners on success", async () => {
   let connected = false;
   const loginOAuth = vi.fn(async () => { connected = true; return true; });
