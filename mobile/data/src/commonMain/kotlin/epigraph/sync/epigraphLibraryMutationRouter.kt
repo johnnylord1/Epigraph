@@ -188,7 +188,14 @@ class EpigraphLibraryMutationRouter(
         val removedCategoryIds = (currentCategoryIds - requestedCategoryIds).toSortedSet()
         val addedCategoryIds = (requestedCategoryIds - currentCategoryIds).toSortedSet()
         val membershipChanged = manga.favorite != mutation.inLibrary
-        val publishedCategoryIds = if (mutation.republish) requestedCategoryIds.toSortedSet() else addedCategoryIds
+        // An entry joining the library carries every folder it already has locally (a migration
+        // files the target before adding it), not only the ones added in this mutation.
+        val joinsLibrary = mutation.inLibrary && (membershipChanged || identityProvisioned)
+        val publishedCategoryIds = if (mutation.republish || joinsLibrary) {
+            requestedCategoryIds.toSortedSet()
+        } else {
+            addedCategoryIds
+        }
 
         // A locally-created category may already be assigned before its first Core mutation. Make
         // sure every category that will be sent with an entry has a stable identity, not only

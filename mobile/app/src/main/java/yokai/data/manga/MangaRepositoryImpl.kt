@@ -188,11 +188,13 @@ class MangaRepositoryImpl(
     private suspend fun routeCategoryChange(mangaId: Long, categoryIds: Set<Long>): Boolean {
         val router = epigraphLibraryRouter ?: return false
         if (!hasEpigraphIdentity(mangaId)) return false
-        val favorite = currentFavorite(mangaId) ?: return false
+        // A work outside the library has nothing on the Core to assign. Migration files the
+        // target before adding it, so keep the folders locally; adding it publishes them.
+        if (currentFavorite(mangaId) != true) return false
         router.setMembership(
             mutation = LibraryMembershipMutation(
                 localMangaId = mangaId,
-                inLibrary = favorite,
+                inLibrary = true,
                 categoryIds = categoryIds,
                 origin = EpigraphMutationOrigin.LOCAL_USER,
             ),

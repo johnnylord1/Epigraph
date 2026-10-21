@@ -412,6 +412,38 @@ class EpigraphLibraryMutationRouterTest {
     }
 
     @Test
+    fun `novel filed before joining the library publishes the folder it already has`() = runTest {
+        // Migration files the target in the source's folder first and adds it to the library after.
+        val mangaId = insertManga(favorite = false)
+        val categoryId = insertCategory("Lendo", sort = 1)
+        bindNovelIdentity(mangaId)
+        database.aethon_syncQueries.insertMangaCategoryAssignment(mangaId, categoryId)
+        val router = router(sequentialMutationIds(), scope = "novels:profile:main")
+
+        val result = router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = setOf(categoryId),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        assertTrue(result.membershipChanged)
+        assertEquals(3, result.emittedCommandCount)
+        val commands = coordinator.claimReady(100, 1_000, 10)
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        assertTrue(commands[0] is SyncCommand.UpsertCategory)
+        assertTrue((commands[1] as SyncCommand.SetNovelLibraryMembership).inLibrary)
+        assertTrue((commands[2] as SyncCommand.SetCategoryAssignment).assigned)
+        assertEquals(
+            listOf(categoryId),
+            database.categoriesQueries.findAllByMangaId(mangaId).executeAsList().map { it._id },
+        )
+    }
+
+    @Test
     fun `novel joining a desktop books category reuses its id for the novel library`() = runTest {
         val mangaId = insertManga(favorite = false)
         val categoryId = insertCategory("Fila", sort = 2)
