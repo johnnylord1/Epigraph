@@ -101,6 +101,64 @@ class CoreReplicaSqlDelightTest {
     }
 
     @Test
+    fun `clearing confirmed state keeps local outbox`() {
+        queries.enqueueMutation(
+            clientMutationId = "mutation-1",
+            deviceId = "phone-a",
+            scopeId = "novels:profile:main",
+            entityType = "novel.entry",
+            entityId = "novel:local",
+            operation = "upsert",
+            payloadJson = "{}",
+            createdAt = 1,
+            nextAttemptAt = 1,
+        )
+        queries.upsertCoreReplicaRecord("novels:profile:main", "novel.entry", "novel:old", 1, 1, "{}", "a".repeat(64))
+        queries.upsertCoreReplicaTombstone("novels:profile:main", "novel.entry", "novel:gone", 2, 2, 1, null, "b".repeat(64))
+
+        queries.deleteAllCoreReplicaRecords()
+        queries.deleteAllCoreReplicaTombstones()
+
+        assertEquals(emptyList<Any>(), queries.selectCoreReplicaRecordsByScope("novels:profile:main").executeAsList())
+        assertEquals(emptyList<Any>(), queries.selectCoreReplicaTombstonesByScope("novels:profile:main").executeAsList())
+        assertEquals(1L, queries.pendingMutationCount().executeAsOne())
+    }
+
+    @Test
+    fun `entity is unknown to Core only without record tombstone or local mutation`() {
+        val scope = "novels:profile:main"
+        fun known(entityId: String) = queries.isEntityKnownToCore(scope, "novel.entry", entityId).executeAsOne()
+
+        assertEquals(false, queries.hasCoreReplicaCoverageForScope(scope).executeAsOne())
+        queries.upsertCoreReplicaCheckpoint("FILTERED:$scope", "FILTERED", scope, 3, 1)
+        assertEquals(true, queries.hasCoreReplicaCoverageForScope(scope).executeAsOne())
+        assertEquals(false, queries.hasCoreReplicaCoverageForScope("comics:profile:main").executeAsOne())
+
+        assertEquals(false, known("novel:missing"))
+        queries.upsertCoreReplicaRecord(scope, "novel.entry", "novel:held", 1, 1, "{}", "a".repeat(64))
+        queries.upsertCoreReplicaTombstone(scope, "novel.entry", "novel:removed", 2, 2, 1, null, "b".repeat(64))
+        queries.enqueueMutation(
+            clientMutationId = "mutation-1",
+            deviceId = "phone-a",
+            scopeId = scope,
+            entityType = "novel.entry",
+            entityId = "novel:queued",
+            operation = "upsert",
+            payloadJson = "{}",
+            createdAt = 1,
+            nextAttemptAt = 1,
+        )
+
+        assertEquals(true, known("novel:held"))
+        assertEquals(true, known("novel:removed"))
+        assertEquals(true, known("novel:queued"))
+        assertEquals(false, known("novel:missing"))
+        // Another entity type or scope with the same id does not hide the missing entry.
+        assertEquals(false, queries.isEntityKnownToCore(scope, "novel.history", "novel:held").executeAsOne())
+        assertEquals(false, queries.isEntityKnownToCore("novels:profile:other", "novel.entry", "novel:held").executeAsOne())
+    }
+
+    @Test
     fun `lamport clock only advances`() {
         queries.advanceCoreLamport(7)
         queries.advanceCoreLamport(3)

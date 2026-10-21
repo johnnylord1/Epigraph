@@ -58,6 +58,11 @@ class SqlDelightCoreReplicaStore(
             // otherwise a coincident global event id could be discarded after re-pairing.
             aethon_syncQueries.deleteAllCoreReplicaCheckpoints()
             aethon_syncQueries.deleteAllCoreReplicaInboxEvents()
+            // Confirmed rows describe the previous server. A snapshot diffed against them would read
+            // every local work the new Core has not received yet as a remote removal and demote it.
+            // Local library rows stay untouched; the library repairs publish what the Core lacks.
+            aethon_syncQueries.deleteAllCoreReplicaRecords()
+            aethon_syncQueries.deleteAllCoreReplicaTombstones()
         }
     }
 

@@ -8,6 +8,7 @@ import epigraph.sync.EpigraphSyncScopeProvider
 import epigraph.sync.LibraryMembershipMutation
 import co.touchlab.kermit.Logger
 import epigraph.novel.plugin.NovelPluginManager
+import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import kotlinx.coroutines.CancellationException
 import yokai.data.Database
 import yokai.data.DatabaseHandler
@@ -19,6 +20,10 @@ import yokai.data.DatabaseHandler
  * novel with no identity and no outbox row. This pass is deliberately idempotent: it considers
  * only favorite rows without a NOVEL identity, and the router provisions identity, portable
  * binding, library snapshot and category assignments atomically.
+ *
+ * A favorite that already has an identity is republished once the paired Core's snapshot shows it
+ * does not hold the entry (a newly paired or rewound Core), so the library merges instead of
+ * staying split between devices.
  */
 class LocalNovelLibraryOutboxRepair(
     private val database: DatabaseHandler,
@@ -29,23 +34,35 @@ class LocalNovelLibraryOutboxRepair(
     suspend fun repair(): Int {
         // Before pairing there is nowhere safe to address an outbox mutation. Keep the library row
         // local and retry on the next app-start/connectivity worker after pairing.
-        runCatching { scopes.current() }.getOrElse { return 0 }
+        val scopeId = runCatching { scopes.current() }.getOrElse { return 0 }.novels.value
         plugins.ensureInstalledPluginsLoaded()
         val novelSources = plugins.installedSourcesFlow.value.associateBy { it.id }
         if (novelSources.isEmpty()) return 0
         repairSplitBindings(novelSources.mapValues { it.value.pluginId }.entries.associate { it.value to it.key })
 
         val candidates = database.await {
+            val replicaCovered = aethon_syncQueries.hasCoreReplicaCoverageForScope(scopeId).executeAsOne()
             mangasQueries.findFavorites().executeAsList().mapNotNull { manga ->
                 if (novelSources[manga.source] == null) return@mapNotNull null
                 val alreadyIdentified = aethon_syncQueries
                     .selectIdentityByLocalReference("NOVEL", manga._id.toString())
                     .executeAsOneOrNull() != null
-                if (alreadyIdentified) return@mapNotNull null
+                val republish = alreadyIdentified && replicaCovered &&
+                    aethon_syncQueries.selectPortableWorkBindingByLocalReference(manga._id.toString())
+                        .executeAsOneOrNull()
+                        ?.takeIf { it.ecosystem == "LNREADER" }
+                        ?.let { binding ->
+                            !aethon_syncQueries.isEntityKnownToCore(
+                                scopeId,
+                                EpigraphCoreEntityType.NOVEL_ENTRY,
+                                binding.portable_id,
+                            ).executeAsOne()
+                        } == true
+                if (alreadyIdentified && !republish) return@mapNotNull null
                 val categoryIds = categoriesQueries.findAllByMangaId(manga._id)
                     .executeAsList()
                     .mapTo(linkedSetOf()) { it._id }
-                Candidate(manga._id, manga.source, manga.url, categoryIds)
+                Candidate(manga._id, manga.source, manga.url, categoryIds, republish)
             }
         }
 
@@ -62,7 +79,8 @@ class LocalNovelLibraryOutboxRepair(
                         portableWorkRef = PortableWorkRef.Novel(
                             pluginId = source.pluginId,
                             novelKey = ProviderOwnedKey(candidate.providerKey),
-                        ),
+                        ).takeUnless { candidate.republish },
+                        republish = candidate.republish,
                     ),
                     createdAtEpochMillis = System.currentTimeMillis(),
                 )
@@ -204,5 +222,6 @@ class LocalNovelLibraryOutboxRepair(
         val sourceId: Long,
         val providerKey: String,
         val categoryIds: Set<Long>,
+        val republish: Boolean,
     )
 }

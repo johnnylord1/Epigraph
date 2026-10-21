@@ -53,10 +53,16 @@ data class LibraryMembershipMutation(
      * materialized together with the first library mutation.
      */
     val portableWorkRef: PortableWorkRef? = null,
+    /**
+     * Sends the entry and every requested category assignment even when nothing changed locally.
+     * Used when a newly paired or rewound Core does not hold a favorite this device already knows.
+     */
+    val republish: Boolean = false,
 ) {
     init {
         require(localMangaId > 0) { "local manga ID must be positive" }
         require(categoryIds.all { it > 0 }) { "local category IDs must be positive" }
+        require(!republish || inLibrary) { "only library members can be republished" }
     }
 }
 
@@ -182,6 +188,7 @@ class EpigraphLibraryMutationRouter(
         val removedCategoryIds = (currentCategoryIds - requestedCategoryIds).toSortedSet()
         val addedCategoryIds = (requestedCategoryIds - currentCategoryIds).toSortedSet()
         val membershipChanged = manga.favorite != mutation.inLibrary
+        val publishedCategoryIds = if (mutation.republish) requestedCategoryIds.toSortedSet() else addedCategoryIds
 
         // A locally-created category may already be assigned before its first Core mutation. Make
         // sure every category that will be sent with an entry has a stable identity, not only
@@ -205,7 +212,7 @@ class EpigraphLibraryMutationRouter(
         }
 
         val categoryEntities = if (mutation.origin.emitsOutbox) {
-            (removedCategoryIds + addedCategoryIds).mapNotNull { categoryId ->
+            (removedCategoryIds + publishedCategoryIds).mapNotNull { categoryId ->
                 val categoryIdentity = aethon_syncQueries
                     .selectCategoryIdentityByLocalIdAndScope(categoryId, if (isNovel) "NOVEL" else "MANGA")
                     .executeAsOneOrNull()
@@ -302,7 +309,7 @@ class EpigraphLibraryMutationRouter(
                         }
                     }
                 }
-                if (membershipChanged || identityProvisioned) {
+                if (membershipChanged || identityProvisioned || mutation.republish) {
                     if (isNovel) {
                         add(
                             SyncCommand.SetNovelLibraryMembership(
@@ -339,7 +346,7 @@ class EpigraphLibraryMutationRouter(
                         }
                     }
                 }
-                addedCategoryIds.forEach { categoryId ->
+                publishedCategoryIds.forEach { categoryId ->
                     categoryEntities[categoryId]?.let { category ->
                         if (isNovel || portableWork is PortableWorkRef.Comic || isLegacySuwayomiCategory(category)) {
                             add(SyncCommand.SetCategoryAssignment(syncEntityId, category, true, portableWork))

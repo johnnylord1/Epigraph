@@ -1570,6 +1570,45 @@ DELETE FROM aethon_core_replica_checkpoint;
 deleteAllCoreReplicaInboxEvents:
 DELETE FROM aethon_core_replica_inbox;
 
+deleteAllCoreReplicaRecords:
+DELETE FROM aethon_core_replica_record;
+
+deleteAllCoreReplicaTombstones:
+DELETE FROM aethon_core_replica_tombstone;
+
+-- True once this scope has replayed a snapshot from the paired Core, so a missing record means the
+-- Core does not hold the entity rather than that the replica has not caught up yet.
+hasCoreReplicaCoverageForScope:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_core_replica_checkpoint
+    WHERE coverage_type = 'ALL' OR scope_id = :scopeId
+);
+
+-- Whether the paired Core holds, removed, or is about to receive this entity.
+isEntityKnownToCore:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_core_replica_record
+    WHERE scope_id = :scopeId AND entity_type = :entityType
+      AND entity_id IN (
+          :entityId,
+          (SELECT canonical_entity_id FROM aethon_entity_alias WHERE alias_entity_id = :entityId)
+      )
+    UNION ALL
+    SELECT 1 FROM aethon_core_replica_tombstone
+    WHERE scope_id = :scopeId AND entity_type = :entityType
+      AND entity_id IN (
+          :entityId,
+          (SELECT canonical_entity_id FROM aethon_entity_alias WHERE alias_entity_id = :entityId)
+      )
+    UNION ALL
+    SELECT 1 FROM aethon_sync_outbox
+    WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id = :entityId
+    UNION ALL
+    SELECT 1 FROM aethon_sync_replica_wait
+    WHERE scope_id = :scopeId AND entity_type = :entityType
+      AND (entity_id = :entityId OR canonical_entity_id = :entityId)
+);
+
 pruneCoreReplicaInboxBelowCheckpoints:
 DELETE FROM aethon_core_replica_inbox
 WHERE global_event_id <= (

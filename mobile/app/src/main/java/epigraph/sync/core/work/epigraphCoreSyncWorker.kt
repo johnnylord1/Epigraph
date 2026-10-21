@@ -73,22 +73,40 @@ class EpigraphCoreSyncWorker(
         }
     }
 
-    private suspend fun runOnce(): WorkerExecution {
-        // Backfill favorites added on this device before pairing (or by older builds) before
-        // counting/draining the outbox. The repairs are idempotent and no-ops until paired.
-        runCatching { get<LocalNovelLibraryOutboxRepair>().repair() }
+    private suspend fun repairLibraries(): Int {
+        val novels = runCatching { get<LocalNovelLibraryOutboxRepair>().repair() }
             .onFailure { failure ->
                 Log.w(LOG_TAG, "local novel library repair failed", failure)
             }
-        runCatching { get<LocalComicLibraryOutboxRepair>().repair() }
+            .getOrDefault(0)
+        val comics = runCatching { get<LocalComicLibraryOutboxRepair>().repair() }
             .onFailure { failure ->
                 Log.w(LOG_TAG, "local comic library repair failed", failure)
             }
+            .getOrDefault(0)
+        return novels + comics
+    }
+
+    private suspend fun runOnce(): WorkerExecution {
+        // Backfill favorites added on this device before pairing (or by older builds) before
+        // counting/draining the outbox. The repairs are idempotent and no-ops until paired.
+        repairLibraries()
         val outcome = try {
-            get<CoreOutboxSyncRunner>().run(
+            val runner = get<CoreOutboxSyncRunner>()
+            val first = runner.run(
                 nowEpochMillis = System.currentTimeMillis(),
                 synchronizeReplica = true,
             )
+            // The first snapshot from a newly paired or rewound Core shows which local favorites it
+            // lacks; publish them in this run instead of waiting for the next wake.
+            if (first !is CoreOutboxSyncOutcome.Retry && repairLibraries() > 0) {
+                runner.run(
+                    nowEpochMillis = System.currentTimeMillis(),
+                    synchronizeReplica = true,
+                )
+            } else {
+                first
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {

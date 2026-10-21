@@ -589,6 +589,101 @@ class EpigraphLibraryMutationRouterTest {
         )
     }
 
+    @Test
+    fun `republished novel resends entry and every category assignment without local changes`() = runTest {
+        val mangaId = insertManga(favorite = true)
+        val categoryId = insertCategory("Novels", sort = 2)
+        val novel = PortableWorkRef.Novel("centralnovel", ProviderOwnedKey("/novels/86-eighty-six"))
+        val router = router(sequentialMutationIds(), scope = "novels:profile:main")
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = setOf(categoryId),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+                portableWorkRef = novel,
+            ),
+            createdAtEpochMillis = 100,
+        )
+        coordinator.claimReady(100, 1_000, 10)
+
+        val unchanged = router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = setOf(categoryId),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 200,
+        )
+        assertEquals(1, unchanged.emittedCommandCount)
+
+        val result = router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = setOf(categoryId),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+                republish = true,
+            ),
+            createdAtEpochMillis = 300,
+        )
+
+        assertFalse(result.changed)
+        assertEquals(3, result.emittedCommandCount)
+        val commands = coordinator.claimReady(300, 1_000, 10)
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+            .drop(1)
+        assertTrue(commands[0] is SyncCommand.UpsertCategory)
+        val entry = commands[1] as SyncCommand.SetNovelLibraryMembership
+        assertEquals(PortableIdentityV3.workId(novel), entry.entityId.value)
+        assertEquals(novel, entry.portableWorkRef)
+        assertNotNull(entry.entry)
+        assertTrue((commands[2] as SyncCommand.SetCategoryAssignment).assigned)
+        assertEquals(
+            listOf(categoryId),
+            database.categoriesQueries.findAllByMangaId(mangaId).executeAsList().map { it._id },
+        )
+    }
+
+    @Test
+    fun `republished comic resends its portable entry`() = runTest {
+        val mangaId = insertManga(favorite = true)
+        val work = PortableWorkRef.Comic(DecimalSourceId("1"), ProviderOwnedKey("/comic/1"))
+        val router = router(sequentialMutationIds())
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = emptySet(),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+                portableWorkRef = work,
+            ),
+            createdAtEpochMillis = 100,
+        )
+        coordinator.claimReady(100, 1_000, 10)
+
+        val result = router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = emptySet(),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+                republish = true,
+            ),
+            createdAtEpochMillis = 200,
+        )
+
+        assertEquals(1, result.emittedCommandCount)
+        val command = coordinator.claimReady(200, 1_000, 10)
+            .single()
+            .let { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        command as SyncCommand.SetLibraryMembership
+        assertEquals(PortableIdentityV3.workId(work), command.entityId.value)
+        assertTrue(command.inLibrary)
+        assertEquals(work, command.portableWorkRef)
+    }
+
     private fun router(
         mutationIds: ClientMutationIdFactory,
         scope: String = "comics:profile:main",

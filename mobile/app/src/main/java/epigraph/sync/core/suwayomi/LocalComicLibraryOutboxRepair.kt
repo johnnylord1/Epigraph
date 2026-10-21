@@ -5,6 +5,7 @@ import epigraph.contract.DecimalSourceId
 import epigraph.contract.PortableWorkRef
 import epigraph.contract.ProviderOwnedKey
 import epigraph.novel.source.NovelSource
+import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.EpigraphLibraryMutationRouter
 import epigraph.sync.EpigraphMutationOrigin
 import epigraph.sync.EpigraphSyncScopeProvider
@@ -23,6 +24,9 @@ import yokai.data.DatabaseHandler
  * portable binding and category assignments in one transaction, so a published row is skipped on
  * the next run. Local files and sources whose extension is not installed have no portable identity
  * and stay local.
+ *
+ * A favorite that already has a portable identity is republished once the paired Core's snapshot
+ * shows it does not hold the entry (a newly paired or rewound Core).
  */
 class LocalComicLibraryOutboxRepair(
     private val database: DatabaseHandler,
@@ -31,20 +35,32 @@ class LocalComicLibraryOutboxRepair(
     private val scopes: EpigraphSyncScopeProvider,
 ) {
     suspend fun repair(): Int {
-        runCatching { scopes.current() }.getOrElse { return 0 }
+        val scopeId = runCatching { scopes.current() }.getOrElse { return 0 }.comics.value
 
         val candidates = database.await {
+            val replicaCovered = aethon_syncQueries.hasCoreReplicaCoverageForScope(scopeId).executeAsOne()
             mangasQueries.findFavorites().executeAsList().mapNotNull { manga ->
-                val identified = sequenceOf("MANGA", "NOVEL").any { contentType ->
+                val identities = sequenceOf("MANGA", "NOVEL").mapNotNull { contentType ->
                     aethon_syncQueries
                         .selectIdentityByLocalReference(contentType, manga._id.toString())
-                        .executeAsOneOrNull() != null
-                }
-                if (identified) return@mapNotNull null
+                        .executeAsOneOrNull()
+                }.toList()
+                val republish = identities.singleOrNull()?.content_type == "MANGA" && replicaCovered &&
+                    aethon_syncQueries.selectPortableWorkBindingByLocalReference(manga._id.toString())
+                        .executeAsOneOrNull()
+                        ?.takeIf { it.ecosystem == "SUWAYOMI" }
+                        ?.let { binding ->
+                            !aethon_syncQueries.isEntityKnownToCore(
+                                scopeId,
+                                EpigraphCoreEntityType.COMIC_ENTRY,
+                                binding.portable_id,
+                            ).executeAsOne()
+                        } == true
+                if (identities.isNotEmpty() && !republish) return@mapNotNull null
                 val categoryIds = categoriesQueries.findAllByMangaId(manga._id)
                     .executeAsList()
                     .mapTo(linkedSetOf()) { it._id }
-                Candidate(manga._id, manga.source, manga.url, categoryIds)
+                Candidate(manga._id, manga.source, manga.url, categoryIds, republish)
             }
         }
 
@@ -63,7 +79,8 @@ class LocalComicLibraryOutboxRepair(
                         portableWorkRef = PortableWorkRef.Comic(
                             sourceId = DecimalSourceId(source.id.toString()),
                             mangaKey = ProviderOwnedKey(candidate.providerKey),
-                        ),
+                        ).takeUnless { candidate.republish },
+                        republish = candidate.republish,
                     ),
                     createdAtEpochMillis = System.currentTimeMillis(),
                 )
@@ -84,5 +101,6 @@ class LocalComicLibraryOutboxRepair(
         val sourceId: Long,
         val providerKey: String,
         val categoryIds: Set<Long>,
+        val republish: Boolean,
     )
 }

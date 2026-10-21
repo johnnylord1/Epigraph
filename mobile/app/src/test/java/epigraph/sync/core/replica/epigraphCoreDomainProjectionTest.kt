@@ -1557,6 +1557,41 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `a newly paired Core never demotes favorites the previous Core confirmed`() = runTest {
+        val store = SqlDelightCoreReplicaStore(
+            databaseHandler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            projection = projection,
+        )
+        suspend fun confirmEntry() = store.transaction {
+            upsertConfirmed(novelEntryRecord())
+            projectConfirmed(novelEntryRecord())
+        }
+        // The new Core has never received the novel, so its first snapshot omits it.
+        suspend fun emptySnapshot() = store.transaction {
+            replaceConfirmedScope(SCOPE_ID, emptyList(), emptyList())
+            projectScope(SCOPE_ID, emptyList(), emptyList())
+        }
+        confirmEntry()
+        val localId = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID)
+            .executeAsOne().local_reference.toLong()
+        assertTrue(database.mangasQueries.findById(localId).executeAsOne().favorite)
+
+        store.reset()
+        emptySnapshot()
+
+        assertTrue(database.mangasQueries.findById(localId).executeAsOne().favorite)
+        assertEquals(
+            emptyList<Any>(),
+            database.aethon_syncQueries.selectCoreReplicaRecordsByScope(SCOPE_ID).executeAsList(),
+        )
+
+        // The same Core omitting an entry it confirmed earlier is a real removal.
+        confirmEntry()
+        emptySnapshot()
+        assertFalse(database.mangasQueries.findById(localId).executeAsOne().favorite)
+    }
+
+    @Test
     fun `novel progress that outlives its entry never fails the novel snapshot`() = runTest {
         // Desktop keeps the reading position of a novel removed from its library.
         val removedEntry = CoreConfirmedTombstone(

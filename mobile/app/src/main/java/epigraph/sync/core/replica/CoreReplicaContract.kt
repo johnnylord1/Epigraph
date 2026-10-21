@@ -81,7 +81,10 @@ interface CoreReplicaCheckpointReader {
     suspend fun latestCheckpoint(coverage: CoreReplayCoverage): CoreReplayCheckpoint?
 }
 
-/** Invalidates replay cursors when a new Core is paired, forcing a fresh authoritative snapshot. */
+/**
+ * Invalidates replay cursors and confirmed state when a new Core is paired or its history is
+ * rewound, forcing a fresh authoritative snapshot that cannot infer removals from the old server.
+ */
 fun interface CoreReplicaCheckpointResetter {
     suspend fun reset()
 }
