@@ -62,6 +62,15 @@ export function readFirstRunPending(hasExistingStore: boolean): boolean {
   }
 }
 
+/** The user already picked how to set up (sync, backup or from scratch) and is working through it. */
+export function readFirstRunPathChosen(): boolean {
+  try {
+    return !!JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.path;
+  } catch {
+    return false;
+  }
+}
+
 /** Setup the user started over from Settings: it opens as asked, even on an app that holds data. */
 export function readFirstRunReopenedByUser(): boolean {
   try {

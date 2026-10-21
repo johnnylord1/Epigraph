@@ -8,7 +8,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
   import type { NavPage } from "../../store/state.svelte";
-  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPending as readFirstRunMarker, readFirstRunReopenedByUser, writeCompletedFirstRunMarker } from "../../lib/firstRun";
+  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPathChosen, readFirstRunPending as readFirstRunMarker, readFirstRunReopenedByUser, writeCompletedFirstRunMarker } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
   import { enterView, fadeOutView, handOver, playShellEntrance } from "../../lib/motion/motion";
 
@@ -29,8 +29,12 @@
   // Setup pending at launch waits until the app is known to be empty: an app that already holds
   // works, sources or repositories opens as it is, and setup is marked done without showing it.
   let firstRunLaunchCheck = $state(firstRunPendingAtLaunch && !readFirstRunReopenedByUser());
-  // The check could not reach the server: setup opens with a way to skip it.
+  // The check could not reach the server: setup opens with a way to skip it, and the check goes
+  // on in the background until the server answers.
   let firstRunServerUnavailable = $state(false);
+  // The server answered later with data while the user was already working through a setup path:
+  // setup stays, but can be left.
+  let firstRunSkippable = $state(false);
   // The shell that replaces a finished setup arrives as it does behind the splash.
   let firstRunShown = false;
   $effect(() => {
@@ -47,6 +51,25 @@
   }
 
   const FIRST_RUN_LAUNCH_CHECK_TIMEOUT_MS = 15000;
+  const FIRST_RUN_SERVER_RETRY_MS = 5000;
+  // The probe still running when the launch check gave up waiting; the background check awaits it.
+  let firstRunLaunchProbe: Promise<"empty" | "content" | "unknown"> | null = null;
+
+  async function probeInstallContent(profileId: string, serverUrl: string) {
+    const { createProductionCleanInstallProbe, readInstallContent } = await import("../../lib/firstRunCleanInstall");
+    return readInstallContent(createProductionCleanInstallProbe({ profileId, serverUrl }));
+  }
+
+  async function skipFirstRunForContent(profileId: string, serverUrl: string) {
+    const { rememberProfileContent } = await import("../../lib/firstRunCleanInstall");
+    try {
+      writeCompletedFirstRunMarker(localStorage);
+      rememberProfileContent(localStorage, profileId);
+      cleanInstallCheckedScope = `${profileId}::${serverUrl}`;
+    } catch {}
+    firstRunPending = readFirstRunPending();
+  }
+
   $effect(() => {
     if (!firstRunLaunchCheck) return;
     if (!firstRunPending || backupAuditPlan || backupRestoreLaunchIntent) {
@@ -57,29 +80,49 @@
     const serverUrl = store.runtimeServerUrl;
     if (!profileId || !serverUrl) return;
     let cancelled = false;
-    void import("../../lib/firstRunCleanInstall").then(async ({
-      createProductionCleanInstallProbe, readInstallContent, rememberProfileContent,
-    }) => {
-      // A server that never answers leaves the app as unknown, and unknown opens setup as before.
+    const probe = probeInstallContent(profileId, serverUrl).catch(() => "unknown" as const);
+    void (async () => {
+      // A server that does not answer in time opens setup with the notice; the probe keeps going.
       const content = await Promise.race([
-        readInstallContent(createProductionCleanInstallProbe({ profileId, serverUrl })),
+        probe,
         new Promise<"unknown">((resolve) => setTimeout(() => resolve("unknown"), FIRST_RUN_LAUNCH_CHECK_TIMEOUT_MS)),
       ]);
       if (cancelled) return;
-      if (content === "content") {
-        try {
-          writeCompletedFirstRunMarker(localStorage);
-          rememberProfileContent(localStorage, profileId);
-          cleanInstallCheckedScope = `${profileId}::${serverUrl}`;
-        } catch {}
-        firstRunPending = readFirstRunPending();
-      }
+      if (content === "content") await skipFirstRunForContent(profileId, serverUrl);
+      firstRunLaunchProbe = content === "unknown" ? probe : null;
       firstRunServerUnavailable = content === "unknown";
       firstRunLaunchCheck = false;
-    }).catch((error) => {
-      console.warn("Could not check whether the app already holds data.", error);
-      if (!cancelled) firstRunLaunchCheck = false;
-    });
+    })();
+    return () => { cancelled = true; };
+  });
+
+  // Keeps checking while setup shows the notice. Once the server answers, the notice goes away; an
+  // app that holds data leaves setup, unless the user already picked a path, where it can be skipped.
+  $effect(() => {
+    if (!firstRunServerUnavailable || !firstRunPending) return;
+    const profileId = store.runtimeResolvedLocalProfileId;
+    const serverUrl = store.runtimeServerUrl;
+    if (!profileId || !serverUrl) return;
+    let cancelled = false;
+    void (async () => {
+      let pending = firstRunLaunchProbe;
+      firstRunLaunchProbe = null;
+      for (;;) {
+        const content = await (pending ?? probeInstallContent(profileId, serverUrl).catch(() => "unknown" as const));
+        pending = null;
+        if (cancelled) return;
+        if (content !== "unknown") {
+          if (content === "content") {
+            if (readFirstRunPathChosen()) firstRunSkippable = true;
+            else await skipFirstRunForContent(profileId, serverUrl);
+          }
+          firstRunServerUnavailable = false;
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, FIRST_RUN_SERVER_RETRY_MS));
+        if (cancelled) return;
+      }
+    })();
     return () => { cancelled = true; };
   });
 
@@ -458,7 +501,7 @@
   <div class="first-run-layout" aria-busy="true"></div>
 {:else if firstRunPending}
   <div class="first-run-layout" out:handOver>
-    <FirstRun serverUnavailable={firstRunServerUnavailable} onComplete={() => (firstRunPending = false)} />
+    <FirstRun serverUnavailable={firstRunServerUnavailable} skippable={firstRunSkippable} onComplete={() => (firstRunPending = false)} />
     {@render detailSurface()}
   </div>
 {:else}

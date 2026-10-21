@@ -57,8 +57,10 @@
     initialState?: FirstRunState;
     /** The launch check could not reach the server, so the app may already hold data. */
     serverUnavailable?: boolean;
+    /** The app turned out to hold data while setup was open: it can be left. */
+    skippable?: boolean;
   }
-  let { onComplete = () => {}, initialState, serverUnavailable = false }: Props = $props();
+  let { onComplete = () => {}, initialState, serverUnavailable = false, skippable = false }: Props = $props();
 
   type ContentType = "manga" | "novels";
 
@@ -270,7 +272,7 @@
     onComplete();
   }
 
-  /** Leaves setup when the server did not answer: the app opens as it is. */
+  /** Leaves setup when the server did not answer, or the app holds data: the app opens as it is. */
   function skipSetup() {
     firstRun = completeFirstRunState(firstRun);
     persistFirstRun();
@@ -321,7 +323,7 @@
   progressLabel={$_("firstRun.shell.setupProgress")}
   cancel={firstRun.cancellable
     ? { label: $_("firstRun.shell.cancel"), onCancel: cancelSetup }
-    : serverUnavailable ? { label: $_("firstRun.shell.skip"), onCancel: skipSetup } : undefined}
+    : serverUnavailable || skippable ? { label: $_("firstRun.shell.skip"), onCancel: skipSetup } : undefined}
   notice={serverUnavailable && !firstRun.cancellable ? $_("firstRun.shell.serverUnavailable") : undefined}
 >
   {#key firstRun.step}

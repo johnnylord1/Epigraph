@@ -201,6 +201,43 @@ describe("first-run startup gate", () => {
     expect(JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.status).toBe("complete");
   });
 
+  it("keeps checking while the server does not answer and leaves setup once it answers with data", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(createFirstRunState()));
+    cleanInstall.fail = true;
+    resolveRuntime();
+    render(Layout);
+    await waitFor(() => expect(document.querySelector(".first-run-notice")).not.toBeNull());
+    cleanInstall.fail = false;
+    cleanInstall.counts = [2, 0, 0, 0];
+    await waitFor(() => expect(document.querySelector(".epigraph-app-shell")).not.toBeNull(), { timeout: 8000 });
+    expect(JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.status).toBe("complete");
+  }, 12000);
+
+  it("drops the notice once the server answers with an empty app", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(createFirstRunState()));
+    cleanInstall.fail = true;
+    resolveRuntime();
+    render(Layout);
+    await waitFor(() => expect(document.querySelector(".first-run-notice")).not.toBeNull());
+    cleanInstall.fail = false;
+    await waitFor(() => expect(document.querySelector(".first-run-notice")).toBeNull(), { timeout: 8000 });
+    expect(screen.queryByRole("button", { name: "Skip setup" })).toBeNull();
+    expect(document.querySelector(".first-run-shell")).not.toBeNull();
+  }, 12000);
+
+  it("keeps a setup path in progress when the server answers later with data, but lets it be skipped", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify({ ...createFirstRunState(), step: "sources", path: "fresh" }));
+    cleanInstall.fail = true;
+    resolveRuntime();
+    render(Layout);
+    await waitFor(() => expect(document.querySelector(".first-run-notice")).not.toBeNull());
+    cleanInstall.fail = false;
+    cleanInstall.counts = [0, 0, 0, 3];
+    await waitFor(() => expect(document.querySelector(".first-run-notice")).toBeNull(), { timeout: 8000 });
+    expect(document.querySelector(".first-run-shell")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Skip setup" })).toBeTruthy();
+  }, 12000);
+
   it("shows no skip action when the server answers with an empty app", async () => {
     localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(createFirstRunState()));
     resolveRuntime();
