@@ -10,6 +10,7 @@
   import type { NavPage } from "../../store/state.svelte";
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPathChosen, readFirstRunPending as readFirstRunMarker, readFirstRunReopenedByUser, writeCompletedFirstRunMarker } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
+  import { announceServerWhenReady } from "../../lib/serverLifecycle";
   import { enterView, fadeOutView, handOver, playShellEntrance } from "../../lib/motion/motion";
 
   interface Props {
@@ -52,8 +53,6 @@
 
   const FIRST_RUN_LAUNCH_CHECK_TIMEOUT_MS = 15000;
   const FIRST_RUN_SERVER_RETRY_MS = 5000;
-  // The probe still running when the launch check gave up waiting; the background check awaits it.
-  let firstRunLaunchProbe: Promise<"empty" | "content" | "unknown"> | null = null;
 
   async function probeInstallContent(profileId: string, serverUrl: string) {
     const { createProductionCleanInstallProbe, readInstallContent } = await import("../../lib/firstRunCleanInstall");
@@ -89,41 +88,35 @@
       ]);
       if (cancelled) return;
       if (content === "content") await skipFirstRunForContent(profileId, serverUrl);
-      firstRunLaunchProbe = content === "unknown" ? probe : null;
       firstRunServerUnavailable = content === "unknown";
       firstRunLaunchCheck = false;
     })();
     return () => { cancelled = true; };
   });
 
-  // Keeps checking while setup shows the notice. Once the server answers, the notice goes away; an
-  // app that holds data leaves setup, unless the user already picked a path, where it can be skipped.
+  // Keeps checking while setup shows the notice, through the app's own background server watch.
+  // Once the server answers, the notice goes away; an app that holds data leaves setup, unless the
+  // user already picked a path, where it can be skipped.
   $effect(() => {
     if (!firstRunServerUnavailable || !firstRunPending) return;
     const profileId = store.runtimeResolvedLocalProfileId;
     const serverUrl = store.runtimeServerUrl;
     if (!profileId || !serverUrl) return;
     let cancelled = false;
-    void (async () => {
-      let pending = firstRunLaunchProbe;
-      firstRunLaunchProbe = null;
-      for (;;) {
-        const content = await (pending ?? probeInstallContent(profileId, serverUrl).catch(() => "unknown" as const));
-        pending = null;
-        if (cancelled) return;
-        if (content !== "unknown") {
-          if (content === "content") {
-            if (readFirstRunPathChosen()) firstRunSkippable = true;
-            else await skipFirstRunForContent(profileId, serverUrl);
-          }
-          firstRunServerUnavailable = false;
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, FIRST_RUN_SERVER_RETRY_MS));
-        if (cancelled) return;
+    const stop = announceServerWhenReady(serverUrl, async () => {
+      const content = await probeInstallContent(profileId, serverUrl).catch(() => "unknown" as const);
+      if (cancelled || content === "unknown") return false;
+      if (content === "content") {
+        if (readFirstRunPathChosen()) firstRunSkippable = true;
+        else await skipFirstRunForContent(profileId, serverUrl);
       }
-    })();
-    return () => { cancelled = true; };
+      firstRunServerUnavailable = false;
+      return true;
+    }, { intervalMs: FIRST_RUN_SERVER_RETRY_MS });
+    return () => {
+      cancelled = true;
+      stop();
+    };
   });
 
   // Setup also opens again when a profile that held works or sources since setup now holds
