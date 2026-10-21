@@ -1,3 +1,5 @@
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,6 +32,10 @@ use super::runtime_manifest::{
 
 const SHUTDOWN_RESPONSE_DELAY: Duration = Duration::from_millis(100);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+const LAN_ADDRESS_FIRST_RETRY: Duration = Duration::from_secs(2);
+const LAN_ADDRESS_MAX_RETRY: Duration = Duration::from_secs(30);
+const STARTUP_LOG_FILE_NAME: &str = "syncd-startup.log";
+const STARTUP_LOG_MAX_BYTES: u64 = 64 * 1024;
 // Stable persisted device identity; the display name may be Epigraph while
 // the database identity remains compatible with existing installations.
 const LOCAL_AUTHORITY_DEVICE_ID: &str = "aethon-core-maintenance";
@@ -354,17 +360,71 @@ async fn run_serve_command(arguments: Vec<std::ffi::OsString>) -> anyhow::Result
     match arguments.as_slice() {
         [] => super::app::run().await,
         [mode] if mode == "--lan" => {
-            let lan_ip = detect_lan_ip()?;
-            let port = SyncdConfig::from_env().bind_addr.port();
+            let config = SyncdConfig::from_env();
+            let lan_ip =
+                wait_for_lan_ip(&config.data_dir, detect_lan_ip, LAN_ADDRESS_FIRST_RETRY).await;
+            let port = config.bind_addr.port();
             std::env::set_var("EPIGRAPH_SYNCD_BIND_HOST", "0.0.0.0");
             std::env::set_var("EPIGRAPH_SYNCD_OWNERSHIP", "persistent-attached");
             std::env::set_var(
                 "EPIGRAPH_SYNCD_ADVERTISED_BASE_URL",
                 lan_advertised_base_url(lan_ip, port),
             );
-            super::app::run().await
+            let result = super::app::run().await;
+            if let Err(error) = &result {
+                record_startup_note(&config.data_dir, &format!("Core stopped: {error:#}"));
+            }
+            result
         }
         _ => bail!("serve accepts only the optional --lan argument"),
+    }
+}
+
+/// At sign-in the network often has no address yet. The autostarted Core waits for one instead of
+/// exiting, since nothing would start it again until the next sign-in.
+async fn wait_for_lan_ip(
+    data_dir: &Path,
+    mut detect: impl FnMut() -> anyhow::Result<IpAddr>,
+    first_retry: Duration,
+) -> IpAddr {
+    let mut delay = first_retry;
+    let mut waiting = false;
+    loop {
+        match detect() {
+            Ok(ip) => {
+                if waiting {
+                    record_startup_note(data_dir, "LAN address found; starting");
+                }
+                return ip;
+            }
+            Err(error) => {
+                if !waiting {
+                    record_startup_note(data_dir, &format!("waiting for a LAN address: {error:#}"));
+                    waiting = true;
+                }
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(LAN_ADDRESS_MAX_RETRY);
+            }
+        }
+    }
+}
+
+/// The autostarted Core has no console and no desktop reading its output, so its startup problems
+/// go to a small file in its data folder.
+fn record_startup_note(data_dir: &Path, message: &str) {
+    let _ = std::fs::create_dir_all(data_dir);
+    let path = data_dir.join(STARTUP_LOG_FILE_NAME);
+    let oversized = std::fs::metadata(&path)
+        .map(|metadata| metadata.len() > STARTUP_LOG_MAX_BYTES)
+        .unwrap_or(false);
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(!oversized)
+        .truncate(oversized)
+        .open(&path);
+    if let Ok(mut file) = file {
+        let _ = writeln!(file, "{} {message}", super::db::now_ms());
     }
 }
 
@@ -704,6 +764,55 @@ mod tests {
             lan_advertised_base_url("::1".parse().unwrap(), 4780),
             "https://[::1]:4780"
         );
+    }
+
+    #[tokio::test]
+    async fn lan_core_waits_for_an_address_and_notes_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut attempts = 0;
+        let ip = wait_for_lan_ip(
+            dir.path(),
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    anyhow::bail!("no LAN address yet")
+                }
+                Ok("192.168.1.20".parse().unwrap())
+            },
+            Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(ip, "192.168.1.20".parse::<IpAddr>().unwrap());
+        assert_eq!(attempts, 3);
+        let notes = std::fs::read_to_string(dir.path().join(STARTUP_LOG_FILE_NAME)).unwrap();
+        let lines: Vec<&str> = notes.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].ends_with("waiting for a LAN address: no LAN address yet"));
+        assert!(lines[1].ends_with("LAN address found; starting"));
+    }
+
+    #[tokio::test]
+    async fn lan_core_with_an_address_writes_no_startup_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let ip = wait_for_lan_ip(
+            dir.path(),
+            || Ok("10.0.0.5".parse().unwrap()),
+            Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(ip, "10.0.0.5".parse::<IpAddr>().unwrap());
+        assert!(!dir.path().join(STARTUP_LOG_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn startup_notes_start_over_once_the_file_is_too_large() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STARTUP_LOG_FILE_NAME);
+        std::fs::write(&path, vec![b'x'; STARTUP_LOG_MAX_BYTES as usize + 1]).unwrap();
+        record_startup_note(dir.path(), "fresh");
+        let notes = std::fs::read_to_string(&path).unwrap();
+        assert!(notes.ends_with(" fresh\n"));
+        assert!(notes.len() < 64);
     }
 
     #[test]
