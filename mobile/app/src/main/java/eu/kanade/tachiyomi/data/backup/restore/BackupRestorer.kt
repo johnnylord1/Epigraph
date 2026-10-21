@@ -26,6 +26,7 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceBackupRestorer
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.SourceManager
@@ -37,6 +38,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Request
+import yokai.domain.category.CategoryLibrary
+import yokai.domain.category.interactor.GetCategories
 import yokai.domain.extension.repo.ExtensionRepoRepository
 import yokai.domain.extension.repo.interactor.CreateExtensionRepo
 import yokai.i18n.MR
@@ -64,6 +67,8 @@ class BackupRestorer(
     private val createExtensionRepo: CreateExtensionRepo = get(),
     private val extensionManager: ExtensionManager = get(),
     private val network: NetworkHelper = get(),
+    private val preferences: PreferencesHelper = get(),
+    private val getCategories: GetCategories = get(),
 ) {
     private var restoreAmount = 0
     private var restoreProgress = 0
@@ -104,10 +109,22 @@ class BackupRestorer(
             journal.recordedErrors.forEach { (time, message) -> errors.add(Date(time) to message) }
         }
 
-        BackupUtil.openBackup(context, uri, novelPluginManager::knownPluginLangs, ::cacheBackupCover).use { opened ->
+        BackupUtil.openBackup(
+            context,
+            uri,
+            novelPluginManager::knownPluginLangs,
+            ::cacheBackupCover,
+            defaultBooksCategoryName(),
+        ).use { opened ->
             restoreContents(opened)
         }
         // TODO: optionally trigger online library + tracker update
+    }
+
+    /** The category the user picked as the Books & novels default; "last used" and "ask" pick none. */
+    private suspend fun defaultBooksCategoryName(): String? {
+        val id = preferences.defaultCategory(CategoryLibrary.BOOKS).get().takeIf { it > 0 } ?: return null
+        return getCategories.await(CategoryLibrary.BOOKS).find { it.id == id }?.name
     }
 
     private suspend fun restoreContents(opened: OpenedBackup) {

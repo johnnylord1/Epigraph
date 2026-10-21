@@ -49,6 +49,11 @@ class LnReaderBackupConverter(
     private val knownPluginLangs: Map<String, String> = emptyMap(),
     private val now: () -> Long = System::currentTimeMillis,
     private val zone: ZoneId = ZoneId.systemDefault(),
+    /**
+     * Name of the Books & novels category the user made the default. LNReader's default category
+     * is restored into it; null keeps those novels in Default.
+     */
+    private val defaultCategoryName: String? = null,
 ) {
     /**
      * @param workDir private directory for the temporary copy of the nested data archive.
@@ -234,19 +239,27 @@ class LnReaderBackupConverter(
         val categories = raw.mapNotNull { element ->
             val category = element as? JsonObject ?: return@mapNotNull null
             val id = category.text("id") ?: return@mapNotNull null
-            val name = category.text("name") ?: return@mapNotNull null
+            // LNReader's default category (1) is Epigraph's default for Books & novels: the folder
+            // the user chose, or Default with no folder of its own.
+            val name = if (id == LNREADER_DEFAULT_CATEGORY_ID) {
+                defaultCategoryName ?: return@mapNotNull null
+            } else {
+                category.text("name") ?: return@mapNotNull null
+            }
             val members = (category["novelIds"] as? JsonArray).orEmpty()
                 .mapNotNull { it.textOrNull() }
                 // An id shared by two backup records cannot say which one is in the folder.
                 .mapNotNull { novelsByRawId[it]?.singleOrNull() }
                 .distinct()
-            // LNReader's default category (1) is Epigraph's Default: its novels stay there, with no
-            // folder of their own. A category without library novels is not brought over either,
-            // like the empty local-imports one (2) LNReader always seeds.
-            if (id == LNREADER_DEFAULT_CATEGORY_ID) return@mapNotNull null
+            // A category without library novels is not brought over, like the empty local-imports
+            // one (2) LNReader always seeds.
             if (members.isEmpty()) return@mapNotNull null
             Triple(category.number("sort") ?: 0.0, name, members)
-        }.sortedBy { it.first }
+        }
+            // The chosen default can share its name with an LNReader category: restore one folder.
+            .groupBy { it.second }
+            .map { (name, group) -> Triple(group.minOf { it.first }, name, group.flatMap { it.third }.distinct()) }
+            .sortedBy { it.first }
 
         return categories.mapIndexed { order, (_, name, members) ->
             members.forEach { it.manga.categories += order }

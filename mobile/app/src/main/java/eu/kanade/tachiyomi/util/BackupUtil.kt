@@ -44,6 +44,9 @@ object BackupUtil {
     /**
      * Like [decodeBackup], but keeps the archive of a unified container open so a restore can read
      * the local EPUB/PDF files stored beside the manga payload. Close the result when done.
+     *
+     * @param defaultBooksCategoryName the user's default Books & novels category, which receives
+     * the novels of LNReader's default category; null leaves them in Default.
      */
     @SuppressLint("Recycle")
     fun openBackup(
@@ -51,6 +54,7 @@ object BackupUtil {
         uri: Uri,
         novelPluginLangs: () -> Map<String, String> = { emptyMap() },
         coverSink: ((String, ByteArray) -> Unit)? = null,
+        defaultBooksCategoryName: String? = null,
     ): OpenedBackup {
         val input = context.contentResolver.openInputStream(uri)?.let(::BufferedInputStream)
             ?: error("Unable to open backup")
@@ -69,7 +73,8 @@ object BackupUtil {
                 archive.outputStream().use { copyAtMost(input, it, MAX_ARCHIVE_FILE_BYTES, "The backup file is too large") }
                 val isLnReader = ZipFile(archive).use(LnReaderBackupConverter::isLnReaderBackup)
                 if (isLnReader) {
-                    val backup = LnReaderBackupConverter(novelPluginLangs()).convert(archive, context.cacheDir, coverSink)
+                    val backup = LnReaderBackupConverter(novelPluginLangs(), defaultCategoryName = defaultBooksCategoryName)
+                        .convert(archive, context.cacheDir, coverSink)
                     archive.delete()
                     return OpenedBackup(backup, null)
                 }

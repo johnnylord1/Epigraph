@@ -127,6 +127,29 @@ class LnReaderBackupConverterTest {
     }
 
     @Test
+    fun `LNReader's default category goes to the default category the user chose`() {
+        val categories = """
+            [{"id": 1, "name": "Default", "sort": 0, "novelIds": [12]},
+             {"id": 2, "name": "Local", "sort": 1, "novelIds": []}]
+        """.trimIndent()
+        val backup = LnReaderBackupConverter(now = { 1_000L }, zone = ZoneOffset.UTC, defaultCategoryName = "Lendo")
+            .convert(write(dataZip(categories = categories)), workDir)
+
+        assertEquals(listOf("Lendo"), backup.backupCategories.map { it.name })
+        assertEquals("BOOKS", backup.backupCategories.single().library)
+        assertEquals(listOf(0), backup.backupManga.single().categories)
+    }
+
+    @Test
+    fun `the chosen default merges with an LNReader category of the same name`() {
+        val backup = LnReaderBackupConverter(now = { 1_000L }, zone = ZoneOffset.UTC, defaultCategoryName = "Reading")
+            .convert(write(dataZip()), workDir)
+
+        assertEquals(listOf("Reading", "Favorites"), backup.backupCategories.map { it.name })
+        assertEquals(listOf(0, 1), backup.backupManga.single().categories.sorted())
+    }
+
+    @Test
     fun `other archives are not taken for LNReader backups`() {
         val file = write(zip("manifest.json" to "{}".toByteArray(), "payloads/manga/backup.tachibk" to byteArrayOf(1)))
         assertFalse(ZipFile(file).use(LnReaderBackupConverter::isLnReaderBackup))
