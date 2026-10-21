@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import FirstRunDependencies from "./FirstRunDependencies.svelte";
   import type { MangaRestoreChoices } from "../../lib/backup/mangaRestoreDependencies";
   import {
@@ -143,6 +143,7 @@
       };
       restoreWarnings = Object.values(workflow.warnings?.() ?? {}).flat();
       if (restoreWarnings.length === 0) onRestored(completedResult);
+      else revealRestoreNotes();
     } catch (error) {
       files = [...files];
       restoreError = error;
@@ -150,6 +151,15 @@
       installingDependencies = false;
       working = false;
     }
+  }
+
+  let restoreNotes = $state<HTMLElement | null>(null);
+
+  /* The notes sit under the review, below the fold on a short window; the heading already says the
+     import is done, and the notes come into view above the footer. */
+  async function revealRestoreNotes() {
+    await tick();
+    restoreNotes?.scrollIntoView?.({ block: "end", behavior: "smooth" });
   }
 
   function kindLabel(file: BackupWorkflowFile): string {
@@ -209,8 +219,13 @@
   </div>
 {:else}
   <div class="review" in:arrive>
-  <FirstRunTitle text={$_("firstRun.backup.reviewTitle")} />
-  <p class="fr-lede">{$_("firstRun.backup.reviewLede")}</p>
+  {#if completedResult}
+    <FirstRunTitle text={$_("firstRun.backup.doneTitle")} />
+    <p class="fr-lede">{$_("firstRun.backup.doneLede")}</p>
+  {:else}
+    <FirstRunTitle text={$_("firstRun.backup.reviewTitle")} />
+    <p class="fr-lede">{$_("firstRun.backup.reviewLede")}</p>
+  {/if}
   <div class="summary-strip">
     <div><strong aria-label={String(summary.workCount)} use:countUp={summary.workCount}></strong><span>{$_("firstRun.backup.titles")}</span></div>
     <div><strong aria-label={String(repositoryTotal)} use:countUp={repositoryTotal}></strong><span>{$_("firstRun.backup.repositories")}</span></div>
@@ -224,16 +239,16 @@
     <li><GitMerge size={20} /><strong>{$_("firstRun.backup.merge")}</strong><span>{$_("firstRun.backup.overlapCount", { count: summary.conflictCount })}</span></li>
   </ul>
 
-  <details class="merge-decisions">
-    <summary>{$_("firstRun.backup.mergeDecisions")}</summary>
-    <div class="backup-list">
-      {#each readyFiles.filter((file) => file.conflictCount > 0) as file (file.key)}
-        <div class="fr-row backup-row"><span class="fr-mark"><GitMerge size={19} /></span><span class="fr-row-copy"><strong>{file.name}</strong><small>{$_("firstRun.backup.mergeRule", { count: file.conflictCount })}</small></span><span class="tag">{$_("firstRun.backup.reviewed")}</span></div>
-      {:else}
-        <div class="fr-empty">{$_("firstRun.backup.noOverlaps")}</div>
-      {/each}
-    </div>
-  </details>
+  {#if summary.conflictCount > 0}
+    <details class="merge-decisions">
+      <summary>{$_("firstRun.backup.mergeDecisions")}</summary>
+      <div class="backup-list">
+        {#each readyFiles.filter((file) => file.conflictCount > 0) as file (file.key)}
+          <div class="fr-row backup-row"><span class="fr-mark"><GitMerge size={19} /></span><span class="fr-row-copy"><strong>{file.name}</strong><small>{$_("firstRun.backup.mergeRule", { count: file.conflictCount })}</small></span><span class="tag">{$_("firstRun.backup.reviewed")}</span></div>
+        {/each}
+      </div>
+    </details>
+  {/if}
 
   {#if readyFiles.some(file => file.libraryKinds.includes("manga") || file.libraryKinds.includes("novels"))}
     <FirstRunDependencies bind:this={dependencies} entries={readyFiles} choices={mangaChoices}
@@ -255,7 +270,7 @@
   {/if}
   {#if restoreError}<div class="fr-error restore-error" role="alert"><WarningCircle size={18} /><span>{operationError(restoreError, "firstRun.backup.restoreError", $_)}</span></div>{/if}
   {#if restoreWarnings.length > 0}
-    <div class="restore-progress" role="status"><ul>{#each warningNotes as { note, count } (note)}<li>{note}{#if count > 1} <b class="note-count">({count})</b>{/if}</li>{/each}</ul></div>
+    <div class="restore-progress restore-notes" role="status" bind:this={restoreNotes}><ul>{#each warningNotes as { note, count } (note)}<li>{note}{#if count > 1} <b class="note-count">({count})</b>{/if}</li>{/each}</ul></div>
   {/if}
 
   <div class="fr-footer">
@@ -322,6 +337,8 @@
   .progress-track i::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text-primary) 40%, transparent), transparent); animation: backup-sheen 1.4s linear infinite; }
   .progress-track i.is-done::after { animation: none; opacity: 0; }
   .restore-error { margin: 14px 0 0; }
+  /* Room for the sticky footer, so the last note is not hidden under it once scrolled into view. */
+  .restore-notes { scroll-margin-bottom: 96px; }
   .restore-progress ul { margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: 12.5px; }
   .note-count { color: var(--text-muted); font-weight: 600; font-variant-numeric: tabular-nums; }
   @keyframes backup-bob { 50% { transform: translateY(-5px); } }

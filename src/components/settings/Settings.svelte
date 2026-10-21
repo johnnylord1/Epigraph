@@ -136,6 +136,7 @@
   } from "../../lib/flaresolverr";
   import { FIRST_RUN_REOPENED_EVENT, isFirstRunBackupRestoreComplete, type FirstRunBackupReadiness } from "../../lib/firstRun";
   import { reopenFirstRun } from "../../lib/firstRunCleanInstall";
+  import { mirrorFirstRunMarker } from "../../lib/firstRunDurable";
 
   // The switch shows what the app does now: the user's choice, or the system setting until one is made.
   const animationsOn = $derived(
@@ -706,6 +707,7 @@
   /** Leaves Settings and walks through setup again; library, sources and settings stay as they are. */
   function redoFirstRun() {
     try { reopenFirstRun(localStorage, { cancellable: true }); } catch { return; }
+    void mirrorFirstRunMarker({ profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl });
     setSettingsOpen(false);
     window.dispatchEvent(new Event(FIRST_RUN_REOPENED_EVENT));
   }

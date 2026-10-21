@@ -9,6 +9,7 @@
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
   import type { NavPage } from "../../store/state.svelte";
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPathChosen, readFirstRunPending as readFirstRunMarker, readFirstRunReopenedByUser, writeCompletedFirstRunMarker } from "../../lib/firstRun";
+  import { mirrorFirstRunMarker, restoreDurableFirstRunCompletion } from "../../lib/firstRunDurable";
   import FirstRun from "../firstRun/FirstRun.svelte";
   import { announceServerWhenReady } from "../../lib/serverLifecycle";
   import { enterView, fadeOutView, handOver, playShellEntrance } from "../../lib/motion/motion";
@@ -66,7 +67,14 @@
       rememberProfileContent(localStorage, profileId);
       cleanInstallCheckedScope = `${profileId}::${serverUrl}`;
     } catch {}
+    void mirrorFirstRunMarker({ profileId, serverUrl });
     firstRunPending = readFirstRunPending();
+    window.dispatchEvent(new Event(FIRST_RUN_COMPLETED_EVENT));
+  }
+
+  function finishFirstRun() {
+    firstRunPending = false;
+    window.dispatchEvent(new Event(FIRST_RUN_COMPLETED_EVENT));
   }
 
   $effect(() => {
@@ -81,6 +89,12 @@
     let cancelled = false;
     const probe = probeInstallContent(profileId, serverUrl).catch(() => "unknown" as const);
     void (async () => {
+      if (await restoreDurableFirstRunCompletion({ profileId, serverUrl })) {
+        if (cancelled) return;
+        firstRunLaunchCheck = false;
+        finishFirstRun();
+        return;
+      }
       // A server that does not answer in time opens setup with the notice; the probe keeps going.
       const content = await Promise.race([
         probe,
@@ -143,7 +157,9 @@
         if (content !== "empty" || !shouldReopenEmptyProfile(localStorage, profileId)) return;
         reopenFirstRun(localStorage);
       } catch { return; }
+      void mirrorFirstRunMarker({ profileId, serverUrl });
       firstRunPending = true;
+      window.dispatchEvent(new Event(FIRST_RUN_REOPENED_EVENT));
     }).catch((error) => console.warn("Could not check whether the app is empty.", error));
     return () => { cancelled = true; };
   });
@@ -494,7 +510,7 @@
   <div class="first-run-layout" aria-busy="true"></div>
 {:else if firstRunPending}
   <div class="first-run-layout" out:handOver>
-    <FirstRun serverUnavailable={firstRunServerUnavailable} skippable={firstRunSkippable} onComplete={() => (firstRunPending = false)} />
+    <FirstRun serverUnavailable={firstRunServerUnavailable} skippable={firstRunSkippable} onComplete={finishFirstRun} />
     {@render detailSurface()}
   </div>
 {:else}

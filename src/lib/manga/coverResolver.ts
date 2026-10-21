@@ -43,7 +43,8 @@ export function mangaCoverPath(input: MangaCoverInput): string {
 
 function appendCoverParams(url: string, options: MangaCoverOptions): string {
   const generation = `${options.cacheGeneration ?? ""}`.trim();
-  if (!generation) return url;
+  // Inline covers carry their bytes in the URL, so a query string would corrupt them.
+  if (!generation || /^(data|blob):/i.test(url)) return url;
   const params = [`epigraph_cover_generation=${encodeURIComponent(generation)}`];
   return `${url}${url.includes("?") ? "&" : "?"}${params.join("&")}`;
 }

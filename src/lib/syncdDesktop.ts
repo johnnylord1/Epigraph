@@ -36,6 +36,8 @@ export interface SyncdBootstrapBundle {
 
 export interface SyncdDesktopDiscoveryCandidate {
   instanceName: string;
+  /** The computer name shown on the other side's pairing screen. */
+  deviceName: string;
   serverId: string;
   effectiveOrigin: string;
   effectiveSource: SyncdEffectiveDiscoverySource;

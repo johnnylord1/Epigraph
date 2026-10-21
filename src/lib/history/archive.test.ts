@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PersistedNovelLibraryState } from "../novels/domain";
-import { summarizeArchive } from "./archive";
+import { countUnstartedNovels, summarizeArchive } from "./archive";
 
 function novels(chapters: Array<{ novelId: string; unread: boolean }>, ids: string[]) {
   return {
@@ -8,6 +8,21 @@ function novels(chapters: Array<{ novelId: string; unread: boolean }>, ids: stri
     chapters: chapters.map((chapter, index) => ({ ...chapter, id: `c${index}` })),
   } as unknown as Pick<PersistedNovelLibraryState, "entries" | "chapters">;
 }
+
+describe("countUnstartedNovels", () => {
+  it("counts novels with nothing read and no reading history", () => {
+    const state = novels(
+      [
+        { novelId: "a", unread: false },
+        { novelId: "b", unread: true },
+        { novelId: "c", unread: true },
+      ],
+      ["a", "b", "c", "d"],
+    );
+    expect(countUnstartedNovels(state, new Set(["c"]))).toBe(2);
+    expect(countUnstartedNovels(null, new Set())).toBe(0);
+  });
+});
 
 describe("summarizeArchive", () => {
   it("counts comics, books and novels together", () => {

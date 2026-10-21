@@ -1,5 +1,6 @@
 import type { SyncdNovelDependencyDeclaration, SyncdNovelDependencyRemoval } from "../syncdDesktop";
-import { novelRepositoryMatchKey, type PersistedNovelRepositoryState } from "./repositoryState";
+import { novelRepositoryMatchKey, type NovelRepositoryScopeInput, type PersistedNovelRepositoryState } from "./repositoryState";
+import type { PersistedNovelLibraryEntry } from "./domain";
 
 export interface SyncedNovelDependencyPlan {
   repositories: { url: string }[];
@@ -116,6 +117,33 @@ export async function applySyncedNovelDependencyRemovals(
     }
   }
   return { state, removed };
+}
+
+/** Synced novels whose chapter list is still only what the other device sent, minus recent tries. */
+export function novelsAwaitingChapterList(
+  entries: readonly PersistedNovelLibraryEntry[],
+  recentlyAttempted: ReadonlySet<string>,
+): string[] {
+  return entries.filter((entry) => entry.chaptersPending && !recentlyAttempted.has(entry.id)).map((entry) => entry.id);
+}
+
+const chapterListAttempts = new Map<string, number>();
+
+/**
+ * Lists the full chapters of synced novels from their plugin here, as the phone does; a novel whose
+ * plugin is still missing is tried again after the retry interval.
+ */
+export async function hydrateSyncedNovelChapters(scope: NovelRepositoryScopeInput): Promise<void> {
+  const [{ loadNovelLibraryState }, { refreshNovelLibraryFromSources }] = await Promise.all([
+    import("./libraryState"),
+    import("./libraryRefresh"),
+  ]);
+  const state = await loadNovelLibraryState(scope);
+  const now = Date.now();
+  const ids = novelsAwaitingChapterList(state.entries, recentSyncedDependencyAttempts(chapterListAttempts, now));
+  if (ids.length === 0) return;
+  for (const id of ids) chapterListAttempts.set(id, now);
+  await refreshNovelLibraryFromSources(scope, { categoryNovelIds: ids });
 }
 
 const attemptedDependencies = new Map<string, number>();

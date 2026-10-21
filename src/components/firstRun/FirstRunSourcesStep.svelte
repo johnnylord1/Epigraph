@@ -190,7 +190,9 @@
   function languageLabel(lang: string): string {
     if (!/^[a-z]{2,3}([-_][a-z0-9]{2,4})?$/i.test(lang)) return lang;
     try {
-      return new Intl.DisplayNames([appliedAppLanguage() ?? "en"], { type: "language" }).of(lang.replace("_", "-")) ?? lang;
+      const locale = appliedAppLanguage() ?? "en";
+      const label = new Intl.DisplayNames([locale], { type: "language" }).of(lang.replace("_", "-")) ?? lang;
+      return label.charAt(0).toLocaleUpperCase(locale) + label.slice(1);
     } catch {
       return lang;
     }

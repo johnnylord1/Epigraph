@@ -24,6 +24,7 @@
   import { builtinThemeLabel } from "../../lib/theme/themeLabels";
   import { loadNovelLibraryState } from "../../lib/novels/libraryState";
   import { gql } from "../../lib/client";
+  import { mirrorFirstRunMarker } from "../../lib/firstRunDurable";
   import { countUp, depart, revealThemeChange, staggerIn } from "../../lib/motion/firstRunMotion";
   import {
     completeFirstRunState,
@@ -126,6 +127,7 @@
 
   function persistFirstRun() {
     try { localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(firstRun)); } catch {}
+    void mirrorFirstRunMarker({ profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl });
   }
 
   function setFirstRunStep(step: FirstRunStep) {

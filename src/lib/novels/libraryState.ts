@@ -165,6 +165,7 @@ function normalizeLibraryEntry(value: unknown): PersistedNovelLibraryEntry | nul
     chapterCount: typeof record.chapterCount === "number" ? record.chapterCount : 0,
     addedAt: typeof record.addedAt === "number" ? record.addedAt : Date.now(),
     updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now(),
+    ...(record.chaptersPending === true ? { chaptersPending: true } : {}),
   };
 }
 

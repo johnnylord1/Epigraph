@@ -792,7 +792,16 @@ fn build_txt_records(descriptor: &SyncdDiscoveryDescriptor) -> SyncdPublishedTxt
         supports_live_pairing_status: descriptor.capabilities.supports_live_pairing_status,
         supports_descriptor: descriptor.capabilities.supports_descriptor,
         tls_cert_sha256: descriptor.tls_cert_sha256.clone(),
+        device_name: announced_device_name(),
     }
+}
+
+/// Same name as the pairing screen and bootstrap payload, so both computers agree on it.
+fn announced_device_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Epigraph Desktop".to_string())
 }
 
 fn txt_record_pairs(txt_records: &SyncdPublishedTxtRecords) -> Vec<(String, String)> {
@@ -834,6 +843,7 @@ fn txt_record_pairs(txt_records: &SyncdPublishedTxtRecords) -> Vec<(String, Stri
             "tls_sha256".to_string(),
             txt_records.tls_cert_sha256.clone(),
         ),
+        ("dn".to_string(), txt_records.device_name.clone()),
     ]
 }
 
@@ -1278,6 +1288,10 @@ mod tests {
         assert_eq!(
             resolved.get_property_val_str("tls_sha256").unwrap(),
             publication.txt_records.tls_cert_sha256
+        );
+        assert_eq!(
+            resolved.get_property_val_str("dn").unwrap(),
+            publication.txt_records.device_name
         );
         assert!(resolved.get_property_val_str("token").is_none());
         let raw = format!("{resolved:?}");

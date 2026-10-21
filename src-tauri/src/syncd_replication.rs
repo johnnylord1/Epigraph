@@ -5692,7 +5692,16 @@ fn upsert_novel_entry(state: &mut PersistedNovelLibraryState, record: NovelEntry
                 .filter(|value| value.as_str().is_some_and(|text| !text.trim().is_empty()))
         })
         .unwrap_or(Value::Null);
-    let next = json!({
+    // A novel first seen through sync holds only the chapters the other device sent; the app lists
+    // the rest from the plugin here, which drops this mark.
+    let chapters_pending = state
+        .entries
+        .iter()
+        .find(|entry| novel_entry_entity_id(entry).as_deref() == Some(local_novel_id.as_str()))
+        .map_or(true, |entry| {
+            entry.get("chaptersPending") == Some(&Value::Bool(true))
+        });
+    let mut next = json!({
         "id": local_novel_id,
         "title": record.title,
         "author": record.author,
@@ -5706,6 +5715,9 @@ fn upsert_novel_entry(state: &mut PersistedNovelLibraryState, record: NovelEntry
         "addedAt": record.added_at_ms,
         "updatedAt": record.updated_at_ms,
     });
+    if chapters_pending {
+        next["chaptersPending"] = json!(true);
+    }
     let novel_id = value_string_field(&next, "id").unwrap_or_default();
     if let Some(index) = state
         .entries
@@ -9662,6 +9674,14 @@ mod tests {
 
         upsert_novel_entry(&mut state, record(Some("https://example.test/new.jpg")));
         assert_eq!(state.entries[0]["coverUrl"], "https://example.test/new.jpg");
+        // Already listed here from its plugin, so its chapters are not pending.
+        assert!(state.entries[0].get("chaptersPending").is_none());
+
+        let mut fresh = PersistedNovelLibraryState::default();
+        upsert_novel_entry(&mut fresh, record(None));
+        assert_eq!(fresh.entries[0]["chaptersPending"], true);
+        upsert_novel_entry(&mut fresh, record(None));
+        assert_eq!(fresh.entries[0]["chaptersPending"], true);
     }
 
     #[test]

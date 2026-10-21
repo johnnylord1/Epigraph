@@ -12,6 +12,16 @@ export interface ArchiveSummary {
   chaptersRead: number;
 }
 
+/** Novels in the library with no chapter read and none in the reading history. */
+export function countUnstartedNovels(
+  novels: Pick<PersistedNovelLibraryState, "entries" | "chapters"> | null,
+  startedNovelIds: ReadonlySet<string>,
+): number {
+  const started = new Set(startedNovelIds);
+  for (const chapter of novels?.chapters ?? []) if (!chapter.unread) started.add(chapter.novelId);
+  return (novels?.entries ?? []).filter((entry) => !started.has(entry.id)).length;
+}
+
 /**
  * The Home archive across comics, books and novels. Chapters read come from the library itself,
  * so a restored backup counts before anything is read on this computer; the local read log

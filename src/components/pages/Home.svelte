@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { translate } from "../../lib/i18n/runtime";
+  import { appliedAppLanguage, translate } from "../../lib/i18n/runtime";
   import { flushSync, onMount } from "svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { gql } from "../../lib/client";
@@ -7,7 +7,7 @@
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "../../lib/cache";
   import { buildCompletedLibraryIds, collectTrackedChapterTotalsByMangaId, collectTrackedCompletedMangaIds, collectTrackedMangaIds, type TrackerCompletionTracker } from "../../lib/library/completion";
   import { isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
-  import { dedupeSources, shouldHideSource } from "../../lib/util";
+  import { dedupeSources, preferredSourceLanguage, shouldHideSource } from "../../lib/util";
   import { presentBook } from "../../lib/books/presentation";
   import { isBookFinished, isBookInProgress } from "../../lib/books/progress";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
@@ -55,7 +55,7 @@
   import type { BookEntry, BookProgress } from "../../lib/books/types";
   import type { Manga, Category, Source, Tracker, Extension } from "../../lib/types";
   import { summarizeReadingWeek } from "../../lib/history/week";
-  import { summarizeArchive } from "../../lib/history/archive";
+  import { countUnstartedNovels, summarizeArchive } from "../../lib/history/archive";
   import RecentActivity from "../layout/RecentActivity.svelte";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import ActivityButton from "../layout/ActivityButton.svelte";
@@ -919,8 +919,13 @@
     state: "online" | "slow" | "offline" | "neutral";
   };
 
+  /* One entry per extension, in the reader's language, so the count matches the extensions the
+     First Run summary reported instead of counting every language of a multi-language extension. */
+  const dedupedHomeSources = $derived(
+    dedupeSources(homeSources, preferredSourceLanguage(store.settings.preferredExtensionLang, appliedAppLanguage())),
+  );
   const visibleHomeSources = $derived((() => {
-    const deduped = dedupeSources(homeSources, store.settings.preferredExtensionLang || "en");
+    const deduped = dedupedHomeSources;
     const extensionsByKey = new Map(
       homeExtensions.map((extension) => {
         const key = `${normalizeExtensionSourceKey(extension.name)}::${(extension.lang || "").toLowerCase()}`;
@@ -979,12 +984,13 @@
   const queuedDownloadCount = $derived(store.activeDownloads.filter((item) => item.state === "QUEUED").length);
   const pausedDownloadCount = $derived(store.activeDownloads.filter((item) => item.state === "PAUSED").length);
   const comicSourceReadyCount = $derived.by(() => {
+    if (homeSources.length > 0) return dedupedHomeSources.length;
     const count = setupState && "usableSourceCount" in setupState ? setupState.usableSourceCount : null;
     return count ?? visibleHomeSources.length;
   });
   const sourceReadyCount = $derived(comicSourceReadyCount + novelSourceCount);
   const hiddenHomeSourceCount = $derived(
-    Math.max(dedupeSources(homeSources, store.settings.preferredExtensionLang || "en").length, comicSourceReadyCount) - visibleHomeSources.length,
+    Math.max(dedupedHomeSources.length, comicSourceReadyCount) - visibleHomeSources.length,
   );
   const browseSourcesSummary = $derived(
     sourceReadyCount > 0
@@ -1017,8 +1023,11 @@
   const mangaToReadCount = $derived(
     libraryManga.filter((manga) => !startedMangaIds.has(manga.id) && !finishedIds.has(manga.id)).length,
   );
+  const novelsToReadCount = $derived(
+    countUnstartedNovels(novelLibraryState, new Set(novelHistory.map((item) => item.novel.id))),
+  );
   const planToReadCount = $derived(
-    mangaToReadCount + booksToReadCount,
+    mangaToReadCount + booksToReadCount + novelsToReadCount,
   );
   const planToReadSummary = $derived(
     planToReadCount > 0
@@ -1394,11 +1403,11 @@
               <div class="home-side-card__split">
                 <div>
                   <strong>{archiveTotalCount}</strong>
-                  <small>{$_("home.metrics.titles")}</small>
+                  <small>{archiveTotalCount === 1 ? $_("home.metrics.titleOne") : $_("home.metrics.titles")}</small>
                 </div>
                 <div>
                   <strong>{sourceReadyCount}</strong>
-                  <small>{$_("home.metrics.sources")}</small>
+                  <small>{sourceReadyCount === 1 ? $_("home.metrics.sourceOne") : $_("home.metrics.sources")}</small>
                 </div>
               </div>
             </section>

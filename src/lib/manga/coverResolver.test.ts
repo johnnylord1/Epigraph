@@ -31,4 +31,9 @@ describe("manga cover resolver", () => {
     expect(cover?.path).toBe("/thumbs/series-b");
     expect(resolveMangaCoverUrl("/thumbs/series-b", { cacheGeneration: 7 })).toContain("epigraph_cover_generation=7");
   });
+
+  it("leaves inline covers untouched", () => {
+    const inline = "data:image/jpeg;base64,/9j/AAAA";
+    expect(resolveMangaCoverUrl(inline, { context: "home", cacheGeneration: 7 })).toBe(inline);
+  });
 });

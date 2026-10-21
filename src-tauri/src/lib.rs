@@ -2115,6 +2115,21 @@ mod tests {
     use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
     #[test]
+    fn first_run_state_accepts_only_a_small_marker() {
+        assert!(validate_first_run_state(
+            r#"{"version":1,"status":"complete","step":"complete","path":null}"#
+        )
+        .is_ok());
+        assert!(validate_first_run_state(r#"{"version":1}"#).is_err());
+        assert!(validate_first_run_state("not json").is_err());
+        let oversized = format!(
+            r#"{{"status":"complete","pad":"{}"}}"#,
+            "x".repeat(17 * 1024)
+        );
+        assert!(validate_first_run_state(&oversized).is_err());
+    }
+
+    #[test]
     fn server_health_probes_do_not_hold_the_calling_thread() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let server_url = format!("http://{}", listener.local_addr().unwrap());
@@ -4769,6 +4784,71 @@ fn write_extension_compatibility_state(
     }
     write_text_file_atomic(&path, &contents)?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// WebView storage can lose its last writes when the computer loses power, so setup's marker is
+/// also kept here, written through to the disk.
+fn first_run_state_path_for_target(
+    launch_target: &LaunchTargetInfo,
+    profile_id: Option<&str>,
+    server_url: Option<&str>,
+) -> Result<PathBuf, String> {
+    Ok(
+        extension_compatibility_state_path_for_target(launch_target, profile_id, server_url)?
+            .with_file_name("first-run.json"),
+    )
+}
+
+fn validate_first_run_state(contents: &str) -> Result<(), String> {
+    if contents.len() > 16 * 1024 {
+        return Err("Setup state exceeds the supported size.".to_string());
+    }
+    let parsed = serde_json::from_str::<serde_json::Value>(contents)
+        .map_err(|error| format!("Setup state is invalid JSON: {error}"))?;
+    if !parsed
+        .get("status")
+        .is_some_and(serde_json::Value::is_string)
+    {
+        return Err("Setup state has an invalid shape.".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn read_first_run_state(
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = first_run_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    std::fs::read_to_string(path)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn write_first_run_state(
+    contents: String,
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    validate_first_run_state(&contents)?;
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = first_run_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    write_text_file_atomic(&path, &contents)
 }
 
 #[tauri::command]
@@ -7541,6 +7621,8 @@ pub fn run() {
             write_novel_source_classification_state,
             read_extension_compatibility_state,
             write_extension_compatibility_state,
+            read_first_run_state,
+            write_first_run_state,
             read_book_library_state,
             write_book_library_state,
             read_migration_journal_state,

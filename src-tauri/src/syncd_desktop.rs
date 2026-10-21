@@ -77,6 +77,8 @@ pub struct SyncdBootstrapBundle {
 #[serde(rename_all = "camelCase")]
 pub struct SyncdDesktopDiscoveryCandidate {
     pub instance_name: String,
+    /// The name people see on the other computer's pairing screen.
+    pub device_name: String,
     pub server_id: String,
     pub effective_origin: String,
     pub effective_source: SyncdEffectiveDiscoverySource,
@@ -368,6 +370,10 @@ pub async fn syncd_list_discovery_candidates(
         }
         candidates.push(SyncdDesktopDiscoveryCandidate {
             instance_name: service.get_fullname().to_string(),
+            device_name: discovered_device_name(
+                service.get_property_val_str("dn"),
+                service.get_fullname(),
+            ),
             server_id: contract.server_id.clone(),
             effective_origin: contract.effective_origin.clone(),
             effective_source: contract.effective_source,
@@ -410,6 +416,22 @@ fn unique_discovery_candidates(
         .collect::<Vec<_>>();
     unique.sort_by(|left, right| left.instance_name.cmp(&right.instance_name));
     unique
+}
+
+/// A Core that predates the name record shows its instance label without the service suffix.
+fn discovered_device_name(announced: Option<&str>, fullname: &str) -> String {
+    announced
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            fullname
+                .split("._")
+                .next()
+                .unwrap_or(fullname)
+                .trim_end_matches('.')
+                .to_string()
+        })
 }
 
 /// Starts or reattaches this computer's Core for host actions. The detailed failure stays in the
@@ -2231,6 +2253,7 @@ mod tests {
     fn discovery_lists_each_core_once() {
         let candidate = |instance: &str, server: &str, origin: &str| SyncdDesktopDiscoveryCandidate {
             instance_name: instance.to_string(),
+            device_name: instance.to_string(),
             server_id: server.to_string(),
             effective_origin: origin.to_string(),
             effective_source: SyncdEffectiveDiscoverySource::AdvertisedEndpoint,
@@ -2251,6 +2274,23 @@ mod tests {
         ]);
         let names = listed.iter().map(|entry| entry.instance_name.as_str()).collect::<Vec<_>>();
         assert_eq!(names, ["epigraph-a", "epigraph-b"]);
+    }
+
+    #[test]
+    fn discovery_prefers_the_announced_computer_name() {
+        let fullname = "epigraph-syncd-01a15e04._epigraph-sync._tcp.local.";
+        assert_eq!(
+            discovered_device_name(Some(" JOHNNY-PC "), fullname),
+            "JOHNNY-PC"
+        );
+        assert_eq!(
+            discovered_device_name(Some(""), fullname),
+            "epigraph-syncd-01a15e04"
+        );
+        assert_eq!(
+            discovered_device_name(None, fullname),
+            "epigraph-syncd-01a15e04"
+        );
     }
 
     #[test]

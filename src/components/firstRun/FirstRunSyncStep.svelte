@@ -15,6 +15,7 @@
     type SyncdConnectState,
     type SyncdDesktopDiscoveryCandidate,
     type SyncdHostPairingState,
+    type SyncdReplicationScopeCheckpoint,
     type SyncdReplicationSnapshot,
   } from "../../lib/syncdDesktop";
   import { pairingVerificationCode } from "../../lib/syncPairingVerification";
@@ -25,7 +26,7 @@
     onReadyChange?: (ready: boolean) => void;
     onBack?: () => void;
     onContinue?: () => void;
-    /** Leaves sync for later (Settings › Sync) and carries on with a fresh setup. */
+    /** Leaves sync for later (Settings › System › Security › Device pairing) and carries on with a fresh setup. */
     onSkip?: () => void;
   }
 
@@ -59,17 +60,24 @@
      libraries and Core merges them, so nothing here waits for a remote bootstrap. */
   let hostPeer = $state<{ name: string; platform: string } | null>(null);
 
-  const targetName = $derived(target?.instanceName ?? connectState?.remoteDeviceName ?? hostPeer?.name ?? $_("firstRun.sync.otherComputer"));
+  const targetName = $derived(target?.deviceName ?? target?.instanceName ?? connectState?.remoteDeviceName ?? hostPeer?.name ?? $_("firstRun.sync.otherComputer"));
   const peerIsPhone = $derived(hostPeer?.platform === "android");
   const hostProgressKey = $derived(hostPeer && profileId
     ? JSON.stringify([profileId, snapshot?.comicsScopeCheckpoint ?? null, snapshot?.booksScopeCheckpoint ?? null, snapshot?.novelsScopeCheckpoint ?? null])
     : null);
   const pin = $derived(digits.join(""));
   const verification = $derived(connectState ? pairingVerificationCode(connectState.tlsCertSha256) : "");
+  /* Live replication has replayed every scope, so one that never got a checkpoint had nothing to
+     bring. A computer that hosted the pairing reads its library back instead and has no checkpoints. */
+  function scopeState(checkpoint: SyncdReplicationScopeCheckpoint | null | undefined): "ready" | "empty" | "syncing" {
+    if (checkpoint) return "ready";
+    if (!ready) return "syncing";
+    return hostPeer ? "ready" : "empty";
+  }
   const scopes = $derived([
-    { id: "comics", icon: Books, label: $_("firstRun.sync.scopeComics"), done: Boolean(snapshot?.comicsScopeCheckpoint) || ready },
-    { id: "books", icon: BookOpenText, label: $_("firstRun.sync.scopeBooks"), done: Boolean(snapshot?.booksScopeCheckpoint) || ready },
-    { id: "novels", icon: BookOpenText, label: $_("firstRun.sync.scopeNovels"), done: Boolean(snapshot?.novelsScopeCheckpoint) || ready },
+    { id: "comics", icon: Books, label: $_("firstRun.sync.scopeComics"), state: scopeState(snapshot?.comicsScopeCheckpoint) },
+    { id: "books", icon: BookOpenText, label: $_("firstRun.sync.scopeBooks"), state: scopeState(snapshot?.booksScopeCheckpoint) },
+    { id: "novels", icon: BookOpenText, label: $_("firstRun.sync.scopeNovels"), state: scopeState(snapshot?.novelsScopeCheckpoint) },
   ]);
   const readinessKey = $derived(firstRunSyncReadinessKey(profileId, snapshot));
 
@@ -367,8 +375,8 @@
             {#each candidates as candidate (candidate.effectiveOrigin)}
               <div class="fr-row" data-origin={candidate.effectiveOrigin}>
                 <span class="fr-mark"><Desktop size={18} /></span>
-                <span class="fr-row-copy"><strong>{candidate.instanceName}</strong><small>{$_("firstRun.sync.sameNetwork")}</small></span>
-                <button class="fr-link" type="button" aria-label={$_("firstRun.sync.chooseNamed", { name: candidate.instanceName })} onclick={() => chooseComputer(candidate)}>{$_("firstRun.sync.choose")}</button>
+                <span class="fr-row-copy"><strong>{candidate.deviceName || candidate.instanceName}</strong><small>{$_("firstRun.sync.sameNetwork")}</small></span>
+                <button class="fr-link" type="button" aria-label={$_("firstRun.sync.chooseNamed", { name: candidate.deviceName || candidate.instanceName })} onclick={() => chooseComputer(candidate)}>{$_("firstRun.sync.choose")}</button>
               </div>
             {/each}
           {/if}
@@ -422,10 +430,10 @@
         <p class="help">{stage === "done" ? $_("firstRun.sync.doneHelp") : $_("firstRun.sync.syncingHelp")}</p>
         <div class="scopes">
           {#each scopes as scope (scope.id)}
-            <div class="fr-row scope" class:is-done={scope.done}>
+            <div class="fr-row scope" class:is-done={scope.state !== "syncing"} data-scope={scope.id} data-state={scope.state}>
               <span class="fr-mark"><scope.icon size={18} /></span>
               <span class="fr-row-copy"><strong>{scope.label}</strong></span>
-              <span class="scope-state">{#if scope.done}<Check size={15} weight="bold" />{$_("firstRun.sync.scopeReady")}{:else}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeSyncing")}{/if}</span>
+              <span class="scope-state">{#if scope.state === "ready"}<Check size={15} weight="bold" />{$_("firstRun.sync.scopeReady")}{:else if scope.state === "empty"}{$_("firstRun.sync.scopeEmpty")}{:else}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeSyncing")}{/if}</span>
             </div>
           {/each}
         </div>

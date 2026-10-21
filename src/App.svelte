@@ -105,7 +105,7 @@
   import SplashScreen from "./components/layout/SplashScreen.svelte";
   import { playShellEntrance, pointerEffects, setAnimationPreference, SPLASH_EXIT_EVENT } from "./lib/motion/motion";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeConstants";
-  import { FIRST_RUN_COMPLETED_EVENT, readFirstRunPending, writeCompletedFirstRunMarker } from "./lib/firstRun";
+  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPending, writeCompletedFirstRunMarker } from "./lib/firstRun";
 
   type DiscordRuntime = typeof import("./lib/discord");
   let discordRuntimePromise: Promise<DiscordRuntime> | null = null;
@@ -193,7 +193,20 @@
     running: "feedback.novelLookupRunning",
     done: "feedback.novelLookupDone",
   });
+  // A restored or synced library arrives during setup; its lookups and their toasts wait until
+  // setup is done, so they do not cover setup's own buttons.
+  let firstRunOpen = $state(readFirstRunPending(hadPersistedStoreAtStartup));
   $effect(() => {
+    const syncFirstRunOpen = () => { firstRunOpen = readFirstRunPending(hadPersistedStoreAtStartup); };
+    window.addEventListener(FIRST_RUN_COMPLETED_EVENT, syncFirstRunOpen);
+    window.addEventListener(FIRST_RUN_REOPENED_EVENT, syncFirstRunOpen);
+    return () => {
+      window.removeEventListener(FIRST_RUN_COMPLETED_EVENT, syncFirstRunOpen);
+      window.removeEventListener(FIRST_RUN_REOPENED_EVENT, syncFirstRunOpen);
+    };
+  });
+  $effect(() => {
+    if (firstRunOpen) return;
     const works = store.libraryMangaSnapshot;
     if (works.length === 0) return;
     void import("./lib/recommendations/anilistLibraryLookup").then((lookup) => {
@@ -204,6 +217,7 @@
     // Novels are read from their saved library state, again on each page change so added novels
     // are queued; books follow the store. A tracked work is already known for certain by the entry the
     // user picked on the tracker, so it is not looked up.
+    if (firstRunOpen) return;
     void store.navPage;
     const books = store.books.map((book) => ({ id: book.id, key: `book:${book.id}`, title: book.title, author: book.author, genres: book.genres }));
     const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
@@ -604,8 +618,13 @@
     if (!currentProfileId || payload.localProfileId !== currentProfileId) return;
     // Plugins the other device uses are installed here from their declared repository.
     void import("./lib/novels/syncedDependencies")
-      .then(({ reconcileSyncedNovelDependencies }) => reconcileSyncedNovelDependencies(currentProfileId))
-      .catch((error) => console.warn("Failed to install synced novel dependencies:", error));
+      .then(async ({ reconcileSyncedNovelDependencies, hydrateSyncedNovelChapters }) => {
+        await reconcileSyncedNovelDependencies(currentProfileId)
+          .catch((error) => console.warn("Failed to install synced novel dependencies:", error));
+        // With the plugins in place, synced novels list their full chapters from them.
+        await hydrateSyncedNovelChapters({ profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl });
+      })
+      .catch((error) => console.warn("Failed to list synced novel chapters:", error));
   }
 
   const AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS = 3 * 60 * 1000;

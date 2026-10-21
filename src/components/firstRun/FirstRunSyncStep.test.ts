@@ -32,7 +32,8 @@ import FirstRunSyncStep from "./FirstRunSyncStep.svelte";
 import { pairingVerificationCode } from "../../lib/syncPairingVerification";
 
 const office = {
-  instanceName: "OFFICE-PC",
+  instanceName: "epigraph-syncd-01a15e04._epigraph-sync._tcp.local.",
+  deviceName: "OFFICE-PC",
   serverId: "server-1",
   effectiveOrigin: "https://192.168.1.20:4877",
   effectiveSource: "advertised-endpoint",

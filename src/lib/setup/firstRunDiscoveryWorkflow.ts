@@ -20,7 +20,8 @@ import {
 } from "../../store/state.svelte";
 import type { Source } from "../types";
 import { shouldHideNsfw, shouldHideSource } from "../util";
-import { translate } from "../i18n/runtime";
+import { appliedAppLanguage, translate } from "../i18n/runtime";
+import { extensionLanguageMatchesLocale, isMultiLanguageExtension } from "./firstRunSourcesWorkflow";
 
 type DiscoveryScope = { profileId: string | null; serverUrl: string | null };
 
@@ -31,6 +32,8 @@ export interface FirstRunDiscoverySource {
   id: string;
   name: string;
   lang?: string | null;
+  /** Language variants of one extension share this, so the step can keep just one of them. */
+  group?: string;
   scope?: DiscoveryScope;
 }
 
@@ -105,6 +108,36 @@ async function settleLimited<T>(tasks: Array<() => Promise<T>>, limit: number, i
   }
   await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
   return results;
+}
+
+function languageRank(lang: string | null | undefined, locale: string): number {
+  const value = lang?.trim() ?? "";
+  if (value && extensionLanguageMatchesLocale(value, locale)) return 0;
+  if (isMultiLanguageExtension(value)) return 1;
+  if (value.toLowerCase() === "en" || value.toLowerCase() === "english") return 2;
+  return 3;
+}
+
+/**
+ * A comic extension installs one source per language, so the step would otherwise show four
+ * languages of the same catalog. Keep the variant closest to the app language for each name and
+ * put the sources in that language first, before the step takes the first few.
+ */
+export function rankFirstRunDiscoverySources<T extends FirstRunDiscoverySource>(sources: readonly T[], locale: string): T[] {
+  const best = new Map<string, { source: T; rank: number; order: number }>();
+  sources.forEach((source, order) => {
+    const key = (source.group ?? source.name).trim().toLowerCase();
+    const rank = languageRank(source.lang, locale);
+    const current = best.get(key);
+    if (!current || rank < current.rank) best.set(key, { source, rank, order: current?.order ?? order });
+  });
+  return [...best.values()]
+    .sort((left, right) => Number(left.rank !== 0) - Number(right.rank !== 0) || left.order - right.order)
+    .map((entry) => entry.source);
+}
+
+function discoveryLocale(): string {
+  return appliedAppLanguage() ?? (typeof navigator === "undefined" ? "en" : navigator.language) ?? "en";
 }
 
 export function createFirstRunDiscoveryWorkflow(
@@ -286,18 +319,18 @@ export function createProductionFirstRunDiscoveryWorkflow(): FirstRunDiscoveryWo
     async loadMangaSources() {
       const original = scope();
       const response = await gql<{ sources: { nodes: Source[] } }>(GET_SOURCES);
-      return (response.sources.nodes ?? [])
+      return rankFirstRunDiscoverySources((response.sources.nodes ?? [])
         .filter((source) => source.id !== "0" && !shouldHideSource(source, store.settings))
-        .map((source) => ({ id: source.id, name: source.displayName || source.name, lang: source.lang, scope: original }));
+        .map((source) => ({ id: source.id, name: source.displayName || source.name, group: source.name, lang: source.lang, scope: original })), discoveryLocale());
     },
     async loadNovelSources() {
       const original = scope();
-      return (await loadTrustedInstalledNovelSources(original)).map((source) => ({
+      return rankFirstRunDiscoverySources((await loadTrustedInstalledNovelSources(original)).map((source) => ({
         id: source.pluginId,
         name: source.name,
         lang: source.lang,
         scope: original,
-      }));
+      })), discoveryLocale());
     },
     async findManga(source, query) {
       checkedScope(source);

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createFirstRunDiscoveryWorkflow,
+  rankFirstRunDiscoverySources,
   type FirstRunDiscoveryDependencies,
 } from "./firstRunDiscoveryWorkflow";
 
@@ -189,5 +190,35 @@ describe("first-run discovery workflow", () => {
     await workflow.loadPopular();
     expect(workflow.items.some((item) => item.title === "Available")).toBe(true);
     expect(workflow.error).toBeNull();
+  });
+});
+
+describe("rankFirstRunDiscoverySources", () => {
+  const variant = (id: string, lang: string, group = "MANGA Plus") => ({ id, name: `${group} (${lang})`, group, lang });
+
+  it("keeps the app language's variant of each extension and lists those first", () => {
+    const ranked = rankFirstRunDiscoverySources([
+      variant("mp-en", "en"),
+      variant("mp-es", "es"),
+      { id: "other", name: "Other", group: "Other", lang: "en" },
+      variant("mp-pt", "pt-BR"),
+      variant("mp-fr", "fr"),
+    ], "pt-BR");
+
+    expect(ranked.map((source) => source.id)).toEqual(["mp-pt", "other"]);
+  });
+
+  it("falls back to multi-language and then English variants", () => {
+    expect(rankFirstRunDiscoverySources([variant("a-es", "es"), variant("a-en", "en")], "pt-BR").map((source) => source.id)).toEqual(["a-en"]);
+    expect(rankFirstRunDiscoverySources([variant("a-en", "en"), variant("a-all", "all")], "pt-BR").map((source) => source.id)).toEqual(["a-all"]);
+  });
+
+  it("matches novel sources by language name", () => {
+    const ranked = rankFirstRunDiscoverySources([
+      { id: "en-novel", name: "English novels", lang: "English" },
+      { id: "pt-novel", name: "Central Novel", lang: "Português" },
+    ], "pt-BR");
+
+    expect(ranked.map((source) => source.id)).toEqual(["pt-novel", "en-novel"]);
   });
 });

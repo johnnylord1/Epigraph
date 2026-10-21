@@ -69,6 +69,8 @@ export interface PersistedNovelLibraryEntry {
   chapterCount: number;
   addedAt: number;
   updatedAt: number;
+  /** Arrived through sync and not yet listed from its plugin here, so only some chapters are known. */
+  chaptersPending?: boolean;
 }
 
 export interface PersistedNovelChapterEntry {

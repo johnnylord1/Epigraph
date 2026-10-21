@@ -117,12 +117,28 @@ export function dedupeSources(sources: Source[], preferredLang: string): Source[
     if (!byName.has(src.name)) byName.set(src.name, []);
     byName.get(src.name)!.push(src);
   }
+  const preferredBase = baseLanguage(preferredLang);
   const picked: Source[] = [];
   for (const group of byName.values()) {
-    const preferred = group.find((s) => s.lang === preferredLang);
+    const preferred = group.find((s) => s.lang === preferredLang)
+      ?? group.find((s) => preferredBase !== "" && baseLanguage(s.lang) === preferredBase);
     picked.push(preferred ?? group.sort((a, b) => a.lang.localeCompare(b.lang))[0]);
   }
   return picked;
+}
+
+function baseLanguage(lang: string | null | undefined): string {
+  return (lang ?? "").trim().toLowerCase().split(/[-_]/)[0];
+}
+
+/**
+ * The source language Home and Browse lead with. "en" is also the setting's default, so with the
+ * default left in place the app language decides instead.
+ */
+export function preferredSourceLanguage(setting: string | null | undefined, appLanguage: string | null | undefined): string {
+  const chosen = setting?.trim();
+  if (chosen && chosen !== "en") return chosen;
+  return appLanguage?.trim() || chosen || "en";
 }
 
 // ── Manga deduplication ───────────────────────────────────────────────────────

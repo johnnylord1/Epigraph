@@ -6,8 +6,10 @@ import {
   SYNCED_DEPENDENCY_RETRY_MS,
   applySyncedNovelDependencyRemovals,
   missingSyncedNovelDependencies,
+  novelsAwaitingChapterList,
   recentSyncedDependencyAttempts,
 } from "./syncedDependencies";
+import type { PersistedNovelLibraryEntry } from "./domain";
 
 const OFFICIAL = "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
 const OTHER = "https://example.com/someone/plugins.min.json";
@@ -141,5 +143,13 @@ describe("applySyncedNovelDependencyRemovals", () => {
       { ...operations, removeRepository: (current) => current },
     );
     expect(result).toEqual({ state: builtin, removed: 0 });
+  });
+});
+
+describe("novelsAwaitingChapterList", () => {
+  it("picks synced novels not yet listed from their plugin, skipping recent tries", () => {
+    const entry = (id: string, chaptersPending?: boolean) => ({ id, chaptersPending }) as PersistedNovelLibraryEntry;
+    const entries = [entry("synced", true), entry("listed"), entry("tried", true)];
+    expect(novelsAwaitingChapterList(entries, new Set(["tried"]))).toEqual(["synced"]);
   });
 });

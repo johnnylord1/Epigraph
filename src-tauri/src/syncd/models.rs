@@ -827,6 +827,8 @@ pub struct SyncdPublishedTxtRecords {
     pub supports_live_pairing_status: bool,
     pub supports_descriptor: bool,
     pub tls_cert_sha256: String,
+    /// The computer name the pairing screen tells the other side to pick.
+    pub device_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
