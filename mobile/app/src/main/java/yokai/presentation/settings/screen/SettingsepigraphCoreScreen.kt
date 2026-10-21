@@ -32,17 +32,40 @@ import epigraph.sync.core.work.CoreUserActionReason
 import eu.kanade.tachiyomi.util.relativeTimeSpanString
 import java.util.UUID
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.Devices
+import androidx.compose.material.icons.outlined.Dialpad
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.LinkOff
+import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.SyncProblem
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -56,6 +79,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -68,12 +92,13 @@ import com.google.zxing.client.android.Intents
 import dev.icerock.moko.resources.StringResource
 import dev.icerock.moko.resources.compose.pluralStringResource
 import dev.icerock.moko.resources.compose.stringResource
-import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.launch
 import org.koin.core.context.GlobalContext
 import yokai.i18n.MR
 import yokai.presentation.component.preference.Preference
+import yokai.presentation.component.preference.widget.PrefsHorizontalPadding
+import yokai.presentation.component.preference.widget.TextPreferenceWidget
 import yokai.presentation.settings.ComposableSettings
 
 object SettingsEpigraphCoreScreen : ComposableSettings() {
@@ -190,8 +215,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             result.contents?.takeIf(String::isNotBlank)?.let(::beginPairing)
         }
         val scannerPrompt = stringResource(MR.strings.epigraph_core_scan_qr_summary)
-        // Disabled items collapse out of the list. The short load when the screen opens is not
-        // busy, or the pairing items would grow back in under the finger.
+        // A pairing in progress; the pairing options step aside until it ends.
         val busy = state is CorePairingUiState.Pairing ||
             state is CorePairingUiState.Selecting
 
@@ -561,131 +585,293 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             )
         }
 
-        return persistentListOf(
-            Preference.PreferenceGroup(
-                title = stringResource(MR.strings.epigraph_core),
-                preferenceItems = persistentListOf(
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_status),
-                        subtitle = statusText(state),
-                    ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_scan_qr),
-                        subtitle = stringResource(MR.strings.epigraph_core_scan_qr_summary),
-                        enabled = !busy,
-                        onClick = {
-                            scanner.launch(
-                                ScanOptions()
-                                    .setCaptureActivity(PairingScanActivity::class.java)
-                                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                                    .setPrompt(scannerPrompt)
-                                    .setBeepEnabled(false)
-                                    .setBarcodeImageEnabled(false)
-                                    .setOrientationLocked(false)
-                                    // The pairing link makes a dense code; a slower, thorough decode
-                                    // reads it off a monitor where the default pass gives up.
-                                    .addExtra("TRY_HARDER", true)
-                                    // Also read light-on-dark codes, as older desktop builds draw.
-                                    .addExtra(Intents.Scan.SCAN_TYPE, Intents.Scan.MIXED_SCAN),
-                            )
-                        },
-                    ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_pin_pair),
-                        subtitle = stringResource(MR.strings.epigraph_core_pin_pair_summary),
-                        enabled = !busy,
-                        onClick = {
-                            pinText = ""
-                            selectedHost = null
-                            addressText = ""
-                            showAddressField = false
-                            showPinDialog = true
-                            controller.discoverHosts()
-                        },
-                    ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_paste_bundle),
-                        subtitle = stringResource(MR.strings.epigraph_core_paste_bundle_summary),
-                        enabled = !busy,
-                        onClick = { showPasteDialog = true },
-                    ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_sync_selection_title),
-                        subtitle = syncSelectionSummary(state, persistedSelection),
-                        enabled = state is CorePairingUiState.Paired && persistedSelection != null,
-                        onClick = { showSelectionEditor = true },
-                    ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_disconnect),
-                        subtitle = stringResource(MR.strings.epigraph_core_disconnect_summary),
-                        enabled = state is CorePairingUiState.Paired,
-                        onClick = { showDisconnectDialog = true },
-                    ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_setup_entry_title),
-                        subtitle = run {
-                            val counts = coreDependencySetupCounts(comicRepositories, extensionState.report, novelInventory)
-                            when {
-                                counts.hasPending -> stringResource(
-                                    MR.strings.epigraph_core_setup_entry_summary,
-                                    counts.repositoriesToAdd,
-                                    counts.extensionsToInstall,
-                                )
-                                extensionState.report != null || novelInventory != null ->
-                                    stringResource(MR.strings.epigraph_core_setup_entry_synced)
-                                else -> stringResource(MR.strings.epigraph_core_extensions_no_inventory)
-                            }
-                        },
-                        // Shown as soon as paired; the desktop lists load later and only change the summary.
-                        enabled = state is CorePairingUiState.Paired,
-                        onClick = {
-                            context.startActivity(
-                                CoreDependencySetupActivity.intent(
-                                    context,
-                                    persistedSelection?.serverId,
-                                    persistedSelection?.profileId,
-                                ),
-                            )
-                        },
-                    ),
+        val paired = state as? CorePairingUiState.Paired
+        val openSetup = {
+            context.startActivity(
+                CoreDependencySetupActivity.intent(
+                    context,
+                    persistedSelection?.serverId,
+                    persistedSelection?.profileId,
                 ),
+            )
+        }
+
+        val statusCard = Preference.PreferenceItem.CustomPreference(
+            title = stringResource(MR.strings.epigraph_core_status),
+        ) {
+            CoreStatusCard(
+                state = state,
+                syncStatus = syncStatus,
+                onSyncNow = { coroutineScope.launch { runCatching { syncMonitor.syncNow() } } },
+            )
+        }
+
+        val pairingItems = listOf(
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.epigraph_core_scan_qr),
+                subtitle = stringResource(MR.strings.epigraph_core_scan_qr_summary),
+                icon = Icons.Outlined.QrCodeScanner,
+                onClick = {
+                    scanner.launch(
+                        ScanOptions()
+                            .setCaptureActivity(PairingScanActivity::class.java)
+                            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            .setPrompt(scannerPrompt)
+                            .setBeepEnabled(false)
+                            .setBarcodeImageEnabled(false)
+                            .setOrientationLocked(false)
+                            // The pairing link makes a dense code; a slower, thorough decode
+                            // reads it off a monitor where the default pass gives up.
+                            .addExtra("TRY_HARDER", true)
+                            // Also read light-on-dark codes, as older desktop builds draw.
+                            .addExtra(Intents.Scan.SCAN_TYPE, Intents.Scan.MIXED_SCAN),
+                    )
+                },
             ),
-            Preference.PreferenceGroup(
-                title = stringResource(MR.strings.epigraph_core_sync_group),
-                preferenceItems = listOfNotNull(
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_sync_status_title),
-                        subtitle = syncStatus?.let { syncStatusText(it) }
-                            ?: stringResource(MR.strings.epigraph_core_loading),
-                    ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_sync_now),
-                        subtitle = stringResource(MR.strings.epigraph_core_sync_now_summary),
-                        // A disabled item collapses out of the list, so it must not follow the sync
-                        // status, or the list jumps on every status change.
-                        enabled = state is CorePairingUiState.Paired,
-                        onClick = { coroutineScope.launch { runCatching { syncMonitor.syncNow() } } },
-                    ),
-                    blockedMutations.takeIf { it.isNotEmpty() }?.let { blocked ->
-                        Preference.PreferenceItem.TextPreference(
-                            title = stringResource(MR.strings.epigraph_core_blocked_title),
-                            subtitle = stringResource(MR.strings.epigraph_core_blocked_summary, blocked.size),
-                            onClick = { showBlockedDialog = true },
-                        )
-                    },
-                    novelsWithoutChapters.takeIf { it.isNotEmpty() }?.let { titles ->
-                        Preference.PreferenceItem.TextPreference(
-                            title = stringResource(MR.strings.epigraph_core_novels_without_chapters_title),
-                            subtitle = stringResource(
-                                MR.strings.epigraph_core_novels_without_chapters_summary,
-                                titles.size,
-                                titles.take(3).joinToString(", ") + if (titles.size > 3) ", …" else "",
-                            ),
-                        )
-                    },
-                ).toPersistentList(),
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.epigraph_core_pin_pair),
+                subtitle = stringResource(MR.strings.epigraph_core_pin_pair_summary),
+                icon = Icons.Outlined.Dialpad,
+                onClick = {
+                    pinText = ""
+                    selectedHost = null
+                    addressText = ""
+                    showAddressField = false
+                    showPinDialog = true
+                    controller.discoverHosts()
+                },
+            ),
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.epigraph_core_paste_bundle),
+                subtitle = stringResource(MR.strings.epigraph_core_paste_bundle_summary),
+                icon = Icons.Outlined.ContentPaste,
+                onClick = { showPasteDialog = true },
             ),
         )
+
+        return buildList<Preference> {
+            add(statusCard)
+            if (paired != null) {
+                add(
+                    Preference.PreferenceGroup(
+                        title = stringResource(MR.strings.epigraph_core_sync_group),
+                        preferenceItems = listOfNotNull(
+                            Preference.PreferenceItem.TextPreference(
+                                title = stringResource(MR.strings.epigraph_core_sync_selection_title),
+                                subtitle = syncSelectionSummary(paired, persistedSelection),
+                                icon = Icons.Outlined.Tune,
+                                enabled = persistedSelection != null,
+                                onClick = { showSelectionEditor = true },
+                            ),
+                            Preference.PreferenceItem.TextPreference(
+                                title = stringResource(MR.strings.epigraph_core_setup_entry_title),
+                                subtitle = run {
+                                    val counts = coreDependencySetupCounts(comicRepositories, extensionState.report, novelInventory)
+                                    when {
+                                        counts.hasPending -> stringResource(
+                                            MR.strings.epigraph_core_setup_entry_summary,
+                                            counts.repositoriesToAdd,
+                                            counts.extensionsToInstall,
+                                        )
+                                        extensionState.report != null || novelInventory != null ->
+                                            stringResource(MR.strings.epigraph_core_setup_entry_synced)
+                                        else -> stringResource(MR.strings.epigraph_core_extensions_no_inventory)
+                                    }
+                                },
+                                icon = Icons.Outlined.Extension,
+                                // Shown as soon as paired; the desktop lists load later and only change the summary.
+                                onClick = openSetup,
+                            ),
+                            blockedMutations.takeIf { it.isNotEmpty() }?.let { blocked ->
+                                Preference.PreferenceItem.TextPreference(
+                                    title = stringResource(MR.strings.epigraph_core_blocked_title),
+                                    subtitle = stringResource(MR.strings.epigraph_core_blocked_summary, blocked.size),
+                                    icon = Icons.Outlined.SyncProblem,
+                                    onClick = { showBlockedDialog = true },
+                                )
+                            },
+                            novelsWithoutChapters.takeIf { it.isNotEmpty() }?.let { titles ->
+                                Preference.PreferenceItem.TextPreference(
+                                    title = stringResource(MR.strings.epigraph_core_novels_without_chapters_title),
+                                    subtitle = stringResource(
+                                        MR.strings.epigraph_core_novels_without_chapters_summary,
+                                        titles.size,
+                                        titles.take(3).joinToString(", ") + if (titles.size > 3) ", …" else "",
+                                    ),
+                                    icon = Icons.Outlined.AutoStories,
+                                    // The summary points to the dependency setup, so the item opens it.
+                                    onClick = openSetup,
+                                )
+                            },
+                        ).toPersistentList(),
+                    ),
+                )
+            }
+            // Pairing options wait until the saved connection is read, so they never move under the
+            // finger, and step aside while a pairing runs.
+            if (state !is CorePairingUiState.Loading && !busy) {
+                add(
+                    Preference.PreferenceGroup(
+                        title = stringResource(
+                            if (paired != null) MR.strings.epigraph_core_connection_group else MR.strings.epigraph_core_pair_group,
+                        ),
+                        preferenceItems = if (paired == null) {
+                            pairingItems.toPersistentList()
+                        } else {
+                            (
+                                pairingItems + Preference.PreferenceItem.CustomPreference(
+                                    title = stringResource(MR.strings.epigraph_core_disconnect),
+                                ) { item ->
+                                    TextPreferenceWidget(
+                                        title = item.title,
+                                        subtitle = stringResource(MR.strings.epigraph_core_disconnect_summary),
+                                        icon = Icons.Outlined.LinkOff,
+                                        iconTint = MaterialTheme.colorScheme.error,
+                                        onPreferenceClick = { showDisconnectDialog = true },
+                                    )
+                                }
+                                ).toPersistentList()
+                        },
+                    ),
+                )
+            }
+        }
+    }
+
+    private enum class CoreTone { GOOD, NEUTRAL, PROBLEM }
+
+    /** Where the connection stands and how the last sync went, with the one action that matters most. */
+    @Composable
+    private fun CoreStatusCard(
+        state: CorePairingUiState,
+        syncStatus: CoreSyncStatus?,
+        onSyncNow: () -> Unit,
+    ) {
+        val paired = state as? CorePairingUiState.Paired
+        val syncTone = when (syncStatus) {
+            is CoreSyncStatus.Synced, CoreSyncStatus.Idle -> CoreTone.GOOD
+            is CoreSyncStatus.NeedsPairing,
+            is CoreSyncStatus.NeedsUserAction,
+            is CoreSyncStatus.Blocked,
+            -> CoreTone.PROBLEM
+            else -> CoreTone.NEUTRAL
+        }
+        val tone = when {
+            state is CorePairingUiState.CredentialFailed || state is CorePairingUiState.PairingFailed -> CoreTone.PROBLEM
+            paired == null -> CoreTone.NEUTRAL
+            syncTone == CoreTone.PROBLEM -> CoreTone.PROBLEM
+            else -> CoreTone.GOOD
+        }
+        val colors = MaterialTheme.colorScheme
+        val (badgeColor, badgeContentColor) = when (tone) {
+            CoreTone.GOOD -> colors.primaryContainer to colors.onPrimaryContainer
+            CoreTone.PROBLEM -> colors.errorContainer to colors.onErrorContainer
+            CoreTone.NEUTRAL -> colors.surfaceVariant to colors.onSurfaceVariant
+        }
+        val headline = when {
+            paired == null -> statusText(state)
+            paired.verifiedInThisProcess -> stringResource(MR.strings.epigraph_core_connected)
+            else -> stringResource(MR.strings.epigraph_core_connection_waiting)
+        }
+        val detail = when {
+            paired != null -> stringResource(MR.strings.epigraph_core_profile_origin, paired.profileId, paired.origin)
+            state is CorePairingUiState.Unpaired -> stringResource(MR.strings.epigraph_core_summary)
+            else -> null
+        }
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PrefsHorizontalPadding, vertical = 8.dp),
+            shape = MaterialTheme.shapes.large,
+            color = colors.surfaceContainerHigh,
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(badgeColor),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = if (tone == CoreTone.PROBLEM) Icons.Outlined.ErrorOutline else Icons.Outlined.Devices,
+                            contentDescription = null,
+                            tint = badgeContentColor,
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = headline,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (tone == CoreTone.PROBLEM) colors.error else colors.onSurface,
+                        )
+                        if (detail != null) {
+                            Text(
+                                text = detail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                if (state is CorePairingUiState.Pairing) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp),
+                    )
+                }
+                if (paired != null) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(12.dp), contentAlignment = Alignment.Center) {
+                            if (syncStatus is CoreSyncStatus.Syncing) {
+                                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            when (syncTone) {
+                                                CoreTone.GOOD -> colors.primary
+                                                CoreTone.PROBLEM -> colors.error
+                                                CoreTone.NEUTRAL -> colors.outline
+                                            },
+                                        ),
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = syncStatus?.let { syncStatusText(it) }
+                                ?: stringResource(MR.strings.epigraph_core_loading),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (syncTone == CoreTone.PROBLEM) colors.error else colors.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    FilledTonalButton(
+                        onClick = onSyncNow,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Sync,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(MR.strings.epigraph_core_sync_now))
+                    }
+                }
+            }
+        }
     }
 
     private fun blockedKindLabel(entityType: String): StringResource = when (entityType.substringBefore('.')) {
@@ -747,11 +933,17 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                 SyncDomain.BOOKS -> "books:global"
             }
         }
-        return if (requiredScopes.any { it !in paired.scopes }) {
-            stringResource(MR.strings.epigraph_core_sync_authorization_required)
-        } else {
-            stringResource(MR.strings.epigraph_core_sync_selection_summary)
+        if (requiredScopes.any { it !in paired.scopes }) {
+            return stringResource(MR.strings.epigraph_core_sync_authorization_required)
         }
+        // What this device syncs, in the order the editor lists it.
+        val domains = listOf(
+            SyncDomain.COMICS to MR.strings.epigraph_core_sync_comics,
+            SyncDomain.NOVELS to MR.strings.epigraph_core_sync_novels,
+            SyncDomain.BOOKS to MR.strings.epigraph_core_sync_books,
+        ).filter { (domain, _) -> domain in selected.enabledDomains }
+            .map { (_, label) -> stringResource(label) }
+        return domains.joinToString(" · ").ifEmpty { stringResource(MR.strings.epigraph_core_sync_selection_summary) }
     }
 
     @Composable

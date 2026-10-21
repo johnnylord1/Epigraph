@@ -1283,6 +1283,11 @@
     <string name="epigraph_core_extension_blocked">Não confiável ou bloqueada neste dispositivo</string>
     <string name="epigraph_core_extension_trust">Confiar</string>
     <string name="epigraph_core_setup_entry_title">Repositórios e extensões</string>
+    <string name="epigraph_core_connected">Conectado ao desktop</string>
+    <string name="epigraph_core_connection_waiting">Conexão salva, aguardando o Core</string>
+    <string name="epigraph_core_profile_origin">Perfil %1$s · %2$s</string>
+    <string name="epigraph_core_pair_group">Parear um desktop</string>
+    <string name="epigraph_core_connection_group">Conexão</string>
     <string name="epigraph_core_setup_entry_summary">%1$d para adicionar · %2$d para instalar</string>
     <string name="epigraph_core_setup_entry_synced">Igual ao desktop</string>
     <string name="epigraph_core_bridge_waiting_for">via Epigraph Core (aguardando %1$s)</string>

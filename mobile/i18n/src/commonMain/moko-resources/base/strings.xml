@@ -2405,6 +2405,11 @@
     <string name="epigraph_core_extension_blocked">Untrusted or blocked on this device</string>
     <string name="epigraph_core_extension_trust">Trust</string>
     <string name="epigraph_core_setup_entry_title">Repositories and extensions</string>
+    <string name="epigraph_core_connected">Connected to the desktop</string>
+    <string name="epigraph_core_connection_waiting">Connection saved, waiting for Core</string>
+    <string name="epigraph_core_profile_origin">Profile %1$s · %2$s</string>
+    <string name="epigraph_core_pair_group">Pair a desktop</string>
+    <string name="epigraph_core_connection_group">Connection</string>
     <string name="epigraph_core_setup_entry_summary">%1$d to add · %2$d to install</string>
     <string name="epigraph_core_setup_entry_synced">Same as the desktop</string>
     <string name="epigraph_core_bridge_waiting_for">via Epigraph Core (waiting for %1$s)</string>

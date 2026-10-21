@@ -98,7 +98,7 @@ class SettingsMainController : SettingsLegacyController(), FloatingSearchInterfa
             onClick { navigateTo(SettingsTrackingController()) }
         }
         preference {
-            iconRes = R.drawable.ic_sync_24dp
+            iconRes = R.drawable.ic_devices_24dp
             iconTint = tintColor
             titleRes = MR.strings.epigraph_core
             summaryRes = MR.strings.epigraph_core_summary
