@@ -262,6 +262,19 @@ export function syncdListPairedDevicesIfRunning(): Promise<SyncdPairedDeviceView
   return invoke("syncd_list_paired_devices_if_running");
 }
 
+/** Synced data this computer's Core has not applied to Suwayomi yet, as counts. */
+export interface SyncdSyncProgress {
+  pendingProjections: number;
+  pendingTrackerLogins: number;
+  /** Works already in the library still fetching their details and chapter list. */
+  pendingDetails: number;
+}
+
+/** Null when this computer's Core is not running (or is older); never starts it. */
+export function syncdGetSyncProgressIfRunning(): Promise<SyncdSyncProgress | null> {
+  return invoke("syncd_get_sync_progress_if_running");
+}
+
 export function syncdUpdatePairedDeviceGrantedScopes(
   deviceId: string,
   profileId: string,

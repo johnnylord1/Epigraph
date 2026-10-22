@@ -80,6 +80,23 @@ class TrackerCredentialSyncerTest {
     }
 
     @Test
+    fun `agreed login is offered again to a core that lost it`() = runTest {
+        source.logins[MAL] = TrackerSecret("reader", "", "mal-token")
+        core.values["anilist"] = CoreTrackerCredential("anilist", revision = 2, token = "remote")
+        syncer.synchronize(core)
+        // The desktop was reset: its Core starts over with no record of either login.
+        core.values.clear()
+        core.calls.clear()
+
+        assertEquals(TrackerCredentialSyncReport(pushed = 2), syncer.synchronize(core))
+        assertEquals(listOf("list", "put:myanimelist@0", "put:anilist@0"), core.calls)
+        assertEquals("remote", core.values.getValue("anilist").token)
+        assertEquals("mal-token", core.values.getValue("myanimelist").token)
+        assertEquals(1L, vault.read().getValue("myanimelist").revision)
+        assertEquals("remote", source.logins.getValue(ANILIST).token)
+    }
+
+    @Test
     fun `core tombstone logs the tracker out`() = runTest {
         core.values["anilist"] = CoreTrackerCredential("anilist", revision = 1, token = "remote")
         syncer.synchronize(core)

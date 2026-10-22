@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick, type Component } from "svelte";
-  import { ArrowLeft, ArrowRight, ArrowsClockwise, BookOpenText, Books, CaretRight, Check, Desktop, DeviceMobile, Laptop, WifiHigh, WarningCircle, X } from "phosphor-svelte";
+  import { ArrowLeft, ArrowRight, ArrowsClockwise, BookOpenText, Books, CaretRight, Check, Desktop, DeviceMobile, Key, Laptop, WifiHigh, WarningCircle, X } from "phosphor-svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { arrive, enterElements, findByData, motionFade, motionFly, pulse, prefersReducedMotion, spring } from "../../lib/motion/firstRunMotion";
   import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadiness";
@@ -9,6 +9,7 @@
     listenSyncdReplicationState,
     syncdConnectWithBootstrap,
     syncdGetReplicationState,
+    syncdGetSyncProgressIfRunning,
     syncdListDiscoveryCandidates,
     syncdListPairedDevicesIfRunning,
     syncdResolvePairingPin,
@@ -17,6 +18,7 @@
     type SyncdHostPairingState,
     type SyncdReplicationScopeCheckpoint,
     type SyncdReplicationSnapshot,
+    type SyncdSyncProgress,
   } from "../../lib/syncdDesktop";
   import { pairingVerificationCode } from "../../lib/syncPairingVerification";
   import FirstRunTitle from "./FirstRunTitle.svelte";
@@ -35,6 +37,7 @@
   type Stage = "scan" | "code" | "approval" | "syncing" | "done" | "rejected";
   const PIN_LENGTH = 6;
   const SCAN_INTERVAL_MS = 4000;
+  const PROGRESS_INTERVAL_MS = 2000;
 
   let stage = $state<Stage>("scan");
   let candidates = $state<SyncdDesktopDiscoveryCandidate[]>([]);
@@ -47,6 +50,10 @@
   let snapshot = $state<SyncdReplicationSnapshot | null>(null);
   let libraryError = $state(false);
   let libraryRetry = $state(0);
+  let libraryRead = $state(false);
+  /* What Core still has to put into Suwayomi; null when Core is not running or too old to say. */
+  let progress = $state<SyncdSyncProgress | null>(null);
+  let progressChecked = $state(false);
   let ready = $state(false);
   let slotsElement = $state<HTMLDivElement>();
   let bodyElement = $state<HTMLDivElement>();
@@ -69,15 +76,28 @@
   const verification = $derived(connectState ? pairingVerificationCode(connectState.tlsCertSha256) : "");
   /* Live replication has replayed every scope, so one that never got a checkpoint had nothing to
      bring. A computer that hosted the pairing reads its library back instead and has no checkpoints. */
-  function scopeState(checkpoint: SyncdReplicationScopeCheckpoint | null | undefined): "ready" | "empty" | "syncing" {
+  type ScopeState = "ready" | "empty" | "syncing" | "importing" | "background";
+  function scopeState(checkpoint: SyncdReplicationScopeCheckpoint | null | undefined): ScopeState {
     if (checkpoint) return "ready";
-    if (!ready) return "syncing";
+    if (!libraryRead) return "syncing";
     return hostPeer ? "ready" : "empty";
   }
+  /* Synced comics become Suwayomi works through Core's import, and synced tracker logins are
+     signed in there too; the step is ready once both are applied. Details and chapter lists of
+     imported works keep arriving from their sources afterwards, without holding the step. */
+  const applied = $derived(progressChecked && (!progress || (progress.pendingProjections === 0 && progress.pendingTrackerLogins === 0)));
+  function comicsState(): ScopeState {
+    const base = scopeState(snapshot?.comicsScopeCheckpoint);
+    if (base === "syncing") return base;
+    if (!ready && (progress?.pendingProjections ?? 0) > 0) return "importing";
+    if (ready && (progress?.pendingDetails ?? 0) > 0) return "background";
+    return base;
+  }
   const scopes = $derived([
-    { id: "comics", icon: Books, label: $_("firstRun.sync.scopeComics"), state: scopeState(snapshot?.comicsScopeCheckpoint) },
+    { id: "comics", icon: Books, label: $_("firstRun.sync.scopeComics"), state: comicsState() },
     { id: "books", icon: BookOpenText, label: $_("firstRun.sync.scopeBooks"), state: scopeState(snapshot?.booksScopeCheckpoint) },
     { id: "novels", icon: BookOpenText, label: $_("firstRun.sync.scopeNovels"), state: scopeState(snapshot?.novelsScopeCheckpoint) },
+    { id: "trackers", icon: Key, label: $_("firstRun.sync.scopeTrackers"), state: (libraryRead && progressChecked && (progress?.pendingTrackerLogins ?? 0) === 0 ? "ready" : "syncing") as ScopeState },
   ]);
   const readinessKey = $derived(firstRunSyncReadinessKey(profileId, snapshot));
 
@@ -193,9 +213,7 @@
     let current = true;
     libraryError = false;
     void refreshFirstRunSyncLibrary(profileId, () => current).then(() => {
-      if (!current) return;
-      ready = true;
-      stage = "done";
+      if (current) libraryRead = true;
     }).catch((error) => {
       console.warn("First-run sync could not read the synced library.", error);
       if (current) libraryError = true;
@@ -211,14 +229,41 @@
     let current = true;
     libraryError = false;
     void refreshFirstRunSyncLibrary(profileId, () => current).then(() => {
-      if (!current) return;
-      ready = true;
-      stage = "done";
+      if (current) libraryRead = true;
     }).catch((error) => {
       console.warn("First-run sync could not read the synced library.", error);
-      if (current && !ready) libraryError = true;
+      if (current && !libraryRead) libraryError = true;
     });
     return () => { current = false; };
+  });
+
+  /* While syncing, and afterwards until imported works are complete, Core reports what it has
+     still to apply. */
+  $effect(() => {
+    if (stage !== "syncing" && stage !== "done") return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await syncdGetSyncProgressIfRunning();
+        if (cancelled) return;
+        progress = next;
+      } catch (error) {
+        if (cancelled) return;
+        console.warn("First-run sync could not read sync progress.", error);
+      }
+      progressChecked = true;
+      if (ready && (progress?.pendingDetails ?? 0) === 0) return;
+      timer = setTimeout(poll, PROGRESS_INTERVAL_MS);
+    };
+    void poll();
+    return () => { cancelled = true; clearTimeout(timer); };
+  });
+
+  $effect(() => {
+    if (ready || !libraryRead || !applied) return;
+    ready = true;
+    stage = "done";
   });
 
   $effect(() => {
@@ -430,10 +475,10 @@
         <p class="help">{stage === "done" ? $_("firstRun.sync.doneHelp") : $_("firstRun.sync.syncingHelp")}</p>
         <div class="scopes">
           {#each scopes as scope (scope.id)}
-            <div class="fr-row scope" class:is-done={scope.state !== "syncing"} data-scope={scope.id} data-state={scope.state}>
+            <div class="fr-row scope" class:is-done={scope.state === "ready" || scope.state === "empty"} data-scope={scope.id} data-state={scope.state}>
               <span class="fr-mark"><scope.icon size={18} /></span>
               <span class="fr-row-copy"><strong>{scope.label}</strong></span>
-              <span class="scope-state">{#if scope.state === "ready"}<Check size={15} weight="bold" />{$_("firstRun.sync.scopeReady")}{:else if scope.state === "empty"}{$_("firstRun.sync.scopeEmpty")}{:else}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeSyncing")}{/if}</span>
+              <span class="scope-state">{#if scope.state === "ready"}<Check size={15} weight="bold" />{$_("firstRun.sync.scopeReady")}{:else if scope.state === "empty"}{$_("firstRun.sync.scopeEmpty")}{:else if scope.state === "importing"}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeImporting")}{:else if scope.state === "background"}<Check size={15} weight="bold" />{$_("firstRun.sync.scopeBackground")}{:else}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeSyncing")}{/if}</span>
             </div>
           {/each}
         </div>

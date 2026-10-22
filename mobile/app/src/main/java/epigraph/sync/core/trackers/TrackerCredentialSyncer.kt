@@ -106,8 +106,11 @@ class TrackerCredentialSyncer(
         for (syncId in source.syncIds.sorted()) {
             val trackerKey = TrackerSyncKeys.keyFor(syncId) ?: continue
             val local = source.read(syncId)
-            val known = agreed[trackerKey]
             val core = remote[trackerKey]
+            // The Core keeps a tombstone for every login it deleted, so an agreement it has no
+            // record of at all was lost there (a reset or reinstalled desktop): offer the login again.
+            val known = agreed[trackerKey]?.takeIf { core != null }
+            if (core == null) next.remove(trackerKey)
             val localChanged = if (known == null) local != null else local != known.secret
             val coreChanged = core != null && core.revision != known?.revision
 

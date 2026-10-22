@@ -5,6 +5,7 @@ mod discord_rpc;
 mod compat;
 mod migration_journal;
 mod offline_chapter;
+mod renderer_recovery;
 mod suwayomi_lan;
 mod suwayomi_maintenance;
 mod restore_commands;
@@ -7582,6 +7583,7 @@ pub fn run() {
             syncd_desktop::syncd_host_decide_pairing,
             syncd_desktop::syncd_list_paired_devices,
             syncd_desktop::syncd_list_paired_devices_if_running,
+            syncd_desktop::syncd_get_sync_progress_if_running,
             syncd_desktop::syncd_request_progress_mirror,
             syncd_desktop::syncd_publish_tracker_login,
             syncd_desktop::syncd_publish_tracker_logout,
@@ -7697,6 +7699,7 @@ pub fn run() {
             // while legacy data is copied in the background.
             tauri::async_runtime::spawn_blocking(compat::migrate_legacy_storage);
             configure_webdriver_window(app.handle());
+            renderer_recovery::install(app.handle());
             cloudflare_solver::start(app.handle());
             session_control::install(app.handle())
                 .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;

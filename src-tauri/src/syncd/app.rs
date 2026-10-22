@@ -106,6 +106,7 @@ pub async fn run() -> anyhow::Result<()> {
     let (shutdown, shutdown_receiver) = ShutdownCoordinator::channel();
     spawn_gc_task(state.clone(), shutdown.subscribe());
     super::suwayomi_projection::spawn_projection_task(state.clone(), shutdown.subscribe());
+    super::suwayomi_hydration::spawn_hydration_task(state.clone(), shutdown.subscribe());
     super::suwayomi_progress_mirror::spawn_progress_mirror_task(
         state.clone(),
         shutdown.subscribe(),
@@ -282,6 +283,10 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         .route(
             "/v1/local/progress-mirror",
             post(local::post_local_progress_mirror),
+        )
+        .route(
+            "/v1/local/sync-progress",
+            get(local::get_local_sync_progress),
         )
         .route(
             "/v1/local/tracker-credentials/:tracker_key",

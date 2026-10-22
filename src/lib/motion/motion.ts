@@ -612,24 +612,44 @@ function forwardClicksDuring(transition: ViewTransition) {
   transition.finished.then(stop, stop);
 }
 
-/** Applies a theme change as a circle that grows from the pointer; falls back to an instant swap. */
+const THEME_REVEAL_MS = 900;
+let themeReveal: { transition: ViewTransition; apply: () => void | Promise<void> } | null = null;
+let themeRevealStartedAt = -Infinity;
+
+/**
+ * Applies a theme change as a circle that grows from the pointer; falls back to an instant swap.
+ * Choices made within a reveal of the last one swap at once: view transitions started at click
+ * speed pile up, and a burst of them crashed the WebView2 renderer.
+ */
 export function revealThemeChange(apply: () => void | Promise<void>, origin?: { x: number; y: number }) {
   const doc = document as ViewTransitionDocument;
-  if (!doc.startViewTransition || prefersReducedMotion() || !origin) {
+  const revealing = performance.now() - themeRevealStartedAt < THEME_REVEAL_MS;
+  if (!doc.startViewTransition || prefersReducedMotion() || !origin || revealing) {
+    // A skipped reveal still runs its update; it must not put the older choice back afterwards.
+    if (themeReveal) {
+      themeReveal.apply = () => {};
+      themeReveal.transition.skipTransition();
+    }
     void apply();
     return;
   }
   try {
-    const transition = doc.startViewTransition(() => apply());
-    forwardClicksDuring(transition);
+    const reveal = { transition: null as unknown as ViewTransition, apply };
+    reveal.transition = doc.startViewTransition(() => reveal.apply());
+    themeReveal = reveal;
+    themeRevealStartedAt = performance.now();
+    const clear = () => { if (themeReveal === reveal) themeReveal = null; };
+    reveal.transition.finished.then(clear, clear);
+    forwardClicksDuring(reveal.transition);
     const radius = Math.hypot(Math.max(origin.x, innerWidth - origin.x), Math.max(origin.y, innerHeight - origin.y));
-    transition.ready.then(() => {
+    reveal.transition.ready.then(() => {
       document.documentElement.animate(
         { clipPath: [`circle(0 at ${origin.x}px ${origin.y}px)`, `circle(${radius}px at ${origin.x}px ${origin.y}px)`] },
-        { duration: 900, easing: OUT_EASING, pseudoElement: "::view-transition-new(root)" },
+        { duration: THEME_REVEAL_MS, easing: OUT_EASING, pseudoElement: "::view-transition-new(root)" },
       );
     }).catch(() => {});
   } catch {
+    themeReveal = null;
     void apply();
   }
 }

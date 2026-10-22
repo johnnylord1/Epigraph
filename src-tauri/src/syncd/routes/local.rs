@@ -8,7 +8,10 @@ use serde::Deserialize;
 
 use crate::syncd::models::{AppError, PairingTokenResponse, SharedAppState};
 use crate::syncd::tracker_credentials::{self, DESKTOP_DEVICE_ID};
-use crate::syncd::{db, myanimelist_oauth, suwayomi_progress_mirror, suwayomi_tracking_mirror};
+use crate::syncd::{
+    db, myanimelist_oauth, suwayomi_hydration, suwayomi_progress_mirror, suwayomi_projection,
+    suwayomi_tracking_mirror,
+};
 
 /// Upper bound for ids accepted by one progress-mirror request.
 const MAX_PROGRESS_MIRROR_IDS: usize = 1_024;
@@ -293,6 +296,40 @@ pub async fn post_local_myanimelist_login_complete(
             "Local tracker login could not be stored.".to_string(),
         )),
     }
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSyncProgress {
+    pub pending_projections: i64,
+    pub pending_tracker_logins: usize,
+    /// Synced works still waiting for their details and chapter list from the source. They are in
+    /// the library already, so the first run does not wait for them.
+    pub pending_details: i64,
+}
+
+/// What synced data this desktop has not applied yet, as counts only, so the first run can wait
+/// until the synced library and tracker logins are in Suwayomi.
+pub async fn get_local_sync_progress(
+    State(state): State<SharedAppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+) -> Result<Json<LocalSyncProgress>, AppError> {
+    if !remote_addr.ip().is_loopback() {
+        return Err(AppError::Forbidden(
+            "Local sync progress is only available from loopback.".to_string(),
+        ));
+    }
+    let pending_projections = suwayomi_projection::pending_projection_count(&state)
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "could not count pending Suwayomi projections");
+            AppError::Internal("Sync progress is unavailable.".to_string())
+        })?;
+    Ok(Json(LocalSyncProgress {
+        pending_projections,
+        pending_tracker_logins: suwayomi_tracking_mirror::pending_login_count(&state).await,
+        pending_details: suwayomi_hydration::pending_count(),
+    }))
 }
 
 fn local_vault_error(error: anyhow::Error) -> AppError {

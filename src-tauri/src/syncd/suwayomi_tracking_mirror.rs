@@ -300,6 +300,19 @@ pub fn credential_action(credential: &StoredTrackerCredential) -> CredentialActi
     }
 }
 
+/// Stored logins of Suwayomi trackers this desktop has not applied yet.
+pub async fn pending_login_count(state: &SharedAppState) -> usize {
+    pending_desktop_credentials(state)
+        .await
+        .iter()
+        .filter(|credential| {
+            SUWAYOMI_TRACKERS
+                .iter()
+                .any(|(key, _, _)| *key == credential.tracker_key)
+        })
+        .count()
+}
+
 async fn pending_desktop_credentials(state: &SharedAppState) -> Vec<StoredTrackerCredential> {
     if !tracker_credentials::is_supported() {
         return Vec::new();

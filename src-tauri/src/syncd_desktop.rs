@@ -859,6 +859,40 @@ async fn fetch_paired_devices(local_base_url: &str) -> Result<Vec<SyncdPairedDev
     parse_json_response(response).await
 }
 
+/// Synced data this computer's Core has not applied to Suwayomi yet, as counts.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdSyncProgress {
+    pub pending_projections: i64,
+    pub pending_tracker_logins: i64,
+    /// Works in the library still waiting for details and chapters; absent from older Cores.
+    #[serde(default)]
+    pub pending_details: i64,
+}
+
+/// What the running Core still has to apply from paired devices (works, progress, categories and
+/// tracker logins). `None` when no Core runtime is attached or it is older; never starts Core.
+#[tauri::command]
+pub async fn syncd_get_sync_progress_if_running(
+    app: AppHandle,
+) -> Result<Option<SyncdSyncProgress>, String> {
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(None);
+    };
+    let client = insecure_local_client()?;
+    let response = client
+        .get(format!("{}/v1/local/sync-progress", runtime.local_base_url))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(transport_error_message)?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = response.error_for_status().map_err(|error| error.to_string())?;
+    parse_json_response(response).await.map(Some)
+}
+
 /// Asks the running Core to mirror Suwayomi reading progress now, after the desktop changed
 /// chapter read, page or bookmark state. Returns `false` when no Core runtime is attached; the
 /// periodic mirror tick stays the fallback either way. Never starts Core.

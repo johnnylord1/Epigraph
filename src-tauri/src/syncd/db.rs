@@ -7086,6 +7086,69 @@ async fn enqueue_comic_projections_in_tx(
     Ok(())
 }
 
+/// Queues the stored progress of a work's chapters again, exactly as it was queued when it
+/// arrived. For chapters Suwayomi replaced after the progress was applied to them (a source that
+/// now lists them under another host): the projection finds the chapters that took their place.
+/// Returns how many records were queued.
+pub async fn reproject_comic_chapter_states(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    work: &PortableWorkRefV3,
+    chapter_keys: &std::collections::BTreeSet<String>,
+) -> anyhow::Result<usize> {
+    let PortableWorkRefV3::Comic { manga_key, .. } = work else {
+        return Ok(0);
+    };
+    if chapter_keys.is_empty() {
+        return Ok(0);
+    }
+    let scope_id = format!("comics:profile:{profile_id}");
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        r#"
+        SELECT entity_id, record_json, record_server_version FROM comic_sync_state
+        WHERE scope_id = ? AND entity_type = 'comic.chapter_state' AND instr(record_json, ?) > 0
+        "#,
+    )
+    .bind(&scope_id)
+    .bind(serde_json::to_string(manga_key)?)
+    .fetch_all(pool)
+    .await
+    .context("failed to load stored chapter progress to project again")?;
+    let now = now_ms();
+    let mut tx = pool.begin().await?;
+    let mut queued = 0;
+    for (entity_id, record_json, server_version) in rows {
+        let Ok(record) = serde_json::from_str::<Value>(&record_json) else {
+            continue;
+        };
+        let matches = record
+            .get("portableChapterRef")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<PortableChapterRefV3>(value).ok())
+            .is_some_and(|chapter| {
+                matches!(&chapter, PortableChapterRefV3::Comic { work: chapter_work, chapter_key }
+                    if chapter_work == work && chapter_keys.contains(chapter_key))
+            });
+        if !matches {
+            continue;
+        }
+        enqueue_comic_state_projection_in_tx(
+            &mut tx,
+            &scope_id,
+            "comic.chapter_state",
+            &entity_id,
+            &record,
+            false,
+            server_version,
+            now,
+        )
+        .await?;
+        queued += 1;
+    }
+    tx.commit().await?;
+    Ok(queued)
+}
+
 pub async fn apply_comic_history_mutation(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,

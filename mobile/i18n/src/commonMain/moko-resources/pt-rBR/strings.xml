@@ -1295,6 +1295,8 @@
     <string name="epigraph_core_novels_without_chapters_summary">%1$d novels sincronizadas ainda não têm capítulos neste aparelho: %2$s. Aprove os plugins e repositórios LNReader delas na configuração de dependências e sincronize de novo.</string>
     <string name="epigraph_core_setup_repositories">Repositórios</string>
     <string name="epigraph_core_setup_extensions">Extensões</string>
+    <string name="epigraph_core_setup_repositories_hint">As obras sincronizadas do desktop vêm destes repositórios; adicione os que faltam para abri-las neste celular.</string>
+    <string name="epigraph_core_setup_extensions_hint">Instale as extensões que as obras sincronizadas usam para abri-las neste celular.</string>
     <string name="epigraph_core_setup_add">Adicionar</string>
     <string name="epigraph_core_setup_add_all">Adicionar todos</string>
     <string name="epigraph_core_setup_next">Próximo</string>

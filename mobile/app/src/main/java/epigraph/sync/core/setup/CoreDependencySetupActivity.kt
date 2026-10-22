@@ -339,10 +339,28 @@ private fun CoreDependencySetupContent(
             awaitingSync = false
             launchAction {
                 coordinator.refreshFromStore()
-                if (effectiveServerId != null && effectiveProfileId != null) {
-                    novelInventory = novelCoordinator.inventory(effectiveServerId, effectiveProfileId)
+                val refreshed = coordinator.state.value.report
+                val rows = refreshed?.let { coordinator.desktopRepositories(it) }.orEmpty()
+                comicRows = rows
+                val inventory = if (effectiveServerId != null && effectiveProfileId != null) {
+                    novelCoordinator.inventory(effectiveServerId, effectiveProfileId)
+                } else {
+                    novelInventory
                 }
+                novelInventory = inventory
                 worksRefresh += 1
+                // Pages with nothing to add or install are skipped instead of paged through.
+                val repositoriesMissing = rows.any { !it.added } ||
+                    inventory?.repositories.orEmpty().any {
+                        it.status == LnReaderRepositoryParityStatus.APPROVAL_REQUIRED
+                    }
+                val extensionsMissing = refreshed?.items.orEmpty().any { it.status in COMIC_ACTIONABLE_STATUSES } ||
+                    inventory?.plugins.orEmpty().any { it.status in NOVEL_INSTALLABLE_STATUSES }
+                when {
+                    repositoriesMissing -> Unit
+                    extensionsMissing -> step = STEP_EXTENSIONS
+                    else -> onClose()
+                }
             }
         }
     }
@@ -445,6 +463,21 @@ private fun CoreDependencySetupContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
+
+            if (step >= STEP_REPOSITORIES && !awaitingSync && (report != null || novelInventory != null)) {
+                Text(
+                    stringResource(
+                        if (step == STEP_REPOSITORIES) {
+                            MR.strings.epigraph_core_setup_repositories_hint
+                        } else {
+                            MR.strings.epigraph_core_setup_extensions_hint
+                        },
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                 )
             }
 

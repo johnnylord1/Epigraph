@@ -2417,6 +2417,8 @@
     <string name="epigraph_core_novels_without_chapters_summary">%1$d synced novels have no chapters on this device yet: %2$s. Approve their LNReader plugins and repositories in the dependency setup, then sync again.</string>
     <string name="epigraph_core_setup_repositories">Repositories</string>
     <string name="epigraph_core_setup_extensions">Extensions</string>
+    <string name="epigraph_core_setup_repositories_hint">The works synced from the desktop come from these repositories; add the missing ones so this phone can open them.</string>
+    <string name="epigraph_core_setup_extensions_hint">Install the extensions the synced works use so they open on this phone.</string>
     <string name="epigraph_core_setup_add">Add</string>
     <string name="epigraph_core_setup_add_all">Add all</string>
     <string name="epigraph_core_setup_next">Next</string>

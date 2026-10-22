@@ -9,6 +9,7 @@ const sync = vi.hoisted(() => ({
   replication: vi.fn(),
   refresh: vi.fn(),
   paired: vi.fn(),
+  progress: vi.fn(),
   pairingListener: null as null | ((payload: unknown) => void),
   replicationListener: null as null | ((payload: unknown) => void),
 }));
@@ -19,6 +20,7 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdConnectWithBootstrap: sync.connect,
   syncdGetReplicationState: sync.replication,
   syncdListPairedDevicesIfRunning: sync.paired,
+  syncdGetSyncProgressIfRunning: sync.progress,
   listenSyncdPairingStatus: vi.fn(async (handler: (payload: unknown) => void) => { sync.pairingListener = handler; return () => {}; }),
   listenSyncdReplicationState: vi.fn(async (handler: (payload: unknown) => void) => { sync.replicationListener = handler; return () => {}; }),
 }));
@@ -78,6 +80,7 @@ beforeEach(() => {
   sync.connect.mockResolvedValue(connectState("pending"));
   sync.refresh.mockResolvedValue(undefined);
   sync.paired.mockResolvedValue([]);
+  sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0 });
 });
 
 afterEach(cleanup);
@@ -173,6 +176,48 @@ describe("FirstRunSyncStep", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("waits until synced comics are imported and tracker logins are signed in", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      sync.progress.mockResolvedValue({ pendingProjections: 12, pendingTrackerLogins: 2, pendingDetails: 0 });
+      sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);
+      render(FirstRunSyncStep, { props: { profileId: "main" } });
+
+      await waitFor(() => expect(screen.getByText("Importing")).toBeTruthy());
+      expect(document.querySelector('[data-scope="trackers"]')?.getAttribute("data-state")).toBe("syncing");
+      expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+
+      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 1, pendingDetails: 0 });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+
+      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0 });
+      await vi.advanceTimersByTimeAsync(2000);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
+      expect(document.querySelector('[data-scope="trackers"]')?.getAttribute("data-state")).toBe("ready");
+      expect(screen.getByText("Library synced")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not hold the step for details and chapters still arriving from sources", async () => {
+    sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 40 });
+    sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);
+    render(FirstRunSyncStep, { props: { profileId: "main" } });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
+    expect(await screen.findByText("Finishing in background")).toBeTruthy();
+  });
+
+  it("does not wait on a Core that cannot report its progress", async () => {
+    sync.progress.mockResolvedValue(null);
+    sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);
+    render(FirstRunSyncStep, { props: { profileId: "main" } });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
   });
 
   it("keeps the user on the code with a clear message when the PIN does not match", async () => {

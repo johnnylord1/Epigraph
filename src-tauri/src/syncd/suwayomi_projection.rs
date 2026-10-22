@@ -13,6 +13,7 @@ use super::models::{
     SharedAppState,
 };
 use super::routes::suwayomi_commands::{self, CommandOperation};
+use super::routes::suwayomi_import;
 use super::routes::suwayomi_proxy;
 use super::{db, routes::suwayomi_catalog};
 
@@ -55,6 +56,9 @@ const RECOVERABLE_BLOCKED_CODES: [&str; 3] = [
 /// A device added a work Suwayomi could not find, for example because its extension is not
 /// installed here. Blocked after a few attempts so it stops counting as pending.
 const PORTABLE_WORK_NOT_FOUND: &str = "portable_work_not_found";
+/// Rows waiting on their own work or chapter to appear here. They concern no other work, so they
+/// do not hold later rows of the profile: one comic whose source is down must not stall the rest.
+const UNBOUND_WORK_CODES: [&str; 2] = ["portable_work_not_bound", "portable_chapter_not_resolved"];
 const PORTABLE_CHAPTER_PAGE_SIZE: i64 = 250;
 const MAX_PORTABLE_CHAPTER_PAGES: usize = 80;
 const CATEGORY_ASSIGNMENT_PAGE_SIZE: i64 = 100;
@@ -131,6 +135,7 @@ pub fn spawn_projection_task(
         let runtime_root = crate::suwayomi_maintenance::default_runtime_root();
         let mut maintenance = MaintenanceWatch::default();
         let mut runtime_return = RuntimeReturnWatch::default();
+        let mut import = ImportWatch::default();
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
@@ -155,6 +160,14 @@ pub fn spawn_projection_task(
                         runtime_return.retain(&[]);
                     } else {
                         rearm_returned_runtimes(&state, &mut runtime_return).await;
+                        // Works first: their categories and progress need them to be here.
+                        match import_unseen_comics(&state, &mut import).await {
+                            Ok(ImportPass::Idle) => {}
+                            Ok(ImportPass::Busy) => continue,
+                            Err(error) => {
+                                tracing::warn!(error = %error, "failed to import synced works into Suwayomi")
+                            }
+                        }
                     }
                     if let Err(error) = drain_ready(&state).await {
                         tracing::warn!(error = %error, "failed to drain canonical Suwayomi projections");
@@ -264,7 +277,6 @@ impl MaintenanceWatch {
     }
 }
 
-#[allow(dead_code)]
 pub async fn pending_projection_count(state: &SharedAppState) -> anyhow::Result<i64> {
     sqlx::query_scalar(
         "SELECT COUNT(*) FROM suwayomi_projection_outbox WHERE status IN ('pending', 'in_flight', 'retry', 'blocked')",
@@ -341,8 +353,11 @@ fn retry_delay_ms(code: &str, attempt_count: i64) -> i64 {
 
 async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionRow>> {
     let _writer_guard = state.mutation_gate.lock().await;
-    let now = super::db::now_ms();
-    let mut tx = state.pool.begin().await?;
+    claim_next_at(&state.pool, super::db::now_ms()).await
+}
+
+async fn claim_next_at(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Option<ProjectionRow>> {
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         UPDATE suwayomi_projection_outbox
@@ -367,6 +382,7 @@ async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionR
               AND earlier.source_server_version < candidate.source_server_version
               AND earlier.status = 'retry'
               AND earlier.attempt_count < ?
+              AND COALESCE(earlier.last_error, '') NOT IN (?, ?)
           )
         ORDER BY source_server_version ASC
         LIMIT 1
@@ -374,6 +390,8 @@ async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionR
     )
     .bind(now)
     .bind(ORDERED_RETRY_ATTEMPTS)
+    .bind(UNBOUND_WORK_CODES[0])
+    .bind(UNBOUND_WORK_CODES[1])
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(row) = &row {
@@ -669,16 +687,9 @@ async fn bind_unseen_comic(
         ));
     };
     let session = projection_session(&row.profile_id);
-    let data = suwayomi_catalog::execute_graphql_document(
-        state,
-        &session,
-        PORTABLE_COMIC_LOOKUP_QUERY,
-        json!({ "sourceId": source_id, "url": manga_key }),
-        false,
-    )
-    .await
-    .map_err(|_| ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE))?;
-    let mut manga_id = exact_comic_match(data.pointer("/mangas/nodes"), manga_key);
+    let mut manga_id = lookup_local_comic(state, &session, work)
+        .await
+        .map_err(|()| ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE))?;
     if let (None, Some(title)) = (manga_id, title_hint) {
         // An extension that is missing or failing here answers with an error; that is retried
         // like a work that was not found.
@@ -731,6 +742,317 @@ fn exact_comic_match(nodes: Option<&Value>, manga_key: &str) -> Option<i64> {
         .filter(|node| node.get("url").and_then(Value::as_str) == Some(manga_key))
         .filter_map(|node| node.get("id").and_then(Value::as_i64))
         .find(|id| *id > 0 && *id <= i32::MAX as i64)
+}
+
+/// Remembers which unseen works an import pass already tried, so a work Suwayomi still does not
+/// list afterwards falls back to the per-row path instead of being restored every tick.
+#[derive(Default)]
+struct ImportWatch {
+    attempted: BTreeSet<String>,
+    failures: u32,
+}
+
+impl ImportWatch {
+    fn key(profile_id: &str, portable_work_id: &str) -> String {
+        format!("{profile_id}\0{portable_work_id}")
+    }
+}
+
+enum ImportPass {
+    /// Nothing left to bring in; the queue drains normally.
+    Idle,
+    /// A batch was handled; the next tick looks for more before draining.
+    Busy,
+}
+
+/// A work some device keeps in its library, with what the outbox holds about it.
+#[derive(Debug)]
+struct UnseenWork {
+    profile_id: String,
+    portable_work_id: String,
+    work: PortableWorkRefV3,
+    title_hint: Option<String>,
+    in_library: bool,
+    operation_ids: Vec<String>,
+    /// Chapter key → the newest progress the outbox carries for it.
+    chapters: std::collections::BTreeMap<String, Value>,
+}
+
+/// Groups outbox rows that name a portable comic by profile and work, oldest first.
+fn collect_portable_works(rows: &[(String, String, String, String)]) -> Vec<UnseenWork> {
+    let mut works: Vec<UnseenWork> = Vec::new();
+    let mut indexes = std::collections::HashMap::new();
+    for (operation_id, profile_id, operation_name, variables_json) in rows {
+        let Ok(variables) = serde_json::from_str::<Value>(variables_json) else {
+            continue;
+        };
+        let Some(work) = variables
+            .get("portableWorkRef")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<PortableWorkRefV3>(value).ok())
+            .filter(|work| work.validate().is_ok() && matches!(work, PortableWorkRefV3::Comic { .. }))
+        else {
+            continue;
+        };
+        let portable_work_id = canonical_portable_work_id(&work);
+        let index = *indexes
+            .entry(ImportWatch::key(profile_id, &portable_work_id))
+            .or_insert_with(|| {
+                works.push(UnseenWork {
+                    profile_id: profile_id.clone(),
+                    portable_work_id,
+                    work,
+                    title_hint: None,
+                    in_library: false,
+                    operation_ids: Vec::new(),
+                    chapters: Default::default(),
+                });
+                works.len() - 1
+            });
+        let entry = &mut works[index];
+        entry.operation_ids.push(operation_id.clone());
+        match operation_name.as_str() {
+            "UpdateManga" => {
+                if let Some(in_library) = variables.get("inLibrary").and_then(Value::as_bool) {
+                    entry.in_library = in_library;
+                }
+                if let Some(title) = variables
+                    .get(db::PORTABLE_TITLE_HINT_FIELD)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                {
+                    entry.title_hint = Some(title.to_string());
+                }
+            }
+            "UpdateChaptersProgress" => {
+                if let Some(key) = variables
+                    .pointer("/portableChapterRef/chapterKey")
+                    .and_then(Value::as_str)
+                {
+                    entry.chapters.insert(key.to_string(), variables.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    works
+}
+
+/// The work as `suwayomi_import` takes it: in the library, with the chapters a device has progress
+/// on. `suwayomi_hydration` then fetches its details, cover and full chapter list from the source.
+///
+/// The stand-in chapters carry no chapter number (-1). Suwayomi gives a chapter it adds the read
+/// and bookmark state of a removed chapter with the same number, so a stand-in numbered 0 that the
+/// source drops would mark the source's chapter 0 read.
+fn import_work_variables(work: &UnseenWork) -> Option<Value> {
+    let PortableWorkRefV3::Comic {
+        source_id,
+        manga_key,
+    } = &work.work
+    else {
+        return None;
+    };
+    let title = work
+        .title_hint
+        .clone()
+        .unwrap_or_else(|| manga_key.clone());
+    let chapters: Vec<Value> = work
+        .chapters
+        .iter()
+        .map(|(key, progress)| {
+            json!({
+                "url": key,
+                "name": chapter_name_hint(key),
+                "isRead": progress.get("isRead").and_then(Value::as_bool).unwrap_or(false),
+                "isBookmarked": progress.get("isBookmarked").and_then(Value::as_bool).unwrap_or(false),
+                "lastPageRead": progress.get("lastPageRead").and_then(Value::as_i64).unwrap_or(0),
+                "chapterNumber": -1.0,
+            })
+        })
+        .collect();
+    let variables = json!({ "works": [{
+        "sourceId": source_id,
+        "url": manga_key,
+        "title": title,
+        "dateAdded": db::now_ms(),
+        "chapters": chapters,
+    }] });
+    suwayomi_import::normalized_import(variables)
+        .ok()
+        .and_then(|mut value| value.get_mut("works")?.as_array_mut()?.pop())
+}
+
+/// A readable stand-in for a chapter name until the source lists the chapter: the last segment of
+/// its key (`/manga/a/chapter-12` → `chapter-12`).
+fn chapter_name_hint(chapter_key: &str) -> String {
+    chapter_key
+        .trim_end_matches('/')
+        .rsplit('/')
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(chapter_key)
+        .to_string()
+}
+
+/// Brings in, one restore at a time, the works devices keep in their library that this Suwayomi
+/// has never listed: a desktop that joins (or was reset) gets the whole library at once instead of
+/// searching every source for every title. Categories and progress then drain as usual.
+async fn import_unseen_comics(
+    state: &SharedAppState,
+    watch: &mut ImportWatch,
+) -> anyhow::Result<ImportPass> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        r#"
+        SELECT operation_id, profile_id, operation_name, variables_json
+        FROM suwayomi_projection_outbox
+        WHERE status IN ('pending', 'retry', 'blocked') AND variables_json LIKE '%"portableWorkRef"%'
+        ORDER BY profile_id, source_server_version
+        "#,
+    )
+    .fetch_all(&state.pool)
+    .await
+    .context("failed to list Suwayomi projections of portable works")?;
+    let mut batch = Vec::new();
+    for work in collect_portable_works(&rows) {
+        if !work.in_library
+            || watch
+                .attempted
+                .contains(&ImportWatch::key(&work.profile_id, &work.portable_work_id))
+            || batch
+                .first()
+                .is_some_and(|first: &UnseenWork| first.profile_id != work.profile_id)
+        {
+            continue;
+        }
+        let bound = db::load_portable_work_binding(&state.pool, &work.profile_id, &work.portable_work_id)
+            .await?
+            .is_some_and(|binding| binding.resolution_state == "BOUND");
+        if bound {
+            watch
+                .attempted
+                .insert(ImportWatch::key(&work.profile_id, &work.portable_work_id));
+            continue;
+        }
+        batch.push(work);
+        if batch.len() == suwayomi_import::MAX_IMPORT_WORKS {
+            break;
+        }
+    }
+    let Some(profile_id) = batch.first().map(|work| work.profile_id.clone()) else {
+        return Ok(ImportPass::Idle);
+    };
+    let session = projection_session(&profile_id);
+
+    // Works Suwayomi already lists are only bound.
+    let mut missing = Vec::new();
+    for work in batch {
+        match lookup_local_comic(state, &session, &work.work).await {
+            Ok(Some(manga_id)) => bind_imported_comic(state, &work, manga_id).await?,
+            Ok(None) => missing.push(work),
+            // The runtime is not answering; its rows back off and are rearmed when it returns.
+            Err(()) => return Ok(ImportPass::Idle),
+        }
+    }
+    let works: Vec<Value> = missing.iter().filter_map(import_work_variables).collect();
+    if !works.is_empty() {
+        match suwayomi_import::import_works_confirmed(state, &session, json!({ "works": works })).await
+        {
+            Ok(_) => watch.failures = 0,
+            Err(AppError::ServiceUnavailable(detail))
+                if detail.retryable == Some(true) && watch.failures < 2 =>
+            {
+                watch.failures += 1;
+                tracing::warn!(profile = %profile_id, code = %detail.code, "Suwayomi import of synced works will retry");
+                return Ok(ImportPass::Busy);
+            }
+            Err(error) => {
+                watch.failures = 0;
+                tracing::warn!(profile = %profile_id, error = ?error, "Suwayomi import of synced works failed");
+            }
+        }
+    }
+    let mut imported = 0;
+    for work in &missing {
+        watch
+            .attempted
+            .insert(ImportWatch::key(&work.profile_id, &work.portable_work_id));
+        if let Ok(Some(manga_id)) = lookup_local_comic(state, &session, &work.work).await {
+            bind_imported_comic(state, work, manga_id).await?;
+            imported += 1;
+        }
+    }
+    if !missing.is_empty() {
+        tracing::info!(profile = profile_id, imported, tried = missing.len(), "imported synced works into Suwayomi");
+    }
+    Ok(ImportPass::Busy)
+}
+
+/// The id Suwayomi has for the work's exact source and key, if it lists it.
+async fn lookup_local_comic(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    work: &PortableWorkRefV3,
+) -> Result<Option<i64>, ()> {
+    let PortableWorkRefV3::Comic {
+        source_id,
+        manga_key,
+    } = work
+    else {
+        return Ok(None);
+    };
+    let data = suwayomi_catalog::execute_graphql_document(
+        state,
+        session,
+        PORTABLE_COMIC_LOOKUP_QUERY,
+        json!({ "sourceId": source_id, "url": manga_key }),
+        false,
+    )
+    .await
+    .map_err(|_| ())?;
+    Ok(exact_comic_match(data.pointer("/mangas/nodes"), manga_key))
+}
+
+/// Binds the work and makes its waiting rows due again with fresh attempts, so its category and
+/// progress land now instead of after the backoff they earned while it was missing.
+async fn bind_imported_comic(
+    state: &SharedAppState,
+    work: &UnseenWork,
+    manga_id: i64,
+) -> anyhow::Result<()> {
+    let local_reference = manga_id.to_string();
+    db::upsert_portable_work_binding(
+        &state.pool,
+        &work.profile_id,
+        &work.portable_work_id,
+        &work.work,
+        None,
+        Some(&local_reference),
+        PortableResolutionStateV3::Bound,
+        None,
+        work.title_hint.as_deref(),
+        None,
+        0,
+        db::now_ms(),
+    )
+    .await?;
+    let now = db::now_ms();
+    let _writer_guard = state.mutation_gate.lock().await;
+    for operation_id in &work.operation_ids {
+        sqlx::query(
+            r#"
+            UPDATE suwayomi_projection_outbox
+            SET status = 'retry', attempt_count = 0, next_attempt_at_ms = ?, lease_until_ms = NULL,
+                updated_at_ms = ?
+            WHERE operation_id = ? AND status IN ('retry', 'blocked')
+            "#,
+        )
+        .bind(now)
+        .bind(now)
+        .bind(operation_id)
+        .execute(&state.pool)
+        .await?;
+    }
+    Ok(())
 }
 
 async fn resolve_chapter_id(
@@ -845,7 +1167,7 @@ fn failed_command_outcome(error: &AppError, attempt_count: i64) -> ProjectionOut
     }
 }
 
-fn projection_session(profile_id: &str) -> AuthenticatedSession {
+pub(crate) fn projection_session(profile_id: &str) -> AuthenticatedSession {
     AuthenticatedSession {
         token_id: "epigraph-core-projection".to_string(),
         device_id: "epigraph-core".to_string(),
@@ -1286,6 +1608,114 @@ mod tests {
         assert_eq!(exact_comic_match(Some(&nodes), "/manga/a"), Some(9));
         assert_eq!(exact_comic_match(Some(&nodes), "/manga/A"), None);
         assert_eq!(exact_comic_match(None, "/manga/a"), None);
+    }
+
+    #[tokio::test]
+    async fn a_work_waiting_to_be_found_does_not_hold_later_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        for (id, version, status, error, next) in [
+            ("unbound", 1, "retry", Some("portable_work_not_bound"), 9_000),
+            ("chapter", 2, "retry", Some("portable_chapter_not_resolved"), 9_000),
+            ("next", 3, "pending", None, 0),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateManga', '{"id":7}', 'comic.library', ?, ?, ?, 1, ?, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(id)
+            .bind(version)
+            .bind(status)
+            .bind(next)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let claimed = claim_next_at(&pool, 500).await.unwrap().unwrap();
+        assert_eq!(claimed.operation_id, "next");
+
+        // Any other early failure still holds the profile's queue in order.
+        sqlx::query(
+            r#"
+            INSERT INTO suwayomi_projection_outbox (
+              operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+              source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+              created_at_ms, updated_at_ms
+            ) VALUES ('outage', 'main', 'UpdateManga', '{"id":7}', 'comic.library', 'outage', 0,
+                      'retry', 1, 9000, 'runtime_unavailable', 1, 1),
+                     ('later', 'main', 'UpdateManga', '{"id":7}', 'comic.library', 'later', 4,
+                      'pending', 0, 0, NULL, 1, 1)
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(claim_next_at(&pool, 600).await.unwrap().is_none());
+    }
+
+    fn outbox_row(id: &str, operation: &str, variables: Value) -> (String, String, String, String) {
+        (id.to_string(), "main".to_string(), operation.to_string(), variables.to_string())
+    }
+
+    #[test]
+    fn groups_outbox_rows_by_portable_work() {
+        let work = json!({ "type": "comic", "sourceId": "2499283573021220255", "mangaKey": "/manga/a" });
+        let other = json!({ "type": "comic", "sourceId": "1", "mangaKey": "/manga/b" });
+        let chapter = |key: &str| json!({ "type": "comic", "work": work, "chapterKey": key });
+        let rows = vec![
+            outbox_row("entry", "UpdateManga", json!({
+                "inLibrary": true, "portableTitleHint": " A ", "portableWorkRef": work })),
+            outbox_row("old", "UpdateChaptersProgress", json!({
+                "isRead": false, "lastPageRead": 2, "isBookmarked": null,
+                "portableWorkRef": work, "portableChapterRef": chapter("/manga/a/chapter-1") })),
+            outbox_row("new", "UpdateChaptersProgress", json!({
+                "isRead": true, "lastPageRead": null, "isBookmarked": null,
+                "portableWorkRef": work, "portableChapterRef": chapter("/manga/a/chapter-1") })),
+            outbox_row("category", "UpdateMangaCategories", json!({
+                "addTo": [3], "removeFrom": [], "portableWorkRef": work })),
+            outbox_row("other", "UpdateMangaCategories", json!({
+                "addTo": [3], "removeFrom": [], "portableWorkRef": other })),
+            outbox_row("plain", "UpdateCategory", json!({ "id": 3, "name": "X" })),
+            outbox_row("broken", "UpdateManga", json!({ "portableWorkRef": { "type": "comic" } })),
+        ];
+        let works = collect_portable_works(&rows);
+        assert_eq!(works.len(), 2);
+        let first = &works[0];
+        assert!(first.in_library);
+        assert_eq!(first.title_hint.as_deref(), Some("A"));
+        assert_eq!(first.operation_ids, ["entry", "old", "new", "category"]);
+        assert_eq!(first.chapters.len(), 1);
+        assert_eq!(first.chapters["/manga/a/chapter-1"]["isRead"], json!(true));
+        // A work only categorised here is not in any device's library.
+        assert!(!works[1].in_library);
+
+        let import = import_work_variables(first).unwrap();
+        assert_eq!(import["sourceId"], json!("2499283573021220255"));
+        assert_eq!(import["url"], json!("/manga/a"));
+        assert_eq!(import["title"], json!("A"));
+        assert_eq!(
+            import["chapters"],
+            json!([{ "url": "/manga/a/chapter-1", "name": "chapter-1", "isRead": true,
+                     "isBookmarked": false, "lastPageRead": 0, "chapterNumber": -1.0 }])
+        );
+        // Without a title hint the key stands in until the source fills the details.
+        assert_eq!(import_work_variables(&works[1]).unwrap()["title"], json!("/manga/b"));
+    }
+
+    #[test]
+    fn chapter_name_hint_is_the_last_key_segment() {
+        assert_eq!(chapter_name_hint("/manga/a/chapter-12/"), "chapter-12");
+        assert_eq!(chapter_name_hint("https://host.example/c/99"), "99");
+        assert_eq!(chapter_name_hint("chapter-1"), "chapter-1");
+        assert_eq!(chapter_name_hint("/"), "/");
     }
 
     #[test]
