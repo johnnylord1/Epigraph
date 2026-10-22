@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
-use crate::syncd::routes::suwayomi_catalog;
+use crate::syncd::routes::{suwayomi_catalog, suwayomi_import};
 
 const COMMAND_SCHEMA_VERSION: u32 = 1;
 const MAX_CHAPTER_IDS: usize = 250;
@@ -108,6 +108,20 @@ const SET_EXTENSION_REPOS_QUERY: &str = r#"
   }
 "#;
 
+const EXTENSION_STORES_QUERY: &str = r#"
+  query EpigraphExtensionStores {
+    extensionStores { nodes { indexUrl } }
+  }
+"#;
+
+const ADD_EXTENSION_STORE_QUERY: &str = r#"
+  mutation EpigraphAddExtensionStore($indexUrl: String!) {
+    addExtensionStore(input: { indexUrl: $indexUrl }) {
+      extensionStore { indexUrl }
+    }
+  }
+"#;
+
 const FETCH_EXTENSIONS_QUERY: &str = r#"
   mutation EpigraphFetchExtensions {
     fetchExtensions(input: {}) {
@@ -120,6 +134,30 @@ const INSTALL_EXTENSION_QUERY: &str = r#"
   mutation EpigraphInstallExtension($id: String!) {
     updateExtension(input: { id: $id, patch: { install: true } }) {
       extension { pkgName isInstalled }
+    }
+  }
+"#;
+
+const RESOLVE_MANGA_LOOKUP_QUERY: &str = r#"
+  query EpigraphResolveManga($sourceId: LongString!, $url: String!) {
+    mangas(condition: { sourceId: $sourceId, url: $url }, first: 2) {
+      nodes { id url inLibrary }
+    }
+  }
+"#;
+
+const RESOLVE_MANGA_SEARCH_QUERY: &str = r#"
+  mutation EpigraphResolveMangaSearch($source: LongString!, $query: String!) {
+    fetchSourceManga(input: { source: $source, type: SEARCH, query: $query, page: 1 }) {
+      mangas { id url inLibrary }
+    }
+  }
+"#;
+
+const FETCH_CHAPTERS_QUERY: &str = r#"
+  mutation EpigraphFetchChapters($mangaId: Int!) {
+    fetchChapters(input: { mangaId: $mangaId }) {
+      chapters { id }
     }
   }
 "#;
@@ -146,6 +184,12 @@ pub enum CommandOperation {
     AddExtensionRepos,
     #[serde(rename = "InstallExtension")]
     InstallExtension,
+    #[serde(rename = "ResolveManga")]
+    ResolveManga,
+    #[serde(rename = "FetchChapters")]
+    FetchChapters,
+    #[serde(rename = "ImportWorks")]
+    ImportWorks,
 }
 
 #[derive(Debug, Deserialize)]
@@ -228,6 +272,20 @@ struct InstallExtensionVariables {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ResolveMangaVariables {
+    source_id: String,
+    url: String,
+    title: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FetchChaptersVariables {
+    manga_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UpdateCategoryOrderVariables {
     id: i64,
     position: i64,
@@ -258,6 +316,10 @@ pub async fn post_command(
         add_extension_repos_confirmed(&state, &session, variables).await?
     } else if request.operation == CommandOperation::InstallExtension {
         install_extension_confirmed(&state, &session, document, variables).await?
+    } else if request.operation == CommandOperation::ResolveManga {
+        resolve_manga_confirmed(&state, &session, document, variables).await?
+    } else if request.operation == CommandOperation::ImportWorks {
+        suwayomi_import::import_works_confirmed(&state, &session, variables).await?
     } else {
         suwayomi_catalog::execute_graphql_document(&state, &session, document, variables, true)
             .await?
@@ -278,6 +340,11 @@ pub(crate) async fn execute_internal_command(
     operation: CommandOperation,
     variables: Value,
 ) -> Result<Value, AppError> {
+    if operation == CommandOperation::ImportWorks {
+        return Err(AppError::BadRequest(
+            "ImportWorks is only a direct device command.".to_string(),
+        ));
+    }
     let (document, variables) = normalized_command(&operation, variables)?;
     let session = AuthenticatedSession {
         token_id: "epigraph-core-projection".to_string(),
@@ -353,6 +420,18 @@ async fn add_extension_repos_confirmed(
     variables: Value,
 ) -> Result<Value, AppError> {
     let requested: Vec<String> = string_array(variables.get("repos"));
+    // Suwayomi v2.3 keeps extension stores; older runtimes keep JSON repositories in settings.
+    if let Ok(data) = suwayomi_catalog::execute_graphql_document(
+        state,
+        session,
+        EXTENSION_STORES_QUERY,
+        json!({}),
+        false,
+    )
+    .await
+    {
+        return add_extension_stores_confirmed(state, session, requested, &data).await;
+    }
     let data = suwayomi_catalog::execute_graphql_document(
         state,
         session,
@@ -367,6 +446,7 @@ async fn add_extension_repos_confirmed(
     );
     let before = repos.len();
     for repo in requested {
+        let repo = legacy_repo_url(&repo);
         if !repos
             .iter()
             .any(|known| repo_root(known).eq_ignore_ascii_case(repo_root(&repo)))
@@ -391,6 +471,77 @@ async fn add_extension_repos_confirmed(
             .and_then(|value| value.get("extensionRepos")),
     );
     Ok(json!({ "extensionRepos": confirmed, "changed": true }))
+}
+
+/// Adds each repository the runtime does not have yet as an extension store, trying the index
+/// formats a repository folder may publish until the runtime accepts one.
+async fn add_extension_stores_confirmed(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    requested: Vec<String>,
+    data: &Value,
+) -> Result<Value, AppError> {
+    let mut stores: Vec<String> = data
+        .get("extensionStores")
+        .and_then(|value| value.get("nodes"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|node| node.get("indexUrl").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
+    let mut changed = false;
+    for repo in requested {
+        if stores
+            .iter()
+            .any(|known| repo_root(known).eq_ignore_ascii_case(repo_root(&repo)))
+        {
+            continue;
+        }
+        for candidate in store_index_candidates(&repo) {
+            let added = suwayomi_catalog::execute_graphql_document(
+                state,
+                session,
+                ADD_EXTENSION_STORE_QUERY,
+                json!({ "indexUrl": candidate }),
+                true,
+            )
+            .await;
+            if let Ok(data) = added {
+                let confirmed = data
+                    .pointer("/addExtensionStore/extensionStore/indexUrl")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&candidate)
+                    .to_string();
+                stores.push(confirmed);
+                changed = true;
+                break;
+            }
+        }
+    }
+    Ok(json!({ "extensionRepos": stores, "changed": changed }))
+}
+
+/// The requested index first, then the other formats in the same repository folder.
+fn store_index_candidates(repo: &str) -> Vec<String> {
+    let root = repo_root(repo);
+    let mut candidates = vec![repo.to_string()];
+    for file in ["index.pb", "index.min.json"] {
+        let candidate = format!("{root}/{file}");
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    candidates
+}
+
+/// Runtimes before extension stores read only JSON indexes.
+fn legacy_repo_url(repo: &str) -> String {
+    if repo.ends_with(".pb") {
+        format!("{}/index.min.json", repo_root(repo))
+    } else {
+        repo.to_string()
+    }
 }
 
 /// The repository folder, so `.../repo/index.min.json`, `.../repo/index.pb` and
@@ -466,6 +617,65 @@ async fn install_extension_confirmed(
         ));
     }
     Ok(json!({ "pkgName": pkg_name, "available": true, "isInstalled": true }))
+}
+
+/// Finds a work by its source and key. Suwayomi only knows works it has already fetched, so when
+/// the key is not there yet, searching the source for the title fetches it; only an exact key
+/// match is accepted. `mangaId` is null when the work cannot be found, for example because its
+/// extension is not installed here.
+async fn resolve_manga_confirmed(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    document: &'static str,
+    variables: Value,
+) -> Result<Value, AppError> {
+    let field = |name: &str| {
+        variables
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let (source_id, url, title) = (field("sourceId"), field("url"), field("title"));
+    let data = suwayomi_catalog::execute_graphql_document(
+        state,
+        session,
+        document,
+        json!({ "sourceId": source_id, "url": url }),
+        false,
+    )
+    .await?;
+    let mut found = exact_manga_match(data.pointer("/mangas/nodes"), &url);
+    if found.is_none() {
+        // A missing or failing extension answers with an error, which means not found here.
+        if let Ok(data) = suwayomi_catalog::execute_graphql_document(
+            state,
+            session,
+            RESOLVE_MANGA_SEARCH_QUERY,
+            json!({ "source": source_id, "query": title }),
+            true,
+        )
+        .await
+        {
+            found = exact_manga_match(data.pointer("/fetchSourceManga/mangas"), &url);
+        }
+    }
+    Ok(match found {
+        Some((id, in_library)) => json!({ "mangaId": id, "inLibrary": in_library }),
+        None => json!({ "mangaId": null, "inLibrary": false }),
+    })
+}
+
+fn exact_manga_match(nodes: Option<&Value>, url: &str) -> Option<(i64, bool)> {
+    nodes?
+        .as_array()?
+        .iter()
+        .filter(|node| node.get("url").and_then(Value::as_str) == Some(url))
+        .find_map(|node| {
+            let id = node.get("id").and_then(Value::as_i64)?;
+            let in_library = node.get("inLibrary").and_then(Value::as_bool) == Some(true);
+            (id > 0 && id <= i32::MAX as i64).then_some((id, in_library))
+        })
 }
 
 pub(crate) fn created_category<'a>(name: &str, data: &'a Value) -> Option<&'a Value> {
@@ -619,6 +829,38 @@ fn normalized_command(
             ensure_package_name(&variables.pkg_name)?;
             Ok((INSTALL_EXTENSION_QUERY, json!({ "id": variables.pkg_name })))
         }
+        CommandOperation::ResolveManga => {
+            let variables: ResolveMangaVariables =
+                serde_json::from_value(variables).map_err(|_| {
+                    AppError::BadRequest(
+                        "ResolveManga requires sourceId, url and title variables.".to_string(),
+                    )
+                })?;
+            ensure_source_id(&variables.source_id)?;
+            ensure_manga_url(&variables.url)?;
+            let title = variables.title.trim();
+            if title.is_empty() || title.len() > 512 || title.chars().any(char::is_control) {
+                return Err(AppError::BadRequest(
+                    "title must be a work title of at most 512 bytes.".to_string(),
+                ));
+            }
+            Ok((
+                RESOLVE_MANGA_LOOKUP_QUERY,
+                json!({ "sourceId": variables.source_id, "url": variables.url, "title": title }),
+            ))
+        }
+        CommandOperation::FetchChapters => {
+            let variables: FetchChaptersVariables =
+                serde_json::from_value(variables).map_err(|_| {
+                    AppError::BadRequest("FetchChapters requires a mangaId variable.".to_string())
+                })?;
+            ensure_int(variables.manga_id, "mangaId")?;
+            Ok((FETCH_CHAPTERS_QUERY, json!({ "mangaId": variables.manga_id })))
+        }
+        CommandOperation::ImportWorks => Ok((
+            suwayomi_import::RESTORE_MUTATION,
+            suwayomi_import::normalized_import(variables)?,
+        )),
         CommandOperation::UpdateCategoryOrder => {
             let variables: UpdateCategoryOrderVariables = serde_json::from_value(variables)
                 .map_err(|_| {
@@ -643,15 +885,34 @@ fn normalized_command(
 fn ensure_repo_url(value: &str) -> Result<(), AppError> {
     let valid = value.len() <= 2048
         && value.starts_with("https://")
-        && value.ends_with(".json")
+        && (value.ends_with(".json") || value.ends_with(".pb"))
         && !value.chars().any(|c| c.is_whitespace() || c.is_control());
     if valid {
         Ok(())
     } else {
         Err(AppError::BadRequest(
-            "Extension repositories must be https URLs to a .json index.".to_string(),
+            "Extension repositories must be https URLs to a .json or .pb index.".to_string(),
         ))
     }
+}
+
+pub(super) fn ensure_source_id(value: &str) -> Result<(), AppError> {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    if digits.is_empty() || digits.len() > 19 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(AppError::BadRequest(
+            "sourceId must be a Suwayomi source id.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn ensure_manga_url(value: &str) -> Result<(), AppError> {
+    if value.is_empty() || value.len() > 2048 || value.chars().any(char::is_control) {
+        return Err(AppError::BadRequest(
+            "url must be a work key of at most 2048 bytes.".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn ensure_package_name(value: &str) -> Result<(), AppError> {
@@ -854,6 +1115,59 @@ mod tests {
         for bad in [json!({ "repos": [] }), json!({ "repos": ["http://x/index.json"] }), json!({ "repos": ["https://x/a b.json"] })] {
             assert!(normalized_command(&CommandOperation::AddExtensionRepos, bad).is_err());
         }
+
+        let store = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb";
+        assert!(normalized_command(
+            &CommandOperation::AddExtensionRepos,
+            json!({ "repos": [store] }),
+        )
+        .is_ok());
+        assert_eq!(
+            store_index_candidates(store),
+            vec![
+                store.to_string(),
+                "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json".to_string(),
+            ]
+        );
+        assert_eq!(store_index_candidates(repo)[1], store);
+        assert_eq!(legacy_repo_url(store), repo);
+        assert_eq!(legacy_repo_url(repo), repo);
+    }
+
+    #[test]
+    fn normalizes_work_resolution_and_chapter_listing() {
+        let (document, variables) = normalized_command(
+            &CommandOperation::ResolveManga,
+            json!({ "sourceId": "2499283573021220255", "url": "/title/abc", "title": " One ", "x": 1 }),
+        )
+        .unwrap();
+        assert_eq!(document, RESOLVE_MANGA_LOOKUP_QUERY);
+        assert_eq!(
+            variables,
+            json!({ "sourceId": "2499283573021220255", "url": "/title/abc", "title": "One" })
+        );
+        for bad in [
+            json!({ "sourceId": "", "url": "/a", "title": "A" }),
+            json!({ "sourceId": "12a", "url": "/a", "title": "A" }),
+            json!({ "sourceId": "1", "url": "", "title": "A" }),
+            json!({ "sourceId": "1", "url": "/a\n", "title": "A" }),
+            json!({ "sourceId": "1", "url": "/a", "title": "  " }),
+        ] {
+            assert!(normalized_command(&CommandOperation::ResolveManga, bad).is_err());
+        }
+
+        let (document, variables) =
+            normalized_command(&CommandOperation::FetchChapters, json!({ "mangaId": 9 })).unwrap();
+        assert_eq!(document, FETCH_CHAPTERS_QUERY);
+        assert_eq!(variables, json!({ "mangaId": 9 }));
+        assert!(normalized_command(&CommandOperation::FetchChapters, json!({ "mangaId": 0 })).is_err());
+
+        let nodes = json!([
+            { "id": 4, "url": "/title/abcd", "inLibrary": true },
+            { "id": 5, "url": "/title/abc", "inLibrary": false },
+        ]);
+        assert_eq!(exact_manga_match(Some(&nodes), "/title/abc"), Some((5, false)));
+        assert_eq!(exact_manga_match(Some(&nodes), "/title/ab"), None);
     }
 
     #[test]

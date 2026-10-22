@@ -27,6 +27,8 @@ function flush() {
   if (!mangaIds.length && !chapterIds.length && !catalog) return;
   // The periodic mirror tick is the fallback, so a Core that is away or older is not an error here.
   void invoke("syncd_request_progress_mirror", { mangaIds, chapterIds }).catch(() => {});
+  // A profile joined to another desktop sends the edit there too.
+  window.dispatchEvent?.(new Event("epigraph-comic-local-edit"));
 }
 
 /**

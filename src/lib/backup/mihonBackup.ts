@@ -646,3 +646,78 @@ export function createReconciledBackupPayload(
 export function decodedBackupDebugString(parsedBackup: ParsedBackup): string {
   return decodeUtf8(parsedBackup.bytes);
 }
+
+/** A work and its chapters as another desktop's Suwayomi lists them, times in milliseconds. */
+export interface MihonImportWork {
+  sourceId: string;
+  url: string;
+  title: string;
+  author: string | null;
+  artist: string | null;
+  genre: string[];
+  status: string | null;
+  dateAdded: number;
+  chapters: MihonImportChapter[];
+}
+
+export interface MihonImportChapter {
+  url: string;
+  name: string;
+  scanlator: string | null;
+  isRead: boolean;
+  isBookmarked: boolean;
+  lastPageRead: number;
+  fetchedAt: number;
+  uploadDate: number;
+  chapterNumber: number;
+  sourceOrder: number;
+}
+
+/** Mihon's `MangaStatus` numbers for Suwayomi's status names. */
+const MIHON_MANGA_STATUS: Record<string, number> = {
+  UNKNOWN: 0,
+  ONGOING: 1,
+  COMPLETED: 2,
+  LICENSED: 3,
+  PUBLISHING_FINISHED: 4,
+  CANCELLED: 5,
+  ON_HIATUS: 6,
+};
+
+function nonNegativeLong(value: number): Long {
+  return Long.fromNumber(Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0, false);
+}
+
+/**
+ * A gzip backup holding only these works and their chapters, in the library and in no category.
+ * It has no description or cover, so Suwayomi fetches both from the source when a work is shown.
+ */
+export function encodeMihonImportBackup(works: readonly MihonImportWork[]): ArrayBuffer {
+  const chunks = works.map((work) => {
+    const manga = BackupMangaType.fromObject({
+      source: encodeInt64(work.sourceId),
+      url: work.url,
+      title: work.title,
+      artist: work.artist ?? "",
+      author: work.author ?? "",
+      genre: work.genre,
+      status: MIHON_MANGA_STATUS[work.status ?? ""] ?? 0,
+      dateAdded: nonNegativeLong(work.dateAdded),
+      favorite: true,
+      chapters: work.chapters.map((chapter) => ({
+        url: chapter.url,
+        name: chapter.name,
+        scanlator: chapter.scanlator ?? "",
+        read: chapter.isRead,
+        bookmark: chapter.isBookmarked,
+        lastPageRead: nonNegativeLong(chapter.lastPageRead),
+        dateFetch: nonNegativeLong(chapter.fetchedAt),
+        dateUpload: nonNegativeLong(chapter.uploadDate),
+        chapterNumber: chapter.chapterNumber,
+        sourceOrder: nonNegativeLong(chapter.sourceOrder),
+      })),
+    });
+    return encodeFieldChunk(BACKUP_TOP_LEVEL_MANGA_FIELD, BackupMangaType.encode(manga).finish());
+  });
+  return copyBytesToArrayBuffer(pako.gzip(concatChunks(chunks)));
+}

@@ -1006,7 +1006,11 @@ fn projection_confirmed(operation: CommandOperation, variables: &Value, data: &V
                 })
         }
         // Direct device commands only; the outbox projection never produces them.
-        CommandOperation::AddExtensionRepos | CommandOperation::InstallExtension => false,
+        CommandOperation::AddExtensionRepos
+        | CommandOperation::InstallExtension
+        | CommandOperation::ResolveManga
+        | CommandOperation::FetchChapters
+        | CommandOperation::ImportWorks => false,
         CommandOperation::CreateCategory => variables
             .get("name")
             .and_then(Value::as_str)

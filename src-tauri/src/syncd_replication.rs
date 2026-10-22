@@ -4903,6 +4903,219 @@ pub async fn syncd_publish_comic_reader_mutation(
     submit_mutations_for_active_profiles(&app, Some(profile_id), vec![mutation]).await
 }
 
+/// The paired session a joined profile reaches the other desktop's comics through. A profile
+/// whose comics this desktop's own Core hosts, or whose sync is paused, has none.
+async fn joined_comic_session(
+    app: &AppHandle,
+    profile_id: &str,
+) -> Result<Option<PersistedSyncSession>, String> {
+    let hosted = {
+        let state = app.state::<SyncdReplicationState>();
+        let runtime = state.runtime.lock().await;
+        runtime.local_authority.contains_key(profile_id)
+    };
+    if hosted {
+        return Ok(None);
+    }
+    let replication = load_replication_state()?;
+    let Some(active_session_key) = replication
+        .profiles
+        .get(profile_id)
+        .filter(|profile| !profile.paused)
+        .and_then(|profile| profile.active_session_key.clone())
+    else {
+        return Ok(None);
+    };
+    Ok(load_persisted_state()?.sessions.into_iter().find(|session| {
+        session.local_profile_id == profile_id && session.session_key == active_session_key
+    }))
+}
+
+async fn required_joined_comic_session(
+    app: &AppHandle,
+    profile_id: &str,
+) -> Result<PersistedSyncSession, String> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() || profile_id.contains('\0') {
+        return Err("profileId is invalid.".to_string());
+    }
+    joined_comic_session(app, profile_id)
+        .await?
+        .ok_or_else(|| "This profile has no paired desktop for comics.".to_string())
+}
+
+/// Posts to the other desktop's comics bridge, trying its known addresses in order, and answers
+/// with the bridge's JSON body.
+async fn post_remote_comic_bridge(
+    session: &PersistedSyncSession,
+    path: &str,
+    body: &Value,
+) -> Result<Value, String> {
+    let client = build_pinned_http_client(&session.tls_cert_sha256)?;
+    let scope_id = comics_scope_id(&session.remote_profile_id);
+    let mut origins = vec![session.canonical_origin.clone()];
+    for origin in &session.fallback_origins {
+        if !origins.contains(origin) {
+            origins.push(origin.clone());
+        }
+    }
+    let mut last_error = None;
+    for (index, origin) in origins.iter().enumerate() {
+        let response = client
+            .post(format!("{origin}{path}"))
+            .query(&[("scopeId", scope_id.as_str())])
+            .header("Authorization", format!("Bearer {}", session.access_token))
+            .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+            .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+            .header(
+                CLIENT_PROTOCOL_HEADER.as_str(),
+                CLIENT_PROTOCOL_VERSION.to_string(),
+            )
+            .header(
+                LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
+                CLIENT_PROTOCOL_VERSION.to_string(),
+            )
+            .json(body)
+            .send()
+            .await;
+        match response {
+            Ok(response) if response.status().is_success() => {
+                return response.json::<Value>().await.map_err(|error| {
+                    format!("Invalid comics answer from the other computer: {error}")
+                });
+            }
+            Ok(response) => {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                return Err(match serde_json::from_str::<ErrorBody>(&text) {
+                    Ok(body) if body.error.code == "UNAUTHORIZED" => "needs_reauth".to_string(),
+                    Ok(body) => format!("{}: {}", body.error.code, body.error.message),
+                    Err(_) => format!("The other computer answered HTTP {status}."),
+                });
+            }
+            Err(error) => {
+                let message = transport_error_message(error);
+                if is_connection_error(&message) && index + 1 < origins.len() {
+                    last_error = Some(message);
+                    continue;
+                }
+                return Err(message);
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "The other computer is unreachable.".to_string()))
+}
+
+/// Whether this profile's comics come from another desktop through a paired session. Its Core
+/// mirrors only reading state, so the webview reconciles both Suwayomi libraries itself.
+#[tauri::command]
+pub async fn syncd_comic_bridge_available(
+    app: AppHandle,
+    profile_id: String,
+) -> Result<bool, String> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() || profile_id.contains('\0') {
+        return Err("profileId is invalid.".to_string());
+    }
+    Ok(joined_comic_session(&app, profile_id).await?.is_some())
+}
+
+/// Reads the other desktop's Suwayomi. Its Core refuses mutations here; changes go through
+/// `syncd_remote_comic_command`.
+#[tauri::command]
+pub async fn syncd_remote_comic_query(
+    app: AppHandle,
+    profile_id: String,
+    query: String,
+    variables: Option<Value>,
+) -> Result<Value, String> {
+    let session = required_joined_comic_session(&app, &profile_id).await?;
+    let body = post_remote_comic_bridge(
+        &session,
+        "/v1/suwayomi/api/graphql",
+        &json!({ "query": query, "variables": variables.unwrap_or_else(|| json!({})) }),
+    )
+    .await?;
+    if let Some(error) = body
+        .get("errors")
+        .and_then(Value::as_array)
+        .and_then(|errors| errors.first())
+    {
+        return Err(error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("The other computer's comics query failed.")
+            .to_string());
+    }
+    Ok(body.get("data").cloned().unwrap_or(Value::Null))
+}
+
+/// Runs one of the Core's typed Suwayomi commands on the other desktop.
+#[tauri::command]
+pub async fn syncd_remote_comic_command(
+    app: AppHandle,
+    profile_id: String,
+    operation: String,
+    variables: Value,
+) -> Result<Value, String> {
+    let session = required_joined_comic_session(&app, &profile_id).await?;
+    let body = post_remote_comic_bridge(
+        &session,
+        "/v1/suwayomi/commands",
+        &json!({ "operation": operation, "variables": variables }),
+    )
+    .await?;
+    Ok(body.get("data").cloned().unwrap_or(Value::Null))
+}
+
+/// One file per profile and paired desktop, so pairing with another desktop starts from a merge
+/// instead of reading the old one's removals into the new one.
+fn comic_sync_baseline_path(session: &PersistedSyncSession) -> PathBuf {
+    let key = hash_digest(&format!(
+        "{}\0{}\0{}",
+        session.local_profile_id, session.remote_server_id, session.remote_profile_id
+    ));
+    desktop_state_dir()
+        .join("comic-sync")
+        .join(format!("{}.json", &key[..32]))
+}
+
+/// What both desktops held after the last comics reconciliation, so the next one can tell an
+/// addition on one side from a removal on the other.
+#[tauri::command]
+pub async fn syncd_read_comic_sync_baseline(
+    app: AppHandle,
+    profile_id: String,
+) -> Result<Option<Value>, String> {
+    let session = required_joined_comic_session(&app, &profile_id).await?;
+    match fs::read(comic_sync_baseline_path(&session)) {
+        // An unreadable baseline only costs a merge without removals.
+        Ok(bytes) => Ok(serde_json::from_slice::<Value>(&bytes)
+            .ok()
+            .filter(Value::is_object)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn syncd_write_comic_sync_baseline(
+    app: AppHandle,
+    profile_id: String,
+    baseline: Value,
+) -> Result<(), String> {
+    if !baseline.is_object() {
+        return Err("baseline must be a JSON object.".to_string());
+    }
+    let session = required_joined_comic_session(&app, &profile_id).await?;
+    let path = comic_sync_baseline_path(&session);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let payload = serde_json::to_vec(&baseline).map_err(|error| error.to_string())?;
+    write_file_atomic(&path, &payload)
+}
+
 #[tauri::command]
 pub fn syncd_get_pending_comic_reader_changes(
     profile_id: String,

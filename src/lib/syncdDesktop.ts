@@ -403,10 +403,20 @@ export function listenSyncdReplicationState(
   return listen<SyncdReplicationSnapshot>("syncd-replication-state", ({ payload }) => handler(payload));
 }
 
-export function listenSyncdComicLibraryChanged(
+/** Also fires when this window brought the other computer's comics in. */
+export async function listenSyncdComicLibraryChanged(
   handler: (payload: { localProfileId: string }) => void,
 ): Promise<UnlistenFn> {
-  return listen<{ localProfileId: string }>("syncd-comic-library-changed", ({ payload }) => handler(payload));
+  const unlisten = await listen<{ localProfileId: string }>("syncd-comic-library-changed", ({ payload }) => handler(payload));
+  const onReconciled = (event: Event) => {
+    const detail = (event as CustomEvent<{ localProfileId?: string }>).detail;
+    if (detail?.localProfileId) handler({ localProfileId: detail.localProfileId });
+  };
+  window.addEventListener("epigraph-comic-library-reconciled", onReconciled);
+  return () => {
+    unlisten();
+    window.removeEventListener("epigraph-comic-library-reconciled", onReconciled);
+  };
 }
 
 export function listenSyncdReplicationError(

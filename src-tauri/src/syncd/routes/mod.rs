@@ -16,5 +16,6 @@ pub mod suwayomi_catalog;
 pub mod suwayomi_commands;
 pub mod suwayomi_content;
 pub mod suwayomi_extensions;
+pub mod suwayomi_import;
 pub mod suwayomi_proxy;
 pub mod tracker_credentials;

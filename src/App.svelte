@@ -3043,6 +3043,23 @@
   });
 
   $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void import("./lib/comicSync/desktopComicBridge")
+      .then(({ startJoinedComicSync }) => startJoinedComicSync())
+      .then((started) => {
+        if (disposed) started();
+        else stop = started;
+      })
+      .catch((error) => console.warn("Comic sync with the other computer could not start:", error));
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  });
+
+  $effect(() => {
     const target = getServerTargetInfo();
     const title = mainWindowTitle(target.title);
     document.title = title;
