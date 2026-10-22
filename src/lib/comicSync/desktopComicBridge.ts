@@ -3,6 +3,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { gql, gqlUpload } from "../client";
 import { encodeMihonImportBackup, type MihonImportWork } from "../backup/mihonBackup";
 import { extensionStoreIndexCandidates, extensionStoreKey } from "../manga/runtime/storeUrl";
+import { fetchSourceMangaChapters } from "../manga/runtime/sourceOperations";
+import { GET_SETTINGS, legacyExtensionRepos, type LegacyRepoSettings } from "../queries";
 import { bumpContentSetupVersion, store } from "../../store/state.svelte";
 import {
   batchChapterUpdates,
@@ -105,12 +107,6 @@ const REMOTE_STORES_QUERY = `
   }
 `;
 
-const REMOTE_LEGACY_REPOS_QUERY = `
-  query EpigraphComicSyncRepos {
-    settings { extensionRepos }
-  }
-`;
-
 const WORK_DETAILS_QUERY = `
   query EpigraphComicSyncWorkDetails($ids: [Int!]!) {
     mangas(filter: { id: { in: $ids } }) {
@@ -173,12 +169,6 @@ const LOCAL_SEARCH_MUTATION = `
 const LOCAL_UPDATE_MANGA_MUTATION = `
   mutation EpigraphComicSyncUpdateManga($id: Int!, $inLibrary: Boolean) {
     updateManga(input: { id: $id, patch: { inLibrary: $inLibrary } }) { manga { id inLibrary } }
-  }
-`;
-
-const LOCAL_FETCH_CHAPTERS_MUTATION = `
-  mutation EpigraphComicSyncFetchChapters($mangaId: Int!) {
-    fetchChapters(input: { mangaId: $mangaId }) { chapters { id } }
   }
 `;
 
@@ -532,7 +522,7 @@ function localSide(): ComicSide {
       return true;
     },
     async fetchChapters(mangaId) {
-      await gql(LOCAL_FETCH_CHAPTERS_MUTATION, { mangaId });
+      await fetchSourceMangaChapters({ mangaId });
     },
     async createCategory(name) {
       await gql(LOCAL_CREATE_CATEGORY_MUTATION, { name });
@@ -616,8 +606,7 @@ async function readRemoteStores(remote: ComicSide): Promise<string[]> {
     const data = await remote.query<{ extensionStores: { nodes: { indexUrl: string }[] } }>(REMOTE_STORES_QUERY);
     return data.extensionStores.nodes.map((node) => node.indexUrl);
   } catch {
-    const data = await remote.query<{ settings: { extensionRepos: string[] | null } }>(REMOTE_LEGACY_REPOS_QUERY);
-    return data.settings.extensionRepos ?? [];
+    return legacyExtensionRepos(await remote.query<LegacyRepoSettings>(GET_SETTINGS));
   }
 }
 

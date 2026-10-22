@@ -23,7 +23,7 @@
   import { BUILTIN_THEMES, BUILTIN_THEME_CONTRACTS } from "../../lib/theme/contract";
   import { builtinThemeLabel } from "../../lib/theme/themeLabels";
   import { loadNovelLibraryState } from "../../lib/novels/libraryState";
-  import { gql } from "../../lib/client";
+  import { countComicLibrary } from "../../lib/setup/firstRunSyncReadiness";
   import { mirrorFirstRunMarker } from "../../lib/firstRunDurable";
   import { countUp, depart, revealThemeChange, staggerIn } from "../../lib/motion/firstRunMotion";
   import {
@@ -76,7 +76,6 @@
   ];
 
   const STEP_ORDER: readonly FirstRunStep[] = ["theme", "entry", "sync", "backup", "sources", "trackers", "discover", "complete"];
-  const FIRST_RUN_COMIC_LIBRARY_COUNT = `query FirstRunComicLibraryCount { mangas(condition: { inLibrary: true }) { totalCount } }`;
 
   let stepRoot = $state<HTMLDivElement>();
   let syncReady = $state(false);
@@ -179,8 +178,8 @@
         console.warn("First-run library readiness could not be loaded.", error);
       }
     });
-    void gql<{ mangas: { totalCount: number } }>(FIRST_RUN_COMIC_LIBRARY_COUNT, undefined, undefined, 8000)
-      .then((data) => { if (!cancelled && typeof data?.mangas?.totalCount === "number") comicLibraryCount = data.mangas.totalCount; })
+    void countComicLibrary()
+      .then((count) => { if (!cancelled && count !== null) comicLibraryCount = count; })
       .catch(() => {});
     return () => { cancelled = true; };
   });

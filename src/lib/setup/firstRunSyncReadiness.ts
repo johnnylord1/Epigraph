@@ -1,4 +1,5 @@
 import type { SyncdReplicationSnapshot } from "../syncdDesktop";
+import { gql } from "../client";
 import {
   bumpContentSetupVersion,
   replaceBooksState,
@@ -8,6 +9,14 @@ import {
 } from "../../store/state.svelte";
 import { reloadBookLibraryState } from "../books/libraryState";
 import { reloadNovelLibraryState } from "../novels/libraryState";
+
+const COMIC_LIBRARY_COUNT_QUERY = `query FirstRunComicLibraryCount { mangas(condition: { inLibrary: true }) { totalCount } }`;
+
+/** How many comics the active Suwayomi library holds, or null when it does not answer with a count. */
+export async function countComicLibrary(): Promise<number | null> {
+  const data = await gql<{ mangas: { totalCount: number } }>(COMIC_LIBRARY_COUNT_QUERY, undefined, undefined, 8000);
+  return typeof data?.mangas?.totalCount === "number" ? data.mangas.totalCount : null;
+}
 
 /** Pairing and persisted Live state are not evidence of a remote bootstrap. */
 export function firstRunSyncReadinessKey(profileId: string | null, snapshot: SyncdReplicationSnapshot | null): string | null {

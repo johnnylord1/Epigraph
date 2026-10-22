@@ -701,6 +701,13 @@ export const GET_SETTINGS = `
   }
 `;
 
+export type LegacyRepoSettings = { settings: { extensionRepos: string[] | null } };
+
+/** The repositories a pre-v2.3 Suwayomi keeps in its settings. */
+export function legacyExtensionRepos(data: LegacyRepoSettings): string[] {
+  return data.settings.extensionRepos ?? [];
+}
+
 export const SET_EXTENSION_REPOS = `
   mutation SetExtensionRepos($repos: [String!]!) {
     setSettings(input: { settings: { extensionRepos: $repos } }) {
