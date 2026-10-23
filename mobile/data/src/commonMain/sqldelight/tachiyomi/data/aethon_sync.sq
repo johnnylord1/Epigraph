@@ -63,6 +63,10 @@ CREATE TABLE aethon_portable_work_binding (
 CREATE INDEX aethon_portable_work_resolution_index
 ON aethon_portable_work_binding(resolution_state, ecosystem, updated_at);
 
+-- The comic progress backfill looks works and chapters up by local id.
+CREATE INDEX aethon_portable_work_local_index
+ON aethon_portable_work_binding(local_reference);
+
 CREATE TABLE aethon_portable_chapter_binding (
     portable_chapter_id TEXT NOT NULL PRIMARY KEY,
     portable_work_id TEXT NOT NULL,
@@ -82,6 +86,9 @@ CREATE TABLE aethon_portable_chapter_binding (
 
 CREATE INDEX aethon_portable_chapter_resolution_index
 ON aethon_portable_chapter_binding(resolution_state, portable_work_id, updated_at);
+
+CREATE INDEX aethon_portable_chapter_local_index
+ON aethon_portable_chapter_binding(local_reference);
 
 CREATE TABLE aethon_portable_manifest_work (
     server_id TEXT NOT NULL,
@@ -264,6 +271,10 @@ CREATE TABLE aethon_sync_outbox (
 
 CREATE INDEX aethon_sync_outbox_ready_index
 ON aethon_sync_outbox(status, next_attempt_at, created_at);
+
+-- "Is this entity already queued?" checks run once per chapter during backfill.
+CREATE INDEX aethon_sync_outbox_entity_index
+ON aethon_sync_outbox(scope_id, entity_type, entity_id);
 
 CREATE TABLE aethon_sync_receipt (
     device_id TEXT NOT NULL,
@@ -1614,16 +1625,18 @@ SELECT EXISTS(
 -- is listed until its first publish creates one. Oldest reads first.
 selectComicChapterProgressBackfill:
 SELECT DISTINCT C._id AS chapter_id, C.manga_id, coalesce(H.history_last_read, 0) AS last_read_at, C.date_fetch
-FROM chapters AS C
-JOIN mangas AS M ON M._id = C.manga_id
-JOIN aethon_portable_work_binding AS W
-  ON W.local_reference = CAST(C.manga_id AS TEXT)
- AND W.ecosystem = 'SUWAYOMI' AND W.resolution_state = 'BOUND'
+FROM aethon_portable_work_binding AS W
+-- Find the manga by primary key. Comparing text against CAST(C.manga_id) made SQLite pair every work
+-- with every favorite before reaching the chapters (minutes on a large library).
+JOIN mangas AS M
+  ON M._id = CAST(W.local_reference AS INTEGER) AND W.local_reference = CAST(M._id AS TEXT)
+JOIN chapters AS C ON C.manga_id = M._id
 LEFT JOIN aethon_portable_chapter_binding AS PC
   ON PC.local_reference = CAST(C._id AS TEXT) AND PC.portable_work_id = W.portable_id
  AND PC.resolution_state = 'BOUND'
 LEFT JOIN history AS H ON H.history_chapter_id = C._id
-WHERE M.favorite = 1
+WHERE W.ecosystem = 'SUWAYOMI' AND W.resolution_state = 'BOUND'
+  AND M.favorite = 1
   AND (C.read = 1 OR C.bookmark = 1 OR C.last_page_read > 0)
   AND (PC.portable_chapter_id IS NULL OR NOT EXISTS (
       SELECT 1 FROM aethon_core_replica_record AS R
@@ -1644,19 +1657,21 @@ ORDER BY last_read_at, C._id;
 -- Core neither holds, removed, nor is about to receive.
 selectComicHistoryBackfill:
 SELECT DISTINCT C._id AS chapter_id, C.manga_id, H.history_last_read AS last_read_at
-FROM history AS H
-JOIN chapters AS C ON C._id = H.history_chapter_id
-JOIN mangas AS M ON M._id = C.manga_id
-JOIN aethon_portable_work_binding AS W
-  ON W.local_reference = CAST(C.manga_id AS TEXT)
- AND W.ecosystem = 'SUWAYOMI' AND W.resolution_state = 'BOUND'
-WHERE M.favorite = 1
+FROM aethon_portable_work_binding AS W
+JOIN mangas AS M
+  ON M._id = CAST(W.local_reference AS INTEGER) AND W.local_reference = CAST(M._id AS TEXT)
+-- Each series' latest read, computed once. A correlated max() per history row was quadratic per series.
+JOIN (
+    SELECT C2.manga_id, max(H2.history_last_read) AS last_read
+    FROM chapters AS C2
+    JOIN history AS H2 ON H2.history_chapter_id = C2._id
+    GROUP BY C2.manga_id
+) AS L ON L.manga_id = M._id
+JOIN chapters AS C ON C.manga_id = M._id
+JOIN history AS H ON H.history_chapter_id = C._id AND H.history_last_read = L.last_read
+WHERE W.ecosystem = 'SUWAYOMI' AND W.resolution_state = 'BOUND'
+  AND M.favorite = 1
   AND H.history_last_read > 0
-  AND H.history_last_read = (
-      SELECT max(H2.history_last_read) FROM history AS H2
-      JOIN chapters AS C2 ON C2._id = H2.history_chapter_id
-      WHERE C2.manga_id = C.manga_id
-  )
   AND NOT EXISTS (
       SELECT 1 FROM aethon_core_replica_record AS R
       WHERE R.scope_id = :scopeId AND R.entity_type = 'comic.history'

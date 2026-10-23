@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.Dialpad
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.LinkOff
+import androidx.compose.material.icons.outlined.SyncDisabled
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.SyncProblem
@@ -119,6 +120,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         val syncMonitor = remember { GlobalContext.get().get<CoreSyncStatusMonitor>() }
         val syncStatus by remember(syncMonitor) { syncMonitor.status() }
             .collectAsState(initial = null)
+        val syncPaused by controller.syncPaused.collectAsState()
         val novelCoverageCheck = remember { GlobalContext.get().get<NovelChapterCoverageCheck>() }
         var novelsWithoutChapters by remember { mutableStateOf<List<String>>(emptyList()) }
         // Counts change on every poll while a sync runs; these lists only change when a sync ends.
@@ -602,7 +604,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             CoreStatusCard(
                 state = state,
                 syncStatus = syncStatus,
+                syncPaused = syncPaused,
                 onSyncNow = { coroutineScope.launch { runCatching { syncMonitor.syncNow() } } },
+                onReconnect = { controller.setSyncPaused(false) },
             )
         }
 
@@ -719,7 +723,21 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                             pairingItems.toPersistentList()
                         } else {
                             (
-                                pairingItems + Preference.PreferenceItem.CustomPreference(
+                                pairingItems + Preference.PreferenceItem.TextPreference(
+                                    title = stringResource(
+                                        if (syncPaused) MR.strings.epigraph_core_sync_resume else MR.strings.epigraph_core_sync_pause,
+                                    ),
+                                    subtitle = stringResource(
+                                        if (syncPaused) {
+                                            MR.strings.epigraph_core_sync_resume_summary
+                                        } else {
+                                            MR.strings.epigraph_core_sync_pause_summary
+                                        },
+                                    ),
+                                    icon = if (syncPaused) Icons.Outlined.Sync else Icons.Outlined.SyncDisabled,
+                                    // Reversible and keeps the pairing, so it needs no confirmation.
+                                    onClick = { controller.setSyncPaused(!syncPaused) },
+                                ) + Preference.PreferenceItem.CustomPreference(
                                     title = stringResource(MR.strings.epigraph_core_disconnect),
                                 ) { item ->
                                     TextPreferenceWidget(
@@ -745,16 +763,21 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
     private fun CoreStatusCard(
         state: CorePairingUiState,
         syncStatus: CoreSyncStatus?,
+        syncPaused: Boolean,
         onSyncNow: () -> Unit,
+        onReconnect: () -> Unit,
     ) {
         val paired = state as? CorePairingUiState.Paired
-        val syncTone = when (syncStatus) {
-            is CoreSyncStatus.Synced, CoreSyncStatus.Idle -> CoreTone.GOOD
-            is CoreSyncStatus.NeedsPairing,
-            is CoreSyncStatus.NeedsUserAction,
-            is CoreSyncStatus.Blocked,
-            -> CoreTone.PROBLEM
-            else -> CoreTone.NEUTRAL
+        val syncTone = when {
+            syncPaused -> CoreTone.NEUTRAL
+            else -> when (syncStatus) {
+                is CoreSyncStatus.Synced, CoreSyncStatus.Idle -> CoreTone.GOOD
+                is CoreSyncStatus.NeedsPairing,
+                is CoreSyncStatus.NeedsUserAction,
+                is CoreSyncStatus.Blocked,
+                -> CoreTone.PROBLEM
+                else -> CoreTone.NEUTRAL
+            }
         }
         val tone = when {
             state is CorePairingUiState.CredentialFailed || state is CorePairingUiState.PairingFailed -> CoreTone.PROBLEM
@@ -829,7 +852,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.size(12.dp), contentAlignment = Alignment.Center) {
-                            if (syncStatus is CoreSyncStatus.Syncing) {
+                            if (!syncPaused && syncStatus is CoreSyncStatus.Syncing) {
                                 CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
                             } else {
                                 Box(
@@ -848,15 +871,18 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = syncStatus?.let { syncStatusText(it) }
-                                ?: stringResource(MR.strings.epigraph_core_loading),
+                            text = when {
+                                syncPaused -> stringResource(MR.strings.epigraph_core_sync_status_paused)
+                                else -> syncStatus?.let { syncStatusText(it) }
+                                    ?: stringResource(MR.strings.epigraph_core_loading)
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (syncTone == CoreTone.PROBLEM) colors.error else colors.onSurface,
                             modifier = Modifier.weight(1f),
                         )
                     }
                     FilledTonalButton(
-                        onClick = onSyncNow,
+                        onClick = if (syncPaused) onReconnect else onSyncNow,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 12.dp),
@@ -867,7 +893,11 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(MR.strings.epigraph_core_sync_now))
+                        Text(
+                            stringResource(
+                                if (syncPaused) MR.strings.epigraph_core_sync_resume else MR.strings.epigraph_core_sync_now,
+                            ),
+                        )
                     }
                 }
             }

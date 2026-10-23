@@ -14,12 +14,15 @@ import epigraph.sync.core.replay.CoreReplaySession
 import epigraph.sync.core.session.CoreEndpointResolver
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.work.CoreDeviceIdentityProvider
+import epigraph.sync.core.work.CoreSyncPause
+import epigraph.sync.core.work.InMemoryCoreSyncPause
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
@@ -48,6 +51,7 @@ class CoreLiveEventSupervisor(
     private val checkpoints: CoreReplicaCheckpointReader,
     private val applier: CoreReplicaApplier,
     private val scheduler: CoreBackgroundSyncScheduler,
+    private val syncPause: CoreSyncPause = InMemoryCoreSyncPause(),
 ) {
     private val logger = Logger.withTag(LOG_TAG)
     private val connectivity = context.applicationContext
@@ -65,6 +69,8 @@ class CoreLiveEventSupervisor(
 
     private suspend fun runSupervisor() {
         while (currentCoroutineContext().isActive) {
+            // Disconnected from Settings: hold the feed closed until sync is reconnected.
+            syncPause.paused.first { paused -> !paused }
             val session = runCatching { credentialsStore.load() }
                 .onFailure { logger.w { "Could not load Core credentials" } }
                 .getOrNull()
@@ -81,7 +87,7 @@ class CoreLiveEventSupervisor(
             }
 
             try {
-                runAuthenticatedSession(session)
+                runUntilPaused { runAuthenticatedSession(session) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: CoreLiveSessionChanged) {
@@ -103,6 +109,19 @@ class CoreLiveEventSupervisor(
             } finally {
                 session.close()
             }
+        }
+    }
+
+    /** Runs [block], closing it as soon as sync is disconnected so the feed drops right away. */
+    private suspend fun runUntilPaused(block: suspend () -> Unit) {
+        coroutineScope {
+            val live = launch { block() }
+            val pauseWatch = launch {
+                syncPause.paused.first { paused -> paused }
+                live.cancel()
+            }
+            live.join()
+            pauseWatch.cancel()
         }
     }
 

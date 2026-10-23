@@ -8,6 +8,9 @@ import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.policy.DeviceSyncSelectionStore
 import epigraph.sync.core.policy.DeviceSyncSelectionV1
 import epigraph.sync.core.session.CoreEndpointResolver
+import epigraph.sync.core.session.CoreSessionEnder
+import epigraph.sync.core.work.CoreSyncPause
+import epigraph.sync.core.work.InMemoryCoreSyncPause
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -91,6 +94,8 @@ class EpigraphCorePairingController(
     private val pinResolver: PairingPinResolver? = null,
     private val hostProbe: CoreHostProbe = CoreHostProbe { null },
     private val pairingEndedListeners: List<CorePairingEndedListener> = emptyList(),
+    private val sessionEnder: CoreSessionEnder = CoreSessionEnder { },
+    private val syncPause: CoreSyncPause = InMemoryCoreSyncPause(),
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
     private val lifetimeScope = CoroutineScope(SupervisorJob() + ioDispatcher)
@@ -103,6 +108,7 @@ class EpigraphCorePairingController(
     private var activeVerificationCode: String? = null
     private val mutableDiscovery = MutableStateFlow<CoreHostDiscoveryState>(CoreHostDiscoveryState.Idle)
     val discovery: StateFlow<CoreHostDiscoveryState> = mutableDiscovery.asStateFlow()
+    val syncPaused: StateFlow<Boolean> = syncPause.paused
 
     suspend fun refresh() = operation.withLock {
         // An expired QR/PIN bundle cannot be claimed; never reopen its "Choose what to sync" dialog
@@ -229,6 +235,14 @@ class EpigraphCorePairingController(
         lifetimeScope.launch { disconnect() }
     }
 
+    /** Disconnects sync while keeping the pairing; reconnecting syncs what queued meanwhile. */
+    fun setSyncPaused(paused: Boolean) {
+        lifetimeScope.launch {
+            syncPause.setPaused(paused)
+            if (!paused) syncScheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
+        }
+    }
+
     fun updateSelection(selection: PairingSyncSelection) {
         lifetimeScope.launch {
             operation.withLock {
@@ -298,6 +312,8 @@ class EpigraphCorePairingController(
             mutableState.value = when (result) {
                 is PairingActivationResult.Activated -> {
                     mutableSelection.value = result.selection
+                    // A new pairing is the user asking to sync, whatever an earlier one was left at.
+                    syncPause.setPaused(false)
                     // State negotiated with a previously paired Core must not leak into this one.
                     notifyPairingEnded()
                     syncScheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
@@ -331,11 +347,26 @@ class EpigraphCorePairingController(
     suspend fun disconnect() = operation.withLock {
         pendingBootstrapBundle = null
         mutableState.value = try {
-            withContext(ioDispatcher) { credentials.delete() }
+            withContext(ioDispatcher) {
+                endDesktopSession()
+                credentials.delete()
+            }
+            syncPause.setPaused(false)
             notifyPairingEnded()
             CorePairingUiState.Unpaired
         } catch (failure: CoreCredentialException) {
             CorePairingUiState.CredentialFailed(failure.failure)
+        }
+    }
+
+    /** Revokes this device on the desktop while its token still exists; never blocks forgetting. */
+    private suspend fun endDesktopSession() {
+        try {
+            credentials.load()?.use { session -> sessionEnder.endSession(session) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // An unreadable credential cannot reach the desktop; the desktop can revoke it itself.
         }
     }
 
@@ -372,14 +403,18 @@ class EpigraphCorePairingController(
         CorePairingUiState.CredentialFailed(failure.failure)
     }
 
+    // The selection lives in the app database; reading it on the caller's (UI) thread froze the Core
+    // screen whenever a sync query held the connection.
     private suspend fun readPersistedSelection(): DeviceSyncSelectionV1? = try {
-        withContext(ioDispatcher) { credentials.load() }?.use { session ->
-            selections.load(session.serverId, session.profileId, deviceProvider.current().id)
-                ?: DeviceSyncSelectionV1.defaults(
-                    serverId = session.serverId,
-                    profileId = session.profileId,
-                    deviceId = deviceProvider.current().id,
-                ).also(selections::upsert)
+        withContext(ioDispatcher) {
+            credentials.load()?.use { session ->
+                selections.load(session.serverId, session.profileId, deviceProvider.current().id)
+                    ?: DeviceSyncSelectionV1.defaults(
+                        serverId = session.serverId,
+                        profileId = session.profileId,
+                        deviceId = deviceProvider.current().id,
+                    ).also(selections::upsert)
+            }
         }
     } catch (_: Exception) {
         null

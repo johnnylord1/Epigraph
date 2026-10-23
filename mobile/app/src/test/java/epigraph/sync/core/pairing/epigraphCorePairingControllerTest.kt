@@ -1,18 +1,28 @@
 package epigraph.sync.core.pairing
 
+import epigraph.sync.core.credentials.CoreCredentialSession
 import epigraph.sync.core.credentials.CoreCredentialStore
+import epigraph.sync.core.events.CoreBackgroundSyncReason
 import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.policy.DeviceSyncSelectionStore
+import epigraph.sync.core.session.CoreSessionEnder
+import epigraph.sync.core.work.InMemoryCoreSyncPause
 import io.mockk.Runs
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.confirmVerified
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.verify
+import io.mockk.verifyOrder
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class EpigraphCorePairingControllerTest {
@@ -20,6 +30,7 @@ class EpigraphCorePairingControllerTest {
     fun `disconnect removes only the session and does not schedule destructive reconciliation`() = runTest {
         val credentials = mockk<CoreCredentialStore>()
         val scheduler = mockk<CoreBackgroundSyncScheduler>()
+        every { credentials.load() } returns null
         every { credentials.delete() } just Runs
         val controller = EpigraphCorePairingController(
             activation = mockk(),
@@ -34,8 +45,78 @@ class EpigraphCorePairingControllerTest {
         controller.disconnect()
 
         assertSame(CorePairingUiState.Unpaired, controller.state.value)
+        verify(exactly = 1) { credentials.load() }
         verify(exactly = 1) { credentials.delete() }
         confirmVerified(credentials, scheduler)
+    }
+
+    @Test
+    fun `forgetting tells the desktop first and still forgets when the desktop cannot be reached`() = runTest {
+        val credentials = mockk<CoreCredentialStore>()
+        val session = mockk<CoreCredentialSession>(relaxed = true)
+        val ender = mockk<CoreSessionEnder>()
+        every { credentials.load() } returns session
+        every { credentials.delete() } just Runs
+        val pause = InMemoryCoreSyncPause(paused = true)
+        fun controller() = EpigraphCorePairingController(
+            activation = mockk(),
+            credentials = credentials,
+            deviceProvider = mockk(),
+            syncScheduler = mockk(),
+            selections = mockk<DeviceSyncSelectionStore>(),
+            endpoints = mockk(),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            sessionEnder = ender,
+            syncPause = pause,
+        )
+
+        coEvery { ender.endSession(session) } just Runs
+        controller().disconnect()
+
+        verifyOrder {
+            credentials.load()
+            session.close()
+            credentials.delete()
+        }
+        coVerify(exactly = 1) { ender.endSession(session) }
+        // A later pairing starts connected, not still disconnected from before.
+        assertFalse(pause.paused.value)
+
+        coEvery { ender.endSession(session) } throws IllegalStateException("desktop unreachable")
+        val unreachable = controller()
+        unreachable.disconnect()
+
+        assertSame(CorePairingUiState.Unpaired, unreachable.state.value)
+        verify(exactly = 2) { credentials.delete() }
+    }
+
+    @Test
+    fun `disconnecting sync keeps the pairing and reconnecting asks for a sync`() = runTest {
+        val credentials = mockk<CoreCredentialStore>()
+        val scheduler = mockk<CoreBackgroundSyncScheduler>()
+        every { scheduler.enqueue(any()) } just Runs
+        val pause = InMemoryCoreSyncPause()
+        val controller = EpigraphCorePairingController(
+            activation = mockk(),
+            credentials = credentials,
+            deviceProvider = mockk(),
+            syncScheduler = scheduler,
+            selections = mockk<DeviceSyncSelectionStore>(),
+            endpoints = mockk(),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            syncPause = pause,
+        )
+
+        controller.setSyncPaused(true)
+        advanceUntilIdle()
+        assertTrue(controller.syncPaused.value)
+        verify(exactly = 0) { scheduler.enqueue(any()) }
+
+        controller.setSyncPaused(false)
+        advanceUntilIdle()
+        assertFalse(controller.syncPaused.value)
+        verify(exactly = 1) { scheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING) }
+        confirmVerified(credentials)
     }
 
     @Test

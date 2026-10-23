@@ -46,6 +46,14 @@ JOIN chapters
 ON history.history_chapter_id = chapters._id
 WHERE chapters.manga_id = :mangaId AND history.history_chapter_id = chapters._id;
 
+-- History of one manga keyed by chapter URL, as backups store it, in a single query.
+getBackupByMangaId:
+SELECT chapters.url, history.history_last_read, history.history_time_read
+FROM history
+JOIN chapters
+ON history.history_chapter_id = chapters._id
+WHERE chapters.manga_id = :mangaId;
+
 getByChapterUrl:
 SELECT history.*
 FROM history

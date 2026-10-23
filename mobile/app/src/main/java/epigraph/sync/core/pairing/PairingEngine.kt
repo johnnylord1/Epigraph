@@ -356,12 +356,14 @@ class EpigraphCorePairingEngine(
             return EventDisposition.INVALID
         }
         return when (event.type) {
+            // A desktop decision taken before the socket opened arrives here as the current status;
+            // syncd follows these with the terminal snapshot events, which decide the outcome.
             PairingStatusEventType.HELLO,
             PairingStatusEventType.SUBSCRIBED,
-            -> if (event.status == PairingSessionStatus.CLAIMED) {
-                EventDisposition.CONTINUE
-            } else {
+            -> if (event.status == PairingSessionStatus.PENDING) {
                 EventDisposition.INVALID
+            } else {
+                EventDisposition.CONTINUE
             }
             PairingStatusEventType.STATUS_CHANGED -> when (event.status) {
                 PairingSessionStatus.CLAIMED -> EventDisposition.CONTINUE

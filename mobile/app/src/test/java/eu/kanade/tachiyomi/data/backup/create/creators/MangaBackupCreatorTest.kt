@@ -15,8 +15,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import yokai.data.DatabaseHandler
 import yokai.domain.category.interactor.GetCategories
-import yokai.domain.chapter.interactor.GetChapter
-import yokai.domain.history.interactor.GetHistory
 import yokai.domain.series.SeriesKnowledgeRepository
 import yokai.domain.series.model.SeriesKnowledgeBundle
 import yokai.domain.series.model.SeriesTranslationCanon
@@ -61,8 +59,6 @@ class MangaBackupCreatorTest {
             customMangaManager = mockk<CustomMangaManager>(relaxed = true),
             handler = mockk<DatabaseHandler>(relaxed = true),
             getCategories = mockk<GetCategories>(relaxed = true),
-            getChapter = mockk<GetChapter>(relaxed = true),
-            getHistory = mockk<GetHistory>(relaxed = true),
             getTrack = mockk<GetTrack>(relaxed = true),
             seriesKnowledgeRepository = repository,
             quoteManagerFactory = { quoteManager },

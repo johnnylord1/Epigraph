@@ -1,0 +1,12 @@
+-- The comic progress backfill joined works and chapters by local_reference and checked the outbox by
+-- entity id with no index on either, so it scanned every binding for every chapter. On a real library it
+-- held the database connection for 14-50 s on every sync run and froze the Library and Core screens.
+-- Indexes only: no data changes, and an older build simply ignores them.
+CREATE INDEX IF NOT EXISTS aethon_portable_work_local_index
+ON aethon_portable_work_binding(local_reference);
+
+CREATE INDEX IF NOT EXISTS aethon_portable_chapter_local_index
+ON aethon_portable_chapter_binding(local_reference);
+
+CREATE INDEX IF NOT EXISTS aethon_sync_outbox_entity_index
+ON aethon_sync_outbox(scope_id, entity_type, entity_id);

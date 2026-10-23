@@ -1422,6 +1422,10 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                         .withFadeTransaction(),
                 )
             }
+            SHORTCUT_EPIGRAPH_CORE -> {
+                ensureRootTabReady(R.id.nav_library)
+                router.pushController(SettingsEpigraphCoreController().withFadeTransaction())
+            }
             Intent.ACTION_VIEW -> {
                 if (intent.scheme in setOf("epigraph", "aethon", "hayai", "tachiyomi") && intent.data?.host == "add-repo") {
                     intent.data?.getQueryParameter("url")?.let { repoUrl ->
@@ -2286,6 +2290,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         const val SHORTCUT_READER_SETTINGS = "eu.kanade.tachiyomi.READER_SETTINGS"
         const val SHORTCUT_EXTENSIONS = "eu.kanade.tachiyomi.EXTENSIONS"
         const val SHORTCUT_LIBRARY_UPDATE_REPORT = "eu.kanade.tachiyomi.SHOW_LIBRARY_UPDATE_REPORT"
+        const val SHORTCUT_EPIGRAPH_CORE = "eu.kanade.tachiyomi.SHOW_EPIGRAPH_CORE"
         const val EXTRA_LIBRARY_UPDATE_REPORT_TAB = "library_update_report_tab"
 
         const val INTENT_SEARCH = "eu.kanade.tachiyomi.SEARCH"

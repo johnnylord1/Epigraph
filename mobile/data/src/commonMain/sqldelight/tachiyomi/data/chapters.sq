@@ -34,6 +34,11 @@ AND (
     :apply_filter = 0 OR S.name IS NULL
 );
 
+-- Backups take every chapter, so they skip the scanlator filter join, which is rebuilt for every query.
+getBackupChaptersByMangaId:
+SELECT * FROM chapters
+WHERE manga_id = :manga_id;
+
 getChaptersById:
 SELECT * FROM chapters
 WHERE _id = :id;

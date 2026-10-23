@@ -203,6 +203,11 @@ On unpair, and also before a *new* pairing is activated:
 - logins the user entered on this device stay;
 - the vault is deleted.
 
+When the user forgets the desktop, the device first calls `DELETE /v1/session` (Core advertises
+`supportsSessionEndV1`) so the Core revokes its tokens and drops it from its devices list. The
+call is best effort with a short timeout: an unreachable or older Core never stops the device from
+forgetting locally, and the desktop can still revoke it from its own list.
+
 ## 3. Rollout and rollback
 
 - **DB:** no schema change. `manga_sync` is used as-is, so there is no migration to roll back.

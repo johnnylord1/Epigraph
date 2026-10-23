@@ -105,6 +105,13 @@ object Notifications {
     /** Notification id used by the local EPUB/PDF playback service. */
     const val ID_BOOK_TTS_PLAYBACK = -802
 
+    /**
+     * Notification channel and ids used by sync with Epigraph desktop.
+     */
+    const val CHANNEL_CORE_SYNC = "core_sync_channel"
+    const val ID_CORE_SYNC_PROGRESS = -901
+    const val ID_CORE_SYNC_ATTENTION = -902
+
     private val deprecatedChannels = listOf(
         "backup_restore_channel",
         "library_channel",
@@ -267,6 +274,13 @@ object Notifications {
                 setShowBadge(false)
                 setSound(null, null)
                 enableVibration(false)
+            },
+            NotificationChannel(
+                CHANNEL_CORE_SYNC,
+                context.getString(MR.strings.epigraph_core_sync_notification_channel),
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                setShowBadge(false)
             },
         )
         context.notificationManager.createNotificationChannels(channels)

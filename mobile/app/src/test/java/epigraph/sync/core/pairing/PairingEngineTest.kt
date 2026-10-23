@@ -58,6 +58,24 @@ class PairingEngineTest {
     }
 
     @Test
+    fun `approval given before the live socket opened still exchanges the token`() = runTest {
+        val transport = FakeTransport(
+            claims = listOf(pending(), approved()),
+            events = flowOf(
+                event(PairingStatusEventType.HELLO, PairingSessionStatus.APPROVED),
+                event(PairingStatusEventType.SUBSCRIBED, PairingSessionStatus.APPROVED),
+                event(PairingStatusEventType.APPROVED, PairingSessionStatus.APPROVED),
+                event(PairingStatusEventType.FINAL_TOKEN_READY, PairingSessionStatus.APPROVED),
+            ),
+        )
+
+        val result = engine(transport).pair(bundle(), device)
+
+        assertEquals("secret-token", assertInstanceOf(PairingResult.Success::class.java, result).session.token.accessToken)
+        assertEquals(2, transport.claimsSeen.size)
+    }
+
+    @Test
     fun `accepts a directly approved idempotent claim without opening live status`() = runTest {
         val transport = FakeTransport(listOf(approved()))
 

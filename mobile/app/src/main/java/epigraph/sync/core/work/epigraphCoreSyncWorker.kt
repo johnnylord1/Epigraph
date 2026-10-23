@@ -46,18 +46,31 @@ class EpigraphCoreSyncWorker(
         if (!isCurrentSchedulerVersion(inputData.getInt(INPUT_SCHEDULER_VERSION, 0))) {
             return Result.success(workDataOf(OUTPUT_STATE to STATE_STALE_SCHEDULER))
         }
+        // Disconnected from Settings: stand down without a follow-up wake; reconnecting enqueues one.
+        if (get<CoreSyncPause>().paused.value) {
+            // A notice about a sync the user just disconnected no longer asks for anything.
+            runCatching { get<CoreSyncNotifier>().clearAttention() }
+            return Result.success(workDataOf(OUTPUT_STATE to STATE_PAUSED))
+        }
         if (!EXECUTION_MUTEX.tryLock()) {
             return Result.success(workDataOf(OUTPUT_STATE to STATE_COALESCED))
         }
         return try {
-            var execution: WorkerExecution
-            var attempts = 0
-            var observedGeneration: Long
-            do {
-                observedGeneration = WAKE_GENERATION.get()
-                execution = runOnce()
-                attempts += 1
-            } while (attempts < MAX_GENERATION_DRAINS && observedGeneration != WAKE_GENERATION.get())
+            val notifier = get<CoreSyncNotifier>()
+            val outbox = get<CorePendingOutbox>()
+            val execution = notifier.withProgress(remaining = { outbox.unsettledCount() }) {
+                var drained: WorkerExecution
+                var attempts = 0
+                var observedGeneration: Long
+                do {
+                    observedGeneration = WAKE_GENERATION.get()
+                    drained = runOnce()
+                    attempts += 1
+                } while (attempts < MAX_GENERATION_DRAINS && observedGeneration != WAKE_GENERATION.get())
+                drained
+            }
+            runCatching { get<CoreSyncRunStore>().lastRun.value?.let(notifier::update) }
+                .onFailure { failure -> Log.w(LOG_TAG, "sync notice could not be updated", failure) }
             if (shouldScheduleFollowUp(execution.usesWorkManagerBackoff, execution.awaitingExternalAction)) {
                 scheduleNextWake()
             }
@@ -266,6 +279,7 @@ class EpigraphCoreSyncWorker(
         private const val STATE_NEEDS_PAIRING = "needs_pairing"
         private const val STATE_NEEDS_USER_ACTION = "needs_user_action"
         private const val STATE_STALE_SCHEDULER = "stale_scheduler"
+        private const val STATE_PAUSED = "paused"
         private const val SCHEDULER_VERSION = 6
 
         private val NETWORK_CONSTRAINTS = Constraints.Builder()

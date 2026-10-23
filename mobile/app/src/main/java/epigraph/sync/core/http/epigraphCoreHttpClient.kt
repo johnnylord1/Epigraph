@@ -130,6 +130,20 @@ class EpigraphCoreHttpClient internal constructor(
                 .build(),
         )
 
+    /** Revokes this device on the Core (`DELETE /v1/session`); a Core without the route answers 404/405. */
+    suspend fun endSession(accessToken: String): CoreHttpResult<Unit> =
+        client.newCall(
+            protectedRequestBuilder(endpoint("v1/session"), accessToken)
+                .delete()
+                .build(),
+        ).await().use { response ->
+            if (response.isSuccessful) {
+                CoreHttpResult.Success(Unit)
+            } else {
+                CoreHttpResult.Failure(response.code, null)
+            }
+        }
+
     suspend fun snapshot(
         accessToken: String,
         scopeId: String,

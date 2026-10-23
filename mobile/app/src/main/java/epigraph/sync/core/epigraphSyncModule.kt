@@ -118,6 +118,7 @@ import epigraph.sync.core.replica.CoreReplicaProjection
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.session.AndroidCoreEndpointResolver
 import epigraph.sync.core.session.CoreEndpointResolver
+import epigraph.sync.core.session.HttpCoreSessionEnder
 import epigraph.sync.core.suwayomi.CoreSuwayomiCatalogPageSource
 import epigraph.sync.core.suwayomi.CoreSuwayomiProjectionStatusSource
 import epigraph.sync.core.suwayomi.SuwayomiCatalogPageSource
@@ -148,7 +149,10 @@ import epigraph.sync.core.work.CoreReplicaSyncPort
 import epigraph.sync.core.work.PinnedCoreOutboxSyncConnectionFactory
 import epigraph.sync.core.work.SnapshotCoreReplicaSync
 import epigraph.sync.core.work.SqlDelightCoreSyncWakeStore
+import epigraph.sync.core.work.CoreSyncNotifier
 import epigraph.sync.core.work.CoreSyncRunStore
+import epigraph.sync.core.work.CoreSyncPause
+import epigraph.sync.core.work.SharedPreferencesCoreSyncPause
 import epigraph.sync.core.work.CoreSyncStatusMonitor
 import epigraph.sync.core.work.WorkManagerCoreBackgroundSyncScheduler
 import eu.kanade.tachiyomi.BuildConfig
@@ -190,6 +194,8 @@ fun epigraphSyncModule(app: Application) = module {
     single { AndroidPairingDeviceProvider(app) }
     single<CoreBackgroundSyncScheduler> { WorkManagerCoreBackgroundSyncScheduler(app) }
     single { CoreSyncRunStore(app) }
+    single { CoreSyncNotifier(app) }
+    single<CoreSyncPause> { SharedPreferencesCoreSyncPause(app) }
     single { CoreSyncStatusMonitor(app, get(), get(), get(), get()) }
     single { PortableDependencyTrustCoordinator(get(), get()) }
     single {
@@ -206,7 +212,10 @@ fun epigraphSyncModule(app: Application) = module {
             pairingEndedListeners = listOf(
                 get<CoreTrackingCapabilityCache>(),
                 CorePairingEndedListener { get<TrackerCredentialSyncer>().wipe() },
+                CorePairingEndedListener { get<CoreSyncNotifier>().clearAttention() },
             ),
+            sessionEnder = HttpCoreSessionEnder(get(), get()),
+            syncPause = get(),
         )
     }
     single { CoreSessionTransportFactory(get(), BuildConfig.VERSION_NAME) }
@@ -394,6 +403,7 @@ fun epigraphSyncModule(app: Application) = module {
             checkpoints = get(),
             applier = get(),
             scheduler = get(),
+            syncPause = get(),
         )
     }
     single { SnapshotCoreReplicaSync(get(), get(), get(), get(), get()) }
