@@ -40,6 +40,33 @@ class CoreReplicaApplierTest {
     }
 
     @Test
+    fun `snapshot already applied at the same version is not projected again`() = runTest {
+        val coverage = CoreReplayCoverage.Filtered("books:global")
+        val store = FakeReplicaStore().apply {
+            checkpoints[coverage.toString()] = CoreReplayCheckpoint(8, coverage)
+        }
+
+        val result = CoreReplicaApplier(store).applySnapshot(snapshot(), capabilities())
+
+        assertEquals(8, result.checkpoint.lastGlobalEventId)
+        assertEquals(emptyMap<CoreReplicaKey, CoreConfirmedRecord>(), store.confirmed)
+        assertEquals(listOf("commit"), store.operations)
+    }
+
+    @Test
+    fun `snapshot newer than the held checkpoint is still applied`() = runTest {
+        val coverage = CoreReplayCoverage.Filtered("books:global")
+        val store = FakeReplicaStore().apply {
+            checkpoints[coverage.toString()] = CoreReplayCheckpoint(7, coverage)
+        }
+
+        val result = CoreReplicaApplier(store).applySnapshot(snapshot(), capabilities())
+
+        assertEquals(8, result.checkpoint.lastGlobalEventId)
+        assertEquals(listOf("replace:books:global", "checkpoint:8", "commit"), store.operations)
+    }
+
+    @Test
     fun `snapshot failure rolls back replica tombstones and checkpoint`() {
         val old = record("books:global", "old", 1)
         val store = FakeReplicaStore().apply {
@@ -430,6 +457,9 @@ private class FakeReplicaStore : CoreReplicaStore {
                 stagedInbox += event.globalEventId
                 stagedOperations += "inbox:${event.globalEventId}"
             }
+
+            override suspend fun latestCheckpoint(coverage: CoreReplayCoverage): CoreReplayCheckpoint? =
+                stagedCheckpoints[coverage.toString()]
 
             override suspend fun saveCheckpoint(checkpoint: CoreReplayCheckpoint) {
                 if (failOnCheckpoint) error("checkpoint failure")

@@ -88,6 +88,11 @@ fun appModule(app: Application) = module {
                 // Not sure if this is still needed, but just in case
                 override fun onConfigure(db: SupportSQLiteDatabase) {
                     db.setForeignKeyConstraintsEnabled(true)
+                    // "PRAGMA journal_mode = WAL" alone leaves the pool at one connection, so every
+                    // Library/Settings read waited behind a Core sync transaction (a first snapshot
+                    // can hold it for minutes). Enabling WAL here lets reads use their own
+                    // connections while the sync writes; writes still go through one connection.
+                    db.enableWriteAheadLogging()
                 }
 
                 override fun onCreate(db: SupportSQLiteDatabase) {
