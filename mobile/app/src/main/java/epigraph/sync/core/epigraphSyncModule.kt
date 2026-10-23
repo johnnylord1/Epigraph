@@ -81,6 +81,12 @@ import epigraph.sync.core.portable.NovelDependencyRegistry
 import epigraph.sync.core.portable.PortableLocalEntityLookup
 import epigraph.sync.core.portable.PortableWorkMaterializer
 import epigraph.sync.core.portable.PortableDependencyTrustCoordinator
+import epigraph.sync.core.portable.DeferredComicChapterMaterializer
+import epigraph.sync.core.portable.PortableChapterPrefetcher
+import epigraph.sync.core.portable.SharedPreferencesChapterPrefetchCooldown
+import epigraph.sync.core.portable.SourceChapterListFetcher
+import epigraph.sync.core.portable.SqlDelightChapterPrefetchTargets
+import epigraph.sync.core.work.PortableChapterPrefetchWorker
 import epigraph.contract.PortableContentProvider
 import epigraph.sync.core.policy.DeviceSyncSelectionStore
 import epigraph.sync.core.policy.SqlDelightDeviceSyncSelectionStore
@@ -420,8 +426,20 @@ fun epigraphSyncModule(app: Application) = module {
     single<PortableWorkMaterializer> { EpigraphPortableWorkMaterializer(get(), get(), get()) }
     single<ComicDependencyRegistry> { MihonComicDependencyRegistry(get(), get()) }
     single<NovelDependencyRegistry> { LnReaderNovelDependencyRegistry(get()) }
+    single {
+        PortableChapterPrefetcher(
+            SqlDelightChapterPrefetchTargets(get()),
+            SourceChapterListFetcher(get(), get()),
+            SharedPreferencesChapterPrefetchCooldown(app),
+        )
+    }
     single<PortableContentProvider>(named(PORTABLE_COMICS_PROVIDER)) {
-        MihonPortableProvider(get(), get(), get())
+        MihonPortableProvider(
+            get(),
+            get(),
+            get(),
+            DeferredComicChapterMaterializer { PortableChapterPrefetchWorker.request(app) },
+        )
     }
     single<PortableContentProvider>(named(PORTABLE_NOVELS_PROVIDER)) {
         LnReaderPortableProvider(get(), get(), get())

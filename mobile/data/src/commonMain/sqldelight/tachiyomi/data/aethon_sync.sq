@@ -619,6 +619,28 @@ SELECT * FROM aethon_portable_chapter_binding
 WHERE portable_work_id = :portableWorkId
 ORDER BY updated_at, portable_chapter_id;
 
+-- Bound comics whose local row lacks a chapter another device has state for, most recently read
+-- first; the device fetches their chapter lists from the extension in the background.
+selectComicWorksAwaitingChapterList:
+SELECT work.source_id, work.local_reference
+FROM aethon_portable_work_binding AS work
+LEFT JOIN aethon_reader_progress AS progress ON progress.entity_id = work.portable_id
+WHERE work.ecosystem = 'SUWAYOMI'
+  AND work.resolution_state = 'BOUND'
+  AND EXISTS (
+      SELECT 1 FROM aethon_portable_chapter_binding AS chapter
+      WHERE chapter.portable_work_id = work.portable_id
+        AND chapter.resolution_state = 'PENDING_PROVIDER'
+        AND chapter.resolution_reason = 'CHAPTER_NOT_FOUND'
+        AND NOT EXISTS (
+            SELECT 1 FROM chapters AS local
+            WHERE local.manga_id = CAST(work.local_reference AS INTEGER)
+              AND local.url = chapter.provider_key
+        )
+  )
+ORDER BY progress.updated_at IS NULL, progress.updated_at DESC, work.updated_at DESC, work.portable_id
+LIMIT :limit;
+
 upsertComicDependencyV3:
 INSERT INTO aethon_comic_dependency_v3(
     server_id, profile_id, package_name, required_source_ids_json,

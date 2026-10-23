@@ -35,6 +35,24 @@ with bounded concurrency. Pending chapter state is retained until an exact
 chapter binding is available. Disconnecting or disabling a domain preserves
 bindings, Library data and offline assets.
 
+The sync pass never calls an extension. When a bound comic lacks a chapter the
+manifest has state for, the pass leaves the chapter `PENDING_PROVIDER` /
+`CHAPTER_NOT_FOUND` and asks `PortableChapterPrefetchWorker` for a background
+fetch. The worker lists those comics' chapters with the library update's own
+path (`refreshChapterList` + `syncChaptersWithSource`), most recently read
+first. Each run is bounded:
+
+- at most 30 titles;
+- two sources at once, one title at a time per source;
+- 45 s per title and an 8 min run deadline;
+- a title waits 12 h after a fetch and 1 h after a failure.
+
+It needs a network and no low battery, stands down while sync is disconnected
+or a library update runs, and wakes the Core sync after adding chapters so they
+bind and take their desktop state. It reads one SQL query and changes no schema.
+Rollback: pass no chapter materializer to `MihonPortableProvider` in the sync
+module; pending chapters then wait for the user to open or update the title.
+
 The import validates that every work points to an existing dependency and that
 the dependency declares the work's exact source ID. Trust is retained only while
 the Store/repository provenance remains unchanged. A changed origin returns to

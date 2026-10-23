@@ -205,7 +205,7 @@ class MihonPortableProvider(
             }
         }
         val materialized = chapterMaterializer?.materializeAll(missing)
-            ?: missing.map(::unsupported)
+            ?: missing.map(::chapterNotListedYet)
         materialized.forEach { resolved[it.ref] = it }
         return refs.map { ref -> resolved[ref] ?: ChapterResolution(ref, conflict()) }
     }
@@ -318,7 +318,7 @@ class LnReaderPortableProvider(
             }
         }
         val materialized = chapterMaterializer?.materializeAll(missing)
-            ?: missing.map(::unsupported)
+            ?: missing.map(::chapterNotListedYet)
         materialized.forEach { resolved[it.ref] = it }
         return refs.map { ref -> resolved[ref] ?: ChapterResolution(ref, conflict()) }
     }
@@ -334,9 +334,10 @@ private fun unsupported(ref: PortableWorkRef) = WorkResolution(
     ),
 )
 
-// The device lists a work's chapters through its extension when the work is opened, added or
-// updated, never from the sync pass; until then the chapter stays pending and binds on a later pass.
-private fun unsupported(ref: PortableChapterRef) = ChapterResolution(
+// The sync pass never lists chapters through an extension. A chapter the device has not listed yet
+// stays pending and binds on a later pass: comics ask for a bounded background fetch
+// (DeferredComicChapterMaterializer), novels list theirs when the work is opened, added or updated.
+internal fun chapterNotListedYet(ref: PortableChapterRef) = ChapterResolution(
     ref,
     PortableResolution(
         PortableResolutionState.PENDING_PROVIDER,
