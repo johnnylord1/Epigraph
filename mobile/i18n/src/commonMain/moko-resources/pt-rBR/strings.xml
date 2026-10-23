@@ -1631,7 +1631,7 @@
     <string name="repositories">Repositórios</string>
     <string name="repo_add_failed">Não foi possível adicionar este repositório. Verifique a URL e sua conexão e tente de novo.</string>
     <string name="repo_refresh_failed">Não foi possível atualizar os repositórios. Verifique sua conexão e tente de novo.</string>
-    <string name="add_manga_repo">Adicionar um repositório de mangá</string>
+    <string name="add_manga_repo">Adicionar um repositório de quadrinhos</string>
     <string name="add_novel_repo">Adicionar um repositório de novel</string>
     <string name="manga_repo_add_description">Cole a URL completa do index.min.json fornecida por quem mantém o repositório.</string>
     <string name="novel_repo_add_description">Cole a URL de um repositório para validar o índice e liberar as fontes de novel dele.</string>

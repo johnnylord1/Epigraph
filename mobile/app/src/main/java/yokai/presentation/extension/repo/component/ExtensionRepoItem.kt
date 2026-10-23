@@ -257,7 +257,7 @@ private fun ExtensionRepoItemPreview() {
     MaterialTheme {
         Column {
             ExtensionRepoInput(
-                title = "Add a manga repository",
+                title = "Add a comics repository",
                 description = "Paste the full repository index URL.",
                 inputLabel = "Repository URL",
                 placeholder = "https://example.org/repo/index.min.json",

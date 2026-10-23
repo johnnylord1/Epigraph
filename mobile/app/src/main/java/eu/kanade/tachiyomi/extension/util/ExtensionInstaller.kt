@@ -75,6 +75,10 @@ internal class ExtensionInstaller(private val context: Context) {
     val activeDownloads = ConcurrentHashMap<String, Long>()
     private val promptlessInstallPackages = ConcurrentHashMap.newKeySet<String>()
     private val completedFromPackageState = ConcurrentHashMap.newKeySet<String>()
+
+    /** Package Installer prompts waiting for the open one ([promptingPackage]) to finish. */
+    private val promptQueue = ArrayDeque<Pair<String, () -> Unit>>()
+    private var promptingPackage: String? = null
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var installer: ShizukuInstaller? = null
@@ -344,13 +348,45 @@ internal class ExtensionInstaller(private val context: Context) {
                         .setDataAndType(uri, APK_MIME)
                         .putExtra(EXTRA_DOWNLOAD_ID, downloadId)
                         .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                if (useActivity) {
-                    context.startActivity(intent)
-                } else {
-                    context.sendBroadcast(intent)
+                val start = {
+                    if (useActivity) context.startActivity(intent) else context.sendBroadcast(intent)
                 }
+                if (pkgName == null) start() else enqueuePrompt(pkgName, start)
             }
         }
+    }
+
+    /**
+     * Android's Package Installer puts every confirmation from this app in one task: confirming
+     * one closes the others, and their sessions then wait for a user action that never comes
+     * ("Update all" froze on the second extension). Prompts are therefore shown one at a time.
+     */
+    private fun enqueuePrompt(pkgName: String, start: () -> Unit) {
+        val startNow = synchronized(promptQueue) {
+            promptQueue.removeAll { it.first == pkgName }
+            if (promptingPackage == null || promptingPackage == pkgName) {
+                promptingPackage = pkgName
+                true
+            } else {
+                promptQueue.addLast(pkgName to start)
+                false
+            }
+        }
+        if (startNow) {
+            start()
+        } else {
+            emitToFlow(pkgName, ExtensionIntallInfo(InstallStep.Pending, null))
+        }
+    }
+
+    /** Drops [pkgName] from the prompt queue and, if its prompt was the open one, shows the next. */
+    private fun finishPrompt(pkgName: String) {
+        val next = synchronized(promptQueue) {
+            promptQueue.removeAll { it.first == pkgName }
+            if (promptingPackage != pkgName) return
+            promptQueue.removeFirstOrNull().also { promptingPackage = it?.first }
+        } ?: return
+        next.second()
     }
 
     private fun installPrivately(downloadId: Long, pkgName: String?, uri: Uri) {
@@ -429,6 +465,7 @@ internal class ExtensionInstaller(private val context: Context) {
         try {
             context.packageManager.packageInstaller.abandonSession(sessionId)
         } catch (_: Exception) { }
+        finishPrompt(pkgName)
     }
 
     /**
@@ -450,6 +487,7 @@ internal class ExtensionInstaller(private val context: Context) {
         }
         downloadInstallerMap.remove(pkgName)
         emitToFlow(pkgName, ExtensionIntallInfo(step, null))
+        finishPrompt(pkgName)
     }
 
     /**
@@ -475,6 +513,7 @@ internal class ExtensionInstaller(private val context: Context) {
             downloadManager.remove(downloadId)
         }
         ExtensionInstallerJob.removeActiveInstall(pkgName)
+        finishPrompt(pkgName)
         if (activeDownloads.isEmpty()) {
             downloadReceiver.unregister()
         }

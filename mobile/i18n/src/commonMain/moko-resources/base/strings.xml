@@ -1019,7 +1019,7 @@
     <string name="repo_already_exists">This repository is already added.</string>
     <string name="repo_add_failed">Couldn’t add this repository. Check the URL and your connection, then try again.</string>
     <string name="repo_refresh_failed">Couldn’t refresh repositories. Check your connection and try again.</string>
-    <string name="add_manga_repo">Add a manga repository</string>
+    <string name="add_manga_repo">Add a comics repository</string>
     <string name="add_novel_repo">Add a novel repository</string>
     <string name="manga_repo_add_description">Paste the full index.min.json URL supplied by the repository maintainer.</string>
     <string name="novel_repo_add_description">Paste a repository URL to validate its index and make its novel sources available.</string>
@@ -1030,7 +1030,7 @@
     <string name="repository_count">%1$d added</string>
     <string name="remove_repository">Remove repository</string>
     <string name="information_empty_migration_sources">No library series can be migrated yet. Series from the local source stay where they are.</string>
-    <string name="information_empty_repos">No manga repositories yet. Add one above to browse more extensions.</string>
+    <string name="information_empty_repos">No comics repositories yet. Add one above to browse more extensions.</string>
     <string name="information_empty_novel_repos">No novel repositories yet. Add one above to browse novel sources.</string>
     <string name="novel_repo_invalid">Novel repo index is invalid.</string>
     <string name="novel_repo_empty">Novel repo is empty. Add a repo that contains novel sources.</string>
