@@ -53,6 +53,18 @@ bind and take their desktop state. It reads one SQL query and changes no schema.
 Rollback: pass no chapter materializer to `MihonPortableProvider` in the sync
 module; pending chapters then wait for the user to open or update the title.
 
+Before any extension call, the worker reads the chapter lists the paired
+desktop's Suwayomi already holds through the Core `catalog` route
+(`CoreChapterListStage`): one Core session per run, four readers, 30 s per
+title, matched to the desktop library by exact source ID and manga key, with
+Suwayomi IDs used only within that session. Each list goes through
+`syncChaptersWithSource`, which keeps chapters already stored on the phone, and
+the desktop read state in the same response is folded in under the existing
+bridged rules (it never un-reads a chapter), with a Core request only when the
+identity differs. A title the desktop does not list, or whose list fails, waits
+10 minutes before the desktop is asked again and falls back to the extension
+path above. Rollback: pass no `CoreChapterListStage` to the prefetcher.
+
 The import validates that every work points to an existing dependency and that
 the dependency declares the work's exact source ID. Trust is retained only while
 the Store/repository provenance remains unchanged. A changed origin returns to

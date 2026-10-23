@@ -36,7 +36,8 @@ class PortableChapterPrefetcherTest {
         }
     }
 
-    private fun target(id: Long, source: Long = 1L) = ChapterPrefetchTarget(localMangaId = id, sourceId = source)
+    private fun target(id: Long, source: Long = 1L) =
+        ChapterPrefetchTarget(localMangaId = id, sourceId = source, key = "/m/$id")
 
     private fun prefetcher(
         targets: List<ChapterPrefetchTarget>,
@@ -44,6 +45,7 @@ class PortableChapterPrefetcherTest {
         clock: () -> Long = { NOW },
         titlesPerRun: Int = 30,
         sourceQueues: Int = 1,
+        desktop: CoreChapterListStage? = null,
         fetch: suspend (ChapterPrefetchTarget) -> ChapterFetchOutcome,
     ) = PortableChapterPrefetcher(
         targets = { limit -> targets.take(limit.toInt()) },
@@ -52,6 +54,7 @@ class PortableChapterPrefetcherTest {
         clock = clock,
         titlesPerRun = titlesPerRun,
         sourceQueues = sourceQueues,
+        desktop = desktop,
     )
 
     @Test
@@ -242,6 +245,7 @@ class PortableChapterPrefetcherTest {
 
             assertEquals(listOf(readRecently, readLongAgo, neverRead), targets.map { it.localMangaId })
             assertTrue(targets.all { it.sourceId == 10L })
+            assertEquals(listOf("b", "a", "c"), targets.map { it.key })
             assertFalse(SqlDelightChapterPrefetchTargets(handler).awaiting(limit = 1).size > 1)
         } finally {
             driver.close()

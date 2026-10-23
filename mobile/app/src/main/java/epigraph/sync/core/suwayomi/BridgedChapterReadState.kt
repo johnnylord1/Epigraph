@@ -28,12 +28,33 @@ fun interface BridgedChapterReadState {
     suspend fun chapters(mangaId: Long, hasNewChapters: Boolean): Map<String, SChapter>
 }
 
+/** A desktop work's chapter catalog nodes already read in the current Core session. */
+class CoreChapterNodes(
+    val serverId: String,
+    val profileId: String,
+    val mangaId: Long,
+    val nodes: List<JsonObject>,
+) {
+    fun serves(manga: SuwayomiCoreContentReference.Manga): Boolean =
+        (manga.serverId == null || manga.serverId == serverId) &&
+            manga.profileId == profileId &&
+            manga.mangaId == mangaId
+}
+
 class CoreBridgedChapterReadState(
     private val database: DatabaseHandler,
     private val gateway: EpigraphCoreSourceGateway,
     private val baselines: SharedPreferences,
 ) : BridgedChapterReadState {
-    override suspend fun chapters(mangaId: Long, hasNewChapters: Boolean): Map<String, SChapter> {
+    override suspend fun chapters(mangaId: Long, hasNewChapters: Boolean): Map<String, SChapter> =
+        chapters(mangaId, hasNewChapters, prefetched = null)
+
+    /** As [chapters], read from [prefetched] instead of a new Core request when it is the same work. */
+    suspend fun chapters(
+        mangaId: Long,
+        hasNewChapters: Boolean,
+        prefetched: CoreChapterNodes?,
+    ): Map<String, SChapter> {
         novelLastReads(mangaId)?.let { return it }
         val identity = database.awaitOneOrNull {
             aethon_syncQueries.selectIdentityByLocalReference(MANGA_CONTENT_TYPE, mangaId.toString())
@@ -41,14 +62,16 @@ class CoreBridgedChapterReadState(
         val entityId = identity.entity_id
         if (!hasNewChapters && baselines.getBoolean(entityId, false)) return emptyMap()
         val manga = SuwayomiCoreContentReference.parseMangaEntityId(entityId) ?: return emptyMap()
-        if (!gateway.hasActiveSession()) return emptyMap()
-        val nodes = try {
-            gateway.cachedChapters(manga.serverId, manga.profileId, manga.mangaId)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            null
-        } ?: return emptyMap()
+        val nodes = prefetched?.takeIf { it.serves(manga) }?.nodes ?: run {
+            if (!gateway.hasActiveSession()) return emptyMap()
+            try {
+                gateway.cachedChapters(manga.serverId, manga.profileId, manga.mangaId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                null
+            } ?: return emptyMap()
+        }
         val states = nodes.mapNotNull(::readState)
         // A desktop older than the url field lists chapters without it; ask again once it updates.
         if (states.isNotEmpty() || nodes.isEmpty()) baselines.edit().putBoolean(entityId, true).apply()

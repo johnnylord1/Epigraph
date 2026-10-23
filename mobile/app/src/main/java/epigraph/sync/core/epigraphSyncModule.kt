@@ -86,6 +86,9 @@ import epigraph.sync.core.portable.PortableChapterPrefetcher
 import epigraph.sync.core.portable.SharedPreferencesChapterPrefetchCooldown
 import epigraph.sync.core.portable.SourceChapterListFetcher
 import epigraph.sync.core.portable.SqlDelightChapterPrefetchTargets
+import epigraph.sync.core.portable.CoreChapterListStage
+import epigraph.sync.core.portable.SessionCoreChapterCatalog
+import epigraph.sync.core.portable.SourceChapterListWriter
 import epigraph.sync.core.work.PortableChapterPrefetchWorker
 import epigraph.contract.PortableContentProvider
 import epigraph.sync.core.policy.DeviceSyncSelectionStore
@@ -255,7 +258,8 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreCatalogCoverSink> { CoreCatalogCoverCache(get(), get()) }
     single { AuthenticatedEpigraphCoreSourceGateway(get(), get(), get()) }
     single { EpigraphCoreSource(get<AuthenticatedEpigraphCoreSourceGateway>()) }
-    single<BridgedChapterReadState> {
+    single<BridgedChapterReadState> { get<CoreBridgedChapterReadState>() }
+    single {
         CoreBridgedChapterReadState(
             get(),
             get<AuthenticatedEpigraphCoreSourceGateway>(),
@@ -431,6 +435,14 @@ fun epigraphSyncModule(app: Application) = module {
             SqlDelightChapterPrefetchTargets(get()),
             SourceChapterListFetcher(get(), get()),
             SharedPreferencesChapterPrefetchCooldown(app),
+            CoreChapterListStage(
+                SessionCoreChapterCatalog(get(), get(), get()),
+                SourceChapterListWriter(get(), get(), get(), get()),
+                SharedPreferencesChapterPrefetchCooldown(
+                    app,
+                    SharedPreferencesChapterPrefetchCooldown.DESKTOP_PREFERENCES,
+                ),
+            ),
         )
     }
     single<PortableContentProvider>(named(PORTABLE_COMICS_PROVIDER)) {

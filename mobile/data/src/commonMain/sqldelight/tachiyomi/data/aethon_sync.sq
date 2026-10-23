@@ -622,7 +622,7 @@ ORDER BY updated_at, portable_chapter_id;
 -- Bound comics whose local row lacks a chapter another device has state for, most recently read
 -- first; the device fetches their chapter lists from the extension in the background.
 selectComicWorksAwaitingChapterList:
-SELECT work.source_id, work.local_reference
+SELECT work.source_id, work.local_reference, work.provider_key
 FROM aethon_portable_work_binding AS work
 LEFT JOIN aethon_reader_progress AS progress ON progress.entity_id = work.portable_id
 WHERE work.ecosystem = 'SUWAYOMI'
