@@ -123,7 +123,7 @@ class ExtensionRepoScreen(
                 // Same place as every other content-type switch: the end of the app bar actions.
                 SegmentedSwitch(
                     options = listOf(
-                        0 to repoTabLabel(stringResource(MR.strings.manga), extensionCount),
+                        0 to repoTabLabel(stringResource(MR.strings.library_comics), extensionCount),
                         1 to repoTabLabel(stringResource(MR.strings.novels), novelCount),
                     ),
                     selected = pagerState.currentPage,

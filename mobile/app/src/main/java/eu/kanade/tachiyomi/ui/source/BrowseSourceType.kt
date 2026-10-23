@@ -16,8 +16,8 @@ import yokai.i18n.MR
  *  - key the per-type "last used" source ([eu.kanade.tachiyomi.data.preference.PreferencesHelper.lastUsedNovelSource] / [eu.kanade.tachiyomi.data.preference.PreferencesHelper.lastUsedMangaSource])
  */
 enum class BrowseSourceType(val stringRes: StringResource) {
-    Manga(MR.strings.manga),
-    Novel(MR.strings.novel),
+    Manga(MR.strings.library_comics),
+    Novel(MR.strings.novels),
     ;
 
     companion object {

@@ -1,21 +1,35 @@
 package epigraph.novel.ui
 
 import android.os.Bundle
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -24,11 +38,13 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import dev.icerock.moko.resources.compose.stringResource
@@ -51,12 +67,8 @@ import kotlinx.serialization.json.contentOrNull
 import yokai.i18n.MR
 import yokai.presentation.AppBarType
 import yokai.presentation.component.LabeledCheckbox
-import yokai.presentation.component.preference.widget.EditTextPreferenceWidget
 import yokai.presentation.component.preference.widget.InfoWidget
-import yokai.presentation.component.preference.widget.ListPreferenceWidget
 import yokai.presentation.component.preference.widget.PreferenceGroupHeader
-import yokai.presentation.component.preference.widget.SwitchPreferenceWidget
-import yokai.presentation.component.preference.widget.TextPreferenceWidget
 import yokai.presentation.settings.SettingsScaffold
 import yokai.util.koin.get
 import androidx.compose.ui.res.stringResource as androidStringResource
@@ -270,67 +282,98 @@ private fun PluginHeader(
     }
 }
 
+/**
+ * Plugin labels are often whole instructions ("paste the link from that email here..."), so rows
+ * and dialogs show them in full instead of the two-line titles of the app's own settings.
+ */
 @Composable
 private fun PluginSettingRow(
     setting: PluginSetting,
     value: JsonElement,
     onChange: (JsonElement) -> Unit,
 ) {
-    when (setting.type) {
-        PluginSetting.Type.Switch -> SwitchPreferenceWidget(
-            title = setting.label,
-            checked = (value as? JsonPrimitive)?.booleanOrNull ?: false,
-            onCheckedChanged = { onChange(JsonPrimitive(it)) },
-        )
-        PluginSetting.Type.Select -> ListPreferenceWidget(
-            value = value,
-            title = setting.label,
-            subtitle = setting.options.firstOrNull { it.first == value }?.second,
-            icon = null,
-            entries = setting.options.toMap(),
-            onValueChange = onChange,
-        )
-        PluginSetting.Type.CheckboxGroup -> CheckboxGroupWidget(
-            setting = setting,
-            selected = (value as? JsonArray).orEmpty(),
-            onConfirm = { onChange(JsonArray(it)) },
-        )
-        PluginSetting.Type.Text -> EditTextPreferenceWidget(
-            title = setting.label,
-            subtitle = "%s",
-            icon = null,
-            value = (value as? JsonPrimitive)?.contentOrNull.orEmpty(),
-            onConfirm = {
-                onChange(JsonPrimitive(it))
-                true
-            },
-        )
-    }
-}
-
-@Composable
-private fun CheckboxGroupWidget(
-    setting: PluginSetting,
-    selected: List<JsonElement>,
-    onConfirm: (List<JsonElement>) -> Unit,
-) {
     var showDialog by remember { mutableStateOf(false) }
-    TextPreferenceWidget(
-        title = setting.label,
-        subtitle = setting.options
-            .filter { it.first in selected }
-            .joinToString { it.second }
-            .ifEmpty { null },
-        onPreferenceClick = { showDialog = true },
-    )
-    if (showDialog) {
-        var checked by remember { mutableStateOf(selected.toSet()) }
-        AlertDialog(
-            onDismissRequest = { showDialog = false },
-            title = { Text(text = setting.label) },
-            text = {
-                LazyColumn {
-                    items(setting.options) { (optionValue, optionLabel) ->
+    when (setting.type) {
+        PluginSetting.Type.Switch -> {
+            val checked = (value as? JsonPrimitive)?.booleanOrNull ?: false
+            PluginSettingItem(label = setting.label, onClick = { onChange(JsonPrimitive(!checked)) }) {
+                Switch(checked = checked, onCheckedChange = null)
+            }
+        }
+        PluginSetting.Type.Select -> {
+            PluginSettingItem(
+                label = setting.label,
+                subtitle = setting.options.firstOrNull { it.first == value }?.second,
+                onClick = { showDialog = true },
+            )
+            if (showDialog) {
+                PluginSettingDialog(
+                    label = setting.label,
+                    onDismiss = { showDialog = false },
+                    confirmButton = {
+                        TextButton(onClick = { showDialog = false }) {
+                            Text(text = androidStringResource(AR.string.cancel))
+                        }
+                    },
+                ) {
+                    setting.options.forEach { (optionValue, optionLabel) ->
+                        val isSelected = optionValue == value
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(MaterialTheme.shapes.small)
+                                .selectable(
+                                    selected = isSelected,
+                                    onClick = {
+                                        showDialog = false
+                                        if (!isSelected) onChange(optionValue)
+                                    },
+                                )
+                                .fillMaxWidth()
+                                .minimumInteractiveComponentSize(),
+                        ) {
+                            RadioButton(selected = isSelected, onClick = null)
+                            Text(
+                                text = optionLabel,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(start = 24.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        PluginSetting.Type.CheckboxGroup -> {
+            val selected = (value as? JsonArray).orEmpty()
+            PluginSettingItem(
+                label = setting.label,
+                subtitle = setting.options
+                    .filter { it.first in selected }
+                    .joinToString { it.second },
+                onClick = { showDialog = true },
+            )
+            if (showDialog) {
+                var checked by remember { mutableStateOf(selected.toSet()) }
+                PluginSettingDialog(
+                    label = setting.label,
+                    onDismiss = { showDialog = false },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                showDialog = false
+                                onChange(JsonArray(setting.options.map { it.first }.filter { it in checked }))
+                            },
+                        ) {
+                            Text(text = androidStringResource(AR.string.ok))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDialog = false }) {
+                            Text(text = androidStringResource(AR.string.cancel))
+                        }
+                    },
+                ) {
+                    setting.options.forEach { (optionValue, optionLabel) ->
                         LabeledCheckbox(
                             label = optionLabel,
                             checked = optionValue in checked,
@@ -340,22 +383,108 @@ private fun CheckboxGroupWidget(
                         )
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showDialog = false
-                        onConfirm(setting.options.map { it.first }.filter { it in checked })
+            }
+        }
+        PluginSetting.Type.Text -> {
+            val current = (value as? JsonPrimitive)?.contentOrNull.orEmpty()
+            PluginSettingItem(label = setting.label, subtitle = current, onClick = { showDialog = true })
+            if (showDialog) {
+                // Empty is a valid answer: plugins ask for fields to be cleared (e.g. a used sign-in link).
+                var text by rememberSaveable { mutableStateOf(current) }
+                PluginSettingDialog(
+                    label = setting.label,
+                    onDismiss = { showDialog = false },
+                    confirmButton = {
+                        TextButton(
+                            enabled = text != current,
+                            onClick = {
+                                showDialog = false
+                                onChange(JsonPrimitive(text))
+                            },
+                        ) {
+                            Text(text = androidStringResource(AR.string.ok))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDialog = false }) {
+                            Text(text = androidStringResource(AR.string.cancel))
+                        }
                     },
                 ) {
-                    Text(text = androidStringResource(AR.string.ok))
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        trailingIcon = {
+                            if (text.isNotEmpty()) {
+                                IconButton(onClick = { text = "" }) {
+                                    Icon(imageVector = Icons.Filled.Cancel, contentDescription = null)
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDialog = false }) {
-                    Text(text = androidStringResource(AR.string.cancel))
-                }
-            },
-        )
+            }
+        }
     }
+}
+
+@Composable
+private fun PluginSettingItem(
+    label: String,
+    onClick: () -> Unit,
+    subtitle: String? = null,
+    widget: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = label, style = MaterialTheme.typography.bodyLarge)
+            if (!subtitle.isNullOrEmpty()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (widget != null) {
+            Box(modifier = Modifier.padding(start = 16.dp)) { widget() }
+        }
+    }
+}
+
+/** A dialog that carries the plugin's label as body text, since labels can run for several lines. */
+@Composable
+private fun PluginSettingDialog(
+    label: String,
+    onDismiss: () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 16.dp),
+                )
+                content()
+            }
+        },
+        confirmButton = confirmButton,
+        dismissButton = dismissButton,
+    )
 }
