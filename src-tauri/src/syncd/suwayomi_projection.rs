@@ -1863,6 +1863,93 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn binding_a_work_requeues_only_its_progress_that_gave_up() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let work = |key: &str| json!({ "type": "comic", "sourceId": "10002", "mangaKey": key });
+        for (id, key, status, error) in [
+            ("bound-gave-up", "/series/a", "blocked", Some("portable_work_not_found")),
+            ("bound-rejected", "/series/a", "blocked", Some("command_rejected")),
+            ("other-gave-up", "/series/b", "blocked", Some("portable_work_not_found")),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateChaptersProgress', ?, 'comic.chapter_state', ?, 1, ?, 6, 99, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(json!({ "isRead": true, "portableWorkRef": work(key) }).to_string())
+            .bind(id)
+            .bind(status)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let reference = PortableWorkRefV3::comic("10002", "/series/a");
+        db::upsert_portable_work_binding(
+            &pool,
+            "main",
+            &canonical_portable_work_id(&reference),
+            &reference,
+            None,
+            Some("7"),
+            PortableResolutionStateV3::Bound,
+            None,
+            None,
+            None,
+            0,
+            1,
+        )
+        .await
+        .unwrap();
+
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT operation_id, status, attempt_count FROM suwayomi_projection_outbox ORDER BY operation_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("bound-gave-up".to_string(), "retry".to_string(), 0),
+                ("bound-rejected".to_string(), "blocked".to_string(), 6),
+                ("other-gave-up".to_string(), "blocked".to_string(), 6),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_ordered_claim_check_uses_the_order_index() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        // Without the index each claim read the whole profile queue once per due row (quadratic).
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            r#"
+            EXPLAIN QUERY PLAN
+            SELECT 1 FROM suwayomi_projection_outbox AS earlier
+            WHERE earlier.profile_id = 'main' AND earlier.source_server_version < 10
+              AND earlier.status = 'retry' AND earlier.attempt_count < 3
+            "#,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            plan.iter().any(|(_, _, _, detail)| detail.contains("idx_suwayomi_projection_order")),
+            "{plan:?}"
+        );
+    }
+
     #[test]
     fn unseen_comics_bind_only_to_an_exact_key() {
         let nodes = json!([

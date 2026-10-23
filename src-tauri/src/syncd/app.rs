@@ -177,7 +177,10 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         .route("/v1/mutations", post(mutations::post_mutations))
         .route("/v1/snapshot", get(snapshot::get_snapshot))
         .route("/v1/sync/status", get(status::get_sync_status))
-        .route("/v1/session", get(session::get_session))
+        .route(
+            "/v1/session",
+            get(session::get_session).delete(session::delete_session),
+        )
         .route(
             "/v1/local/shutdown",
             post(super::lifecycle::post_local_shutdown),
@@ -962,6 +965,7 @@ mod tests {
         assert_eq!(payload["comicAuthorityMode"], "suwayomi-confirmed-v1");
         assert_eq!(payload["supportsConfirmedSuwayomiCommandsV1"], true);
         assert_eq!(payload["supportsSyncStatusV1"], true);
+        assert_eq!(payload["supportsSessionEndV1"], true);
         assert_eq!(payload["supportsComicDeleteProjectionWithoutRecord"], true);
         assert_eq!(payload["supportsSuwayomiCategoryCreate"], true);
         assert_eq!(payload["supportsSuwayomiExtensionInstall"], true);
@@ -1016,6 +1020,46 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn a_device_ending_its_session_is_revoked_and_unlisted() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("phone-token"),
+            &["comics:profile:main"],
+        )
+        .await
+        .unwrap();
+        ensure_test_token(
+            &state.pool,
+            "device-b",
+            "main",
+            &token_hash("other-token"),
+            &["comics:profile:main"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state.clone());
+
+        let (status, _) =
+            request_json(&app, Method::DELETE, "/v1/session", Some("phone-token"), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, _) =
+            request_json(&app, Method::GET, "/v1/session", Some("phone-token"), None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) =
+            request_json(&app, Method::GET, "/v1/session", Some("other-token"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let listed = crate::syncd::db::list_paired_devices(&state.pool).await.unwrap();
+        assert_eq!(
+            listed.iter().map(|device| device.device_id.as_str()).collect::<Vec<_>>(),
+            vec!["device-b"]
+        );
     }
 
     #[tokio::test]

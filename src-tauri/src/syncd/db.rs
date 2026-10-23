@@ -9331,6 +9331,10 @@ pub async fn upsert_portable_work_binding(
     .execute(pool)
     .await?;
     if matches!(state, PortableResolutionStateV3::Bound) {
+        if let PortableWorkRefV3::Comic { source_id, manga_key } = reference {
+            requeue_unfound_comic_projections(pool, profile_id, source_id.as_str(), manga_key.as_str())
+                .await?;
+        }
         requeue_blocked_portable_projections(pool, profile_id).await?;
     }
     Ok(())
@@ -9437,6 +9441,38 @@ pub async fn upsert_portable_chapter_binding(
     if matches!(state, PortableResolutionStateV3::Bound) {
         requeue_blocked_portable_projections(pool, profile_id).await?;
     }
+    Ok(())
+}
+
+/// Gives the projections of a comic that gave up waiting for it (`portable_work_not_found`) a new
+/// bounded cycle once it is bound, for example after the import pass brought it in. Otherwise the
+/// progress a device sent before the work existed here would wait for the next daemon start.
+async fn requeue_unfound_comic_projections(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    source_id: &str,
+    manga_key: &str,
+) -> anyhow::Result<()> {
+    let now = now_ms();
+    sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET status = 'retry', attempt_count = 0, next_attempt_at_ms = ?, lease_until_ms = NULL,
+            last_error = 'portable_binding_updated', updated_at_ms = ?
+        WHERE profile_id = ? AND status IN ('blocked', 'retry')
+          AND last_error = 'portable_work_not_found'
+          AND json_valid(variables_json)
+          AND json_extract(variables_json, '$.portableWorkRef.sourceId') = ?
+          AND json_extract(variables_json, '$.portableWorkRef.mangaKey') = ?
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .bind(profile_id)
+    .bind(source_id)
+    .bind(manga_key)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

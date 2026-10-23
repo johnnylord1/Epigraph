@@ -312,6 +312,9 @@ pub struct CapabilitiesResponse {
     pub supports_suwayomi_extension_install: bool,
     /// `/v1/tracker-credentials` (GET, CAS PUT/DELETE) is available on the paired session.
     pub supports_tracker_credentials_v1: bool,
+    /// `DELETE /v1/session` revokes the calling device, so forgetting the connection on a device
+    /// also removes it from the desktop.
+    pub supports_session_end_v1: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,
