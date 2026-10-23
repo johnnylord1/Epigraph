@@ -80,9 +80,11 @@ class EpigraphCoreDomainProjection(
         // Entries/categories/chapters must exist before progress and assignments are applied.
         records.sortedWith(compareBy({ phase(it.key.entityType) }, { it.key.entityId }))
             .forEach { upsert(database, it) }
+        // Keyed once: a linear search per tombstone made large snapshots quadratic inside the
+        // transaction that every other database write waits on.
+        val previousByKey = previousRecords.associateBy { it.key }
         tombstones.forEach { tombstone ->
-            val previous = previousRecords.firstOrNull { it.key == tombstone.key }
-            delete(database, tombstone, previous)
+            delete(database, tombstone, previousByKey[tombstone.key])
         }
         reconcileOrphanedProfileComicProgress(database, scopeId, records)
     }

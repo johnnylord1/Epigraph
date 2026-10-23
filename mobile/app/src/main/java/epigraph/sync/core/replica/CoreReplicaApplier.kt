@@ -1,5 +1,6 @@
 package epigraph.sync.core.replica
 
+import co.touchlab.kermit.Logger
 import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
 import epigraph.sync.core.protocol.EpigraphCoreWireProtocol
 import epigraph.sync.core.protocol.CoreCapabilities
@@ -46,12 +47,14 @@ class CoreReplicaApplier(
             lastGlobalEventId = snapshot.snapshotVersion,
         )
 
+        val startedAtNs = System.nanoTime()
         return store.transaction {
             // WorkManager and the process-lifetime SSE supervisor can both bootstrap after a
             // cold start. Never let a slower HTTP response replace a replica that has already
-            // advanced beyond its snapshot version.
+            // advanced beyond its snapshot version, and do not project the same version twice:
+            // both usually fetch the same snapshot, and re-projecting it held the database again.
             latestCheckpoint(CoreReplayCoverage.Filtered(snapshot.scopeId))?.let { current ->
-                if (current.lastGlobalEventId > snapshot.snapshotVersion) {
+                if (current.lastGlobalEventId >= snapshot.snapshotVersion) {
                     return@transaction CoreReplicaApplyResult.SnapshotApplied(snapshot.scopeId, current)
                 }
             }
@@ -59,6 +62,13 @@ class CoreReplicaApplier(
             projectScope(snapshot.scopeId, records, tombstones)
             saveCheckpoint(checkpoint)
             CoreReplicaApplyResult.SnapshotApplied(snapshot.scopeId, checkpoint)
+        }.also {
+            // Every other database write waits for this transaction; payload-free so it can stay on.
+            logger.i {
+                "snapshot transaction: scope=${snapshot.scopeId.substringBefore(':')} " +
+                    "entities=${records.size} tombstones=${tombstones.size} " +
+                    "ms=${(System.nanoTime() - startedAtNs) / 1_000_000}"
+            }
         }
     }
 
@@ -301,6 +311,7 @@ class CoreReplicaApplier(
     }
 
     private companion object {
+        val logger = Logger.withTag("EpigraphCoreSync")
         const val MERGE_OPERATION = "merge"
         const val DELETE_OPERATION = "delete"
     }
