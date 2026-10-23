@@ -868,6 +868,12 @@ pub struct SyncdSyncProgress {
     /// Works in the library still waiting for details and chapters; absent from older Cores.
     #[serde(default)]
     pub pending_details: i64,
+    /// What paired devices still have to upload; `None` until they report it.
+    #[serde(default)]
+    pub pending_uploads: Option<i64>,
+    /// Projections the running Core has applied to Suwayomi; absent (0) from older Cores.
+    #[serde(default)]
+    pub applied_projections: u64,
 }
 
 /// What the running Core still has to apply from paired devices (works, progress, categories and

@@ -76,28 +76,39 @@
   const verification = $derived(connectState ? pairingVerificationCode(connectState.tlsCertSha256) : "");
   /* Live replication has replayed every scope, so one that never got a checkpoint had nothing to
      bring. A computer that hosted the pairing reads its library back instead and has no checkpoints. */
-  type ScopeState = "ready" | "empty" | "syncing" | "importing" | "background";
+  type ScopeState = "ready" | "empty" | "syncing" | "importing" | "background" | "connecting";
   function scopeState(checkpoint: SyncdReplicationScopeCheckpoint | null | undefined): ScopeState {
     if (checkpoint) return "ready";
     if (!libraryRead) return "syncing";
     return hostPeer ? "ready" : "empty";
   }
-  /* Synced comics become Suwayomi works through Core's import, and synced tracker logins are
-     signed in there too; the step is ready once both are applied. Details and chapter lists of
-     imported works keep arriving from their sources afterwards, without holding the step. */
-  const applied = $derived(progressChecked && (!progress || (progress.pendingProjections === 0 && progress.pendingTrackerLogins === 0)));
+  /* Synced comics become Suwayomi works through Core's import; the step is ready once they are
+     applied. Details and chapter lists of imported works keep arriving from their sources
+     afterwards, and synced tracker logins keep signing in, without holding the step. */
+  /* A phone reports what it still has to send once a sync run sent what it could; until then
+     Core's counts can read zero only because nothing has arrived yet. */
+  const uploadsDone = $derived(!peerIsPhone || !progress || progress.pendingUploads === undefined || progress.pendingUploads === 0);
+  const applied = $derived(progressChecked && uploadsDone && (!progress || progress.pendingProjections === 0));
   function comicsState(): ScopeState {
     const base = scopeState(snapshot?.comicsScopeCheckpoint);
     if (base === "syncing") return base;
     if (!ready && (progress?.pendingProjections ?? 0) > 0) return "importing";
+    if (!ready && !uploadsDone) return "syncing";
     if (ready && (progress?.pendingDetails ?? 0) > 0) return "background";
     return base;
+  }
+  /* Tracker logins sign in against each tracker, which can be slow or offline; the row shows they
+     are still connecting while Core keeps retrying them in the background. */
+  function trackersState(): ScopeState {
+    if (!libraryRead || !progressChecked) return "syncing";
+    if ((progress?.pendingTrackerLogins ?? 0) > 0) return "connecting";
+    return ready || uploadsDone ? "ready" : "syncing";
   }
   const scopes = $derived([
     { id: "comics", icon: Books, label: $_("firstRun.sync.scopeComics"), state: comicsState() },
     { id: "books", icon: BookOpenText, label: $_("firstRun.sync.scopeBooks"), state: scopeState(snapshot?.booksScopeCheckpoint) },
     { id: "novels", icon: BookOpenText, label: $_("firstRun.sync.scopeNovels"), state: scopeState(snapshot?.novelsScopeCheckpoint) },
-    { id: "trackers", icon: Key, label: $_("firstRun.sync.scopeTrackers"), state: (libraryRead && progressChecked && (progress?.pendingTrackerLogins ?? 0) === 0 ? "ready" : "syncing") as ScopeState },
+    { id: "trackers", icon: Key, label: $_("firstRun.sync.scopeTrackers"), state: trackersState() },
   ]);
   const readinessKey = $derived(firstRunSyncReadinessKey(profileId, snapshot));
 
@@ -237,8 +248,8 @@
     return () => { current = false; };
   });
 
-  /* While syncing, and afterwards until imported works are complete, Core reports what it has
-     still to apply. */
+  /* While syncing, and afterwards until imported works are complete and tracker logins signed in,
+     Core reports what it has still to apply. */
   $effect(() => {
     if (stage !== "syncing" && stage !== "done") return;
     let cancelled = false;
@@ -253,7 +264,7 @@
         console.warn("First-run sync could not read sync progress.", error);
       }
       progressChecked = true;
-      if (ready && (progress?.pendingDetails ?? 0) === 0) return;
+      if (ready && (progress?.pendingDetails ?? 0) === 0 && (progress?.pendingTrackerLogins ?? 0) === 0) return;
       timer = setTimeout(poll, PROGRESS_INTERVAL_MS);
     };
     void poll();
@@ -478,7 +489,7 @@
             <div class="fr-row scope" class:is-done={scope.state === "ready" || scope.state === "empty"} data-scope={scope.id} data-state={scope.state}>
               <span class="fr-mark"><scope.icon size={18} /></span>
               <span class="fr-row-copy"><strong>{scope.label}</strong></span>
-              <span class="scope-state">{#if scope.state === "ready"}<Check size={15} weight="bold" />{$_("firstRun.sync.scopeReady")}{:else if scope.state === "empty"}{$_("firstRun.sync.scopeEmpty")}{:else if scope.state === "importing"}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeImporting")}{:else if scope.state === "background"}<Check size={15} weight="bold" />{$_("firstRun.sync.scopeBackground")}{:else}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeSyncing")}{/if}</span>
+              <span class="scope-state">{#if scope.state === "ready"}<Check size={15} weight="bold" />{$_("firstRun.sync.scopeReady")}{:else if scope.state === "empty"}{$_("firstRun.sync.scopeEmpty")}{:else if scope.state === "importing"}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeImporting")}{:else if scope.state === "background"}<Check size={15} weight="bold" />{$_("firstRun.sync.scopeBackground")}{:else if scope.state === "connecting"}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeConnecting")}{:else}<span class="fr-spinner"></span>{$_("firstRun.sync.scopeSyncing")}{/if}</span>
             </div>
           {/each}
         </div>

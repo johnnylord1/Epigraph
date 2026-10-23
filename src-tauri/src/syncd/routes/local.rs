@@ -306,6 +306,10 @@ pub struct LocalSyncProgress {
     /// Synced works still waiting for their details and chapter list from the source. They are in
     /// the library already, so the first run does not wait for them.
     pub pending_details: i64,
+    /// What paired devices still have to upload, or `None` until each has reported a finished run.
+    pub pending_uploads: Option<i64>,
+    /// Projections applied since Core started; when it moves, the UI reloads what it shows.
+    pub applied_projections: u64,
 }
 
 /// What synced data this desktop has not applied yet, as counts only, so the first run can wait
@@ -329,6 +333,8 @@ pub async fn get_local_sync_progress(
         pending_projections,
         pending_tracker_logins: suwayomi_tracking_mirror::pending_login_count(&state).await,
         pending_details: suwayomi_hydration::pending_count(),
+        pending_uploads: super::status::pending_uploads(),
+        applied_projections: suwayomi_projection::applied_projection_count(),
     }))
 }
 

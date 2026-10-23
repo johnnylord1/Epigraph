@@ -22,6 +22,8 @@ class CoreSyncStatusHttpTest {
                 val request = chain.request()
                 assertEquals("/v1/sync/status", request.url.encodedPath)
                 assertEquals("comics:profile:profile-a", request.url.queryParameter("scopeId"))
+                assertEquals("true", request.url.queryParameter("reportsUploads"))
+                assertEquals(null, request.url.queryParameter("pendingUploads"))
                 assertEquals("Bearer token", request.header("Authorization"))
                 Response.Builder()
                     .request(request)
@@ -44,6 +46,32 @@ class CoreSyncStatusHttpTest {
         assertEquals("suwayomi-confirmed-v1", status.comicAuthorityMode)
         assertEquals(2, status.suwayomiProjectionPending)
         assertEquals(false, status.ready)
+    }
+
+    @Test
+    fun `reports what the device still has to send`() = runTest {
+        val client = EpigraphCoreHttpClient(
+            client = OkHttpClient.Builder().addInterceptor(Interceptor { chain ->
+                val request = chain.request()
+                assertEquals("true", request.url.queryParameter("reportsUploads"))
+                assertEquals("37", request.url.queryParameter("pendingUploads"))
+                Response.Builder()
+                    .request(request)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("ok")
+                    .body(STATUS.toResponseBody(JSON_MEDIA_TYPE))
+                    .build()
+            }).build(),
+            baseUrl = "https://core.local/".toHttpUrl(),
+            clientVersion = "0.1.0",
+            json = Json { ignoreUnknownKeys = true },
+            preserveInterceptorsForTests = true,
+        )
+
+        val result = client.syncStatus("token", "comics:profile:profile-a", pendingUploads = 37)
+
+        assertInstanceOf(CoreHttpResult.Success::class.java, result)
     }
 
     private companion object {

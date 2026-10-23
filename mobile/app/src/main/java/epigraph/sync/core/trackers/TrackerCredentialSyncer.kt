@@ -40,7 +40,11 @@ data class TrackerCredentialSyncReport(
     val pushed: Int = 0,
     val conflicts: Int = 0,
     val failed: Int = 0,
-)
+    /** Why each failure happened, as tracker key and HTTP status only; never a credential value. */
+    val failures: List<String> = emptyList(),
+) {
+    fun failure(reason: String) = copy(failed = failed + 1, failures = failures + reason)
+}
 
 /**
  * Converges local tracker logins with the Core. The Core revision is authoritative: when both
@@ -89,12 +93,13 @@ class TrackerCredentialSyncer(
                 .filter { TrackerSyncKeys.syncIdFor(it.trackerKey) != null && it.revision > 0 }
                 .groupBy(CoreTrackerCredential::trackerKey)
                 .mapValues { (_, values) -> values.maxBy(CoreTrackerCredential::revision) }
-            else -> return TrackerCredentialSyncReport(failed = 1)
+            is CoreHttpResult.Failure -> return TrackerCredentialSyncReport().failure("list http=${listed.statusCode}")
+            null -> return TrackerCredentialSyncReport().failure("list unreachable")
         }
         val agreed = try {
             vault.read()
         } catch (failure: CoreCredentialException) {
-            if (failure.failure == CoreCredentialFailure.IO) return TrackerCredentialSyncReport(failed = 1)
+            if (failure.failure == CoreCredentialFailure.IO) return TrackerCredentialSyncReport().failure("vault io")
             // A corrupted vault or an invalidated Keystore key only loses the agreements; the
             // Core value wins on this run, exactly like a first pairing.
             vault.clear()
@@ -117,7 +122,7 @@ class TrackerCredentialSyncer(
             if (coreChanged) {
                 val secret = core!!.toSecretOrNull()
                 if (secret === INVALID) {
-                    report = report.copy(failed = report.failed + 1)
+                    report = report.failure("$trackerKey unusable")
                     continue
                 }
                 if (secret != local) source.apply(syncId, secret)
@@ -152,7 +157,9 @@ class TrackerCredentialSyncer(
                 }
                 result is CoreHttpResult.Failure && result.statusCode == 409 ->
                     report.copy(conflicts = report.conflicts + 1)
-                else -> report.copy(failed = report.failed + 1)
+                result is CoreHttpResult.Failure -> report.failure("$trackerKey ${if (local == null) "delete" else "put"} http=${result.statusCode}")
+                result == null -> report.failure("$trackerKey ${if (local == null) "delete" else "put"} unreachable")
+                else -> report.failure("$trackerKey ${if (local == null) "delete" else "put"} mismatched")
             }
         }
 
@@ -161,7 +168,7 @@ class TrackerCredentialSyncer(
                 vault.write(next)
             } catch (_: CoreCredentialException) {
                 // The next run re-derives the same agreement from the Core revision.
-                report = report.copy(failed = report.failed + 1)
+                report = report.failure("vault write")
             }
         }
         return report

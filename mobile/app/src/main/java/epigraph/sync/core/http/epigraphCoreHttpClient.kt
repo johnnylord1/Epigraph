@@ -164,14 +164,23 @@ class EpigraphCoreHttpClient internal constructor(
         )
     }
 
+    /**
+     * [pendingUploads] is what this device still has to send, given only once a sync run has sent
+     * what it could; the first run on a desktop waits for it to reach zero. `reportsUploads` tells
+     * the Core this device reports it, so a call without the count is not read as "nothing left".
+     */
     suspend fun syncStatus(
         accessToken: String,
         scopeId: String,
+        pendingUploads: Long? = null,
     ): CoreHttpResult<CoreSyncStatus> {
         require(scopeId.isNotBlank()) { "scopeId must not be blank" }
+        require(pendingUploads == null || pendingUploads >= 0) { "pendingUploads must not be negative" }
         val url = endpoint("v1/sync/status")
             .newBuilder()
             .addQueryParameter("scopeId", scopeId)
+            .addQueryParameter("reportsUploads", "true")
+            .apply { pendingUploads?.let { addQueryParameter("pendingUploads", it.toString()) } }
             .build()
         return execute(
             protectedRequestBuilder(url, accessToken)

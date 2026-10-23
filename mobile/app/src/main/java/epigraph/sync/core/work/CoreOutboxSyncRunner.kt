@@ -141,8 +141,14 @@ interface CoreOutboxSyncConnection {
 
     suspend fun capabilities(): CoreHttpResult<CoreCapabilities>
 
-    /** Optional server-side projection readiness; older Core versions return null. */
-    suspend fun syncStatus(scopeId: String): CoreHttpResult<epigraph.sync.core.protocol.CoreSyncStatus>? = null
+    /**
+     * Optional server-side projection readiness; older Core versions return null. [pendingUploads]
+     * tells the Core what this device still has to send after the run.
+     */
+    suspend fun syncStatus(
+        scopeId: String,
+        pendingUploads: Long? = null,
+    ): CoreHttpResult<epigraph.sync.core.protocol.CoreSyncStatus>? = null
 
     suspend fun drainBookAssets(nowEpochMillis: Long): BookAssetDrainReport =
         BookAssetDrainReport(0, 0, 0, 0)
@@ -223,8 +229,9 @@ class PinnedCoreOutboxSyncConnectionFactory(
 
             override suspend fun syncStatus(
                 scopeId: String,
+                pendingUploads: Long?,
             ): CoreHttpResult<epigraph.sync.core.protocol.CoreSyncStatus> =
-                credentials.withAccessTokenString { token -> http.syncStatus(token, scopeId) }
+                credentials.withAccessTokenString { token -> http.syncStatus(token, scopeId, pendingUploads) }
 
             override suspend fun drainBookAssets(nowEpochMillis: Long): BookAssetDrainReport =
                 bookAssets.drainPendingTransfers(transport.assets, credentials, nowEpochMillis)
@@ -933,7 +940,7 @@ class CoreOutboxSyncRunner(
             ) {
                 val scopeId = "comics:profile:${session.profileId}"
                 try {
-                    when (val status = connection.syncStatus(scopeId)) {
+                    when (val status = connection.syncStatus(scopeId, pendingUploads = unsettledAfter)) {
                         null -> CoreRemoteProjectionState.READY
                         is CoreHttpResult.Success -> {
                             if (status.value.comicAuthorityMode != "suwayomi-confirmed-v1") {
@@ -967,6 +974,17 @@ class CoreOutboxSyncRunner(
                     )
                 }
             } else {
+                if (EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities)) {
+                    // Comics are off here, but a desktop's first run still waits for this
+                    // device's upload report; send it and ignore the projection answer.
+                    try {
+                        connection.syncStatus("comics:profile:${session.profileId}", pendingUploads = unsettledAfter)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        reportCoreSyncFailure("connection.syncStatus", failure)
+                    }
+                }
                 CoreRemoteProjectionState.READY
             }
             when (remoteProjection) {

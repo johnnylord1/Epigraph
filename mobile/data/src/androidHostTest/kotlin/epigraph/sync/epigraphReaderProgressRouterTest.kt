@@ -432,6 +432,123 @@ class EpigraphReaderProgressRouterTest {
         assertTrue(queuedMutations().isEmpty())
     }
 
+    @Test
+    fun `backfill queues progress read before pairing dated when it was read`() = runTest {
+        bindReadComicChapter()
+        val router = backfillRouter()
+
+        assertEquals(0, router.backfillComicProgress())
+        assertTrue(queuedMutations().isEmpty())
+
+        coverComicScope()
+        assertEquals(2, router.backfillComicProgress())
+
+        val queued = queuedMutations()
+        val chapterState = queued.single { it.entity_type == "comic.chapter_state" }
+        val history = queued.single { it.entity_type == "comic.history" }
+        assertEquals(1_500, chapterState.created_at)
+        assertEquals(1_500, history.created_at)
+        val state = commandOf(chapterState)["state"]!!.jsonObject
+        assertEquals("true", state["read"]!!.jsonPrimitive.content)
+        assertEquals("5", state["lastPageRead"]!!.jsonPrimitive.content)
+        assertTrue(state["bookmarked"].let { it == null || it is kotlinx.serialization.json.JsonNull })
+        val locator = commandOf(history)["locator"]!!.jsonObject
+        assertEquals("5", locator["pageIndex"]!!.jsonPrimitive.content)
+
+        assertEquals(0, router.backfillComicProgress())
+        assertEquals(2, queuedMutations().size)
+    }
+
+    @Test
+    fun `backfill skips unread chapters and progress the paired Core already holds`() = runTest {
+        val (mangaId, _) = bindReadComicChapter()
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = "https://source.test/chapter/901",
+            name = "Chapter 4",
+            scanlator = null,
+            read = false,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 10,
+            chapterNumber = 4.0,
+            sourceOrder = 1,
+            dateFetch = 1,
+            dateUpload = 1,
+            memo = JsonObject(emptyMap()),
+        )
+        coverComicScope()
+        val router = backfillRouter()
+        assertEquals(2, router.backfillComicProgress())
+        val queued = queuedMutations()
+        assertEquals(1, queued.count { it.entity_type == "comic.chapter_state" })
+
+        // Core received both; a later pass (or a reset outbox) never sends them again.
+        driver.execute(null, "DELETE FROM aethon_sync_outbox", 0)
+        queued.forEach { row ->
+            val entityId = if (row.entity_type == "comic.history") "comic.history::${row.entity_id}" else row.entity_id
+            database.aethon_syncQueries.upsertCoreReplicaRecord(
+                row.scope_id, row.entity_type, entityId, 1, 1, "{}", "a".repeat(64),
+            )
+        }
+        assertEquals(0, router.backfillComicProgress())
+        assertTrue(queuedMutations().isEmpty())
+    }
+
+    private fun bindReadComicChapter(): Pair<Long, Long> {
+        val mangaId = insertManga()
+        val chapterId = insertChapter(mangaId)
+        database.chaptersQueries.update(
+            mangaId = null,
+            url = null,
+            name = null,
+            scanlator = null,
+            read = true,
+            bookmark = null,
+            lastPageRead = 5,
+            pagesLeft = 5,
+            chapterNumber = null,
+            sourceOrder = null,
+            dateFetch = null,
+            dateUpload = null,
+            memo = null,
+            chapterId = chapterId,
+        )
+        database.historyQueries.upsert(chapterId, 1_500, 0)
+        val portableWork = PortableWorkRef.Comic(DecimalSourceId("1"), ProviderOwnedKey("/comic/1"))
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = PortableIdentityV3.workId(portableWork),
+                ref = portableWork,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Example",
+                providerLabelHint = "Fixture",
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
+        return mangaId to chapterId
+    }
+
+    private fun coverComicScope() {
+        database.aethon_syncQueries.upsertCoreReplicaCheckpoint(
+            "FILTERED:comics:profile:main", "FILTERED", "comics:profile:main", 1, 1,
+        )
+    }
+
+    private fun backfillRouter(): EpigraphReaderProgressRouter {
+        var next = 0
+        return EpigraphReaderProgressRouter(
+            coordinator = coordinator,
+            deviceId = DeviceId("phone"),
+            scopeId = SyncScopeId("novels:profile:main"),
+            comicScopeId = SyncScopeId("comics:profile:main"),
+            mutationIds = ClientMutationIdFactory { ClientMutationId("backfill-${next++}") },
+            clock = { 3_000 },
+        )
+    }
+
     private fun queuedMutations() = database.aethon_syncQueries
         .selectReadyMutations(Long.MAX_VALUE - 1, 50)
         .executeAsList()

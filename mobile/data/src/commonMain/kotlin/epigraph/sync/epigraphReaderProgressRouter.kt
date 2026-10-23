@@ -451,6 +451,134 @@ class EpigraphReaderProgressRouter(
     }
 
     /**
+     * Publishes the comic reading progress this phone holds but the paired Core does not, such as
+     * progress recorded before pairing or before the Core was reset. Each chapter that is read,
+     * bookmarked or has a page reached becomes a chapter state carrying only those facts (never an
+     * unread or a cleared bookmark), and each title's latest read becomes its reader position.
+     * Every write is dated when the chapter was last read here (when it was fetched if it was never
+     * opened in the reader), so Core keeps whichever device changed the chapter last. Waits until
+     * the Core's snapshot has arrived, since that is what tells which chapters it already holds;
+     * titles without a bound portable identity wait for it. Returns the number of commands queued.
+     */
+    suspend fun backfillComicProgress(maxCommands: Int = BACKFILL_MAX_COMMANDS): Int {
+        val scopes = pairedScopes() ?: return 0
+        val comicScope = scopes.comics.value
+        val (chapters, histories) = coordinator.readLocal {
+            if (!aethon_syncQueries.hasCoreReplicaCoverageForScope(comicScope).executeAsOne()) {
+                return@readLocal emptyList<BackfillRow>() to emptyList<BackfillRow>()
+            }
+            val chapterRows = aethon_syncQueries.selectComicChapterProgressBackfill(comicScope).executeAsList()
+                .distinctBy { it.chapter_id }
+                .map { row ->
+                    val lastReadAt: Long? = row.last_read_at
+                    BackfillRow(row.manga_id, row.chapter_id, lastReadAt?.takeIf { it > 0 } ?: row.date_fetch)
+                }
+            val historyRows = aethon_syncQueries.selectComicHistoryBackfill(comicScope).executeAsList()
+                .distinctBy { it.manga_id }
+                .mapNotNull { row ->
+                    val lastReadAt: Long? = row.last_read_at
+                    lastReadAt?.let { BackfillRow(row.manga_id, row.chapter_id, it) }
+                }
+            chapterRows to historyRows
+        }
+        var emitted = 0
+        val batches = chapters.chunked(BACKFILL_BATCH).map { it to false } +
+            histories.chunked(BACKFILL_BATCH).map { it to true }
+        for ((batch, history) in batches) {
+            if (emitted >= maxCommands) break
+            val now = clock().also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
+            emitted += coordinator.mutateLocalBatch(now) {
+                val novelByManga = mutableMapOf<Long, Boolean?>()
+                val dated = batch.mapNotNull { row ->
+                    if (novelByManga.getOrPut(row.mangaId) { isNovelWork(row.mangaId) } != false) return@mapNotNull null
+                    val readAt = row.readAt.coerceAtLeast(0)
+                    val envelope = if (history) {
+                        backfillHistoryEnvelope(row, scopes, now)
+                    } else {
+                        backfillChapterStateEnvelope(row, scopes, now, readAt)
+                    }
+                    envelope?.let { it to readAt }
+                }
+                LocalMutationResult(
+                    value = dated.size,
+                    envelopes = dated.map { it.first },
+                    envelopeCreatedAt = dated.associate { (envelope, readAt) -> envelope.clientMutationId to readAt },
+                )
+            }
+        }
+        return emitted
+    }
+
+    private fun Database.backfillChapterStateEnvelope(
+        row: BackfillRow,
+        scopes: EpigraphSyncScopes,
+        now: Long,
+        readAt: Long,
+    ): SyncCommandEnvelope? {
+        val chapter = chaptersQueries.getChaptersById(row.chapterId).executeAsOneOrNull() ?: return null
+        val lastPageRead = chapter.last_page_read.takeIf { it in 1..Int.MAX_VALUE.toLong() }?.toInt()
+        if (!chapter.read && !chapter.bookmark && lastPageRead == null) return null
+        val resolved = resolveChapter(row.mangaId, row.chapterId, chapter, novel = false, now)
+            ?.takeIf { it.portableReady }
+            ?: return null
+        val envelope = comicChapterStateEnvelope(
+            resolved = resolved,
+            scopes = scopes,
+            read = true.takeIf { chapter.read },
+            bookmarked = true.takeIf { chapter.bookmark },
+            lastPageRead = lastPageRead,
+            createdAt = readAt,
+            explicitProgressReset = false,
+        )
+        // A chapter that had no portable binding yet was listed without checking Core.
+        val known = aethon_syncQueries.isEntityKnownToCore(
+            envelope.scopeId.value,
+            COMIC_CHAPTER_STATE.value,
+            envelope.command.entityId.value,
+        ).executeAsOne()
+        return envelope.takeUnless { known }
+    }
+
+    private fun Database.backfillHistoryEnvelope(
+        row: BackfillRow,
+        scopes: EpigraphSyncScopes,
+        now: Long,
+    ): SyncCommandEnvelope? {
+        val chapter = chaptersQueries.getChaptersById(row.chapterId).executeAsOneOrNull() ?: return null
+        val resolved = resolveChapter(row.mangaId, row.chapterId, chapter, novel = false, now)
+            ?.takeIf { it.portableReady }
+            ?: return null
+        // Same position the reader publishes for this chapter.
+        val pageIndex = chapter.last_page_read.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+        val pageCount = (chapter.last_page_read + chapter.pages_left)
+            .takeIf { it in 1..Int.MAX_VALUE.toLong() }
+            ?.toInt()
+        val progression = when {
+            chapter.read -> 1.0
+            pageCount != null -> ((pageIndex + 1).toDouble() / pageCount).coerceIn(0.0, 1.0)
+            else -> 0.0
+        }
+        val locator = ReaderLocator.Manga(
+            entityId = resolved.entityId,
+            chapterId = resolved.chapterEntityId,
+            pageIndex = pageIndex,
+            pageOffset = 0.0,
+            pageCount = pageCount,
+            progression = progression,
+            portableWork = resolved.portableWork as? PortableWorkRef.Comic,
+            portableChapter = resolved.portableChapter as? PortableChapterRef.Comic,
+        )
+        return SyncCommandEnvelope(
+            protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
+            deviceId = deviceId,
+            clientMutationId = mutationIds.next(),
+            scopeId = resolved.comicScope(scopes),
+            entityType = COMIC_HISTORY,
+            command = SyncCommand.SetProgress(resolved.entityId, locator, false),
+        )
+    }
+
+    /**
      * Resolves the published identity of one local chapter: the V3 portable binding when the work is
      * bound (creating the chapter binding on first use), otherwise the legacy identity + chapter
      * binding pair. Null means the chapter has no stable identity yet and must stay local.
@@ -656,6 +784,9 @@ class EpigraphReaderProgressRouter(
         null
     }
 
+    /** A local chapter the progress backfill publishes, with when it was last read here. */
+    private class BackfillRow(val mangaId: Long, val chapterId: Long, val readAt: Long)
+
     private class ResolvedChapter(
         val entityId: EpigraphEntityId,
         val chapterEntityId: String,
@@ -679,6 +810,10 @@ class EpigraphReaderProgressRouter(
         val NOVEL_HISTORY = SyncEntityType("novel.history")
         val COMIC_HISTORY = SyncEntityType("comic.history")
         val COMIC_CHAPTER_STATE = SyncEntityType("comic.chapter_state")
+
+        /** Chapters resolved per backfill transaction, and commands queued per backfill run. */
+        const val BACKFILL_BATCH = 200
+        const val BACKFILL_MAX_COMMANDS = 2_000
 
         fun deterministicNovelBookmarkId(novelId: String, chapterId: String): String {
             val digest = MessageDigest.getInstance("SHA-256")

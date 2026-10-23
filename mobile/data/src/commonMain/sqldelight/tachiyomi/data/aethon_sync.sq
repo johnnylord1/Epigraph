@@ -1609,6 +1609,69 @@ SELECT EXISTS(
       AND (entity_id = :entityId OR canonical_entity_id = :entityId)
 );
 
+-- Chapters of bound comic favorites whose reading progress (read, bookmarked or a page reached) the
+-- paired Core neither holds, removed, nor is about to receive. A chapter without a portable binding
+-- is listed until its first publish creates one. Oldest reads first.
+selectComicChapterProgressBackfill:
+SELECT DISTINCT C._id AS chapter_id, C.manga_id, coalesce(H.history_last_read, 0) AS last_read_at, C.date_fetch
+FROM chapters AS C
+JOIN mangas AS M ON M._id = C.manga_id
+JOIN aethon_portable_work_binding AS W
+  ON W.local_reference = CAST(C.manga_id AS TEXT)
+ AND W.ecosystem = 'SUWAYOMI' AND W.resolution_state = 'BOUND'
+LEFT JOIN aethon_portable_chapter_binding AS PC
+  ON PC.local_reference = CAST(C._id AS TEXT) AND PC.portable_work_id = W.portable_id
+ AND PC.resolution_state = 'BOUND'
+LEFT JOIN history AS H ON H.history_chapter_id = C._id
+WHERE M.favorite = 1
+  AND (C.read = 1 OR C.bookmark = 1 OR C.last_page_read > 0)
+  AND (PC.portable_chapter_id IS NULL OR NOT EXISTS (
+      SELECT 1 FROM aethon_core_replica_record AS R
+      WHERE R.scope_id = :scopeId AND R.entity_type = 'comic.chapter_state'
+        AND R.entity_id = 'comic.chapter_state::' || W.portable_id || '::' || PC.portable_chapter_id
+      UNION ALL
+      SELECT 1 FROM aethon_core_replica_tombstone AS T
+      WHERE T.scope_id = :scopeId AND T.entity_type = 'comic.chapter_state'
+        AND T.entity_id = 'comic.chapter_state::' || W.portable_id || '::' || PC.portable_chapter_id
+      UNION ALL
+      SELECT 1 FROM aethon_sync_outbox AS O
+      WHERE O.scope_id = :scopeId AND O.entity_type = 'comic.chapter_state'
+        AND O.entity_id = 'comic.chapter_state::' || W.portable_id || '::' || PC.portable_chapter_id
+  ))
+ORDER BY last_read_at, C._id;
+
+-- The most recently read chapter of each bound comic favorite whose reader position the paired
+-- Core neither holds, removed, nor is about to receive.
+selectComicHistoryBackfill:
+SELECT DISTINCT C._id AS chapter_id, C.manga_id, H.history_last_read AS last_read_at
+FROM history AS H
+JOIN chapters AS C ON C._id = H.history_chapter_id
+JOIN mangas AS M ON M._id = C.manga_id
+JOIN aethon_portable_work_binding AS W
+  ON W.local_reference = CAST(C.manga_id AS TEXT)
+ AND W.ecosystem = 'SUWAYOMI' AND W.resolution_state = 'BOUND'
+WHERE M.favorite = 1
+  AND H.history_last_read > 0
+  AND H.history_last_read = (
+      SELECT max(H2.history_last_read) FROM history AS H2
+      JOIN chapters AS C2 ON C2._id = H2.history_chapter_id
+      WHERE C2.manga_id = C.manga_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM aethon_core_replica_record AS R
+      WHERE R.scope_id = :scopeId AND R.entity_type = 'comic.history'
+        AND R.entity_id = 'comic.history::' || W.portable_id
+      UNION ALL
+      SELECT 1 FROM aethon_core_replica_tombstone AS T
+      WHERE T.scope_id = :scopeId AND T.entity_type = 'comic.history'
+        AND T.entity_id = 'comic.history::' || W.portable_id
+      UNION ALL
+      SELECT 1 FROM aethon_sync_outbox AS O
+      WHERE O.scope_id = :scopeId AND O.entity_type = 'comic.history'
+        AND O.entity_id = W.portable_id
+  )
+ORDER BY last_read_at, C._id;
+
 pruneCoreReplicaInboxBelowCheckpoints:
 DELETE FROM aethon_core_replica_inbox
 WHERE global_event_id <= (

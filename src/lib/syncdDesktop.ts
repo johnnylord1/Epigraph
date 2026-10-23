@@ -268,6 +268,10 @@ export interface SyncdSyncProgress {
   pendingTrackerLogins: number;
   /** Works already in the library still fetching their details and chapter list. */
   pendingDetails: number;
+  /** What paired devices still have to upload; null until each has reported a finished run. */
+  pendingUploads?: number | null;
+  /** Projections Core applied since it started; absent from older Cores. */
+  appliedProjections?: number;
 }
 
 /** Null when this computer's Core is not running (or is older); never starts it. */

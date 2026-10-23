@@ -74,7 +74,9 @@ class EpigraphMutationCoordinator(
                     entityId = envelope.command.entityId.value,
                     operation = envelope.command.operationWireName(),
                     payloadJson = json.encodeToString(envelope),
-                    createdAt = createdAtEpochMillis,
+                    createdAt = mutation.envelopeCreatedAt[envelope.clientMutationId]
+                        ?.also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
+                        ?: createdAtEpochMillis,
                     nextAttemptAt = createdAtEpochMillis,
                 )
             }
@@ -338,6 +340,11 @@ data class LocalMutationResult<T>(
     val suwayomiMutations: List<SuwayomiMutationIntent> = emptyList(),
     /** Wakes the Core worker although nothing was queued, for work a sync run publishes itself. */
     val wakesSync: Boolean = false,
+    /**
+     * When an envelope's change actually happened, if not at the batch time. Core orders competing
+     * writes by this time, so progress recorded before pairing never beats a newer edit elsewhere.
+     */
+    val envelopeCreatedAt: Map<ClientMutationId, Long> = emptyMap(),
 )
 
 data class EpigraphMutationAcknowledgement(

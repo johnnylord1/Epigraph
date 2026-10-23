@@ -4,6 +4,7 @@ import epigraph.sync.core.events.CoreBackgroundSyncReason
 import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.novels.LocalNovelLibraryOutboxRepair
 import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
+import epigraph.sync.EpigraphReaderProgressRouter
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
@@ -84,12 +85,19 @@ class EpigraphCoreSyncWorker(
                 Log.w(LOG_TAG, "local comic library repair failed", failure)
             }
             .getOrDefault(0)
-        return novels + comics
+        // After the comic repair, so favorites it just bound already carry their reading progress.
+        val progress = runCatching { get<EpigraphReaderProgressRouter>().backfillComicProgress() }
+            .onFailure { failure ->
+                Log.w(LOG_TAG, "local comic progress backfill failed", failure)
+            }
+            .getOrDefault(0)
+        return novels + comics + progress
     }
 
     private suspend fun runOnce(): WorkerExecution {
-        // Backfill favorites added on this device before pairing (or by older builds) before
-        // counting/draining the outbox. The repairs are idempotent and no-ops until paired.
+        // Backfill favorites and reading progress recorded on this device before pairing (or by
+        // older builds) before counting/draining the outbox. The repairs are idempotent and no-ops
+        // until paired.
         repairLibraries()
         val outcome = try {
             val runner = get<CoreOutboxSyncRunner>()
@@ -97,8 +105,8 @@ class EpigraphCoreSyncWorker(
                 nowEpochMillis = System.currentTimeMillis(),
                 synchronizeReplica = true,
             )
-            // The first snapshot from a newly paired or rewound Core shows which local favorites it
-            // lacks; publish them in this run instead of waiting for the next wake.
+            // The first snapshot from a newly paired or rewound Core shows which local favorites and
+            // reading progress it lacks; publish them in this run instead of waiting for the next wake.
             if (first !is CoreOutboxSyncOutcome.Retry && repairLibraries() > 0) {
                 runner.run(
                     nowEpochMillis = System.currentTimeMillis(),

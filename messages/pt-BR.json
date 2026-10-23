@@ -3433,6 +3433,7 @@
   "firstRun_sync_scopeTrackers": "Trackers",
   "firstRun_sync_scopeImporting": "Importando",
   "firstRun_sync_scopeBackground": "Concluindo em segundo plano",
+  "firstRun_sync_scopeConnecting": "Conectando · continua em segundo plano",
   "firstRun_sync_errorPin": "Esse código não confere. Verifique no outro dispositivo.",
   "firstRun_sync_errorLocked": "Muitas tentativas. Abra Adicionar dispositivo de novo no outro computador para receber um novo código.",
   "firstRun_sync_errorIdentity": "Não foi possível confirmar que este é o {name}. Tente de novo na mesma rede.",

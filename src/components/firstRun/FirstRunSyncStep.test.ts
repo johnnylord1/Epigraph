@@ -178,7 +178,7 @@ describe("FirstRunSyncStep", () => {
     }
   });
 
-  it("waits until synced comics are imported and tracker logins are signed in", async () => {
+  it("waits until synced comics are imported, leaving tracker logins connecting in the background", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       sync.progress.mockResolvedValue({ pendingProjections: 12, pendingTrackerLogins: 2, pendingDetails: 0 });
@@ -186,18 +186,46 @@ describe("FirstRunSyncStep", () => {
       render(FirstRunSyncStep, { props: { profileId: "main" } });
 
       await waitFor(() => expect(screen.getByText("Importing")).toBeTruthy());
-      expect(document.querySelector('[data-scope="trackers"]')?.getAttribute("data-state")).toBe("syncing");
+      expect(document.querySelector('[data-scope="trackers"]')?.getAttribute("data-state")).toBe("connecting");
       expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
 
       sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 1, pendingDetails: 0 });
       await vi.advanceTimersByTimeAsync(2000);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
+      expect(document.querySelector('[data-scope="trackers"]')?.getAttribute("data-state")).toBe("connecting");
+      expect(screen.getByText("Connecting · continues in background")).toBeTruthy();
+
+      // Polling goes on after the step is ready, so the row settles once the logins sign in.
+      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0 });
+      await vi.advanceTimersByTimeAsync(2000);
+      await waitFor(() => expect(document.querySelector('[data-scope="trackers"]')?.getAttribute("data-state")).toBe("ready"));
+      expect(screen.getByText("Library synced")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits until a paired phone has uploaded what it still had to send", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: null });
+      sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);
+      render(FirstRunSyncStep, { props: { profileId: "main" } });
+
+      await waitFor(() => expect(screen.getByText("Galaxy S23")).toBeTruthy());
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(document.querySelector('[data-scope="comics"]')?.getAttribute("data-state")).toBe("syncing");
+      expect(document.querySelector('[data-scope="trackers"]')?.getAttribute("data-state")).toBe("syncing");
       expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
 
-      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0 });
+      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: 37 });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+
+      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: 0 });
       await vi.advanceTimersByTimeAsync(2000);
       await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
       expect(document.querySelector('[data-scope="trackers"]')?.getAttribute("data-state")).toBe("ready");
-      expect(screen.getByText("Library synced")).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

@@ -3433,6 +3433,7 @@
   "firstRun_sync_scopeTrackers": "Trackers",
   "firstRun_sync_scopeImporting": "Importing",
   "firstRun_sync_scopeBackground": "Finishing in background",
+  "firstRun_sync_scopeConnecting": "Connecting · continues in background",
   "firstRun_sync_errorPin": "That code doesn't match. Check it on the other device.",
   "firstRun_sync_errorLocked": "Too many attempts. Open Add device again on the other computer to get a new code.",
   "firstRun_sync_errorIdentity": "Couldn't confirm this is {name}. Try again on the same network.",

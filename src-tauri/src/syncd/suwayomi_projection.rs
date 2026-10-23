@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -18,6 +19,19 @@ use super::routes::suwayomi_proxy;
 use super::{db, routes::suwayomi_catalog};
 
 const MAX_BATCH: usize = 8;
+/// A synced library arrives as runs of the same change (every work into the library, every work
+/// of one category into it); a run is sent to Suwayomi as one bulk mutation of up to this many.
+const MAX_GROUPED_ROWS: usize = 50;
+const UPDATE_MANGAS_MUTATION: &str = r#"
+mutation EpigraphCoreUpdateMangas($ids: [Int!]!, $inLibrary: Boolean) {
+  updateMangas(input: { ids: $ids, patch: { inLibrary: $inLibrary } }) { mangas { id inLibrary } }
+}
+"#;
+const UPDATE_MANGAS_CATEGORIES_MUTATION: &str = r#"
+mutation EpigraphCoreUpdateMangasCategories($ids: [Int!]!, $addTo: [Int!], $removeFrom: [Int!]) {
+  updateMangasCategories(input: { ids: $ids, patch: { addToCategories: $addTo, removeFromCategories: $removeFrom } }) { mangas { id } }
+}
+"#;
 const LEASE_MS: i64 = 60_000;
 const BASE_RETRY_MS: i64 = 30_000;
 const MAX_RETRY_MS: i64 = 6 * 60 * 60 * 1_000;
@@ -286,59 +300,98 @@ pub async fn pending_projection_count(state: &SharedAppState) -> anyhow::Result<
     .context("failed to count pending Suwayomi projections")
 }
 
+/// Projections this process has applied to Suwayomi. The desktop UI watches it to reload what it
+/// shows once synced changes land there.
+static APPLIED_PROJECTIONS: AtomicU64 = AtomicU64::new(0);
+
+pub fn applied_projection_count() -> u64 {
+    APPLIED_PROJECTIONS.load(Ordering::Relaxed)
+}
+
 async fn drain_ready(state: &SharedAppState) -> anyhow::Result<usize> {
     let mut completed = 0;
     for _ in 0..MAX_BATCH {
         let Some(row) = claim_next(state).await? else {
             break;
         };
-        match apply_projection(state, &row).await {
-            ProjectionOutcome::Applied => {
-                let _writer_guard = state.mutation_gate.lock().await;
-                sqlx::query("DELETE FROM suwayomi_projection_outbox WHERE operation_id = ?")
-                    .bind(&row.operation_id)
-                    .execute(&state.pool)
-                    .await?;
-                completed += 1;
+        let change = serde_json::from_str::<Value>(&row.variables_json)
+            .ok()
+            .and_then(|variables| group_change(&row.operation_name, &variables));
+        let companions = match &change {
+            Some(change) => claim_group(state, &row, change).await?,
+            None => Vec::new(),
+        };
+        match change {
+            Some(change) if !companions.is_empty() => {
+                let mut rows = Vec::with_capacity(companions.len() + 1);
+                rows.push(row);
+                rows.extend(companions);
+                for (row, outcome) in apply_group(state, rows, &change).await {
+                    completed += usize::from(settle(state, &row, outcome).await?);
+                }
             }
-            ProjectionOutcome::Retry(code) => {
-                let delay = retry_delay_ms(code, row.attempt_count);
-                let now = super::db::now_ms();
-                let _writer_guard = state.mutation_gate.lock().await;
-                sqlx::query(
-                    r#"
-                    UPDATE suwayomi_projection_outbox
-                    SET status = 'retry', next_attempt_at_ms = ?, lease_until_ms = NULL,
-                        last_error = ?, updated_at_ms = ?
-                    WHERE operation_id = ?
-                    "#,
-                )
-                .bind(now.saturating_add(delay))
-                .bind(code)
-                .bind(now)
-                .bind(&row.operation_id)
-                .execute(&state.pool)
-                .await?;
-            }
-            ProjectionOutcome::Blocked(code) => {
-                let now = super::db::now_ms();
-                let _writer_guard = state.mutation_gate.lock().await;
-                sqlx::query(
-                    r#"
-                    UPDATE suwayomi_projection_outbox
-                    SET status = 'blocked', lease_until_ms = NULL, last_error = ?, updated_at_ms = ?
-                    WHERE operation_id = ?
-                    "#,
-                )
-                .bind(code)
-                .bind(now)
-                .bind(&row.operation_id)
-                .execute(&state.pool)
-                .await?;
+            _ => {
+                let outcome = apply_projection(state, &row).await;
+                completed += usize::from(settle(state, &row, outcome).await?);
             }
         }
     }
     Ok(completed)
+}
+
+/// Stores a projection's outcome; true when it was applied and left the outbox.
+async fn settle(
+    state: &SharedAppState,
+    row: &ProjectionRow,
+    outcome: ProjectionOutcome,
+) -> anyhow::Result<bool> {
+    match outcome {
+        ProjectionOutcome::Applied => {
+            let _writer_guard = state.mutation_gate.lock().await;
+            sqlx::query("DELETE FROM suwayomi_projection_outbox WHERE operation_id = ?")
+                .bind(&row.operation_id)
+                .execute(&state.pool)
+                .await?;
+            APPLIED_PROJECTIONS.fetch_add(1, Ordering::Relaxed);
+            return Ok(true);
+        }
+        ProjectionOutcome::Retry(code) => {
+            let delay = retry_delay_ms(code, row.attempt_count);
+            let now = super::db::now_ms();
+            let _writer_guard = state.mutation_gate.lock().await;
+            sqlx::query(
+                r#"
+                UPDATE suwayomi_projection_outbox
+                SET status = 'retry', next_attempt_at_ms = ?, lease_until_ms = NULL,
+                    last_error = ?, updated_at_ms = ?
+                WHERE operation_id = ?
+                "#,
+            )
+            .bind(now.saturating_add(delay))
+            .bind(code)
+            .bind(now)
+            .bind(&row.operation_id)
+            .execute(&state.pool)
+            .await?;
+        }
+        ProjectionOutcome::Blocked(code) => {
+            let now = super::db::now_ms();
+            let _writer_guard = state.mutation_gate.lock().await;
+            sqlx::query(
+                r#"
+                UPDATE suwayomi_projection_outbox
+                SET status = 'blocked', lease_until_ms = NULL, last_error = ?, updated_at_ms = ?
+                WHERE operation_id = ?
+                "#,
+            )
+            .bind(code)
+            .bind(now)
+            .bind(&row.operation_id)
+            .execute(&state.pool)
+            .await?;
+        }
+    }
+    Ok(false)
 }
 
 fn retry_delay_ms(code: &str, attempt_count: i64) -> i64 {
@@ -411,6 +464,218 @@ async fn claim_next_at(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Opti
     }
     tx.commit().await?;
     Ok(row)
+}
+
+/// The part of a work change that is the same for every work it applies to, when it can be sent
+/// in one bulk mutation: `inLibrary` for UpdateManga, the category lists for
+/// UpdateMangaCategories.
+fn group_change(operation_name: &str, variables: &Value) -> Option<Value> {
+    match operation_name {
+        "UpdateManga" => {
+            let in_library = variables.get("inLibrary")?.as_bool()?;
+            Some(json!({ "inLibrary": in_library }))
+        }
+        "UpdateMangaCategories" => {
+            let categories = |key: &str| -> Option<Vec<i64>> {
+                variables
+                    .get(key)?
+                    .as_array()?
+                    .iter()
+                    .map(|id| id.as_i64().filter(|id| (0..=i32::MAX as i64).contains(id)))
+                    .collect()
+            };
+            let add_to = categories("addTo")?;
+            let remove_from = categories("removeFrom")?;
+            if add_to.is_empty() && remove_from.is_empty() {
+                return None;
+            }
+            Some(json!({ "addTo": add_to, "removeFrom": remove_from }))
+        }
+        _ => None,
+    }
+}
+
+async fn claim_group(
+    state: &SharedAppState,
+    first: &ProjectionRow,
+    change: &Value,
+) -> anyhow::Result<Vec<ProjectionRow>> {
+    let _writer_guard = state.mutation_gate.lock().await;
+    claim_group_at(&state.pool, super::db::now_ms(), first, change).await
+}
+
+/// Claims the rows right after `first` (already claimed) that make the same change, so they can
+/// go to Suwayomi together. Only an unbroken run is taken: it stops at the first ready row that
+/// does something else, so no change is applied ahead of an earlier, different one.
+async fn claim_group_at(
+    pool: &sqlx::SqlitePool,
+    now: i64,
+    first: &ProjectionRow,
+    change: &Value,
+) -> anyhow::Result<Vec<ProjectionRow>> {
+    let mut tx = pool.begin().await?;
+    let candidates = sqlx::query_as::<_, ProjectionRow>(
+        r#"
+        SELECT operation_id, profile_id, operation_name, variables_json, attempt_count
+        FROM suwayomi_projection_outbox AS candidate
+        WHERE candidate.profile_id = ? AND candidate.operation_id != ?
+          AND status IN ('pending', 'retry') AND next_attempt_at_ms <= ?
+          AND source_server_version >= (
+            SELECT source_server_version FROM suwayomi_projection_outbox WHERE operation_id = ?
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM suwayomi_projection_outbox AS earlier
+            WHERE earlier.profile_id = candidate.profile_id
+              AND earlier.source_server_version < candidate.source_server_version
+              AND earlier.status = 'retry'
+              AND earlier.attempt_count < ?
+              AND COALESCE(earlier.last_error, '') NOT IN (?, ?)
+          )
+        ORDER BY source_server_version ASC
+        LIMIT ?
+        "#,
+    )
+    .bind(&first.profile_id)
+    .bind(&first.operation_id)
+    .bind(now)
+    .bind(&first.operation_id)
+    .bind(ORDERED_RETRY_ATTEMPTS)
+    .bind(UNBOUND_WORK_CODES[0])
+    .bind(UNBOUND_WORK_CODES[1])
+    .bind((MAX_GROUPED_ROWS - 1) as i64)
+    .fetch_all(&mut *tx)
+    .await?;
+    let group: Vec<ProjectionRow> = candidates
+        .into_iter()
+        .take_while(|row| {
+            row.operation_name == first.operation_name
+                && serde_json::from_str::<Value>(&row.variables_json)
+                    .ok()
+                    .and_then(|variables| group_change(&row.operation_name, &variables))
+                    .as_ref()
+                    == Some(change)
+        })
+        .collect();
+    for row in &group {
+        sqlx::query(
+            r#"
+            UPDATE suwayomi_projection_outbox
+            SET status = 'in_flight', attempt_count = attempt_count + 1,
+                lease_until_ms = ?, last_error = NULL, updated_at_ms = ?
+            WHERE operation_id = ?
+            "#,
+        )
+        .bind(now.saturating_add(LEASE_MS))
+        .bind(now)
+        .bind(&row.operation_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(group)
+}
+
+/// Applies rows that make the same change with one bulk mutation. Each row resolves its work as
+/// it would alone; rows that cannot join (a failed resolution, the same work twice) and every row
+/// of a bulk mutation Suwayomi rejects are applied one by one instead.
+async fn apply_group(
+    state: &SharedAppState,
+    rows: Vec<ProjectionRow>,
+    change: &Value,
+) -> Vec<(ProjectionRow, ProjectionOutcome)> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    let mut members: Vec<(ProjectionRow, i64)> = Vec::new();
+    let mut alone = Vec::new();
+    let mut manga_ids = BTreeSet::new();
+    for row in rows {
+        let Ok(variables) = serde_json::from_str::<Value>(&row.variables_json) else {
+            outcomes.push((row, ProjectionOutcome::Blocked("invalid_variables")));
+            continue;
+        };
+        let variables = match resolve_portable_projection_identity(state, &row, variables).await {
+            Ok(variables) => variables,
+            Err(outcome) => {
+                outcomes.push((row, outcome));
+                continue;
+            }
+        };
+        let id_field = if row.operation_name == "UpdateManga" { "id" } else { "mangaId" };
+        match variables
+            .get(id_field)
+            .and_then(Value::as_i64)
+            .filter(|id| (1..=i32::MAX as i64).contains(id))
+        {
+            Some(manga_id) if manga_ids.insert(manga_id) => members.push((row, manga_id)),
+            _ => alone.push(row),
+        }
+    }
+    if members.len() < 2 {
+        alone.extend(members.drain(..).map(|(row, _)| row));
+    } else {
+        let profile_id = members[0].0.profile_id.clone();
+        let ids: Vec<i64> = members.iter().map(|(_, manga_id)| *manga_id).collect();
+        let updates_library = members[0].0.operation_name == "UpdateManga";
+        let (document, variables) = if updates_library {
+            (UPDATE_MANGAS_MUTATION, json!({ "ids": ids, "inLibrary": change["inLibrary"] }))
+        } else {
+            (
+                UPDATE_MANGAS_CATEGORIES_MUTATION,
+                json!({ "ids": ids, "addTo": change["addTo"], "removeFrom": change["removeFrom"] }),
+            )
+        };
+        match suwayomi_catalog::execute_graphql_document(
+            state,
+            &projection_session(&profile_id),
+            document,
+            variables,
+            true,
+        )
+        .await
+        {
+            Ok(data) => {
+                let confirmed = group_confirmed_ids(updates_library, change, &data);
+                for (row, manga_id) in members {
+                    let outcome =
+                        confirmation_outcome(confirmed.contains(&manga_id), row.attempt_count);
+                    outcomes.push((row, outcome));
+                }
+            }
+            Err(AppError::ServiceUnavailable(detail)) if detail.retryable != Some(false) => {
+                let error = AppError::ServiceUnavailable(detail);
+                for (row, _) in members {
+                    let outcome = failed_command_outcome(&error, row.attempt_count);
+                    outcomes.push((row, outcome));
+                }
+            }
+            Err(_) => alone.extend(members.into_iter().map(|(row, _)| row)),
+        }
+    }
+    for row in alone {
+        let outcome = apply_projection(state, &row).await;
+        outcomes.push((row, outcome));
+    }
+    outcomes
+}
+
+/// Works the bulk mutation answered for, in the state it asked for.
+fn group_confirmed_ids(updates_library: bool, change: &Value, data: &Value) -> BTreeSet<i64> {
+    let (payload, expected_membership) = if updates_library {
+        ("updateMangas", change.get("inLibrary").and_then(Value::as_bool))
+    } else {
+        ("updateMangasCategories", None)
+    };
+    data.get(payload)
+        .and_then(|value| value.get("mangas"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|manga| {
+            expected_membership.map_or(true, |expected| {
+                manga.get("inLibrary").and_then(Value::as_bool) == Some(expected)
+            })
+        })
+        .filter_map(|manga| manga.get("id").and_then(Value::as_i64))
+        .collect()
 }
 
 async fn apply_projection(state: &SharedAppState, row: &ProjectionRow) -> ProjectionOutcome {
@@ -1659,6 +1924,120 @@ mod tests {
         .await
         .unwrap();
         assert!(claim_next_at(&pool, 600).await.unwrap().is_none());
+    }
+
+    #[test]
+    fn only_shared_work_changes_group() {
+        assert_eq!(
+            group_change("UpdateManga", &json!({ "id": 3, "inLibrary": true })),
+            Some(json!({ "inLibrary": true }))
+        );
+        assert_eq!(group_change("UpdateManga", &json!({ "id": 3 })), None);
+        assert_eq!(
+            group_change(
+                "UpdateMangaCategories",
+                &json!({ "portableWorkRef": {}, "addTo": [2], "removeFrom": [] })
+            ),
+            Some(json!({ "addTo": [2], "removeFrom": [] }))
+        );
+        assert_eq!(
+            group_change("UpdateMangaCategories", &json!({ "mangaId": 3, "addTo": [], "removeFrom": [] })),
+            None
+        );
+        assert_eq!(
+            group_change("UpdateMangaCategories", &json!({ "mangaId": 3, "addTo": [-1], "removeFrom": [] })),
+            None
+        );
+        assert_eq!(
+            group_change(db::REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION, &json!({ "assignmentId": "a" })),
+            None
+        );
+        assert_eq!(group_change("UpdateChaptersProgress", &json!({ "mangaId": 3 })), None);
+    }
+
+    #[tokio::test]
+    async fn a_group_takes_only_the_unbroken_run_of_the_same_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let into_one = r#"{"mangaId":1,"addTo":[1],"removeFrom":[]}"#;
+        for (id, profile, operation, variables, version, status, attempts, next) in [
+            ("first", "main", "UpdateMangaCategories", into_one, 1, "pending", 0, 0),
+            ("same", "main", "UpdateMangaCategories", into_one, 2, "pending", 0, 0),
+            ("other-profile", "other", "UpdateMangaCategories", into_one, 3, "pending", 0, 0),
+            // Past its ordered retries, so it no longer holds the rows after it.
+            ("not-due", "main", "UpdateMangaCategories", into_one, 4, "retry", ORDERED_RETRY_ATTEMPTS, 9_000),
+            ("also-same", "main", "UpdateMangaCategories", into_one, 5, "pending", 0, 0),
+            ("into-two", "main", "UpdateMangaCategories", r#"{"mangaId":1,"addTo":[2],"removeFrom":[]}"#, 6, "pending", 0, 0),
+            ("after-break", "main", "UpdateMangaCategories", into_one, 7, "pending", 0, 0),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, 'comic.category_assignment', ?, ?, ?, ?, ?, NULL, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(profile)
+            .bind(operation)
+            .bind(variables)
+            .bind(id)
+            .bind(version)
+            .bind(status)
+            .bind(attempts)
+            .bind(next)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let first = claim_next_at(&pool, 500).await.unwrap().unwrap();
+        assert_eq!(first.operation_id, "first");
+        let change = group_change(&first.operation_name, &serde_json::from_str(&first.variables_json).unwrap())
+            .unwrap();
+        let group = claim_group_at(&pool, 500, &first, &change).await.unwrap();
+        assert_eq!(
+            group.iter().map(|row| row.operation_id.as_str()).collect::<Vec<_>>(),
+            vec!["same", "also-same"]
+        );
+        let states: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT operation_id, status, attempt_count FROM suwayomi_projection_outbox ORDER BY source_server_version",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            states,
+            vec![
+                ("first".to_string(), "in_flight".to_string(), 1),
+                ("same".to_string(), "in_flight".to_string(), 1),
+                ("other-profile".to_string(), "pending".to_string(), 0),
+                ("not-due".to_string(), "retry".to_string(), ORDERED_RETRY_ATTEMPTS),
+                ("also-same".to_string(), "in_flight".to_string(), 1),
+                ("into-two".to_string(), "pending".to_string(), 0),
+                ("after-break".to_string(), "pending".to_string(), 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_bulk_mutation_confirms_only_the_works_it_answered_for() {
+        let library = json!({ "updateMangas": { "mangas": [
+            { "id": 1, "inLibrary": true },
+            { "id": 2, "inLibrary": false },
+        ] } });
+        assert_eq!(
+            group_confirmed_ids(true, &json!({ "inLibrary": true }), &library),
+            BTreeSet::from([1])
+        );
+        let categories = json!({ "updateMangasCategories": { "mangas": [{ "id": 4 }, { "id": 5 }] } });
+        assert_eq!(
+            group_confirmed_ids(false, &json!({ "addTo": [1], "removeFrom": [] }), &categories),
+            BTreeSet::from([4, 5])
+        );
+        assert!(group_confirmed_ids(false, &json!({}), &json!({})).is_empty());
     }
 
     fn outbox_row(id: &str, operation: &str, variables: Value) -> (String, String, String, String) {

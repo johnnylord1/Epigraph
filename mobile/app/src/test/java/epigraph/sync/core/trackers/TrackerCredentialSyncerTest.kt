@@ -115,12 +115,18 @@ class TrackerCredentialSyncerTest {
             token = "x".repeat(TrackerSecret.MAX_FIELD_BYTES + 1),
         )
 
-        assertEquals(TrackerCredentialSyncReport(failed = 1), syncer.synchronize(core))
+        assertEquals(
+            TrackerCredentialSyncReport(failed = 1, failures = listOf("anilist unusable")),
+            syncer.synchronize(core),
+        )
         assertTrue(source.applied.isEmpty())
 
         core.failList = true
         source.logins[MAL] = TrackerSecret("reader", "", "v1")
-        assertEquals(TrackerCredentialSyncReport(failed = 1), syncer.synchronize(core))
+        assertEquals(
+            TrackerCredentialSyncReport(failed = 1, failures = listOf("list http=503")),
+            syncer.synchronize(core),
+        )
         assertEquals(listOf("list", "list"), core.calls)
     }
 

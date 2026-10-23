@@ -3042,6 +3042,35 @@
     };
   });
 
+  async function reloadLibraryAfterSyncLanded() {
+    const profileId = normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId);
+    if (!profileId || !store.runtimeServerUrl) return;
+    cache.clearGroup(CACHE_GROUPS.LIBRARY);
+    cache.clear(CACHE_KEYS.CATEGORIES);
+    await preloadLibrarySnapshot(true);
+    const { COMIC_LIBRARY_RECONCILED_EVENT } = await import("./lib/comicSync/desktopComicBridge");
+    window.dispatchEvent(new CustomEvent(COMIC_LIBRARY_RECONCILED_EVENT, { detail: { localProfileId: profileId } }));
+  }
+
+  // Phones and other computers reach Suwayomi through Core's projection, outside this window, so
+  // the library (works, categories, progress) is reloaded once their changes land there.
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void import("./lib/comicSync/syncLandingWatch")
+      .then(({ startSyncLandingWatch }) => startSyncLandingWatch(reloadLibraryAfterSyncLanded, () => pageHidden))
+      .then((started) => {
+        if (disposed) started();
+        else stop = started;
+      })
+      .catch((error) => console.warn("Synced change watch could not start:", error));
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  });
+
   $effect(() => {
     if (!shellReady || isNovelRuntimeHostWindow) return;
     let disposed = false;
