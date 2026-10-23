@@ -438,7 +438,7 @@ class BrowseController :
                     ?: view?.context?.getString(MR.strings.source_migration)
             } else {
                 // The selected tab right below already reads "Extensions", and the toolbar needs
-                // the room for search, options, languages and the Manga / Novels pill.
+                // the room for search, options, languages and the Comics / Novels pill.
                 null
             }
         if (binding.bottomSheet.sheetToolbar.menu.findItem(if (!onMigrationTab) R.id.action_search else R.id.action_migration_guide) != null) {
@@ -466,7 +466,7 @@ class BrowseController :
         view?.context?.let { context ->
             binding.bottomSheet.sheetToolbar.menu.findItem(R.id.action_extension_type)?.setSegmentedSwitchActionView(
                 context = context,
-                options = listOf(false to context.getString(MR.strings.manga), true to context.getString(MR.strings.novels)),
+                options = listOf(false to context.getString(MR.strings.library_comics), true to context.getString(MR.strings.novels)),
                 selected = sheet.novelPluginsSelected,
                 onSelect = sheet::selectExtensionType,
             )
@@ -479,7 +479,7 @@ class BrowseController :
             // Change hint to show global search.
             searchView.queryHint = view?.context?.getString(MR.strings.search_extensions)
             // Give the open search field the room of the options/language icons; the
-            // Manga/Novels pill stays so the type can still be switched while searching.
+            // Comics/Novels pill stays so the type can still be switched while searching.
             val menu = binding.bottomSheet.sheetToolbar.menu
             fun showSideActions(visible: Boolean) {
                 menu.findItem(R.id.action_extension_repos_settings)?.isVisible = visible

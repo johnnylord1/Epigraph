@@ -32,7 +32,7 @@ class NovelPluginGroupHolder(
     }
 
     fun bind(item: NovelPluginGroupItem) {
-        binding.title.text = "${item.name} (${item.size})"
+        binding.title.text = item.name
         binding.extButton.isVisible = item.canUpdate != null
         binding.extButton.isEnabled = item.canUpdate == true
         binding.extButton.setText(if (item.installAll) MR.strings.install_all else MR.strings.update_all)

@@ -36,6 +36,8 @@ class JsPluginLoader(
         val filters: JsonObject? = null,
         val hasResolveUrl: Boolean = false,
         val supportsPagePlugin: Boolean = false,
+        /** LNReader `pluginSettings`: the plugin's own options, shown on its settings screen. */
+        val pluginSettings: JsonObject? = null,
     )
 
     /**
@@ -155,7 +157,8 @@ class JsPluginLoader(
                             hasFilters: !!__plugin.filters,
                             filters: __plugin.filters || null,
                             hasResolveUrl: typeof __plugin.resolveUrl === 'function',
-                            supportsPagePlugin: typeof __plugin.parsePage === 'function'
+                            supportsPagePlugin: typeof __plugin.parsePage === 'function',
+                            pluginSettings: __plugin.pluginSettings || null
                         })
                     """.trimIndent()) ?: return@withTimeoutOrNull null
 

@@ -65,6 +65,7 @@ import android.R as AR
 import epigraph.novel.plugin.NovelPluginManager
 import epigraph.novel.plugin.model.NovelPluginIndex
 import epigraph.novel.ui.NovelPluginAdapter
+import epigraph.novel.ui.NovelPluginDetailsController
 import epigraph.novel.ui.NovelPluginGroupItem
 import epigraph.novel.ui.NovelPluginItem
 // NOVEL <--
@@ -112,7 +113,7 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
     private var selectedExtensionTypeTab =
         if (presenter.browseType == BrowseSourceType.Novel) EXTENSION_TYPE_NOVELS else EXTENSION_TYPE_MANGA
 
-    /** Drives the Manga / Novels pill in the sheet toolbar. */
+    /** Drives the Comics / Novels pill in the sheet toolbar. */
     val novelPluginsSelected = mutableStateOf(selectedExtensionTypeTab == EXTENSION_TYPE_NOVELS)
     private var migrationSourcesEmpty = false
     private var tabbedSheetAdapter: TabbedSheetAdapter? = null
@@ -373,7 +374,11 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
     override fun onItemClick(view: View?, position: Int): Boolean {
         when (binding.tabs.selectedTabPosition) {
             OUTER_TAB_EXTENSIONS -> {
-                if (selectedExtensionTypeTab != EXTENSION_TYPE_MANGA) return false
+                if (selectedExtensionTypeTab != EXTENSION_TYPE_MANGA) {
+                    val item = (novelPluginAdapter?.getItem(position) as? NovelPluginItem) ?: return false
+                    if (item.isInstalled) openNovelPluginDetails(item.plugin.id)
+                    return false
+                }
                 val extension =
                     (extAdapter?.getItem(position) as? ExtensionItem)?.extension ?: return false
                 if (extension is Extension.Installed) {
@@ -714,9 +719,14 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
 
     override fun onNovelPluginButtonClick(position: Int) {
         val item = (novelPluginAdapter?.getItem(position) as? NovelPluginItem) ?: return
-        if (!item.isInstalled || item.hasUpdate) {
-            presenter.installNovelPlugin(item.plugin)
+        when {
+            !item.isInstalled || item.hasUpdate -> presenter.installNovelPlugin(item.plugin)
+            else -> openNovelPluginDetails(item.plugin.id)
         }
+    }
+
+    private fun openNovelPluginDetails(pluginId: String) {
+        controller.router.pushController(NovelPluginDetailsController(pluginId).withFadeTransaction())
     }
 
     override fun onNovelUpdateAllClicked(position: Int) {

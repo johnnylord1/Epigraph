@@ -52,7 +52,9 @@
     -webkit-app-region: no-drag;
   }
 
+  /* Sits in the topbar band so the window controls stay where every page's topbar has them. */
   .activity-overlay__header {
+    height: var(--shell-topbar-height, 56px);
     display: flex;
     align-items: center;
     justify-content: space-between;

@@ -126,7 +126,7 @@ class MigrationController :
         menu.findItem(R.id.action_extension_type)?.setSegmentedSwitchActionView(
             context = context,
             options = listOf(
-                BrowseSourceType.Manga to context.getString(MR.strings.manga),
+                BrowseSourceType.Manga to context.getString(MR.strings.library_comics),
                 BrowseSourceType.Novel to context.getString(MR.strings.novels),
             ),
             selected = browseTypeState,

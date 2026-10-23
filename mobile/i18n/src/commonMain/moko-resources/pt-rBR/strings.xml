@@ -1722,6 +1722,7 @@
     <string name="auto_scroll">Rolagem automática</string>
     <string name="stop_auto_scroll">Parar rolagem automática</string>
     <string name="scroll_to_top">Voltar ao topo</string>
+    <string name="novel_plugin_no_settings">Este plugin não tem configurações</string>
     <string name="novel_plugins">Plugins de novel</string>
     <string name="novel_font_size">Tamanho da fonte</string>
     <string name="novel_font_family">Família da fonte</string>

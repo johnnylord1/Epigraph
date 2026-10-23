@@ -70,6 +70,14 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
         // Novel tab shows cached data immediately on first tap instead of rendering empty
         // then filling in once refreshNovelPlugins finishes.
         refreshNovelPlugins()
+        // A plugin removed from its settings screen must leave the Novels list too.
+        presenterScope.launch {
+            novelPluginManager.installedPluginsFlow
+                .map { plugins -> plugins.mapTo(HashSet()) { it.id } }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { showNovelPlugins() }
+        }
         // Installing or removing an extension or novel plugin rebuilds the source map; the
         // migration list must follow it, or a just-installed source stays "not installed".
         presenterScope.launch {
@@ -318,13 +326,18 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
         presenterScope.launch {
             novelPluginManager.ensureInstalledPluginsLoaded()
             novelPluginManager.refreshAvailablePlugins()
-            val available = novelPluginManager.availablePluginsFlow.value
-            val librarySources = runCatching { getManga.awaitFavorites().mapTo(HashSet()) { it.source } }.getOrDefault(emptySet())
-            val installedIds = novelPluginManager.installedPluginsFlow.value.mapTo(HashSet()) { it.id }
-            val needed = pluginsNeededByLibrary(librarySources, installedIds, available)
-            val items = toNovelPluginItems(available, needed)
-            withUIContext { view?.setNovelPlugins(items) }
+            showNovelPlugins()
         }
+    }
+
+    /** Redraws the Novels list from the plugins already known, without asking the repos again. */
+    private suspend fun showNovelPlugins() {
+        val available = novelPluginManager.availablePluginsFlow.value
+        val librarySources = runCatching { getManga.awaitFavorites().mapTo(HashSet()) { it.source } }.getOrDefault(emptySet())
+        val installedIds = novelPluginManager.installedPluginsFlow.value.mapTo(HashSet()) { it.id }
+        val needed = pluginsNeededByLibrary(librarySources, installedIds, available)
+        val items = toNovelPluginItems(available, needed)
+        withUIContext { view?.setNovelPlugins(items) }
     }
 
     fun installNovelPlugin(plugin: NovelPluginIndex) {

@@ -26,9 +26,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 import okhttp3.Request
 import java.io.File
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
 import yokai.domain.base.models.Version
 
@@ -443,6 +453,39 @@ class NovelPluginManager(
 
             Logger.d { "NovelPluginManager: Uninstalled plugin '$pluginId'" }
         }
+    }
+
+    /**
+     * The plugin's own options (LNReader `pluginSettings`), read from its installed script.
+     * Null when the plugin is not installed or its script cannot be loaded.
+     */
+    suspend fun loadPluginSettings(pluginId: String): JsonObject? = withIOContext {
+        val artifact = File(pluginsDir, pluginId).resolve("index.js")
+        if (!artifact.isFile) return@withIOContext null
+        pluginLoader.extractMetadata(artifact.readText())?.let { it.pluginSettings ?: JsonObject(emptyMap()) }
+    }
+
+    /** The value the plugin stored for [key] (LNReader `storage.get`), or null when unset or expired. */
+    fun readPluginSetting(pluginId: String, key: String): JsonElement? {
+        val stored = bridge.storageGet(pluginId, key) ?: return null
+        val item = runCatching { json.parseToJsonElement(stored) as? JsonObject }.getOrNull() ?: return null
+        val expires = (item["expires"] as? JsonPrimitive)?.longOrNull
+        if (expires != null && expires > 0 && System.currentTimeMillis() > expires) return null
+        return item["value"]
+    }
+
+    /** Stores [value] for [key] the way the plugin's `storage.set` does, then reloads the plugin to pick it up. */
+    suspend fun writePluginSetting(pluginId: String, key: String, value: JsonElement) {
+        val created = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+            .apply { timeZone = TimeZone.getTimeZone("UTC") }
+            .format(Date())
+        val item = buildJsonObject {
+            put("created", created)
+            put("value", value)
+        }
+        bridge.storageSet(pluginId, key, item.toString())
+        // Plugins read their options when the script loads; the next call starts a fresh runtime.
+        installedSources[pluginId]?.destroy()
     }
 
     /**

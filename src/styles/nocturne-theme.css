@@ -474,7 +474,7 @@
   --component-activity-badge-radius: 999px;
   --component-activity-badge-font-size: calc(11px * var(--component-activity-scale));
   --component-activity-overlay-gap: calc(20px * var(--component-activity-scale));
-  --component-activity-overlay-padding: calc((var(--shell-topbar-height, 56px) + 24px) * var(--component-activity-scale)) calc(28px * var(--component-activity-scale)) calc(24px * var(--component-activity-scale));
+  --component-activity-overlay-padding: 0 calc(28px * var(--component-activity-scale)) calc(24px * var(--component-activity-scale));
   --component-activity-overlay-back-gap: calc(8px * var(--component-activity-scale));
   --component-activity-overlay-back-radius: 999px;
   --component-activity-overlay-back-font-size: calc(11px * var(--component-activity-scale));

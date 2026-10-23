@@ -44,4 +44,6 @@
     <dimen name="material_component_lists_padding_above_list">8dp</dimen>
     <dimen name="material_component_lists_two_line_height">56dp</dimen>
     <dimen name="material_component_lists_text_left_padding">72dp</dimen>
+    <!-- Novel plugin icon inset in the extensions sheet, matching manga icons' visible size. -->
+    <dimen name="novel_plugin_icon_inset">16dp</dimen>
 </resources>

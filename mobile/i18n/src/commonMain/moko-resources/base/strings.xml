@@ -1822,6 +1822,7 @@
     <string name="auto_scroll">Auto-scroll</string>
     <string name="stop_auto_scroll">Stop auto-scroll</string>
     <string name="scroll_to_top">Scroll to top</string>
+    <string name="novel_plugin_no_settings">This plugin has no settings</string>
     <string name="novel_plugins">Novel Plugins</string>
     <string name="novel_font_size">Font size</string>
     <string name="novel_font_family">Font family</string>

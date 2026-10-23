@@ -1,5 +1,6 @@
 package epigraph.novel.ui
 
+import android.animation.AnimatorInflater
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.view.View
@@ -33,6 +34,10 @@ class NovelPluginHolder(view: View, val adapter: NovelPluginAdapter) :
             adapter.listener.onNovelPluginButtonClick(flexibleAdapterPosition)
         }
         binding.cancelButton.isVisible = false
+        // Manga extension icons carry their own transparent margin; LNReader icons are full-bleed,
+        // so they get a wider inset to draw at the same visible size.
+        val inset = itemView.resources.getDimensionPixelSize(R.dimen.novel_plugin_icon_inset)
+        binding.sourceImage.setPadding(inset, inset, inset, inset)
     }
 
     fun bind(item: NovelPluginItem) {
@@ -85,13 +90,11 @@ class NovelPluginHolder(view: View, val adapter: NovelPluginAdapter) :
             }
             item.hasUpdate -> {
                 isActivated = true
-                resetStrokeColor()
+                stateListAnimator = AnimatorInflater.loadStateListAnimator(context, R.animator.icon_btn_state_list_anim)
+                rippleColor = ColorStateList.valueOf(context.getColor(R.color.on_secondary_highlight))
                 setText(MR.strings.update)
             }
-            item.isInstalled -> {
-                setText(MR.strings.installed)
-                isEnabled = false
-            }
+            item.isInstalled -> setText(MR.strings.settings)
             else -> {
                 resetStrokeColor()
                 setText(MR.strings.install)

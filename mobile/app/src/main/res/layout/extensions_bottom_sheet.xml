@@ -44,6 +44,7 @@
             android:background="@android:color/transparent"
             android:clipChildren="false"
             android:clipToPadding="false"
+            android:paddingEnd="8dp"
             app:collapseIcon="@drawable/ic_arrow_back_24dp"
             app:layout_constraintBottom_toTopOf="@id/tabs"
             app:layout_constraintHeight_max="?mainActionBarSize"
