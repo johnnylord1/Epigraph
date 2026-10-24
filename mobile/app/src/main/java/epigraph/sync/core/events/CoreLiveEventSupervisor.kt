@@ -7,6 +7,7 @@ import epigraph.sync.core.credentials.CoreCredentialStore
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.policy.SyncPolicyResolver
 import epigraph.sync.core.protocol.CoreCapabilities
+import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
 import epigraph.sync.core.replica.CoreReplicaApplier
 import epigraph.sync.core.replica.CoreReplicaCheckpointReader
 import epigraph.sync.core.replay.CoreReplayCoverage
@@ -228,9 +229,17 @@ class CoreLiveEventSupervisor(
                 http = sessionTransports.http,
             )
         }
+        // Catalog revision events let the watcher react to desktop and other-device catalog
+        // changes as they happen instead of on its next check.
+        val onCatalogRevision = catalogRevisions
+            ?.takeIf {
+                scopeId == "comics:profile:${credentials.profileId}" &&
+                    EpigraphCoreCompatibilityEvaluator.supportsCatalogRevisionEvents(capabilities)
+            }
+            ?.let { watcher -> { _: String -> watcher.nudge() } }
         val connection = CoreEventConnection { replaySession ->
             credentials.withAccessTokenString { token ->
-                sessionTransports.events.collect(token, replaySession, sink)
+                sessionTransports.events.collect(token, replaySession, onCatalogRevision, sink)
             }
         }
         val orchestrator = CoreEventOrchestrator(network, reconnect, bootstrap, connection)

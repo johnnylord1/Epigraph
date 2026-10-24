@@ -71,6 +71,8 @@ data class CoreCapabilities(
     val supportsSuwayomiCategoryCreate: Boolean = false,
     /** The Core accepts AddExtensionRepos and InstallExtension commands from this phone. */
     val supportsSuwayomiExtensionInstall: Boolean = false,
+    /** `/v1/events?catalogEvents=true` announces catalog revision changes as they happen. */
+    val supportsCatalogRevisionEventsV1: Boolean = false,
 )
 
 @Serializable

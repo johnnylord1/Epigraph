@@ -7,10 +7,15 @@ import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
 import epigraph.sync.core.suwayomi.SuwayomiProjectionStatusSource
 import epigraph.sync.core.work.CoreCatalogStage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Wakes the sync worker when the desktop Core announces a catalog revision the phone has not
@@ -18,7 +23,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
  * send nothing on the event feed, which carries progress; without this check they waited for the
  * periodic worker or the next app start.
  *
- * It asks only while the app is visible, right when it becomes visible and then every [intervalMs].
+ * It asks while the app is visible, right when it becomes visible and then every [intervalMs], and
+ * at once on [nudge], which the event feed calls when a Core announces a revision change.
  * `/v1/sync/status` is a cached read on the Core, and the worker itself skips the stages whose
  * revision did not change.
  */
@@ -30,28 +36,40 @@ class CoreCatalogRevisionWatcher(
     private val wake: () -> Unit,
     private val intervalMs: Long = DEFAULT_INTERVAL_MS,
 ) {
+    private val nudges = Channel<Unit>(Channel.CONFLATED)
+
+    /** Checks now, also while the app is in the background; the Core announced a new revision. */
+    fun nudge() {
+        nudges.trySend(Unit)
+    }
+
     suspend fun watch(credentials: CoreCredentialSession, capabilities: CoreCapabilities) {
         if (!EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities)) return
         val scopeId = "comics:profile:${credentials.profileId}"
         // One wake per announced revision: a stage that cannot record what it applied (local
         // work still in flight) must not wake the worker on every check.
         var woken: Pair<String?, String?>? = null
-        foreground.distinctUntilChanged().collectLatest { visible ->
-            if (!visible) return@collectLatest
-            while (true) {
-                val announced = announced(credentials, scopeId)
-                if (announced != null) {
-                    val (library, extensions) = announced
-                    val behind = (library != null && applied(credentials, CoreCatalogStage.CATALOG) != library) ||
-                        (extensions != null && applied(credentials, CoreCatalogStage.EXTENSIONS) != extensions)
-                    if (!behind) {
-                        woken = null
-                    } else if (announced != woken) {
-                        woken = announced
-                        wake()
-                    }
+        val checking = Mutex()
+        suspend fun check() = checking.withLock {
+            val announced = announced(credentials, scopeId) ?: return@withLock
+            val (library, extensions) = announced
+            val behind = (library != null && applied(credentials, CoreCatalogStage.CATALOG) != library) ||
+                (extensions != null && applied(credentials, CoreCatalogStage.EXTENSIONS) != extensions)
+            if (!behind) {
+                woken = null
+            } else if (announced != woken) {
+                woken = announced
+                wake()
+            }
+        }
+        coroutineScope {
+            launch { for (nudge in nudges) check() }
+            foreground.distinctUntilChanged().collectLatest { visible ->
+                if (!visible) return@collectLatest
+                while (true) {
+                    check()
+                    delay(intervalMs)
                 }
-                delay(intervalMs)
             }
         }
     }

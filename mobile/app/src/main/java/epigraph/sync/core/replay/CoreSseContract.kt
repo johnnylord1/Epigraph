@@ -14,7 +14,16 @@ sealed interface CoreSseEvent {
     data object Ping : CoreSseEvent
 
     data class ReplayRequired(val payload: CoreReplayRequiredPayload) : CoreSseEvent
+
+    /**
+     * `/v1/sync/status` announces new catalog revisions for the scope. Sent only to streams that
+     * asked for it; it has no id and does not move the replay cursor.
+     */
+    data class CatalogRevision(val payload: CoreCatalogRevisionPayload) : CoreSseEvent
 }
+
+@Serializable
+data class CoreCatalogRevisionPayload(val scopeId: String)
 
 @Serializable
 data class CoreReplayRequiredPayload(

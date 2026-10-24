@@ -9,6 +9,7 @@ import epigraph.sync.core.replay.CoreReplayDecision
 import epigraph.sync.core.replay.CoreReplayFailurePolicy
 import epigraph.sync.core.replay.CoreReplaySession
 import epigraph.sync.core.replay.CoreSseDecoder
+import epigraph.sync.core.replay.CoreSseEvent
 import epigraph.sync.core.replay.CoreSseProtocolException
 import java.io.IOException
 import java.io.InputStreamReader
@@ -129,22 +130,26 @@ class OkHttpCoreEventStream internal constructor(
     /**
      * Connects once and consumes the stream until it closes or requires another action.
      * [accessToken] is a per-call value and is never stored by this client.
+     *
+     * A non-null [onCatalogRevision] asks the Core for `catalog_revision` events (only Cores that
+     * advertise them may be asked; older clients reject unknown events) and receives their scope.
      */
     suspend fun collect(
         accessToken: String,
         session: CoreReplaySession,
+        onCatalogRevision: ((String) -> Unit)? = null,
         sink: CoreDurableChangeSink,
     ): CoreEventStreamOutcome = withContext(ioDispatcher) {
         require(accessToken.isNotBlank() && accessToken == accessToken.trim()) {
             "accessToken must be non-blank and canonical"
         }
-        val request = eventRequest(accessToken, session.checkpoint)
+        val request = eventRequest(accessToken, session.checkpoint, catalogEvents = onCatalogRevision != null)
         val call = client.newCall(request)
         val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
             if (cause != null) call.cancel()
         }
         try {
-            call.execute().use { response -> consume(response, session, sink) }
+            call.execute().use { response -> consume(response, session, sink, onCatalogRevision) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: CoreSseProtocolException) {
@@ -163,7 +168,11 @@ class OkHttpCoreEventStream internal constructor(
         }
     }
 
-    private fun eventRequest(accessToken: String, checkpoint: CoreReplayCheckpoint): Request {
+    private fun eventRequest(
+        accessToken: String,
+        checkpoint: CoreReplayCheckpoint,
+        catalogEvents: Boolean,
+    ): Request {
         val url = baseUrl.newBuilder()
             .addPathSegments("v1/events")
             .apply {
@@ -171,6 +180,7 @@ class OkHttpCoreEventStream internal constructor(
                 if (coverage is CoreReplayCoverage.Filtered) {
                     addQueryParameter("scopeId", coverage.scopeId)
                 }
+                if (catalogEvents) addQueryParameter("catalogEvents", "true")
             }
             .build()
         return Request.Builder()
@@ -196,6 +206,7 @@ class OkHttpCoreEventStream internal constructor(
         response: Response,
         session: CoreReplaySession,
         sink: CoreDurableChangeSink,
+        onCatalogRevision: ((String) -> Unit)?,
     ): CoreEventStreamOutcome {
         if (!response.isSuccessful) return httpFailure(response, session.checkpoint)
 
@@ -209,6 +220,7 @@ class OkHttpCoreEventStream internal constructor(
             if (count == 0) continue
             val events = decoder.feed(String(characters, 0, count))
             for (event in events) {
+                if (event is CoreSseEvent.CatalogRevision) onCatalogRevision?.invoke(event.payload.scopeId)
                 when (val decision = session.onEvent(event)) {
                     is CoreReplayDecision.ApplyChange -> {
                         try {

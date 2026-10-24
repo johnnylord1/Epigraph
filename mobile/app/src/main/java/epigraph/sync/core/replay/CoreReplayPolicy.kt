@@ -63,6 +63,7 @@ class CoreReplaySession private constructor(
         is CoreSseEvent.Ping -> CoreReplayDecision.Heartbeat(checkpoint)
         is CoreSseEvent.ReplayRequired -> decideReplayRequired(event.payload)
         is CoreSseEvent.Change -> acceptChange(event)
+        is CoreSseEvent.CatalogRevision -> CoreReplayDecision.Heartbeat(checkpoint)
     }
 
     private fun acceptChange(event: CoreSseEvent.Change): CoreReplayDecision {

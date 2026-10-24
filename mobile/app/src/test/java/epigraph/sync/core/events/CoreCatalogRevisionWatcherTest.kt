@@ -107,21 +107,39 @@ class CoreCatalogRevisionWatcherTest {
     }
 
     @Test
+    fun `a nudge checks at once even in the background`() = watching {
+        foreground.value = false
+        runCurrent()
+        val before = checks
+        status = status("lib-2", "ext-1")
+
+        watcher.nudge()
+        runCurrent()
+        assertEquals(before + 1, checks)
+        assertEquals(1, wakes)
+
+        // Repeated announcements of the same revision do not wake the worker again.
+        watcher.nudge()
+        runCurrent()
+        assertEquals(1, wakes)
+    }
+
+    @Test
     fun `a Core without sync status is never asked`() = runTest {
-        val job = launch { watcher().watch(session, capabilities(supportsSyncStatus = false)) }
+        val job = launch { watcher.watch(session, capabilities(supportsSyncStatus = false)) }
         advanceTimeBy(INTERVAL * 3)
         assertEquals(0, checks)
         job.cancel()
     }
 
     private fun watching(block: suspend TestScope.() -> Unit) = runTest {
-        val job = launch { watcher().watch(session, capabilities()) }
+        val job = launch { watcher.watch(session, capabilities()) }
         runCurrent()
         block()
         job.cancel()
     }
 
-    private fun watcher() = CoreCatalogRevisionWatcher(
+    private val watcher = CoreCatalogRevisionWatcher(
         foreground = foreground,
         status = SuwayomiProjectionStatusSource { _, scopeId ->
             assertEquals("comics:profile:$PROFILE", scopeId)

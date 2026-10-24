@@ -47,6 +47,16 @@ class CoreSseDecoderTest {
     }
 
     @Test
+    fun `decodes a catalog revision announcement`() {
+        val events = CoreSseDecoder().feed(
+            "event: catalog_revision\ndata: {\"scopeId\":\"comics:profile:main\",\"future\":1}\n\n",
+        )
+
+        val revision = assertInstanceOf(CoreSseEvent.CatalogRevision::class.java, events.single())
+        assertEquals("comics:profile:main", revision.payload.scopeId)
+    }
+
+    @Test
     fun `rejects a change whose global SSE id disagrees with envelope`() {
         val decoder = CoreSseDecoder()
 

@@ -56,6 +56,31 @@ class OkHttpCoreEventStreamTest {
     }
 
     @Test
+    fun `catalog revisions are requested only on opt-in and never move the cursor`() = runTest {
+        val interceptor = RecordingInterceptor { request ->
+            response(
+                request,
+                200,
+                changeEvent(8) + "event: catalog_revision\ndata: {\"scopeId\":\"books:global\"}\n\n",
+                "text/event-stream",
+            )
+        }
+        val announced = mutableListOf<String>()
+
+        val session = CoreReplaySession.afterSnapshot(7, CoreReplayCoverage.Filtered("books:global"))
+        val outcome = stream(interceptor).collect("secret", session, { announced += it }) { _, _ -> }
+        stream(interceptor).collect(
+            "secret",
+            CoreReplaySession.afterSnapshot(7, CoreReplayCoverage.Filtered("books:global")),
+        ) { _, _ -> }
+
+        assertEquals(listOf("books:global"), announced)
+        assertEquals(8L, outcome.checkpoint.lastGlobalEventId)
+        assertEquals("true", interceptor.requests[0].url.queryParameter("catalogEvents"))
+        assertEquals(null, interceptor.requests[1].url.queryParameter("catalogEvents"))
+    }
+
+    @Test
     fun `silent half-open stream times out into a reconnect after the applied cursor`() = runTest {
         val interceptor = RecordingInterceptor { request ->
             val body = object : okio.Source {

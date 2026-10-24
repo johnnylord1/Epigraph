@@ -5,7 +5,7 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
- * Incremental, transport-independent decoder for the three SSE event types emitted by syncd v1.
+ * Incremental, transport-independent decoder for the SSE event types emitted by syncd v1.
  * The caller remains responsible for HTTP, TLS pinning, cancellation and reconnect backoff.
  */
 class CoreSseDecoder(
@@ -89,6 +89,7 @@ class CoreSseDecoder(
             "replay_required" -> CoreSseEvent.ReplayRequired(
                 decodeJson("replay_required", payload),
             )
+            "catalog_revision" -> CoreSseEvent.CatalogRevision(decodeJson("catalog_revision", payload))
             else -> throw CoreSseProtocolException("Unsupported syncd SSE event: ${eventName ?: "message"}")
         }
     }

@@ -86,6 +86,9 @@ object EpigraphCoreCompatibilityEvaluator {
     fun supportsSyncStatus(capabilities: CoreCapabilities): Boolean =
         capabilities.supportsSyncStatusV1
 
+    fun supportsCatalogRevisionEvents(capabilities: CoreCapabilities): Boolean =
+        capabilities.supportsSyncStatusV1 && capabilities.supportsCatalogRevisionEventsV1
+
     private val CANONICAL_COMIC_PROJECTION_TYPES = setOf(
         EpigraphCoreEntityType.COMIC_ENTRY,
         EpigraphCoreEntityType.COMIC_CATEGORY,
