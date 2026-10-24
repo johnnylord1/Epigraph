@@ -15,8 +15,11 @@ import eu.kanade.tachiyomi.util.system.withUIContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -52,19 +55,28 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
         super.onCreate()
 
         presenterScope.launch {
-            val extensionJob = async {
-                extensionManager.findAvailableExtensions()
-                extensions = toItems(
-                    Triple(
-                        extensionManager.installedExtensionsFlow.value,
-                        extensionManager.untrustedExtensionsFlow.value,
-                        extensionManager.availableExtensionsFlow.value,
-                    ),
-                )
-                withContext(Dispatchers.Main) { view?.setExtensions(extensions, false) }
-            }
+            val extensionJob = async { extensionManager.findAvailableExtensions() }
             val migrationJob = async { firstTimeMigration() }
             listOf(migrationJob, extensionJob).awaitAll()
+        }
+        // The list follows the manager rather than a copy taken here: an extension installed,
+        // updated or removed by the system installer, or an update found in the background,
+        // changes these flows without any event from this sheet's own installs.
+        presenterScope.launch {
+            extensionManager.isInitialized.first { it }
+            var firstDraw = true
+            combine(
+                extensionManager.installedExtensionsFlow,
+                extensionManager.untrustedExtensionsFlow,
+                extensionManager.availableExtensionsFlow,
+                ::Triple,
+            ).collectLatest { tuple ->
+                if (view == null) return@collectLatest
+                val items = toItems(tuple)
+                val updateController = !firstDraw
+                firstDraw = false
+                withUIContext { view?.setExtensions(items, updateController) }
+            }
         }
         // NOVEL: preload novel plugins on sheet create (mirroring extensionJob above) so the
         // Novel tab shows cached data immediately on first tap instead of rendering empty
