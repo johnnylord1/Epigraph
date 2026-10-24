@@ -65,6 +65,10 @@ class SharedPreferencesCoreStageRevisionStore(context: Context) : CoreStageRevis
     }
 }
 
+/** Where [CoreCatalogRevisionGate] records what [stage] applied for this pairing. */
+fun coreStageRevisionKey(credentials: CoreCredentialSession, stage: CoreCatalogStage): String =
+    "${credentials.serverId}:${credentials.profileId}:${stage.key}"
+
 /** Local state a stage's last apply depended on; null when the stage must run regardless. */
 fun interface CoreCatalogLocalState {
     suspend fun signature(stage: CoreCatalogStage, credentials: CoreCredentialSession): String?
@@ -207,7 +211,7 @@ class CoreCatalogRevisionGate(
             finished.clear()
         }
 
-        private fun key(stage: CoreCatalogStage) = "${credentials.serverId}:${credentials.profileId}:${stage.key}"
+        private fun key(stage: CoreCatalogStage) = coreStageRevisionKey(credentials, stage)
     }
 
     companion object {

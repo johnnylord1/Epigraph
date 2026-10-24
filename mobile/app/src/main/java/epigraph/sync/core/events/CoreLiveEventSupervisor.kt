@@ -52,6 +52,7 @@ class CoreLiveEventSupervisor(
     private val applier: CoreReplicaApplier,
     private val scheduler: CoreBackgroundSyncScheduler,
     private val syncPause: CoreSyncPause = InMemoryCoreSyncPause(),
+    private val catalogRevisions: CoreCatalogRevisionWatcher? = null,
 ) {
     private val logger = Logger.withTag(LOG_TAG)
     private val connectivity = context.applicationContext
@@ -163,6 +164,12 @@ class CoreLiveEventSupervisor(
             }
             launch(CoroutineName("epigraph-core-events-watch")) {
                 watchSession(credentials, capabilities, policy.selectedScopes)
+            }
+            catalogRevisions?.let { watcher ->
+                // Desktop library and extension changes are not on the event feed; see the watcher.
+                launch(CoroutineName("epigraph-core-catalog-revisions")) {
+                    watcher.watch(credentials, capabilities)
+                }
             }
         }
     }

@@ -2,6 +2,8 @@ package epigraph.sync.core
 
 import android.app.Application
 import android.content.Context
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import eu.kanade.tachiyomi.source.SourceManager
 import epigraph.contract.ClientMutationId
 import epigraph.contract.DeviceId
@@ -21,6 +23,7 @@ import epigraph.sync.core.credentials.SharedPreferencesLastPairedProfileStore
 import epigraph.sync.EpigraphSyncScopeProvider
 import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.events.CoreBackgroundSyncReason
+import epigraph.sync.core.events.CoreCatalogRevisionWatcher
 import epigraph.sync.core.events.CoreLiveEventSupervisor
 import epigraph.sync.core.extensions.ExtensionInventoryReplicaSync
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
@@ -150,6 +153,8 @@ import epigraph.sync.core.suwayomi.SuwayomiMutationQueueDrainer
 import epigraph.sync.core.work.CoreCatalogRevisionGate
 import epigraph.sync.core.work.DatabaseCoreCatalogLocalState
 import epigraph.sync.core.work.SharedPreferencesCoreStageRevisionStore
+import epigraph.sync.core.work.CoreStageRevisionStore
+import epigraph.sync.core.work.coreStageRevisionKey
 import epigraph.sync.core.work.CompositeCoreReplicaSync
 import epigraph.sync.core.work.AndroidCoreDeviceIdentityProvider
 import epigraph.sync.core.work.CoordinatorPendingOutbox
@@ -178,6 +183,7 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.map
 import okhttp3.OkHttpClient
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -436,8 +442,18 @@ fun epigraphSyncModule(app: Application) = module {
             applier = get(),
             scheduler = get(),
             syncPause = get(),
+            catalogRevisions = CoreCatalogRevisionWatcher(
+                foreground = ProcessLifecycleOwner.get().lifecycle.currentStateFlow
+                    .map { state -> state.isAtLeast(Lifecycle.State.STARTED) },
+                status = get<CoreSuwayomiProjectionStatusSource>(),
+                applied = { credentials, stage ->
+                    get<CoreStageRevisionStore>().get(coreStageRevisionKey(credentials, stage))?.revision
+                },
+                wake = { get<CoreBackgroundSyncScheduler>().enqueue(CoreBackgroundSyncReason.APP_START) },
+            ),
         )
     }
+    single<CoreStageRevisionStore> { SharedPreferencesCoreStageRevisionStore(app) }
     single { SnapshotCoreReplicaSync(get(), get(), get(), get(), get()) }
     single<CoreReplicaSyncPort>(named(CATALOG_REPLICA)) {
         SuwayomiCatalogSync(
@@ -505,7 +521,7 @@ fun epigraphSyncModule(app: Application) = module {
             get(named(PORTABLE_NOVEL_MANIFEST_REPLICA)),
             revisions = CoreCatalogRevisionGate(
                 status = get<CoreSuwayomiProjectionStatusSource>(),
-                store = SharedPreferencesCoreStageRevisionStore(app),
+                store = get(),
                 localState = DatabaseCoreCatalogLocalState(get(), get(), SharedPreferencesCatalogApplyStampStore(app)),
             ),
         )
