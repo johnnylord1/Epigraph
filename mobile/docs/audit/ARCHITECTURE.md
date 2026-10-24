@@ -87,6 +87,8 @@ The sync model preserves existing local integer IDs. Stable Epigraph identity, b
 
 The Core now advertises the bounded Suwayomi catalog, extension inventory, typed command bridge and `GET /v1/sync/status` readiness endpoint independently from the generic GraphQL proxy. Catalog reconciliation is complete-set only after every page validates, while a failed or partial page preserves the last-known-good Library. Creation/renaming of new Suwayomi categories and tracker bindings remain explicit follow-up work; the mobile client does not claim those capabilities when absent from the negotiated Core.
 
+The sync status also carries optional `comicLibraryRevision` and `comicExtensionsRevision` digests of the catalog fields the phone applies (unread and download counts excluded). `CoreCatalogRevisionGate` skips the extension inventory, portable manifest and catalog stages when the announced revision, and the local state it met (installed extensions, library signature, no unsettled comic work, a complete catalog stamp, a settled portable bootstrap), are unchanged since the last real apply and that apply is under 6 h old. The Core hides the revisions while a library change is projecting or blocked (pending progress does not hide them). A missing revision or a failed status read runs the stage but keeps the record, since a revision is a content digest; a stage that did not apply runs again; the Core replica, which carries progress, always runs. The record is a replaceable SharedPreferences cache, so no schema change is involved.
+
 ## Boundaries
 
 - The PC is not a content proxy for normal manga/novel reading.

@@ -138,6 +138,13 @@ data class CoreSyncStatus(
     val ready: Boolean,
     /** Queued projections other than chapter progress; absent from desktops that predate it. */
     val suwayomiCatalogProjectionPending: Long? = null,
+    /**
+     * Revision of the comic library, categories and the extensions they need, as the catalog and
+     * portable manifest stages read them. Absent from older desktops and while work is unprojected.
+     */
+    val comicLibraryRevision: String? = null,
+    /** Revision of the desktop's extension inventory; absent like [comicLibraryRevision]. */
+    val comicExtensionsRevision: String? = null,
 )
 
 @Serializable

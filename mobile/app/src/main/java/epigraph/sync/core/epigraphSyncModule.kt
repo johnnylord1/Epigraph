@@ -147,6 +147,9 @@ import epigraph.sync.core.suwayomi.BRIDGED_READ_BASELINE_PREFERENCES
 import epigraph.sync.core.suwayomi.BridgedChapterReadState
 import epigraph.sync.core.suwayomi.CoreBridgedChapterReadState
 import epigraph.sync.core.suwayomi.SuwayomiMutationQueueDrainer
+import epigraph.sync.core.work.CoreCatalogRevisionGate
+import epigraph.sync.core.work.DatabaseCoreCatalogLocalState
+import epigraph.sync.core.work.SharedPreferencesCoreStageRevisionStore
 import epigraph.sync.core.work.CompositeCoreReplicaSync
 import epigraph.sync.core.work.AndroidCoreDeviceIdentityProvider
 import epigraph.sync.core.work.CoordinatorPendingOutbox
@@ -500,6 +503,11 @@ fun epigraphSyncModule(app: Application) = module {
             get(),
             get(named(PORTABLE_MANIFEST_REPLICA)),
             get(named(PORTABLE_NOVEL_MANIFEST_REPLICA)),
+            revisions = CoreCatalogRevisionGate(
+                status = get<CoreSuwayomiProjectionStatusSource>(),
+                store = SharedPreferencesCoreStageRevisionStore(app),
+                localState = DatabaseCoreCatalogLocalState(get(), get(), SharedPreferencesCatalogApplyStampStore(app)),
+            ),
         )
     }
     single { CoreTrackingCapabilityCache.create(app) }

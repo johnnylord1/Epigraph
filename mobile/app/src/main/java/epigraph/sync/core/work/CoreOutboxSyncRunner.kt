@@ -446,6 +446,7 @@ class CompositeCoreReplicaSync(
     private val devices: CoreDeviceIdentityProvider? = null,
     private val portableManifest: CoreReplicaSyncPort = DeferredCoreReplicaSync,
     private val portableNovelManifest: CoreReplicaSyncPort = DeferredCoreReplicaSync,
+    private val revisions: CoreCatalogRevisionGate? = null,
 ) : CoreReplicaSyncPort {
     override suspend fun synchronize(
         credentials: CoreCredentialSession,
@@ -463,25 +464,36 @@ class CompositeCoreReplicaSync(
                 (scope == "novels:profile:${credentials.profileId}" && (policy?.syncNovels ?: hasNovelScope)) ||
                 (scope == "comics:profile:${credentials.profileId}" && (policy?.syncComics ?: hasComicScope))
         }
+        // One status read tells which comic stages the desktop changed since this device applied
+        // them; without it every stage runs.
+        val revisionPass = if (hasComicScope) revisions?.open(credentials, capabilities) else null
+        suspend fun gated(
+            stage: CoreCatalogStage,
+            synchronize: suspend () -> CoreReplicaSyncOutcome,
+        ): CoreReplicaSyncOutcome = revisionPass?.run(stage, nowEpochMillis, synchronize) ?: synchronize()
         // Bootstrap dependency metadata before materializing library rows. The extension/plugin
         // stages are read/review-only; no repository is added and no APK is installed silently.
         val extensionOutcome = if (
             policy?.let { it.reconcileComicRepositories || it.reconcileComicExtensions } ?: hasComicScope
-        ) synchronizeSafely(
-            name = "extensions",
-            port = extensionInventory,
-            credentials = credentials,
-            capabilities = capabilities,
-            nowEpochMillis = nowEpochMillis,
-        ) else CoreReplicaSyncOutcome.DEFERRED
+        ) gated(CoreCatalogStage.EXTENSIONS) {
+            synchronizeSafely(
+                name = "extensions",
+                port = extensionInventory,
+                credentials = credentials,
+                capabilities = capabilities,
+                nowEpochMillis = nowEpochMillis,
+            )
+        } else CoreReplicaSyncOutcome.DEFERRED
 
-        val portableOutcome = if (policy?.syncComics ?: hasComicScope) synchronizeSafely(
-            name = "portableManifest",
-            port = portableManifest,
-            credentials = credentials,
-            capabilities = capabilities,
-            nowEpochMillis = nowEpochMillis,
-        ) else CoreReplicaSyncOutcome.DEFERRED
+        val portableOutcome = if (policy?.syncComics ?: hasComicScope) gated(CoreCatalogStage.PORTABLE_MANIFEST) {
+            synchronizeSafely(
+                name = "portableManifest",
+                port = portableManifest,
+                credentials = credentials,
+                capabilities = capabilities,
+                nowEpochMillis = nowEpochMillis,
+            )
+        } else CoreReplicaSyncOutcome.DEFERRED
         val portableNovelOutcome = if (policy?.syncNovels ?: hasNovelScope) synchronizeSafely(
             name = "portableNovelManifest",
             port = portableNovelManifest,
@@ -491,13 +503,15 @@ class CompositeCoreReplicaSync(
         ) else CoreReplicaSyncOutcome.DEFERRED
         // Resolve provider-owned identities before projecting catalog metadata. A BOUND V3 work
         // can then use the native Mihon row; unresolved works retain the Legacy Core source.
-        val catalogOutcome = if (policy?.syncComics ?: hasComicScope) synchronizeSafely(
-            name = "catalog",
-            port = catalog,
-            credentials = credentials,
-            capabilities = capabilities,
-            nowEpochMillis = nowEpochMillis,
-        ) else CoreReplicaSyncOutcome.DEFERRED
+        val catalogOutcome = if (policy?.syncComics ?: hasComicScope) gated(CoreCatalogStage.CATALOG) {
+            synchronizeSafely(
+                name = "catalog",
+                port = catalog,
+                credentials = credentials,
+                capabilities = capabilities,
+                nowEpochMillis = nowEpochMillis,
+            )
+        } else CoreReplicaSyncOutcome.DEFERRED
         val replicaOutcome = if (replicaScopes.isEmpty()) {
             CoreReplicaSyncOutcome.DEFERRED
         } else {
@@ -525,6 +539,7 @@ class CompositeCoreReplicaSync(
             capabilities = capabilities,
             nowEpochMillis = nowEpochMillis,
         ) else CoreReplicaSyncOutcome.DEFERRED
+        revisionPass?.finish()
         return when {
             replicaOutcome == CoreReplicaSyncOutcome.RETRY -> replicaOutcome
             portableOutcome == CoreReplicaSyncOutcome.RETRY -> portableOutcome
@@ -555,6 +570,7 @@ class CompositeCoreReplicaSync(
         capabilities: CoreCapabilities,
         nowEpochMillis: Long,
     ): CoreReplicaSyncOutcome {
+        val startedAt = System.nanoTime()
         val outcome = try {
             port.synchronize(credentials, capabilities, nowEpochMillis)
         } catch (cancelled: CancellationException) {
@@ -563,8 +579,9 @@ class CompositeCoreReplicaSync(
             reportCoreSyncFailure(name, failure)
             CoreReplicaSyncOutcome.RETRY
         }
-        if (BuildConfig.DEBUG && outcome != CoreReplicaSyncOutcome.APPLIED) {
-            runCatching { Log.d("EpigraphCoreSync", "$name sync outcome: ${outcome.name}") }
+        if (BuildConfig.DEBUG) {
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+            runCatching { Log.d("EpigraphCoreSync", "$name sync outcome: ${outcome.name} in ${elapsedMs}ms") }
         }
         return outcome
     }
