@@ -366,6 +366,12 @@ class EpigraphCoreHttpClient internal constructor(
             .addQueryParameter("pageSize", pageSize.toString())
             .addQueryParameter("offset", offset.toString())
         mangaId?.let { urlBuilder.addQueryParameter("mangaId", it.toString()) }
+        // Chapter, unread and download counts are most of the cost of a library read on the
+        // desktop, and no library reader here uses them. A Core that predates the parameter
+        // ignores it and still sends them.
+        if (operation == SuwayomiCatalogOperation.LIBRARY) {
+            urlBuilder.addQueryParameter("withoutCounts", "true")
+        }
         return execute(
             protectedRequestBuilder(urlBuilder.build(), accessToken)
                 .get()

@@ -91,15 +91,19 @@ class SuwayomiCatalogSync(
             }
         }
 
-        val library = try {
-            fetchAll(credentials, SuwayomiCatalogOperation.LIBRARY)
-        } catch (failure: CatalogSyncFailure) {
+        // Both reads run at once; a library failure is still the one reported when both fail.
+        val (libraryRead, categoriesRead) = coroutineScope {
+            val library = async { readAll(credentials, SuwayomiCatalogOperation.LIBRARY) }
+            val categories = async { readAll(credentials, SuwayomiCatalogOperation.CATEGORIES) }
+            library.await() to categories.await()
+        }
+        val library = libraryRead.getOrElse { failure ->
+            failure as CatalogSyncFailure
             reportCatalogFailure(SuwayomiCatalogOperation.LIBRARY, failure)
             return failure.outcome()
         }
-        val remoteCategories = try {
-            fetchAll(credentials, SuwayomiCatalogOperation.CATEGORIES)
-        } catch (failure: CatalogSyncFailure) {
+        val remoteCategories = categoriesRead.getOrElse { failure ->
+            failure as CatalogSyncFailure
             reportCatalogFailure(SuwayomiCatalogOperation.CATEGORIES, failure)
             return failure.outcome()
         }.filterNot { node -> node.long("id") == SUWAYOMI_DEFAULT_CATEGORY_ID }
@@ -174,12 +178,10 @@ class SuwayomiCatalogSync(
 
         val stampKey = "${credentials.serverId}:${credentials.profileId}"
         val previousStamp = stamps?.get(stampKey)
-        val catalogDigest = catalogDigest(
+        val (catalogDigest, recordDigests) = digests(
             SuwayomiCategoryCreateHook.isEnabled(capabilities),
             mangaRecords + categoryRecords + assignmentRecords,
         )
-        val recordDigests = (mangaRecords + categoryRecords + assignmentRecords)
-            .associate { record -> record.key to recordDigest(record) }
         // Applying only after both complete reads protects the local library from partial pages.
         // Reconciliation is intentionally limited to the authoritative library bit; local
         // metadata, chapters, progress and assets remain recoverable after an un-favorite.
@@ -290,6 +292,16 @@ class SuwayomiCatalogSync(
      * a few hundred milliseconds, which made a library of a few hundred titles take seconds. Pages
      * are still checked in offset order, exactly as a sequential read would check them.
      */
+    /** [fetchAll], with a catalog failure as the result instead of thrown. */
+    private suspend fun readAll(
+        credentials: CoreCredentialSession,
+        operation: SuwayomiCatalogOperation,
+    ): Result<List<JsonObject>> = try {
+        Result.success(fetchAll(credentials, operation))
+    } catch (failure: CatalogSyncFailure) {
+        Result.failure(failure)
+    }
+
     private suspend fun fetchAll(
         credentials: CoreCredentialSession,
         operation: SuwayomiCatalogOperation,
@@ -443,29 +455,44 @@ class SuwayomiCatalogSync(
             .with("coreProfileId", credentials.profileId),
     )
 
-    private fun catalogDigest(categoryCreateHook: Boolean, records: List<CoreConfirmedRecord>): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        digest.update(if (categoryCreateHook) 1 else 0)
+    /**
+     * The digest of the whole catalog and a short digest of each record (a stamp keeps one per
+     * record it applied), from a single serialization of every record.
+     */
+    private fun digests(
+        categoryCreateHook: Boolean,
+        records: List<CoreConfirmedRecord>,
+    ): Pair<String, Map<CoreReplicaKey, String>> {
+        val catalog = MessageDigest.getInstance("SHA-256")
+        val single = MessageDigest.getInstance("SHA-256")
+        catalog.update(if (categoryCreateHook) 1 else 0)
+        val recordDigests = HashMap<CoreReplicaKey, String>(records.size * 2)
         records.forEach { record ->
-            digest.update(record.key.entityType.toByteArray())
-            digest.update(0)
-            digest.update(record.key.entityId.toByteArray())
-            digest.update(0)
-            digest.update(record.record.toString().toByteArray())
-            digest.update(0)
+            val type = record.key.entityType.toByteArray()
+            val id = record.key.entityId.toByteArray()
+            val body = record.record.toString().toByteArray()
+            for (digest in arrayOf(catalog, single)) {
+                digest.update(type)
+                digest.update(0)
+                digest.update(id)
+                digest.update(0)
+                digest.update(body)
+            }
+            catalog.update(0)
+            recordDigests[record.key] = hex(single.digest(), RECORD_DIGEST_BYTES)
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
+        val catalogDigest = catalog.digest()
+        return hex(catalogDigest, catalogDigest.size) to recordDigests
     }
 
-    /** Short digest of one record; a stamp keeps one per record it applied. */
-    private fun recordDigest(record: CoreConfirmedRecord): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        digest.update(record.key.entityType.toByteArray())
-        digest.update(0)
-        digest.update(record.key.entityId.toByteArray())
-        digest.update(0)
-        digest.update(record.record.toString().toByteArray())
-        return digest.digest().take(RECORD_DIGEST_BYTES).joinToString("") { "%02x".format(it) }
+    private fun hex(bytes: ByteArray, count: Int): String {
+        val chars = CharArray(count * 2)
+        for (index in 0 until count) {
+            val value = bytes[index].toInt() and 0xff
+            chars[index * 2] = HEX_DIGITS[value ushr 4]
+            chars[index * 2 + 1] = HEX_DIGITS[value and 0x0f]
+        }
+        return String(chars)
     }
 
     private fun Database.localLibrarySignature(scopeId: String): String =
@@ -527,6 +554,7 @@ class SuwayomiCatalogSync(
         const val PARALLEL_PAGE_READS = 4
         const val REAPPLY_INTERVAL_MS = 6 * 60 * 60 * 1_000L
         private const val RECORD_DIGEST_BYTES = 12
+        private val HEX_DIGITS = "0123456789abcdef".toCharArray()
         const val SUWAYOMI_DEFAULT_CATEGORY_ID = 0L
         const val REMOTE_TYPE_SUWAYOMI_MANGA = "SUWAYOMI_MANGA"
 

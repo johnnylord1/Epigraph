@@ -57,6 +57,22 @@ class CoreCatalogRevisionGateTest {
     }
 
     @Test
+    fun `a category change keeps the manifest skip when the desktop announces its revision`() = runTest {
+        status = status("lib-1", "ext-1", manifest = "man-1")
+        sync(1_000)
+        runs.clear()
+        status = status("lib-2", "ext-1", manifest = "man-1")
+
+        sync(2_000)
+        assertEquals(listOf("catalog", "replica"), runs)
+
+        runs.clear()
+        status = status("lib-3", "ext-1", manifest = "man-2")
+        sync(3_000)
+        assertEquals(listOf("portable", "catalog", "replica"), runs)
+    }
+
+    @Test
     fun `a desktop without revisions runs every stage and keeps nothing`() = runTest {
         status = status(null, null)
         sync(1_000)
@@ -164,7 +180,11 @@ class CoreCatalogRevisionGateTest {
         ).synchronize(session, capabilities(), now)
     }
 
-    private fun status(library: String?, extensions: String?): CoreHttpResult<CoreSyncStatus> =
+    private fun status(
+        library: String?,
+        extensions: String?,
+        manifest: String? = null,
+    ): CoreHttpResult<CoreSyncStatus> =
         CoreHttpResult.Success(
             CoreSyncStatus(
                 scopeId = "comics:profile:$PROFILE",
@@ -177,6 +197,7 @@ class CoreCatalogRevisionGateTest {
                 ready = true,
                 comicLibraryRevision = library,
                 comicExtensionsRevision = extensions,
+                comicManifestRevision = manifest,
             ),
         )
 

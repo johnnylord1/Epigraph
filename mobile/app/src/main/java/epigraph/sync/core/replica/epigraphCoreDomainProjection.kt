@@ -206,18 +206,19 @@ class EpigraphCoreDomainProjection(
             .executeAsList()
             .associateBy { it.local_category_id }
         database.aethon_syncQueries
-            .selectCoreRemoteIdentitiesByScopeAndType(serverId, profileId, "SUWAYOMI_MANGA")
+            .selectCoreRemoteMangaCategoryLinks(serverId, profileId)
             .executeAsList()
-            .forEach remoteLoop@{ remote ->
-                if (remote.entity_id in protectedEntityIds) return@remoteLoop
-                val mangaId = localMangaId(database, remote.entity_id) ?: return@remoteLoop
-                database.categoriesQueries.findAllByMangaId(mangaId).executeAsList()
-                    .forEach categoryLoop@{ category ->
-                        val identity = categoriesByLocalId[category._id] ?: return@categoryLoop
-                        if ((remote.entity_id to identity.entity_id) !in observedAssignments) {
-                            database.aethon_syncQueries.deleteMangaCategoryAssignment(mangaId, category._id)
-                        }
-                    }
+            .asSequence()
+            .filterNot { it.entity_id in protectedEntityIds }
+            .filter { link -> link.local_reference.toLongOrNull()?.takeIf { it > 0 } == link.manga_id }
+            .mapNotNull { link ->
+                val identity = categoriesByLocalId[link.category_id] ?: return@mapNotNull null
+                link.takeIf { (it.entity_id to identity.entity_id) !in observedAssignments }
+            }
+            .map { it.manga_id to it.category_id }
+            .toSet()
+            .forEach { (mangaId, categoryId) ->
+                database.aethon_syncQueries.deleteMangaCategoryAssignment(mangaId, categoryId)
             }
 
         // A complete catalog read is authoritative for Core-owned categories.

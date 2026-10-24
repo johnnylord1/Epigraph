@@ -43,6 +43,8 @@ import android.util.Log
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.BuildConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import yokai.data.DatabaseHandler
 
 private val coreSyncLogger = Logger.withTag("EpigraphCoreSync")
@@ -452,7 +454,7 @@ class CompositeCoreReplicaSync(
         credentials: CoreCredentialSession,
         capabilities: CoreCapabilities,
         nowEpochMillis: Long,
-    ): CoreReplicaSyncOutcome {
+    ): CoreReplicaSyncOutcome = coroutineScope {
         val policy = policyResolver?.let { resolver ->
             devices?.let { provider -> resolver.resolve(credentials, capabilities, provider.currentDeviceId()) }
         }
@@ -471,6 +473,17 @@ class CompositeCoreReplicaSync(
             stage: CoreCatalogStage,
             synchronize: suspend () -> CoreReplicaSyncOutcome,
         ): CoreReplicaSyncOutcome = revisionPass?.run(stage, nowEpochMillis, synchronize) ?: synchronize()
+        // The novel manifest shares nothing with the comic stages, so it runs beside them instead
+        // of delaying the comic catalog; the replica stage still waits for it.
+        val portableNovel = if (policy?.syncNovels ?: hasNovelScope) async {
+            synchronizeSafely(
+                name = "portableNovelManifest",
+                port = portableNovelManifest,
+                credentials = credentials,
+                capabilities = capabilities,
+                nowEpochMillis = nowEpochMillis,
+            )
+        } else null
         // Bootstrap dependency metadata before materializing library rows. The extension/plugin
         // stages are read/review-only; no repository is added and no APK is installed silently.
         val extensionOutcome = if (
@@ -494,13 +507,6 @@ class CompositeCoreReplicaSync(
                 nowEpochMillis = nowEpochMillis,
             )
         } else CoreReplicaSyncOutcome.DEFERRED
-        val portableNovelOutcome = if (policy?.syncNovels ?: hasNovelScope) synchronizeSafely(
-            name = "portableNovelManifest",
-            port = portableNovelManifest,
-            credentials = credentials,
-            capabilities = capabilities,
-            nowEpochMillis = nowEpochMillis,
-        ) else CoreReplicaSyncOutcome.DEFERRED
         // Resolve provider-owned identities before projecting catalog metadata. A BOUND V3 work
         // can then use the native Mihon row; unresolved works retain the Legacy Core source.
         val catalogOutcome = if (policy?.syncComics ?: hasComicScope) gated(CoreCatalogStage.CATALOG) {
@@ -512,6 +518,7 @@ class CompositeCoreReplicaSync(
                 nowEpochMillis = nowEpochMillis,
             )
         } else CoreReplicaSyncOutcome.DEFERRED
+        val portableNovelOutcome = portableNovel?.await() ?: CoreReplicaSyncOutcome.DEFERRED
         val replicaOutcome = if (replicaScopes.isEmpty()) {
             CoreReplicaSyncOutcome.DEFERRED
         } else {
@@ -540,7 +547,7 @@ class CompositeCoreReplicaSync(
             nowEpochMillis = nowEpochMillis,
         ) else CoreReplicaSyncOutcome.DEFERRED
         revisionPass?.finish()
-        return when {
+        when {
             replicaOutcome == CoreReplicaSyncOutcome.RETRY -> replicaOutcome
             portableOutcome == CoreReplicaSyncOutcome.RETRY -> portableOutcome
             portableNovelOutcome == CoreReplicaSyncOutcome.RETRY -> portableNovelOutcome

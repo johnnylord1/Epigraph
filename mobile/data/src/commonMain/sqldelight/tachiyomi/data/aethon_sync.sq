@@ -891,6 +891,17 @@ WHERE server_id = :serverId
     AND profile_id = :profileId
     AND remote_type = :remoteType;
 
+-- Category links of the comics a Core scope knows, in one read; the caller checks local_reference.
+selectCoreRemoteMangaCategoryLinks:
+SELECT remote.entity_id, identity.local_reference, link.manga_id, link.category_id
+FROM aethon_core_remote_identity remote
+JOIN aethon_content_identity identity ON identity.entity_id = remote.entity_id
+JOIN mangas_categories link ON link.manga_id = CAST(identity.local_reference AS INTEGER)
+JOIN categories category ON category._id = link.category_id
+WHERE remote.server_id = :serverId
+    AND remote.profile_id = :profileId
+    AND remote.remote_type = 'SUWAYOMI_MANGA';
+
 upsertCoreExtensionInventoryCache:
 INSERT INTO aethon_core_extension_inventory_cache(
     server_id, profile_id, schema_version, inventory_hash, report_json,

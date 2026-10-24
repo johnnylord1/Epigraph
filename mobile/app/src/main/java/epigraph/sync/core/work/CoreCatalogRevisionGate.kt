@@ -151,13 +151,20 @@ class CoreCatalogRevisionGate(
             null
         }
         val value = (result as? CoreHttpResult.Success)?.value ?: return null
-        return Pass(credentials, value.comicLibraryRevision, value.comicExtensionsRevision)
+        return Pass(
+            credentials,
+            value.comicLibraryRevision,
+            value.comicExtensionsRevision,
+            // A desktop that predates the manifest revision gates the manifest on the library.
+            value.comicManifestRevision ?: value.comicLibraryRevision,
+        )
     }
 
     inner class Pass internal constructor(
         private val credentials: CoreCredentialSession,
         private val libraryRevision: String?,
         private val extensionsRevision: String?,
+        private val manifestRevision: String?,
     ) {
         private val finished = mutableMapOf<CoreCatalogStage, CoreStageRevision>()
 
@@ -167,7 +174,11 @@ class CoreCatalogRevisionGate(
             synchronize: suspend () -> CoreReplicaSyncOutcome,
         ): CoreReplicaSyncOutcome {
             val key = key(stage)
-            val revision = if (stage == CoreCatalogStage.EXTENSIONS) extensionsRevision else libraryRevision
+            val revision = when (stage) {
+                CoreCatalogStage.EXTENSIONS -> extensionsRevision
+                CoreCatalogStage.PORTABLE_MANIFEST -> manifestRevision
+                CoreCatalogStage.CATALOG -> libraryRevision
+            }
             // No revision while the Core projects a library change: run, but keep the record. A
             // revision is a digest of the content, so the same one later means the same content,
             // and the local signature still catches what this run changed here.
