@@ -1003,6 +1003,16 @@ Core de ser tratado como autoridade confirmada:
   e encerram a arvore inteira do processo, evitando deixar uma JVM filha
   segurando o JRE depois de pairing, bootstrap, mutations, discovery ou live
   pairing.
+- `GET /v1/sync/status` anuncia, aditivamente, `comicLibraryRevision` e
+  `comicExtensionsRevision` (resumos dos campos que o celular usa; ficam de fora
+  `unreadCount` e `downloadCount`). So aparecem sem mudanca de biblioteca
+  pendente ou bloqueada na projecao (progresso pendente nao as esconde); o tick
+  do mirror (45 s) e as edicoes do desktop recalculam, e comandos de catalogo do
+  celular, hidratacao, instalacao e binding de extensao invalidam.
+  O Android pula extensoes, manifest portatil e catalogo quando a revisao e o
+  estado local nao mudaram desde a ultima aplicacao; revisao ausente (desktop
+  antigo ou projecao pendente) roda a etapa sem apagar o registro, e a reaplicacao completa de 6 h
+  continua. A replica Core (progresso) nunca e pulada.
 
 Evidencias desta revalidacao:
 

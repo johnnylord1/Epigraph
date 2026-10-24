@@ -1,5 +1,6 @@
 pub mod app;
 pub mod autostart;
+pub mod catalog_revision;
 pub mod config;
 pub mod db;
 pub mod discovery;

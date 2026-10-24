@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use super::lifecycle::{wait_for_shutdown_request, ShutdownRequest};
 use super::models::{AppError, AuthenticatedSession, PortableWorkBindingRow, SharedAppState};
 use super::routes::suwayomi_catalog;
-use super::{db, suwayomi_projection};
+use super::{catalog_revision, db, suwayomi_projection};
 
 /// Sources fetched at once, one work at a time each, as Mihon's library update does: sources keep
 /// their own rate limits, so a library on a single source is not hammered.
@@ -208,14 +208,9 @@ async fn hydrate_work(
     manga_id: i64,
 ) -> Result<(), AppError> {
     let stand_ins = chapters_with_progress(state, session, manga_id).await?;
-    let fetched = suwayomi_catalog::execute_graphql_document(
-        state,
-        session,
-        FETCH_CHAPTERS_MUTATION,
-        json!({ "mangaId": manga_id }),
-        true,
-    )
-    .await?;
+    let fetched =
+        suwayomi_catalog::execute_source_fetch(state, session, FETCH_CHAPTERS_MUTATION, json!({ "mangaId": manga_id }))
+            .await?;
     let listed = listed_chapter_urls(fetched.pointer("/fetchChapters/chapters"));
     let replaced: BTreeSet<String> = stand_ins.difference(&listed).cloned().collect();
     if !replaced.is_empty() {
@@ -230,14 +225,10 @@ async fn hydrate_work(
             Err(error) => tracing::warn!(error = %error, manga_id, "failed to carry progress to replaced chapters"),
         }
     }
-    suwayomi_catalog::execute_graphql_document(
-        state,
-        session,
-        FETCH_MANGA_MUTATION,
-        json!({ "id": manga_id }),
-        true,
-    )
-    .await?;
+    suwayomi_catalog::execute_source_fetch(state, session, FETCH_MANGA_MUTATION, json!({ "id": manga_id })).await?;
+    // Only a work that is now complete changed the catalog the devices apply: a work whose source
+    // keeps failing is fetched again on every retry and must not keep the revisions hidden.
+    catalog_revision::invalidate(&session.profile_id);
     Ok(())
 }
 

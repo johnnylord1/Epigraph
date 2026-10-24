@@ -900,12 +900,14 @@ pub async fn syncd_get_sync_progress_if_running(
 }
 
 /// Asks the running Core to mirror Suwayomi reading progress now, after the desktop changed
-/// chapter read, page or bookmark state. Returns `false` when no Core runtime is attached; the
-/// periodic mirror tick stays the fallback either way. Never starts Core.
+/// chapter read, page or bookmark state, or with `catalog` its library, categories or extensions.
+/// Returns `false` when no Core runtime is attached; the periodic mirror tick stays the fallback
+/// either way. Never starts Core.
 #[tauri::command]
 pub async fn syncd_request_progress_mirror(
     manga_ids: Vec<i64>,
     chapter_ids: Vec<i64>,
+    catalog: Option<bool>,
     app: AppHandle,
 ) -> Result<bool, String> {
     let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
@@ -919,7 +921,11 @@ pub async fn syncd_request_progress_mirror(
                 runtime.local_base_url
             ))
             .timeout(Duration::from_secs(5)),
-        &json!({ "mangaIds": manga_ids, "chapterIds": chapter_ids }),
+        &json!({
+            "mangaIds": manga_ids,
+            "chapterIds": chapter_ids,
+            "catalog": catalog.unwrap_or(false),
+        }),
     )
     .await?
     .error_for_status()

@@ -14,7 +14,7 @@ use super::models::{
     PortableWorkBindingRow, PortableWorkRefV3, SharedAppState,
 };
 use super::routes::suwayomi_catalog;
-use super::{db, suwayomi_category_mirror, suwayomi_process};
+use super::{catalog_revision, db, suwayomi_category_mirror, suwayomi_process};
 
 /// How often the desktop's Suwayomi reading progress is re-imported into the syncd
 /// replica so the snapshot/replay serve it to paired mobile devices.
@@ -52,6 +52,14 @@ const LIBRARY_WITH_PROGRESS_QUERY: &str = r#"
         sourceId
         unreadCount
         bookmarkCount
+        title
+        thumbnailUrl
+        realUrl
+        status
+        genre
+        description
+        author
+        artist
         chapters { totalCount }
         latestReadChapter {
           id
@@ -309,7 +317,15 @@ async fn mirror_profile(
     let server_identity = db::load_server_identity(&state.pool).await?;
     let server_id = &server_identity.server_id;
 
-    let library = fetch_library_with_progress(state, &session).await?;
+    let revision_generation = catalog_revision::generation(profile_id);
+    let (library, revision_titles) = match fetch_library_with_progress(state, &session).await {
+        Ok(read) => read,
+        Err(error) => {
+            catalog_revision::invalidate(profile_id);
+            return Err(error);
+        }
+    };
+    catalog_revision::record(state, &session, server_id, revision_generation, revision_titles).await;
     // Bookmarks keep their original eligibility (titles with read progress); chapter states below
     // cover the whole library.
     let manga_refs = library
@@ -319,18 +335,34 @@ async fn mirror_profile(
         .collect::<HashSet<_>>();
 
     let mut mirrored = 0usize;
+    // Chapter states first: they carry desktop edit hints, which then reach devices without
+    // waiting for the history and bookmark scans. Those write through the same semantic-equality
+    // guard from a later snapshot, so this order changes no outcome.
+    mirrored += mirror_chapter_states(
+        state, &session, &scope_id, server_id, profile_id, &library, memory, hints,
+    )
+    .await?;
+    let read_chapters = library
+        .iter()
+        .filter_map(|(manga_id, node)| {
+            let chapter = node.latest_read_chapter.as_ref()?;
+            Some(ChapterNode {
+                manga_id: *manga_id,
+                chapter_id: chapter.chapter_id,
+                url: chapter.url.clone(),
+                is_read: chapter.is_read,
+                is_bookmarked: false,
+                last_read_at: chapter.last_read_at,
+                last_page_read: chapter.last_page_read,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut read_portable = load_portable_refs_batch(state, profile_id, &read_chapters).await?;
     for (manga_id, node) in &library {
         let Some(chapter) = node.latest_read_chapter.as_ref() else {
             continue;
         };
-        let portable = load_portable_refs(
-            state,
-            profile_id,
-            *manga_id,
-            chapter.chapter_id,
-            chapter.url.as_deref(),
-        )
-        .await?;
+        let portable = read_portable.remove(&chapter.chapter_id);
         let (comic_id, chapter_id, portable_work_ref, portable_chapter_ref) = history_identity(
             server_id,
             profile_id,
@@ -381,6 +413,7 @@ async fn mirror_profile(
         "Suwayomi bookmark mirror inventory loaded"
     );
     let bookmark_observed_at_ms = db::now_ms();
+    let mut bookmark_portable = load_portable_refs_batch(state, profile_id, &bookmarks).await?;
     let mut observed_bookmark_entities = HashSet::with_capacity(bookmarks.len());
     for bookmark in &bookmarks {
         if !manga_refs.contains(&bookmark.manga_id) {
@@ -391,14 +424,7 @@ async fn mirror_profile(
             );
             continue;
         }
-        let portable = load_portable_refs(
-            state,
-            profile_id,
-            bookmark.manga_id,
-            bookmark.chapter_id,
-            bookmark.url.as_deref(),
-        )
-        .await?;
+        let portable = bookmark_portable.remove(&bookmark.chapter_id);
         let identity = chapter_state_identity(
             server_id,
             profile_id,
@@ -472,10 +498,6 @@ async fn mirror_profile(
         &observed_bookmark_entities,
         bookmark_observed_at_ms,
         retention_window,
-    )
-    .await?;
-    mirrored += mirror_chapter_states(
-        state, &session, &scope_id, server_id, profile_id, &library, memory, hints,
     )
     .await?;
     let library_titles = library
@@ -1143,49 +1165,9 @@ fn chapter_state_record(
 
 type PortableComicRefs = (PortableWorkRefV3, PortableChapterRefV3);
 
-async fn load_portable_refs(
-    state: &SharedAppState,
-    profile_id: &str,
-    manga_id: i64,
-    chapter_id: i64,
-    chapter_url: Option<&str>,
-) -> anyhow::Result<Option<PortableComicRefs>> {
-    let chapter_rows = sqlx::query_as::<_, PortableChapterBindingRow>(
-        r#"
-        SELECT * FROM portable_chapter_bindings
-        WHERE profile_id = ? AND local_reference = ? AND resolution_state = 'BOUND'
-        ORDER BY updated_at_ms DESC
-        LIMIT 2
-        "#,
-    )
-    .bind(profile_id)
-    .bind(chapter_id.to_string())
-    .fetch_all(&state.pool)
-    .await
-    .context("failed to resolve portable chapter for the progress mirror")?;
-    if chapter_rows.is_empty() {
-        let Some(chapter_url) = chapter_url else {
-            return Ok(None);
-        };
-        let work = load_bound_work_for_manga(state, profile_id, manga_id).await?;
-        return Ok(work.and_then(|work| portable_refs_from_work(&work, manga_id, chapter_url)));
-    }
-    if chapter_rows.len() != 1 {
-        return Ok(None);
-    }
-    let chapter = &chapter_rows[0];
-    let Some(work) =
-        db::load_portable_work_binding(&state.pool, profile_id, &chapter.portable_work_id).await?
-    else {
-        return Ok(None);
-    };
-    Ok(portable_refs_from_bindings(
-        &work, chapter, manga_id, chapter_id,
-    ))
-}
-
-/// Batched form of [`load_portable_refs`] for a chapter scan: one bindings query per
-/// [`SQL_IN_CHUNK`] chapters, with the same exactly-one-bound-binding rule.
+/// Portable identities of `chapters`, with one bindings query per [`SQL_IN_CHUNK`] chapters: a
+/// chapter's single bound chapter binding, else its title's binding and source chapter key. A
+/// chapter with several bound bindings has none.
 async fn load_portable_refs_batch(
     state: &SharedAppState,
     profile_id: &str,
@@ -1392,12 +1374,15 @@ impl ReadChapterNode {
 }
 
 /// Every library title, with its read-progress summary. Titles without a read chapter are
-/// included so their chapter state is mirrored too.
+/// included so their chapter state is mirrored too. Also returns what a paired device applies of
+/// each title, for the catalog revision, unless the library did not fit in the page bound.
 async fn fetch_library_with_progress(
     state: &SharedAppState,
     session: &AuthenticatedSession,
-) -> anyhow::Result<Vec<(i64, LibraryMangaNode)>> {
+) -> anyhow::Result<(Vec<(i64, LibraryMangaNode)>, Option<Vec<Value>>)> {
     let mut mangas = Vec::new();
+    let mut revision_titles = Vec::new();
+    let mut complete = false;
     for page in 0..MAX_MIRROR_PAGES {
         let offset = (page as i64).saturating_mul(MIRROR_PAGE_SIZE);
         let data = suwayomi_catalog::execute_graphql_document(
@@ -1425,6 +1410,7 @@ async fn fetch_library_with_progress(
             else {
                 continue;
             };
+            revision_titles.push(catalog_revision::title_input(node));
             let Some(source_id) = scalar_string(node.get("sourceId")) else {
                 continue;
             };
@@ -1472,10 +1458,11 @@ async fn fetch_library_with_progress(
             .and_then(Value::as_bool)
             .unwrap_or(false);
         if !has_next {
+            complete = true;
             break;
         }
     }
-    Ok(mangas)
+    Ok((mangas, complete.then_some(revision_titles)))
 }
 fn parse_read_chapter(chapter: &Value) -> Option<ReadChapterNode> {
     let chapter_id = chapter

@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::syncd::db;
+use crate::syncd::{catalog_revision, db};
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
 use crate::syncd::routes::suwayomi_proxy;
@@ -258,6 +258,38 @@ fn invalid_catalog_connection() -> AppError {
 }
 
 pub(crate) async fn execute_graphql_document(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    document: &str,
+    variables: Value,
+    mutation: bool,
+) -> Result<Value, AppError> {
+    // Dropped before the write so it is not announced meanwhile, and after it so a revision read
+    // while it ran is not stored.
+    let catalog_write = mutation && catalog_revision::mutation_may_change_catalog(document);
+    if catalog_write {
+        catalog_revision::invalidate(&session.profile_id);
+    }
+    let result = send_graphql_document(state, session, document, variables, mutation).await;
+    if catalog_write {
+        catalog_revision::invalidate(&session.profile_id);
+    }
+    result
+}
+
+/// A source fetch, whose effect on the catalog revisions the next mirror tick picks up. Unlike
+/// [`execute_graphql_document`] it does not drop them, so a source that keeps failing does not keep
+/// them hidden; a caller whose fetch really changes a title drops them itself.
+pub(crate) async fn execute_source_fetch(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    document: &str,
+    variables: Value,
+) -> Result<Value, AppError> {
+    send_graphql_document(state, session, document, variables, true).await
+}
+
+async fn send_graphql_document(
     state: &SharedAppState,
     session: &AuthenticatedSession,
     document: &str,

@@ -9266,6 +9266,8 @@ pub async fn upsert_portable_work_binding(
         requeue_projections_for_bound_works(&mut tx, profile_id, std::iter::once(reference)).await?;
     }
     tx.commit().await?;
+    // Unresolved works carry the extensions a device is asked to install.
+    super::catalog_revision::invalidate(profile_id);
     Ok(())
 }
 

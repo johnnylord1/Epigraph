@@ -70,6 +70,8 @@ pub async fn post_local_authority_token(
 pub struct LocalProgressMirrorRequest {
     pub manga_ids: Vec<i64>,
     pub chapter_ids: Vec<i64>,
+    /// The desktop changed the library, its categories or extensions, not only reading progress.
+    pub catalog: bool,
 }
 
 /// Lets the desktop shell ask for an immediate Suwayomi progress mirror tick after it changed
@@ -89,6 +91,10 @@ pub async fn post_local_progress_mirror(
         return Err(AppError::BadRequest(format!(
             "Local progress mirror accepts at most {MAX_PROGRESS_MIRROR_IDS} ids per list."
         )));
+    }
+    // A bare hint comes from a shell too old to say what it changed.
+    if request.catalog || (request.manga_ids.is_empty() && request.chapter_ids.is_empty()) {
+        crate::syncd::catalog_revision::invalidate_all();
     }
     suwayomi_progress_mirror::request_immediate_mirror(&request.manga_ids, &request.chapter_ids);
     Ok(StatusCode::ACCEPTED)

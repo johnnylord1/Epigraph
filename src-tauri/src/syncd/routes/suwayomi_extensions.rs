@@ -80,10 +80,17 @@ pub async fn get_extensions(
             "The paired device is not authorized for this comics profile.".to_string(),
         ));
     }
+    Ok(Json(load_inventory(&state, &session).await?))
+}
 
+/// The profile's extension inventory, as a paired device installs it.
+pub(crate) async fn load_inventory(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+) -> Result<CoreExtensionInventory, AppError> {
     let data = match suwayomi_catalog::execute_graphql_document(
-        &state,
-        &session,
+        state,
+        session,
         EXTENSIONS_V23_QUERY,
         json!({}),
         false,
@@ -92,15 +99,15 @@ pub async fn get_extensions(
     {
         Ok(data) => (data, "versionCodeLong", "storeIndexUrl"),
         Err(v23_error) => {
-            if super::portable_manifest::runtime_supports_v23_manifest(&state, &session).await
+            if super::portable_manifest::runtime_supports_v23_manifest(state, session).await
                 != Some(false)
             {
                 return Err(v23_error);
             }
             (
                 suwayomi_catalog::execute_graphql_document(
-                    &state,
-                    &session,
+                    state,
+                    session,
                     EXTENSIONS_V21_QUERY,
                     json!({}),
                     false,
@@ -113,7 +120,7 @@ pub async fn get_extensions(
     };
 
     let mut extensions = normalize_inventory(&data.0, data.1, data.2)?;
-    let dependency_hints = load_portable_dependency_hints(&state, &session.profile_id).await?;
+    let dependency_hints = load_portable_dependency_hints(state, &session.profile_id).await?;
     merge_portable_dependencies(
         &mut extensions,
         dependency_hints,
@@ -123,14 +130,14 @@ pub async fn get_extensions(
         .await
         .map_err(|_| AppError::Internal("Failed to load the Core server identity.".to_string()))?;
 
-    Ok(Json(CoreExtensionInventory {
+    Ok(CoreExtensionInventory {
         schema_version: EXTENSION_INVENTORY_SCHEMA_VERSION,
         server_id: server_identity.server_id,
-        profile_id: session.profile_id,
+        profile_id: session.profile_id.clone(),
         runtime_fingerprint: runtime_fingerprint(&data.0),
         generated_at_ms: db::now_ms(),
         extensions,
-    }))
+    })
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

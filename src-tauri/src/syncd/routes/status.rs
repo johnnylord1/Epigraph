@@ -6,8 +6,8 @@ use axum::extract::{Extension, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
+use crate::syncd::{catalog_revision, db};
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +93,15 @@ pub struct SyncStatusResponse {
     /// chapter progress, which a library catalog read cannot undo.
     pub suwayomi_catalog_projection_pending: i64,
     pub ready: bool,
+    /// Revision of the library titles and categories a device applies. Present only while it is
+    /// known to match Suwayomi and no library change waits to be projected or is blocked (chapter
+    /// progress is not part of it); a device that applied the same revision may skip reading the
+    /// catalog again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comic_library_revision: Option<String>,
+    /// Revision of the extension inventory, under the same rules.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comic_extensions_revision: Option<String>,
 }
 
 /// Returns server-side readiness for a comic scope. The mobile outbox is
@@ -150,6 +159,12 @@ pub async fn get_sync_status(
     .await
     .map_err(|_| AppError::Internal("Failed to load Suwayomi projection status.".to_string()))?;
 
+    let ready = pending == 0 && blocked == 0 && in_flight == 0;
+    let revisions = announced_revisions(catalog_revision::current(profile_id), blocked, catalog_pending);
+    let (comic_library_revision, comic_extensions_revision) = match revisions {
+        Some(revisions) => (Some(revisions.library), Some(revisions.extensions)),
+        None => (None, None),
+    };
     Ok(Json(SyncStatusResponse {
         scope_id: query.scope_id,
         current_server_version: runtime.current_server_version,
@@ -159,13 +174,41 @@ pub async fn get_sync_status(
         suwayomi_projection_blocked: blocked,
         suwayomi_projection_in_flight: in_flight,
         suwayomi_catalog_projection_pending: catalog_pending,
-        ready: pending == 0 && blocked == 0 && in_flight == 0,
+        ready,
+        comic_library_revision,
+        comic_extensions_revision,
     }))
+}
+
+/// Revisions are announced while no library change waits to be projected or is blocked. Pending
+/// chapter progress does not hide them: it is not part of a revision, and a device reads the status
+/// right after pushing its own progress.
+fn announced_revisions(
+    revisions: Option<catalog_revision::ComicRevisions>,
+    blocked: i64,
+    catalog_pending: i64,
+) -> Option<catalog_revision::ComicRevisions> {
+    revisions.filter(|_| blocked == 0 && catalog_pending == 0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revisions_stay_announced_while_only_progress_projects() {
+        let revisions = || {
+            Some(catalog_revision::ComicRevisions {
+                library: "library".to_string(),
+                extensions: "extensions".to_string(),
+            })
+        };
+        assert_eq!(announced_revisions(revisions(), 0, 0), revisions());
+        // A library change still projecting or blocked hides them; so does an unknown revision.
+        assert_eq!(announced_revisions(revisions(), 0, 1), None);
+        assert_eq!(announced_revisions(revisions(), 1, 0), None);
+        assert_eq!(announced_revisions(None, 0, 0), None);
+    }
 
     #[test]
     fn pending_uploads_wait_for_every_reporting_device() {

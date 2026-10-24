@@ -253,6 +253,8 @@ async fn start_restore(
                 .mime_str("application/octet-stream")
                 .map_err(|_| unavailable())?,
         );
+    // The restore keeps running in Suwayomi after it answers; the mirror's next reads follow it.
+    crate::syncd::catalog_revision::invalidate(&session.profile_id);
     let response = suwayomi_proxy::proxy_client()
         .post(url)
         .header("accept", "application/json")
