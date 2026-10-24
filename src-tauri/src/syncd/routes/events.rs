@@ -10,14 +10,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::time::{interval, MissedTickBehavior};
 
-use crate::syncd::db;
 use crate::syncd::models::{AppError, AuthenticatedSession, ChangeEnvelope, SharedAppState};
 use crate::syncd::replay::{self, ReplayContext};
+use crate::syncd::{catalog_revision, db};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventsQuery {
     pub scope_id: Option<String>,
+    /// The client handles `catalog_revision` events. Older clients reject unknown event types, so
+    /// the stream sends them only on request.
+    #[serde(default)]
+    pub catalog_events: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,9 +46,10 @@ pub async fn get_events(
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let receiver = state.change_sender.subscribe();
+    let catalog = query.catalog_events.then(catalog_revision::subscribe);
     let replay =
         replay::prepare_replay(&state, &session, query.scope_id.as_deref(), &headers).await?;
-    let stream = sse_stream(state, replay, receiver, session.token_id);
+    let stream = sse_stream(state, replay, receiver, catalog, session.token_id);
     Ok(Sse::new(stream))
 }
 
@@ -101,6 +106,7 @@ fn sse_stream(
     state: SharedAppState,
     replay: ReplayContext,
     mut receiver: tokio::sync::broadcast::Receiver<ChangeEnvelope>,
+    mut catalog: Option<tokio::sync::broadcast::Receiver<String>>,
     token_id: String,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     stream! {
@@ -174,7 +180,50 @@ fn sse_stream(
                         }
                     }
                 }
+                changed = next_catalog_change(&mut catalog) => {
+                    // A lagged receiver missed some profiles, so it reports every streamed scope.
+                    let scopes = replay
+                        .allowed_scopes
+                        .iter()
+                        .filter(|scope| match &changed {
+                            Some(profile_id) => {
+                                scope.strip_prefix(COMICS_SCOPE_PREFIX) == Some(profile_id.as_str())
+                            }
+                            None => scope.starts_with(COMICS_SCOPE_PREFIX),
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if scopes.is_empty() {
+                        continue;
+                    }
+                    if !token_still_grants(&state, &token_id, &replay.allowed_scopes).await {
+                        break;
+                    }
+                    for scope_id in scopes {
+                        yield Ok(catalog_revision_event(&scope_id));
+                    }
+                }
             }
+        }
+    }
+}
+
+const COMICS_SCOPE_PREFIX: &str = "comics:profile:";
+
+/// The next profile whose catalog revisions changed, or `None` after the receiver lagged. Pends
+/// forever for a stream that did not ask for catalog events.
+async fn next_catalog_change(
+    catalog: &mut Option<tokio::sync::broadcast::Receiver<String>>,
+) -> Option<String> {
+    let Some(receiver) = catalog.as_mut() else {
+        return std::future::pending().await;
+    };
+    match receiver.recv().await {
+        Ok(profile_id) => Some(profile_id),
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => None,
+        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+            *catalog = None;
+            std::future::pending().await
         }
     }
 }
@@ -200,6 +249,14 @@ fn change_event(envelope: &ChangeEnvelope) -> Event {
         .event("change")
         .id(envelope.server_version.to_string())
         .data(payload)
+}
+
+/// Tells the client that `/v1/sync/status` announces new catalog revisions for the scope. It has no
+/// id: it is not a change, and must not move the client's replay cursor.
+fn catalog_revision_event(scope_id: &str) -> Event {
+    Event::default()
+        .event("catalog_revision")
+        .data(json!({ "scopeId": scope_id }).to_string())
 }
 
 fn replay_required_event(payload: serde_json::Value) -> Event {

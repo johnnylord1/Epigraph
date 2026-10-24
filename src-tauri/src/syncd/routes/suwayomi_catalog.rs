@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::syncd::{catalog_revision, db};
+use crate::syncd::{catalog_revision, db, suwayomi_progress_mirror, suwayomi_tracking_mirror};
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
 use crate::syncd::routes::suwayomi_proxy;
@@ -273,8 +273,18 @@ pub(crate) async fn execute_graphql_document(
     let result = send_graphql_document(state, session, document, variables, mutation).await;
     if catalog_write {
         catalog_revision::invalidate(&session.profile_id);
+        // Recompute now so other devices hear about a device's change in seconds. The mirrors'
+        // own writes happen inside that recomputation, so they must not ask for another one.
+        if !written_by_a_mirror(session) {
+            suwayomi_progress_mirror::request_immediate_mirror(&[], &[]);
+        }
     }
     result
+}
+
+fn written_by_a_mirror(session: &AuthenticatedSession) -> bool {
+    session.token_id == suwayomi_progress_mirror::MIRROR_TOKEN_ID
+        || session.token_id == suwayomi_tracking_mirror::MIRROR_TOKEN_ID
 }
 
 /// A source fetch, whose effect on the catalog revisions the next mirror tick picks up. Unlike

@@ -5,6 +5,10 @@
 //! change what a revision covers drops it until the next computation, and a computation that
 //! started before such a write is discarded. A device that gets no revision applies the catalog
 //! in full, so dropping one is always safe; announcing a stale one is not.
+//!
+//! When a computation stores revisions that differ from the ones last stored for the profile, the
+//! profile id goes out on [`subscribe`], so the live event stream can tell devices to read
+//! `/v1/sync/status` now instead of on their next check.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -12,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use tokio::sync::broadcast;
 
 use super::models::{AuthenticatedSession, SharedAppState};
 use super::routes::{suwayomi_catalog, suwayomi_extensions};
@@ -93,6 +98,9 @@ struct Registry {
     epoch: u64,
     generations: HashMap<String, u64>,
     entries: HashMap<String, Entry>,
+    /// The revisions last stored per profile. Unlike `entries`, writes do not drop them, so a
+    /// computation that finds the catalog unchanged after a write is not reported as a change.
+    last_stored: HashMap<String, ComicRevisions>,
 }
 
 impl Registry {
@@ -113,15 +121,23 @@ impl Registry {
         self.entries.clear();
     }
 
-    fn store(&mut self, profile_id: &str, generation: Generation, revisions: ComicRevisions, now: Instant) -> bool {
+    fn store(&mut self, profile_id: &str, generation: Generation, revisions: ComicRevisions, now: Instant) -> Stored {
         if self.generation(profile_id) != generation {
-            return false;
+            return Stored::Discarded;
+        }
+        let changed = self.last_stored.get(profile_id) != Some(&revisions);
+        if changed {
+            self.last_stored.insert(profile_id.to_string(), revisions.clone());
         }
         self.entries.insert(
             profile_id.to_string(),
             Entry { revisions, generation, computed_at: now },
         );
-        true
+        if changed {
+            Stored::Changed
+        } else {
+            Stored::Unchanged
+        }
     }
 
     fn current(&self, profile_id: &str, now: Instant) -> Option<ComicRevisions> {
@@ -131,6 +147,31 @@ impl Registry {
             .filter(|entry| now.duration_since(entry.computed_at) < REVISION_TTL)
             .map(|entry| entry.revisions.clone())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stored {
+    /// A write happened since the computation started.
+    Discarded,
+    Unchanged,
+    Changed,
+}
+
+fn changes() -> &'static broadcast::Sender<String> {
+    static CHANGES: OnceLock<broadcast::Sender<String>> = OnceLock::new();
+    CHANGES.get_or_init(|| broadcast::channel(64).0)
+}
+
+/// Profile ids whose stored revisions changed. A receiver that lags has missed some, so it should
+/// treat every profile as changed.
+pub fn subscribe() -> broadcast::Receiver<String> {
+    changes().subscribe()
+}
+
+/// Announces a change without a computation, for stream tests.
+#[cfg(test)]
+pub(crate) fn announce_change_for_test(profile_id: &str) {
+    let _ = changes().send(profile_id.to_string());
 }
 
 fn registry() -> MutexGuard<'static, Registry> {
@@ -274,7 +315,11 @@ pub(super) async fn record(
         library: library_revision(server_id, profile_id, titles, &categories, &extensions),
         extensions,
     };
-    registry().store(profile_id, generation, revisions, Instant::now());
+    let stored = registry().store(profile_id, generation, revisions, Instant::now());
+    if stored == Stored::Changed {
+        // No receiver means no device is streaming; the send has nothing to do then.
+        let _ = changes().send(profile_id.to_string());
+    }
 }
 
 fn library_revision(server_id: &str, profile_id: &str, mut titles: Vec<Value>, categories: &Value, extensions: &str) -> String {
@@ -326,11 +371,11 @@ mod tests {
         let now = Instant::now();
         let before_write = registry.generation("p");
         registry.invalidate("p");
-        assert!(!registry.store("p", before_write, revisions("stale"), now));
+        assert_eq!(registry.store("p", before_write, revisions("stale"), now), Stored::Discarded);
         assert_eq!(registry.current("p", now), None);
 
         let after_write = registry.generation("p");
-        assert!(registry.store("p", after_write, revisions("fresh"), now));
+        assert_eq!(registry.store("p", after_write, revisions("fresh"), now), Stored::Changed);
         assert_eq!(registry.current("p", now), Some(revisions("fresh")));
     }
 
@@ -347,7 +392,7 @@ mod tests {
         let before_desktop_edit = registry.generation("q");
         registry.invalidate_all();
         assert_eq!(registry.current("q", now), None);
-        assert!(!registry.store("q", before_desktop_edit, revisions("b"), now));
+        assert_eq!(registry.store("q", before_desktop_edit, revisions("b"), now), Stored::Discarded);
     }
 
     #[test]
@@ -356,6 +401,22 @@ mod tests {
         let now = Instant::now();
         registry.store("p", registry.generation("p"), revisions("a"), now);
         assert_eq!(registry.current("p", now + REVISION_TTL), None);
+    }
+
+    #[test]
+    fn reports_a_change_only_when_the_stored_revisions_differ() {
+        let mut registry = Registry::default();
+        let now = Instant::now();
+        assert_eq!(registry.store("p", registry.generation("p"), revisions("a"), now), Stored::Changed);
+        assert_eq!(registry.store("p", registry.generation("p"), revisions("a"), now), Stored::Unchanged);
+
+        // A write drops what is announced, but a recomputation that finds the same catalog is not
+        // a change devices need to hear about.
+        registry.invalidate("p");
+        assert_eq!(registry.store("p", registry.generation("p"), revisions("a"), now), Stored::Unchanged);
+        registry.invalidate_all();
+        assert_eq!(registry.store("p", registry.generation("p"), revisions("b"), now), Stored::Changed);
+        assert_eq!(registry.store("q", registry.generation("q"), revisions("b"), now), Stored::Changed);
     }
 
     #[test]

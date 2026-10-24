@@ -2034,6 +2034,71 @@ mod tests {
         .unwrap()
     }
 
+    async fn open_catalog_event_stream(app: Router, opt_in: bool) -> axum::response::Response {
+        let query = if opt_in { "&catalogEvents=true" } else { "" };
+        app.oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/events?scopeId=comics:profile:catalog-events{query}"
+                ))
+                .header(CLIENT_VERSION_HEADER, "0.1.0")
+                .header(CLIENT_PROTOCOL_HEADER, "1")
+                .header("authorization", "Bearer secret-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    /// Reads the stream for `window` and returns everything it sent.
+    async fn read_stream_for(
+        response: axum::response::Response,
+        window: std::time::Duration,
+    ) -> String {
+        let mut body = response.into_body();
+        let mut text = String::new();
+        let deadline = tokio::time::Instant::now() + window;
+        while let Ok(Some(Ok(frame))) = tokio::time::timeout_at(deadline, body.frame()).await {
+            if let Ok(bytes) = frame.into_data() {
+                text.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        }
+        text
+    }
+
+    #[tokio::test]
+    async fn events_stream_sends_catalog_revisions_only_on_request() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "catalog-events",
+            &token_hash("secret-token"),
+            &["comics:profile:catalog-events"],
+        )
+        .await
+        .unwrap();
+
+        let opted_in = open_catalog_event_stream(build_test_router(state.clone()), true).await;
+        let legacy = open_catalog_event_stream(build_test_router(state), false).await;
+        assert_eq!(opted_in.status(), StatusCode::OK);
+        assert_eq!(legacy.status(), StatusCode::OK);
+        crate::syncd::catalog_revision::announce_change_for_test("another-profile");
+        crate::syncd::catalog_revision::announce_change_for_test("catalog-events");
+
+        let window = std::time::Duration::from_millis(500);
+        let (opted_in, legacy) = tokio::join!(
+            read_stream_for(opted_in, window),
+            read_stream_for(legacy, window)
+        );
+        assert_eq!(opted_in.matches("event: catalog_revision").count(), 1);
+        assert!(opted_in.contains("\"scopeId\":\"comics:profile:catalog-events\""));
+        // No id: the event must not move the client's replay cursor.
+        assert!(!opted_in.contains("id:"));
+        assert!(!legacy.contains("catalog_revision"));
+    }
+
     #[tokio::test]
     async fn events_stream_closes_after_token_revocation() {
         let (_temp, state) = build_state_for_http().await;

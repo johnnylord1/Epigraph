@@ -43,7 +43,7 @@ use super::{db, myanimelist_oauth, suwayomi_process};
 const MIRROR_INTERVAL: Duration = Duration::from_secs(60);
 const MIN_REQUESTED_INTERVAL: Duration = Duration::from_millis(1_500);
 const MIRROR_DEVICE_ID: &str = "epigraph-core-tracking-mirror";
-const MIRROR_TOKEN_ID: &str = "epigraph-core-tracking-mirror";
+pub(crate) const MIRROR_TOKEN_ID: &str = "epigraph-core-tracking-mirror";
 const PAGE_SIZE: i64 = 250;
 const MAX_PAGES: usize = 32;
 /// Remote tracker calls per profile and tick; the rest stay pending for the next tick.

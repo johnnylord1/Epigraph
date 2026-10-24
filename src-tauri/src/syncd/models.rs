@@ -315,6 +315,9 @@ pub struct CapabilitiesResponse {
     /// `DELETE /v1/session` revokes the calling device, so forgetting the connection on a device
     /// also removes it from the desktop.
     pub supports_session_end_v1: bool,
+    /// `/v1/events?catalogEvents=true` sends `catalog_revision` (no id) when the revisions in
+    /// `/v1/sync/status` change, so devices refresh their catalog without waiting for a poll.
+    pub supports_catalog_revision_events_v1: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,

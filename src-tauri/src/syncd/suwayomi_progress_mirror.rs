@@ -25,7 +25,7 @@ const MIN_REQUESTED_INTERVAL: Duration = Duration::from_millis(1_500);
 const MIRROR_PAGE_SIZE: i64 = 250;
 const MAX_MIRROR_PAGES: usize = 32;
 const MIRROR_DEVICE_ID: &str = "epigraph-core-mirror";
-const MIRROR_TOKEN_ID: &str = "epigraph-core-mirror";
+pub(crate) const MIRROR_TOKEN_ID: &str = "epigraph-core-mirror";
 /// Mangas whose chapters are fetched in one `chapters` query.
 const MANGAS_PER_CHAPTER_QUERY: usize = 16;
 /// Library titles whose summary changed are rescanned at most this many per tick; the rest stay
