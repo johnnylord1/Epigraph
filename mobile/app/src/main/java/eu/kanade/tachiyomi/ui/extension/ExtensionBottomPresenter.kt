@@ -73,6 +73,8 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
             ).collectLatest { tuple ->
                 if (view == null) return@collectLatest
                 val items = toItems(tuple)
+                // Install progress looks extensions up here, so keep it in step with the list.
+                extensions = items
                 val updateController = !firstDraw
                 firstDraw = false
                 withUIContext { view?.setExtensions(items, updateController) }

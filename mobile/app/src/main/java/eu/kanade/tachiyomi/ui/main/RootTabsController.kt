@@ -71,6 +71,9 @@ class RootTabsController : Controller() {
     var currentTabId: Int = -1
         private set
 
+    // False until the visible tab has been told it is active since this host's view was created.
+    private var visibleTabActivated = false
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup,
@@ -78,6 +81,7 @@ class RootTabsController : Controller() {
     ): View {
         val ctx = activity!!
         val root = FrameLayout(ctx)
+        visibleTabActivated = false
         if (savedViewState != null) {
             currentTabId = savedViewState.getInt(KEY_CURRENT_TAB, currentTabId)
         }
@@ -166,6 +170,13 @@ class RootTabsController : Controller() {
             // Already visible — make sure the child router has a root in case the activity
             // recreated us empty (defensive).
             ensureChildRoot(tabId)
+            // A recreated host (theme or configuration change, process restore) brings the tab
+            // back without a swap. Activate it once, or Library stays paused with stale items
+            // and no chrome until the user switches tabs or restarts the app.
+            if (!visibleTabActivated) {
+                visibleTabActivated = true
+                (childRouterFor(tabId)?.backstack?.lastOrNull()?.controller as? RootTabContent)?.onTabActivated()
+            }
             return
         }
         val outgoing = if (prev != -1 && prev != tabId) {
@@ -181,6 +192,7 @@ class RootTabsController : Controller() {
         ensureChildRoot(tabId)
 
         val incoming = childRouterFor(tabId)?.backstack?.lastOrNull()?.controller
+        visibleTabActivated = true
         (incoming as? RootTabContent)?.onTabActivated()
 
         (activity as? MainActivity)?.onActiveTabChanged(prev, tabId)
