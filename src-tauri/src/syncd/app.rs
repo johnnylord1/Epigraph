@@ -1117,7 +1117,41 @@ mod tests {
         assert_eq!(payload["suwayomiProjectionPending"], 0);
         assert_eq!(payload["suwayomiProjectionBlocked"], 0);
         assert_eq!(payload["suwayomiProjectionInFlight"], 0);
+        assert_eq!(payload["suwayomiCatalogProjectionPending"], 0);
         assert_eq!(payload["ready"], true);
+
+        // Chapter progress is pending work but leaves the library catalog unchanged.
+        sqlx::query(
+            r#"
+            INSERT INTO suwayomi_projection_outbox (
+              operation_id, profile_id, operation_name, variables_json,
+              entity_type, entity_id, source_server_version, status,
+              attempt_count, next_attempt_at_ms, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, 'UpdateChaptersProgress', ?, 'comic.chapter_state', ?, 1, 'pending', 0, ?, ?, ?)
+            "#,
+        )
+        .bind("status-test-progress")
+        .bind("main")
+        .bind(r#"{"ids":[11],"patch":{"isRead":true}}"#)
+        .bind("comic.chapter_state::test")
+        .bind(db::now_ms())
+        .bind(db::now_ms())
+        .bind(db::now_ms())
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        let (status, payload) = request_json(
+            &app,
+            Method::GET,
+            "/v1/sync/status?scopeId=comics%3Aprofile%3Amain",
+            Some("comic-token"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["suwayomiProjectionPending"], 1);
+        assert_eq!(payload["suwayomiCatalogProjectionPending"], 0);
+        assert_eq!(payload["ready"], false);
 
         sqlx::query(
             r#"
@@ -1148,7 +1182,8 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(payload["suwayomiProjectionPending"], 1);
+        assert_eq!(payload["suwayomiProjectionPending"], 2);
+        assert_eq!(payload["suwayomiCatalogProjectionPending"], 1);
         assert_eq!(payload["ready"], false);
     }
 

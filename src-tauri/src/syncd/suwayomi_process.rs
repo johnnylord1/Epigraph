@@ -6,7 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use url::Url;
 
 #[cfg(windows)]
@@ -465,12 +465,8 @@ fn attach_owned_instance(root: &Path) -> Option<AttachedSuwayomi> {
         return None;
     }
 
-    // `System::new()` does not request command-line metadata on Windows.
-    // Ownership verification depends on the exact Suwayomi rootDir argument,
-    // so use a complete snapshot before accepting the recorded PID.
-    let mut system = System::new_all();
     let pid = Pid::from_u32(owner.java_pid);
-    system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+    let system = process_with_command_line(pid);
     let process = system.process(pid)?;
     if !java_process_matches_root(process, root) || !process_identity_matches(&owner, process) {
         return None;
@@ -939,11 +935,23 @@ fn find_java_pid_for_root(root: &Path) -> Option<u32> {
         .map(|process| process.pid().as_u32())
 }
 
-fn java_pid_matches_root(pid: u32, root: &Path) -> bool {
-    let mut system = System::new_all();
-    let pid = Pid::from_u32(pid);
-    system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+/// Ownership verification depends on the exact Suwayomi rootDir argument, which `System::new()`
+/// leaves unread on Windows, so the command line is requested for this one process. A full
+/// `System::new_all()` snapshot of every process took hundreds of milliseconds, and the proxy
+/// runs this check on every Suwayomi request.
+fn process_with_command_line(pid: Pid) -> System {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::new().with_cmd(UpdateKind::Always),
+    );
     system
+}
+
+fn java_pid_matches_root(pid: u32, root: &Path) -> bool {
+    let pid = Pid::from_u32(pid);
+    process_with_command_line(pid)
         .process(pid)
         .is_some_and(|process| java_process_matches_root(process, root))
 }
@@ -1215,6 +1223,28 @@ mod tests {
             assert!(roots.iter().any(|root| paths_identical(root, &expected)), "missing {}", expected.display());
         }
         assert!(roots.iter().all(|root| root.starts_with(temp.path())));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn single_process_snapshot_reads_the_name_and_command_line_ownership_needs() {
+        let mut child = Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"])
+            .spawn()
+            .unwrap();
+        let pid = Pid::from_u32(child.id());
+        let system = process_with_command_line(pid);
+        let process = system.process(pid).map(|process| {
+            let name = process.name().to_string_lossy().to_ascii_lowercase();
+            let cmd = process.cmd().iter().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>();
+            (name, cmd)
+        });
+        let _ = child.kill();
+        let _ = child.wait();
+        let (name, cmd) = process.expect("the spawned process is listed");
+        assert!(name.contains("powershell"), "{name}");
+        assert!(cmd.iter().any(|arg| arg == "Start-Sleep -Seconds 5"), "{cmd:?}");
+        assert_eq!(system.processes().len(), 1);
     }
 
     #[test]

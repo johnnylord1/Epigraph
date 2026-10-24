@@ -9246,6 +9246,89 @@ pub async fn upsert_portable_work_binding(
     record_lamport: i64,
     updated_at_ms: i64,
 ) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    write_portable_work_binding(
+        &mut tx,
+        profile_id,
+        portable_id,
+        reference,
+        dependency_key,
+        local_reference,
+        state,
+        reason,
+        title_hint,
+        provider_label_hint,
+        record_lamport,
+        updated_at_ms,
+    )
+    .await?;
+    if matches!(state, PortableResolutionStateV3::Bound) {
+        requeue_projections_for_bound_works(&mut tx, profile_id, std::iter::once(reference)).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// A work the local library holds, as a manifest snapshot binds it.
+pub struct BoundPortableWork<'a> {
+    pub portable_id: &'a str,
+    pub reference: &'a PortableWorkRefV3,
+    pub dependency_key: Option<&'a str>,
+    pub local_reference: &'a str,
+    pub title_hint: Option<&'a str>,
+    pub provider_label_hint: Option<&'a str>,
+}
+
+/// Binds every work of a manifest snapshot in one transaction with one requeue pass. A transaction
+/// and two requeue scans per work cost seconds on every device sync of a library of a few hundred.
+pub async fn upsert_bound_portable_works(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    works: &[BoundPortableWork<'_>],
+    updated_at_ms: i64,
+) -> anyhow::Result<()> {
+    if works.is_empty() {
+        return Ok(());
+    }
+    let mut tx = pool.begin().await?;
+    for work in works {
+        write_portable_work_binding(
+            &mut tx,
+            profile_id,
+            work.portable_id,
+            work.reference,
+            work.dependency_key,
+            Some(work.local_reference),
+            PortableResolutionStateV3::Bound,
+            None,
+            work.title_hint,
+            work.provider_label_hint,
+            0,
+            updated_at_ms,
+        )
+        .await?;
+    }
+    requeue_projections_for_bound_works(&mut tx, profile_id, works.iter().map(|work| work.reference))
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write_portable_work_binding(
+    conn: &mut sqlx::SqliteConnection,
+    profile_id: &str,
+    portable_id: &str,
+    reference: &PortableWorkRefV3,
+    dependency_key: Option<&str>,
+    local_reference: Option<&str>,
+    state: PortableResolutionStateV3,
+    reason: Option<PortableResolutionReasonV3>,
+    title_hint: Option<&str>,
+    provider_label_hint: Option<&str>,
+    record_lamport: i64,
+    updated_at_ms: i64,
+) -> anyhow::Result<()> {
     reference
         .validate()
         .map_err(|error| anyhow::anyhow!(error))?;
@@ -9328,16 +9411,31 @@ pub async fn upsert_portable_work_binding(
     .bind(provider_label_hint)
     .bind(record_lamport)
     .bind(updated_at_ms)
-    .execute(pool)
+    .execute(conn)
     .await?;
-    if matches!(state, PortableResolutionStateV3::Bound) {
-        if let PortableWorkRefV3::Comic { source_id, manga_key } = reference {
-            requeue_unfound_comic_projections(pool, profile_id, source_id.as_str(), manga_key.as_str())
-                .await?;
-        }
-        requeue_blocked_portable_projections(pool, profile_id).await?;
-    }
     Ok(())
+}
+
+async fn requeue_projections_for_bound_works<'a>(
+    conn: &mut sqlx::SqliteConnection,
+    profile_id: &str,
+    references: impl IntoIterator<Item = &'a PortableWorkRefV3>,
+) -> anyhow::Result<()> {
+    let comics = references
+        .into_iter()
+        .filter_map(|reference| match reference {
+            PortableWorkRefV3::Comic {
+                source_id,
+                manga_key,
+            } => Some(json!([source_id, manga_key])),
+            PortableWorkRefV3::Novel { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    if !comics.is_empty() {
+        requeue_unfound_comic_projections(&mut *conn, profile_id, &Value::Array(comics).to_string())
+            .await?;
+    }
+    requeue_blocked_portable_projections(conn, profile_id).await
 }
 
 pub async fn load_portable_work_binding(
@@ -9439,7 +9537,7 @@ pub async fn upsert_portable_chapter_binding(
     .execute(pool)
     .await?;
     if matches!(state, PortableResolutionStateV3::Bound) {
-        requeue_blocked_portable_projections(pool, profile_id).await?;
+        requeue_blocked_portable_projections(&mut *pool.acquire().await?, profile_id).await?;
     }
     Ok(())
 }
@@ -9447,11 +9545,11 @@ pub async fn upsert_portable_chapter_binding(
 /// Gives the projections of a comic that gave up waiting for it (`portable_work_not_found`) a new
 /// bounded cycle once it is bound, for example after the import pass brought it in. Otherwise the
 /// progress a device sent before the work existed here would wait for the next daemon start.
+/// `comics_json` is a JSON array of `[sourceId, mangaKey]` pairs.
 async fn requeue_unfound_comic_projections(
-    pool: &sqlx::SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     profile_id: &str,
-    source_id: &str,
-    manga_key: &str,
+    comics_json: &str,
 ) -> anyhow::Result<()> {
     let now = now_ms();
     sqlx::query(
@@ -9462,22 +9560,24 @@ async fn requeue_unfound_comic_projections(
         WHERE profile_id = ? AND status IN ('blocked', 'retry')
           AND last_error = 'portable_work_not_found'
           AND json_valid(variables_json)
-          AND json_extract(variables_json, '$.portableWorkRef.sourceId') = ?
-          AND json_extract(variables_json, '$.portableWorkRef.mangaKey') = ?
+          AND EXISTS (
+            SELECT 1 FROM json_each(?) AS comic
+            WHERE json_extract(comic.value, '$[0]') = json_extract(variables_json, '$.portableWorkRef.sourceId')
+              AND json_extract(comic.value, '$[1]') = json_extract(variables_json, '$.portableWorkRef.mangaKey')
+          )
         "#,
     )
     .bind(now)
     .bind(now)
     .bind(profile_id)
-    .bind(source_id)
-    .bind(manga_key)
-    .execute(pool)
+    .bind(comics_json)
+    .execute(conn)
     .await?;
     Ok(())
 }
 
 async fn requeue_blocked_portable_projections(
-    pool: &sqlx::SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     profile_id: &str,
 ) -> anyhow::Result<()> {
     let now = now_ms();
@@ -9496,7 +9596,7 @@ async fn requeue_blocked_portable_projections(
     .bind(now)
     .bind(now)
     .bind(profile_id)
-    .execute(pool)
+    .execute(conn)
     .await?;
     Ok(())
 }

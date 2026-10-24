@@ -16,7 +16,7 @@ use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{
     canonical_portable_work_id, canonicalize_public_novel_repository_url, AppError,
     AuthenticatedSession, ComicDependencyV3, ErrorDetail, ExtensionStoreReferenceV3,
-    NovelDependencyV3, PortableResolutionStateV3, PortableWorkRefV3, RepositoryReferenceV3,
+    NovelDependencyV3, PortableWorkRefV3, RepositoryReferenceV3,
     SharedAppState,
 };
 use crate::syncd::routes::{suwayomi_catalog, suwayomi_extensions};
@@ -697,26 +697,25 @@ async fn build_comic_manifest_snapshot(
         return Err(changed_manifest_snapshot_source());
     }
 
-    let generated_at_ms = db::now_ms();
-    for binding in bindings {
-        let local_reference = binding.local_manga_id.to_string();
-        db::upsert_portable_work_binding(
-            &state.pool,
-            &session.profile_id,
-            &binding.portable_id,
-            &binding.reference,
-            binding.dependency_package_name.as_deref(),
-            Some(&local_reference),
-            PortableResolutionStateV3::Bound,
-            None,
-            binding.title_hint.as_deref(),
-            binding.provider_label_hint.as_deref(),
-            0,
-            generated_at_ms,
-        )
+    let local_references = bindings
+        .iter()
+        .map(|binding| binding.local_manga_id.to_string())
+        .collect::<Vec<_>>();
+    let bound = bindings
+        .iter()
+        .zip(&local_references)
+        .map(|(binding, local_reference)| db::BoundPortableWork {
+            portable_id: &binding.portable_id,
+            reference: &binding.reference,
+            dependency_key: binding.dependency_package_name.as_deref(),
+            local_reference,
+            title_hint: binding.title_hint.as_deref(),
+            provider_label_hint: binding.provider_label_hint.as_deref(),
+        })
+        .collect::<Vec<_>>();
+    db::upsert_bound_portable_works(&state.pool, &session.profile_id, &bound, db::now_ms())
         .await
         .map_err(|error| AppError::Internal(error.to_string()))?;
-    }
     Ok(ComicManifestSnapshot {
         runtime_fingerprint,
         omitted_count,
@@ -852,25 +851,24 @@ async fn build_novel_manifest_snapshot(
         return Err(changed_manifest_snapshot_source());
     }
 
-    let generated_at_ms = db::now_ms();
-    for (portable_id, reference, plugin_id, novel_id, title_hint, provider_label_hint) in bindings {
-        db::upsert_portable_work_binding(
-            &state.pool,
-            &session.profile_id,
-            &portable_id,
-            &reference,
-            Some(&plugin_id),
-            Some(&novel_id),
-            PortableResolutionStateV3::Bound,
-            None,
-            title_hint.as_deref(),
-            provider_label_hint.as_deref(),
-            0,
-            generated_at_ms,
+    let bound = bindings
+        .iter()
+        .map(
+            |(portable_id, reference, plugin_id, novel_id, title_hint, provider_label_hint)| {
+                db::BoundPortableWork {
+                    portable_id,
+                    reference,
+                    dependency_key: Some(plugin_id),
+                    local_reference: novel_id,
+                    title_hint: title_hint.as_deref(),
+                    provider_label_hint: provider_label_hint.as_deref(),
+                }
+            },
         )
+        .collect::<Vec<_>>();
+    db::upsert_bound_portable_works(&state.pool, &session.profile_id, &bound, db::now_ms())
         .await
         .map_err(|error| AppError::Internal(error.to_string()))?;
-    }
     Ok(NovelManifestSnapshot {
         omitted_count,
         dependencies,

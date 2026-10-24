@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -19,8 +19,13 @@ use super::routes::suwayomi_proxy;
 use super::{db, routes::suwayomi_catalog};
 
 const MAX_BATCH: usize = 8;
+/// How long one tick keeps draining a backlog batch after batch. The 2 s tick only paces an idle or
+/// failing queue; a synced backlog would otherwise wait out a tick after every eight rows.
+const DRAIN_BUDGET: Duration = Duration::from_secs(4);
 /// A synced library arrives as runs of the same change (every work into the library, every work
 /// of one category into it); a run is sent to Suwayomi as one bulk mutation of up to this many.
+/// A device's progress arrives as runs of chapters of one work, which share one chapter lookup and
+/// go out as one mutation per distinct progress state.
 const MAX_GROUPED_ROWS: usize = 50;
 const UPDATE_MANGAS_MUTATION: &str = r#"
 mutation EpigraphCoreUpdateMangas($ids: [Int!]!, $inLibrary: Boolean) {
@@ -183,8 +188,16 @@ pub fn spawn_projection_task(
                             }
                         }
                     }
-                    if let Err(error) = drain_ready(&state).await {
-                        tracing::warn!(error = %error, "failed to drain canonical Suwayomi projections");
+                    let started = std::time::Instant::now();
+                    loop {
+                        match drain_ready(&state).await {
+                            Ok(claimed) if claimed == MAX_BATCH && started.elapsed() < DRAIN_BUDGET => {}
+                            Ok(_) => break,
+                            Err(error) => {
+                                tracing::warn!(error = %error, "failed to drain canonical Suwayomi projections");
+                                break;
+                            }
+                        }
                     }
                 }
                 _ = wait_for_shutdown_request(&mut shutdown) => break,
@@ -308,12 +321,15 @@ pub fn applied_projection_count() -> u64 {
     APPLIED_PROJECTIONS.load(Ordering::Relaxed)
 }
 
+/// Applies up to `MAX_BATCH` ready projections (each with the rows grouped behind it) and returns
+/// how many it claimed, so a full batch tells the caller more are waiting.
 async fn drain_ready(state: &SharedAppState) -> anyhow::Result<usize> {
-    let mut completed = 0;
+    let mut claimed = 0;
     for _ in 0..MAX_BATCH {
         let Some(row) = claim_next(state).await? else {
             break;
         };
+        claimed += 1;
         let change = serde_json::from_str::<Value>(&row.variables_json)
             .ok()
             .and_then(|variables| group_change(&row.operation_name, &variables));
@@ -327,16 +343,16 @@ async fn drain_ready(state: &SharedAppState) -> anyhow::Result<usize> {
                 rows.push(row);
                 rows.extend(companions);
                 for (row, outcome) in apply_group(state, rows, &change).await {
-                    completed += usize::from(settle(state, &row, outcome).await?);
+                    settle(state, &row, outcome).await?;
                 }
             }
             _ => {
                 let outcome = apply_projection(state, &row).await;
-                completed += usize::from(settle(state, &row, outcome).await?);
+                settle(state, &row, outcome).await?;
             }
         }
     }
-    Ok(completed)
+    Ok(claimed)
 }
 
 /// Stores a projection's outcome; true when it was applied and left the outbox.
@@ -491,6 +507,11 @@ fn group_change(operation_name: &str, variables: &Value) -> Option<Value> {
             }
             Some(json!({ "addTo": add_to, "removeFrom": remove_from }))
         }
+        "UpdateChaptersProgress" => {
+            variables.get("portableChapterRef").filter(|value| !value.is_null())?;
+            let work = variables.get("portableWorkRef").filter(|value| !value.is_null())?;
+            Some(json!({ "portableWorkRef": work }))
+        }
         _ => None,
     }
 }
@@ -584,36 +605,47 @@ async fn apply_group(
     change: &Value,
 ) -> Vec<(ProjectionRow, ProjectionOutcome)> {
     let mut outcomes = Vec::with_capacity(rows.len());
-    let mut members: Vec<(ProjectionRow, i64)> = Vec::new();
+    let mut lookup = ChapterLookup::default();
+    // The work, or for progress the chapter, each row changes, with its resolved variables.
+    let mut members: Vec<(ProjectionRow, i64, Value)> = Vec::new();
     let mut alone = Vec::new();
-    let mut manga_ids = BTreeSet::new();
+    let mut target_ids = BTreeSet::new();
+    let updates_chapters = rows
+        .first()
+        .is_some_and(|row| row.operation_name == "UpdateChaptersProgress");
     for row in rows {
         let Ok(variables) = serde_json::from_str::<Value>(&row.variables_json) else {
             outcomes.push((row, ProjectionOutcome::Blocked("invalid_variables")));
             continue;
         };
-        let variables = match resolve_portable_projection_identity(state, &row, variables).await {
-            Ok(variables) => variables,
-            Err(outcome) => {
-                outcomes.push((row, outcome));
-                continue;
-            }
+        let variables =
+            match resolve_portable_projection_identity(state, &row, variables, &mut lookup).await {
+                Ok(variables) => variables,
+                Err(outcome) => {
+                    outcomes.push((row, outcome));
+                    continue;
+                }
+            };
+        let target = match row.operation_name.as_str() {
+            "UpdateManga" => variables.get("id"),
+            "UpdateChaptersProgress" => variables.pointer("/ids/0"),
+            _ => variables.get("mangaId"),
         };
-        let id_field = if row.operation_name == "UpdateManga" { "id" } else { "mangaId" };
-        match variables
-            .get(id_field)
+        match target
             .and_then(Value::as_i64)
             .filter(|id| (1..=i32::MAX as i64).contains(id))
         {
-            Some(manga_id) if manga_ids.insert(manga_id) => members.push((row, manga_id)),
+            Some(id) if target_ids.insert(id) => members.push((row, id, variables)),
             _ => alone.push(row),
         }
     }
     if members.len() < 2 {
-        alone.extend(members.drain(..).map(|(row, _)| row));
+        alone.extend(members.drain(..).map(|(row, ..)| row));
+    } else if updates_chapters {
+        apply_chapter_members(state, members, &mut outcomes, &mut alone).await;
     } else {
         let profile_id = members[0].0.profile_id.clone();
-        let ids: Vec<i64> = members.iter().map(|(_, manga_id)| *manga_id).collect();
+        let ids: Vec<i64> = members.iter().map(|(_, manga_id, _)| *manga_id).collect();
         let updates_library = members[0].0.operation_name == "UpdateManga";
         let (document, variables) = if updates_library {
             (UPDATE_MANGAS_MUTATION, json!({ "ids": ids, "inLibrary": change["inLibrary"] }))
@@ -634,7 +666,7 @@ async fn apply_group(
         {
             Ok(data) => {
                 let confirmed = group_confirmed_ids(updates_library, change, &data);
-                for (row, manga_id) in members {
+                for (row, manga_id, _) in members {
                     let outcome =
                         confirmation_outcome(confirmed.contains(&manga_id), row.attempt_count);
                     outcomes.push((row, outcome));
@@ -642,19 +674,76 @@ async fn apply_group(
             }
             Err(AppError::ServiceUnavailable(detail)) if detail.retryable != Some(false) => {
                 let error = AppError::ServiceUnavailable(detail);
-                for (row, _) in members {
+                for (row, ..) in members {
                     let outcome = failed_command_outcome(&error, row.attempt_count);
                     outcomes.push((row, outcome));
                 }
             }
-            Err(_) => alone.extend(members.into_iter().map(|(row, _)| row)),
+            Err(_) => alone.extend(members.into_iter().map(|(row, ..)| row)),
         }
     }
     for row in alone {
-        let outcome = apply_projection(state, &row).await;
+        let outcome = apply_projection_with(state, &row, &mut lookup).await;
         outcomes.push((row, outcome));
     }
     outcomes
+}
+
+/// Sends grouped progress rows as one `updateChapters` per distinct progress state. Each row names
+/// a different chapter, so the order between those mutations does not matter; a row is confirmed
+/// on its own chapter as it would be alone.
+async fn apply_chapter_members(
+    state: &SharedAppState,
+    members: Vec<(ProjectionRow, i64, Value)>,
+    outcomes: &mut Vec<(ProjectionRow, ProjectionOutcome)>,
+    alone: &mut Vec<ProjectionRow>,
+) {
+    let mut by_patch: Vec<(Value, Vec<(ProjectionRow, i64, Value)>)> = Vec::new();
+    for member in members {
+        let patch = chapter_progress_patch(&member.2);
+        match by_patch.iter_mut().find(|(existing, _)| *existing == patch) {
+            Some((_, rows)) => rows.push(member),
+            None => by_patch.push((patch, vec![member])),
+        }
+    }
+    for (mut variables, members) in by_patch {
+        let profile_id = members[0].0.profile_id.clone();
+        variables["ids"] = members.iter().map(|(_, chapter_id, _)| *chapter_id).collect();
+        match suwayomi_commands::execute_internal_command(
+            state,
+            &profile_id,
+            CommandOperation::UpdateChaptersProgress,
+            variables,
+        )
+        .await
+        {
+            Ok(data) => {
+                for (row, _, variables) in members {
+                    let confirmed = chapters_projection_confirmed(&variables, &data);
+                    let outcome = confirmation_outcome(confirmed, row.attempt_count);
+                    outcomes.push((row, outcome));
+                }
+            }
+            Err(AppError::ServiceUnavailable(detail)) if detail.retryable != Some(false) => {
+                let error = AppError::ServiceUnavailable(detail);
+                for (row, ..) in members {
+                    let outcome = failed_command_outcome(&error, row.attempt_count);
+                    outcomes.push((row, outcome));
+                }
+            }
+            Err(_) => alone.extend(members.into_iter().map(|(row, ..)| row)),
+        }
+    }
+}
+
+/// The progress a resolved `UpdateChaptersProgress` row sets, without the chapter it sets it on.
+fn chapter_progress_patch(variables: &Value) -> Value {
+    let field = |name: &str| variables.get(name).cloned().unwrap_or(Value::Null);
+    json!({
+        "isRead": field("isRead"),
+        "isBookmarked": field("isBookmarked"),
+        "lastPageRead": field("lastPageRead"),
+    })
 }
 
 /// Works the bulk mutation answered for, in the state it asked for.
@@ -679,6 +768,14 @@ fn group_confirmed_ids(updates_library: bool, change: &Value, data: &Value) -> B
 }
 
 async fn apply_projection(state: &SharedAppState, row: &ProjectionRow) -> ProjectionOutcome {
+    apply_projection_with(state, row, &mut ChapterLookup::default()).await
+}
+
+async fn apply_projection_with(
+    state: &SharedAppState,
+    row: &ProjectionRow,
+    lookup: &mut ChapterLookup,
+) -> ProjectionOutcome {
     let variables: Value = match serde_json::from_str(&row.variables_json) {
         Ok(value) => value,
         Err(_) => return ProjectionOutcome::Blocked("invalid_variables"),
@@ -694,7 +791,7 @@ async fn apply_projection(state: &SharedAppState, row: &ProjectionRow) -> Projec
         } else {
             (row.operation_name.as_str(), variables)
         };
-    let variables = match resolve_portable_projection_identity(state, row, variables).await {
+    let variables = match resolve_portable_projection_identity(state, row, variables, lookup).await {
         Ok(variables) => variables,
         Err(outcome) => return outcome,
     };
@@ -806,6 +903,7 @@ async fn resolve_portable_projection_identity(
     state: &SharedAppState,
     row: &ProjectionRow,
     mut variables: Value,
+    lookup: &mut ChapterLookup,
 ) -> Result<Value, ProjectionOutcome> {
     let Some(object) = variables.as_object_mut() else {
         return Err(ProjectionOutcome::Blocked("invalid_variables"));
@@ -901,10 +999,10 @@ async fn resolve_portable_projection_identity(
         Some(chapter_id) if trusts_cached_chapter_id(row.attempt_count) => chapter_id,
         // A failed lookup keeps the cached id, so the row still ends in the bounded
         // confirmation path instead of retrying the lookup forever.
-        Some(chapter_id) => resolve_chapter_id(state, &row.profile_id, manga_id, chapter_key)
+        Some(chapter_id) => resolve_chapter_id(state, &row.profile_id, manga_id, chapter_key, lookup)
             .await
             .unwrap_or(chapter_id),
-        None => resolve_chapter_id(state, &row.profile_id, manga_id, chapter_key).await?,
+        None => resolve_chapter_id(state, &row.profile_id, manga_id, chapter_key, lookup).await?,
     };
     let local_chapter_reference = chapter_id.to_string();
     db::upsert_portable_chapter_binding(
@@ -1320,16 +1418,52 @@ async fn bind_imported_comic(
     Ok(())
 }
 
+/// Chapter pages fetched while resolving one batch, per work, so rows for chapters of the same
+/// work share one lookup. A work's pages are fetched only as far as a row needs them.
+#[derive(Default)]
+struct ChapterLookup {
+    works: HashMap<i64, ChapterPages>,
+}
+
+struct ChapterPages {
+    nodes: Value,
+    fetched: usize,
+    complete: bool,
+}
+
+impl Default for ChapterPages {
+    fn default() -> Self {
+        Self { nodes: Value::Array(Vec::new()), fetched: 0, complete: false }
+    }
+}
+
 async fn resolve_chapter_id(
     state: &SharedAppState,
     profile_id: &str,
     manga_id: i64,
     chapter_key: &str,
+    lookup: &mut ChapterLookup,
 ) -> Result<i64, ProjectionOutcome> {
     let session = projection_session(profile_id);
-    let mut path_matches = BTreeSet::new();
-    for page in 0..MAX_PORTABLE_CHAPTER_PAGES {
-        let offset = (page as i64).saturating_mul(PORTABLE_CHAPTER_PAGE_SIZE);
+    let pages = lookup.works.entry(manga_id).or_default();
+    loop {
+        let (exact, same_path) = chapter_key_matches(Some(&pages.nodes), manga_id, chapter_key);
+        if let Some(id) = exact {
+            return Ok(id);
+        }
+        if pages.complete {
+            // A host-only difference binds only when it names a single chapter of the manga.
+            let path_matches: BTreeSet<i64> = same_path.into_iter().collect();
+            return path_matches
+                .first()
+                .copied()
+                .filter(|_| path_matches.len() == 1)
+                .ok_or(ProjectionOutcome::Retry("portable_chapter_not_resolved"));
+        }
+        if pages.fetched >= MAX_PORTABLE_CHAPTER_PAGES {
+            return Err(ProjectionOutcome::Retry("portable_chapter_lookup_limit"));
+        }
+        let offset = (pages.fetched as i64).saturating_mul(PORTABLE_CHAPTER_PAGE_SIZE);
         let data = suwayomi_catalog::execute_graphql_document(
             state,
             &session,
@@ -1346,26 +1480,19 @@ async fn resolve_chapter_id(
         let chapters = data
             .get("chapters")
             .ok_or(ProjectionOutcome::Retry("portable_chapter_lookup_invalid"))?;
-        let (exact, same_path) = chapter_key_matches(chapters.get("nodes"), manga_id, chapter_key);
-        if let Some(id) = exact {
-            return Ok(id);
+        if let (Some(nodes), Some(page)) = (
+            pages.nodes.as_array_mut(),
+            chapters.get("nodes").and_then(Value::as_array),
+        ) {
+            nodes.extend(page.iter().cloned());
         }
-        path_matches.extend(same_path);
-        let has_next = chapters
+        pages.fetched += 1;
+        pages.complete = !chapters
             .get("pageInfo")
             .and_then(|value| value.get("hasNextPage"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        if !has_next {
-            // A host-only difference binds only when it names a single chapter of the manga.
-            return path_matches
-                .first()
-                .copied()
-                .filter(|_| path_matches.len() == 1)
-                .ok_or(ProjectionOutcome::Retry("portable_chapter_not_resolved"));
-        }
     }
-    Err(ProjectionOutcome::Retry("portable_chapter_lookup_limit"))
 }
 
 /// A cached chapter id is trusted only on a row's first attempt. Suwayomi gives chapters new ids
@@ -1928,6 +2055,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_manifest_snapshot_binds_its_works_in_one_pass_and_requeues_only_theirs() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        for (id, key) in [("a", "/series/a"), ("b", "/series/b"), ("c", "/series/c")] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateChaptersProgress', ?, 'comic.chapter_state', ?, 1, 'blocked', 6, 99, 'portable_work_not_found', 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(
+                json!({
+                    "isRead": true,
+                    "portableWorkRef": { "type": "comic", "sourceId": "10002", "mangaKey": key },
+                })
+                .to_string(),
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let first = PortableWorkRefV3::comic("10002", "/series/a");
+        let second = PortableWorkRefV3::comic("10002", "/series/b");
+        let novel = PortableWorkRefV3::Novel {
+            plugin_id: "fixture.plugin".to_string(),
+            novel_key: "/novel/a".to_string(),
+        };
+        let ids = [&first, &second, &novel].map(canonical_portable_work_id);
+        let works = [
+            db::BoundPortableWork {
+                portable_id: &ids[0],
+                reference: &first,
+                dependency_key: None,
+                local_reference: "7",
+                title_hint: Some("First"),
+                provider_label_hint: None,
+            },
+            db::BoundPortableWork {
+                portable_id: &ids[1],
+                reference: &second,
+                dependency_key: None,
+                local_reference: "8",
+                title_hint: None,
+                provider_label_hint: None,
+            },
+            db::BoundPortableWork {
+                portable_id: &ids[2],
+                reference: &novel,
+                dependency_key: Some("fixture.plugin"),
+                local_reference: "novel-1",
+                title_hint: None,
+                provider_label_hint: None,
+            },
+        ];
+
+        db::upsert_bound_portable_works(&pool, "main", &works, 5).await.unwrap();
+
+        for (id, local) in ids.iter().zip(["7", "8", "novel-1"]) {
+            let row = db::load_portable_work_binding(&pool, "main", id).await.unwrap().unwrap();
+            assert_eq!(row.local_reference.as_deref(), Some(local));
+            assert_eq!(row.updated_at_ms, 5);
+        }
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT operation_id, status, attempt_count FROM suwayomi_projection_outbox ORDER BY operation_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("a".to_string(), "retry".to_string(), 0),
+                ("b".to_string(), "retry".to_string(), 0),
+                ("c".to_string(), "blocked".to_string(), 6),
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn the_ordered_claim_check_uses_the_order_index() {
         let temp = tempfile::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
@@ -2040,6 +2252,79 @@ mod tests {
             None
         );
         assert_eq!(group_change("UpdateChaptersProgress", &json!({ "mangaId": 3 })), None);
+        let work = json!({ "type": "COMIC", "sourceId": "1", "mangaKey": "/m/1" });
+        // Progress groups by work, whatever each chapter's state, so its chapters share a lookup.
+        assert_eq!(
+            group_change(
+                "UpdateChaptersProgress",
+                &json!({ "portableWorkRef": work, "portableChapterRef": { "chapterKey": "/c/1" }, "isRead": true })
+            ),
+            Some(json!({ "portableWorkRef": work }))
+        );
+        assert_eq!(
+            group_change("UpdateChaptersProgress", &json!({ "portableWorkRef": work, "isRead": true })),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn chapter_progress_groups_the_unbroken_run_of_one_work() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let progress = |manga_key: &str, chapter_key: &str, read: bool| {
+            json!({
+                "portableWorkRef": { "type": "COMIC", "sourceId": "1", "mangaKey": manga_key },
+                "portableChapterRef": { "chapterKey": chapter_key },
+                "isRead": read,
+            })
+            .to_string()
+        };
+        for (id, variables, version) in [
+            ("first", progress("/m/1", "/c/1", true), 1),
+            ("unread", progress("/m/1", "/c/2", false), 2),
+            ("read", progress("/m/1", "/c/3", true), 3),
+            ("other-work", progress("/m/2", "/c/1", true), 4),
+            ("after-break", progress("/m/1", "/c/4", true), 5),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateChaptersProgress', ?, 'comic.chapter_state', ?, ?, 'pending', 0, 0, NULL, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(variables)
+            .bind(id)
+            .bind(version)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let first = claim_next_at(&pool, 500).await.unwrap().unwrap();
+        let change = group_change(&first.operation_name, &serde_json::from_str(&first.variables_json).unwrap())
+            .unwrap();
+        let group = claim_group_at(&pool, 500, &first, &change).await.unwrap();
+        assert_eq!(
+            group.iter().map(|row| row.operation_id.as_str()).collect::<Vec<_>>(),
+            vec!["unread", "read"]
+        );
+    }
+
+    #[test]
+    fn chapter_progress_patch_leaves_out_the_chapter() {
+        let resolved = json!({ "mangaId": 4, "ids": [9], "isRead": true, "lastPageRead": 3 });
+        assert_eq!(
+            chapter_progress_patch(&resolved),
+            json!({ "isRead": true, "isBookmarked": null, "lastPageRead": 3 })
+        );
+        assert_eq!(
+            chapter_progress_patch(&json!({ "ids": [10], "isRead": true, "lastPageRead": 3 })),
+            chapter_progress_patch(&resolved)
+        );
     }
 
     #[tokio::test]

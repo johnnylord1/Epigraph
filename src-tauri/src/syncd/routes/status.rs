@@ -89,6 +89,9 @@ pub struct SyncStatusResponse {
     pub suwayomi_projection_pending: i64,
     pub suwayomi_projection_blocked: i64,
     pub suwayomi_projection_in_flight: i64,
+    /// Pending or in-flight projections that change the library or its categories, leaving out
+    /// chapter progress, which a library catalog read cannot undo.
+    pub suwayomi_catalog_projection_pending: i64,
     pub ready: bool,
 }
 
@@ -130,12 +133,14 @@ pub async fn get_sync_status(
     let runtime = db::load_server_runtime(&state.pool)
         .await
         .map_err(|_| AppError::Internal("Failed to load sync status.".to_string()))?;
-    let (pending, blocked, in_flight): (i64, i64, i64) = sqlx::query_as(
+    let (pending, blocked, in_flight, catalog_pending): (i64, i64, i64, i64) = sqlx::query_as(
         r#"
         SELECT
             COALESCE(SUM(CASE WHEN status IN ('pending', 'retry') THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN status = 'in_flight' THEN 1 ELSE 0 END), 0)
+            COALESCE(SUM(CASE WHEN status = 'in_flight' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status IN ('pending', 'retry', 'in_flight')
+                AND operation_name <> 'UpdateChaptersProgress' THEN 1 ELSE 0 END), 0)
         FROM suwayomi_projection_outbox
         WHERE profile_id = ?
         "#,
@@ -153,6 +158,7 @@ pub async fn get_sync_status(
         suwayomi_projection_pending: pending,
         suwayomi_projection_blocked: blocked,
         suwayomi_projection_in_flight: in_flight,
+        suwayomi_catalog_projection_pending: catalog_pending,
         ready: pending == 0 && blocked == 0 && in_flight == 0,
     }))
 }
