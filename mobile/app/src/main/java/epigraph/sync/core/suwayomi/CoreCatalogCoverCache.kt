@@ -5,6 +5,9 @@ import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 data class CoreCatalogCoverReference(val reference: String)
@@ -17,6 +20,36 @@ object DeferredCoreCatalogCoverSink : CoreCatalogCoverSink {
     override suspend fun materialize(references: List<CoreCatalogCoverReference>) = Unit
 }
 
+/**
+ * Runs cover passes off the sync path: covers are cosmetic, so a thumbnail the desktop serves slowly
+ * must not keep the sync from finishing. One pass runs at a time and a newer request replaces one
+ * still waiting.
+ */
+class BackgroundCoreCatalogCoverSink(
+    private val delegate: CoreCatalogCoverSink,
+    scope: CoroutineScope,
+) : CoreCatalogCoverSink {
+    private val requests = Channel<List<CoreCatalogCoverReference>>(Channel.CONFLATED)
+
+    init {
+        scope.launch {
+            for (references in requests) {
+                try {
+                    delegate.materialize(references)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    // The cursor resumes the remaining covers on the next request.
+                }
+            }
+        }
+    }
+
+    override suspend fun materialize(references: List<CoreCatalogCoverReference>) {
+        requests.trySend(references)
+    }
+}
+
 fun interface CoreCatalogCoverStore {
     fun target(reference: String): File?
 
@@ -25,14 +58,22 @@ fun interface CoreCatalogCoverStore {
     fun saveCursor(cursor: Int) = Unit
 }
 
-/** Materializes confirmed Core covers without making cover availability authoritative. */
+/**
+ * Materializes confirmed Core covers without making cover availability authoritative.
+ *
+ * Covers run inside the catalog sync, so each pass spends at most [budgetMillis] on them: a cover
+ * the desktop cannot serve must not hold the whole sync up, and the cursor resumes the rest later.
+ */
 class CoreCatalogCoverCache(
     private val client: CoreCoverByteSource,
     private val store: CoreCatalogCoverStore,
     private val maxPerSync: Int = DEFAULT_MAX_PER_SYNC,
+    private val budgetMillis: Long = DEFAULT_BUDGET_MS,
+    private val elapsedMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) : CoreCatalogCoverSink {
     init {
         require(maxPerSync > 0)
+        require(budgetMillis > 0)
     }
 
     override suspend fun materialize(references: List<CoreCatalogCoverReference>) {
@@ -51,13 +92,16 @@ class CoreCatalogCoverCache(
 
         val start = Math.floorMod(store.loadCursor(), missing.size)
         val attemptLimit = minOf(missing.size, maxPerSync * MAX_ATTEMPT_MULTIPLIER)
+        val deadline = elapsedMillis() + budgetMillis
         var attempted = 0
         var published = 0
         while (attempted < attemptLimit && published < maxPerSync) {
+            val remaining = deadline - elapsedMillis()
+            if (remaining <= 0) break
             val reference = missing[(start + attempted) % missing.size]
             attempted += 1
             val result = try {
-                withTimeoutOrNull(FETCH_TIMEOUT_MS) { client.fetch(reference) }
+                withTimeoutOrNull(minOf(FETCH_TIMEOUT_MS, remaining)) { client.fetch(reference) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -115,6 +159,7 @@ class CoreCatalogCoverCache(
         const val DEFAULT_MAX_PER_SYNC = 32
         const val MAX_ATTEMPT_MULTIPLIER = 2
         const val FETCH_TIMEOUT_MS = 5_000L
+        const val DEFAULT_BUDGET_MS = 3_000L
         const val MAX_COVER_BYTES = 16 * 1024 * 1024
         val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
         val RIFF_SIGNATURE = byteArrayOf(0x52, 0x49, 0x46, 0x46)

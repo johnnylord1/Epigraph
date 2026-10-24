@@ -11,6 +11,7 @@ import epigraph.contract.SyncCommandEnvelope
 import epigraph.contract.SyncEntityType
 import epigraph.contract.TrackingField
 import epigraph.contract.TrackingFieldPatch
+import epigraph.sync.portable.PortableWorkBindingRecord
 import epigraph.sync.portable.SqlDelightPortableBindingStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
@@ -19,6 +20,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
+import tachiyomi.data.SelectCoreReplicaRecordVersionsByType
 import yokai.data.Database
 
 /**
@@ -183,24 +185,29 @@ class EpigraphTrackingMutationRouter(
             var applied = 0
             var removed = 0
             val seen = mutableSetOf<String>()
+            // Read once for the pass: each per-row lookup costs about a millisecond on a phone,
+            // which added up to seconds for a few hundred trackers.
+            val favorites = aethon_syncQueries.selectFavoriteMangaIds().executeAsList().toHashSet()
+            val index = trackingPassIndex()
+            val replicas = emission.advertised.associateWith { replicaIndex(emission.scopeFor(it), it) }
             val envelopes = buildList {
                 manga_syncQueries.getAll().executeAsList().forEach { local ->
                     val trackerKey = TrackerSyncKeys.keyFor(local.sync_id) ?: return@forEach
-                    val manga = mangasQueries.findById(local.manga_id).executeAsOneOrNull() ?: return@forEach
-                    if (!manga.favorite) return@forEach
-                    val target = trackingTarget(local.manga_id) ?: return@forEach
+                    if (local.manga_id !in favorites) return@forEach
+                    val target = trackingTarget(local.manga_id, index) ?: return@forEach
                     if (target.entityType !in emission.advertised) return@forEach
                     val trackingId = trackingEntityId(target.entityType, target.workId, trackerKey)
                     seen += trackingId
                     val scopeId = emission.scopeFor(target.entityType)
-                    val record = aethon_syncQueries
-                        .selectCoreReplicaRecord(scopeId, target.entityType.value, trackingId)
-                        .executeAsOneOrNull()
-                    val tombstoneVersion = aethon_syncQueries
-                        .selectCoreReplicaTombstoneVersion(scopeId, target.entityType.value, trackingId)
-                        .executeAsOneOrNull()
+                    val replica = replicas.getValue(target.entityType)
+                    val record = replica.records[trackingId]
+                    val tombstoneVersion = replica.tombstones[trackingId]
                     val observed = maxOf(record?.server_version ?: 0L, tombstoneVersion ?: 0L)
-                    if (hasBlockingTrackingMutation(scopeId, target.entityType, trackingId, observed)) return@forEach
+                    if (replica.mayBlock(trackingId) &&
+                        hasBlockingTrackingMutation(scopeId, target.entityType, trackingId, observed)
+                    ) {
+                        return@forEach
+                    }
                     val localRow = local.toTrackingRow()
                     when {
                         record != null && (tombstoneVersion == null || record.server_version > tombstoneVersion) -> {
@@ -215,22 +222,27 @@ class EpigraphTrackingMutationRouter(
                             manga_syncQueries.deleteForManga(local.manga_id, local.sync_id)
                             removed++
                         }
-                        else -> trackingEnvelope(emission, local.manga_id, local.sync_id) { id, key ->
+                        else -> trackingEnvelope(emission, local.manga_id, local.sync_id, index) { id, key ->
                             SyncCommand.PatchTracking(id, key, localRow.toFieldPatches())
                         }?.let(::add)
                     }
                 }
                 emission.advertised.forEach { entityType ->
                     val scopeId = emission.scopeFor(entityType)
-                    aethon_syncQueries.selectCoreReplicaRecordsByType(entityType.value).executeAsList()
+                    val replicaIndex = replicas.getValue(entityType)
+                    replicaIndex.records.values
                         .forEach replica@{ replica ->
                             if (replica.entity_id in seen) return@replica
-                            val (mangaId, syncId) = localTrackingTarget(entityType, replica.entity_id)
-                                ?: return@replica
-                            val version = aethon_syncQueries
-                                .selectCoreReplicaRecord(scopeId, entityType.value, replica.entity_id)
-                                .executeAsOneOrNull()?.server_version ?: return@replica
-                            if (hasBlockingTrackingMutation(scopeId, entityType, replica.entity_id, version)) {
+                            val (mangaId, syncId) = localTrackingTarget(
+                                entityType,
+                                replica.entity_id,
+                                favorites,
+                                index,
+                            ) ?: return@replica
+                            val version = replica.server_version
+                            if (replicaIndex.mayBlock(replica.entity_id) &&
+                                hasBlockingTrackingMutation(scopeId, entityType, replica.entity_id, version)
+                            ) {
                                 return@replica
                             }
                             val remote = decodeTrackingRecord(replica.record_json, mangaId, syncId)
@@ -257,25 +269,28 @@ class EpigraphTrackingMutationRouter(
     ).executeAsOne()
 
     /** Resolves `<entityType>::<workId>::<trackerKey>` to a favorite local `(manga_id, sync_id)`. */
-    private fun Database.localTrackingTarget(entityType: SyncEntityType, trackingId: String): Pair<Long, Long>? {
+    private fun Database.localTrackingTarget(
+        entityType: SyncEntityType,
+        trackingId: String,
+        favorites: Set<Long>,
+        index: TrackingPassIndex,
+    ): Pair<Long, Long>? {
         val prefix = "${entityType.value}::"
         if (!trackingId.startsWith(prefix)) return null
         val workId = trackingId.removePrefix(prefix).substringBeforeLast("::", "")
         val syncId = TrackerSyncKeys.syncIdFor(trackingId.substringAfterLast("::")) ?: return null
         if (workId.isBlank()) return null
-        val binding = SqlDelightPortableBindingStore(this).work(workId)
+        val binding = index.works[workId]
         val portableLocalId = binding
             ?.takeIf { it.resolution.state == PortableResolutionState.BOUND }
             ?.localReference?.toLongOrNull()
         val mangaId = portableLocalId ?: if (entityType == NOVEL_TRACKING) {
-            aethon_syncQueries.selectIdentityByEntityId(workId).executeAsOneOrNull()
-                ?.local_reference?.toLongOrNull()
+            index.localReferences[workId]?.toLongOrNull()
         } else {
-            coreBackedMangaId(binding?.ref)
+            coreBackedMangaId(binding?.ref, index.coreBacked)
         }
         mangaId ?: return null
-        val manga = mangasQueries.findById(mangaId).executeAsOneOrNull() ?: return null
-        if (!manga.favorite) return null
+        if (mangaId !in favorites) return null
         return mangaId to syncId
     }
 
@@ -318,10 +333,11 @@ class EpigraphTrackingMutationRouter(
         context: EmissionContext,
         mangaId: Long,
         syncId: Long,
+        index: TrackingPassIndex? = null,
         command: (EpigraphEntityId, String) -> SyncCommand,
     ): SyncCommandEnvelope? {
         val trackerKey = TrackerSyncKeys.keyFor(syncId) ?: return null
-        val target = trackingTarget(mangaId) ?: return null
+        val target = trackingTarget(mangaId, index) ?: return null
         if (target.entityType !in context.advertised) return null
         val trackingId = trackingEntityId(target.entityType, target.workId, trackerKey)
         return try {
@@ -340,42 +356,125 @@ class EpigraphTrackingMutationRouter(
         }
     }
 
-    private fun Database.trackingTarget(mangaId: Long): TrackingTarget? {
-        val portableWork = SqlDelightPortableBindingStore(this)
-            .workByLocalReference(mangaId.toString())
-            ?.takeIf { it.resolution.state == PortableResolutionState.BOUND }
-            ?.ref
+    private fun Database.trackingTarget(mangaId: Long, index: TrackingPassIndex? = null): TrackingTarget? {
+        val localReference = mangaId.toString()
+        val portableWork = if (index != null) {
+            index.boundWorks[localReference]
+        } else {
+            SqlDelightPortableBindingStore(this)
+                .workByLocalReference(localReference)
+                ?.takeIf { it.resolution.state == PortableResolutionState.BOUND }
+        }?.ref
         return when (portableWork) {
             is PortableWorkRef.Comic -> TrackingTarget(COMIC_TRACKING, PortableIdentityV3.workId(portableWork))
             is PortableWorkRef.Novel -> TrackingTarget(NOVEL_TRACKING, PortableIdentityV3.workId(portableWork))
-            null -> coreBackedComic(mangaId)
+            null -> coreBackedComic(mangaId, index)
                 ?.let { TrackingTarget(COMIC_TRACKING, PortableIdentityV3.workId(it)) }
-                ?: aethon_syncQueries
-                    .selectIdentityByLocalReference("NOVEL", mangaId.toString())
-                    .executeAsOneOrNull()
-                    ?.let { TrackingTarget(NOVEL_TRACKING, it.entity_id) }
+                ?: if (index != null) {
+                    index.novelEntityIds[localReference]
+                } else {
+                    aethon_syncQueries
+                        .selectIdentityByLocalReference("NOVEL", localReference)
+                        .executeAsOneOrNull()
+                        ?.entity_id
+                }?.let { TrackingTarget(NOVEL_TRACKING, it) }
         }
     }
 
     /** The unbound portable comic shown through this Core-backed row, when it is the only one. */
-    private fun Database.coreBackedComic(mangaId: Long): PortableWorkRef.Comic? {
+    private fun Database.coreBackedComic(mangaId: Long, index: TrackingPassIndex?): PortableWorkRef.Comic? {
         val coreSource = coreSourceId ?: return null
-        val portableId = aethon_syncQueries
-            .selectUnboundPortableComicIdsByCoreManga(mangaId = mangaId, coreSourceId = coreSource)
-            .executeAsList().singleOrNull() ?: return null
-        val comic = SqlDelightPortableBindingStore(this).work(portableId)?.ref as? PortableWorkRef.Comic
+        val coreBacked = index?.coreBacked
+        val portableIds = coreBacked?.unboundPortableIds(mangaId)
+            ?: aethon_syncQueries
+                .selectUnboundPortableComicIdsByCoreManga(mangaId = mangaId, coreSourceId = coreSource)
+                .executeAsList()
+        val portableId = portableIds.singleOrNull() ?: return null
+        val work = if (index != null) index.works[portableId] else SqlDelightPortableBindingStore(this).work(portableId)
+        val comic = work?.ref as? PortableWorkRef.Comic
         // Only when inbound records resolve back to this same row, so both directions agree.
-        return comic?.takeIf { coreBackedMangaId(it) == mangaId }
+        return comic?.takeIf { coreBackedMangaId(it, coreBacked) == mangaId }
     }
 
-    private fun Database.coreBackedMangaId(ref: PortableWorkRef?): Long? {
+    private fun Database.coreBackedMangaId(ref: PortableWorkRef?, coreBacked: CoreBackedLookup? = null): Long? {
         val comic = ref as? PortableWorkRef.Comic ?: return null
         val coreSource = coreSourceId ?: return null
-        return aethon_syncQueries.selectAethonCoreMangaBySourceBinding(
-            sourceId = comic.sourceId.value,
-            providerKey = comic.mangaKey.value,
-            coreSourceId = coreSource,
-        ).executeAsList().singleOrNull()
+        val mangaIds = coreBacked?.mangaIds(comic.sourceId.value, comic.mangaKey.value)
+            ?: aethon_syncQueries.selectAethonCoreMangaBySourceBinding(
+                sourceId = comic.sourceId.value,
+                providerKey = comic.mangaKey.value,
+                coreSourceId = coreSource,
+            ).executeAsList()
+        return mangaIds.singleOrNull()
+    }
+
+    /** The two Core-backed lookups above for every row at once; null without a Core source. */
+    private fun Database.coreBackedLookup(): CoreBackedLookup? {
+        val coreSource = coreSourceId ?: return null
+        val mangaBySourceKey = aethon_syncQueries.selectAethonCoreMangaSourceKeys(coreSource).executeAsList()
+            .groupBy({ it.source_id to it.normalized_url }, { it.manga_id })
+        val unboundByManga = aethon_syncQueries.selectUnboundPortableComicIdsByCoreMangas(coreSource).executeAsList()
+            .groupBy({ it.manga_id }, { it.portable_id })
+        return CoreBackedLookup(mangaBySourceKey, unboundByManga)
+    }
+
+    /** The binding and identity lookups of one reconcile pass, read once inside its transaction. */
+    private fun Database.trackingPassIndex(): TrackingPassIndex {
+        val works = SqlDelightPortableBindingStore(this).allWorks()
+        // Same pick as [SqlDelightPortableBindingStore.workByLocalReference]: the newest bound row.
+        val boundWorks = works
+            .filter { it.resolution.state == PortableResolutionState.BOUND && it.localReference != null }
+            .groupBy { requireNotNull(it.localReference) }
+            .mapValues { (_, rows) -> rows.maxBy { it.updatedAt } }
+        val identities = aethon_syncQueries.selectContentIdentityReferences().executeAsList()
+        return TrackingPassIndex(
+            coreBacked = coreBackedLookup(),
+            works = works.associateBy { it.portableId },
+            boundWorks = boundWorks,
+            novelEntityIds = identities.filter { it.content_type == "NOVEL" }
+                .associate { it.local_reference to it.entity_id },
+            localReferences = identities.associate { it.entity_id to it.local_reference },
+        )
+    }
+
+    private fun Database.replicaIndex(scopeId: String, entityType: SyncEntityType): TrackingReplicaIndex =
+        TrackingReplicaIndex(
+            records = aethon_syncQueries.selectCoreReplicaRecordVersionsByType(scopeId, entityType.value)
+                .executeAsList()
+                .associateBy { it.entity_id },
+            tombstones = aethon_syncQueries.selectCoreReplicaTombstoneVersionsByType(scopeId, entityType.value)
+                .executeAsList()
+                .associate { it.entity_id to it.server_version },
+            pending = aethon_syncQueries.selectOutboxOrWaitEntityIdsForType(scopeId, entityType.value)
+                .executeAsList()
+                .filterNotNullTo(hashSetOf()),
+        )
+
+    private class TrackingPassIndex(
+        val coreBacked: CoreBackedLookup?,
+        val works: Map<String, PortableWorkBindingRecord>,
+        val boundWorks: Map<String, PortableWorkBindingRecord>,
+        val novelEntityIds: Map<String, String>,
+        val localReferences: Map<String, String>,
+    )
+
+    private class TrackingReplicaIndex(
+        val records: Map<String, SelectCoreReplicaRecordVersionsByType>,
+        val tombstones: Map<String, Long>,
+        private val pending: Set<String>,
+    ) {
+        /** Only an entity with an outbox command or a replica wait can be blocked; it is checked exactly. */
+        fun mayBlock(entityId: String): Boolean = entityId in pending
+    }
+
+    private class CoreBackedLookup(
+        private val mangaBySourceKey: Map<Pair<String, String>, List<Long>>,
+        private val unboundByManga: Map<Long, List<String>>,
+    ) {
+        fun mangaIds(sourceId: String, providerKey: String): List<Long> =
+            mangaBySourceKey[sourceId to providerKey].orEmpty()
+
+        fun unboundPortableIds(mangaId: Long): List<String> = unboundByManga[mangaId].orEmpty()
     }
 
     private data class EmissionContext(

@@ -22,7 +22,12 @@ data class CoreSourceRelinkResult(
     val observed: Int,
     val relinked: Int,
     val pending: Int,
+    /** Rows this pass actually moved to their native source; the rest were already there. */
+    val moved: Int = 0,
 )
+
+/** Candidates bound to their native source after a pass, and how many of them the pass moved. */
+data class CoreSourceRelinkCount(val bound: Int, val moved: Int)
 
 data class CoreSourcePackageScope(
     val serverId: String,
@@ -39,8 +44,9 @@ interface CoreSourceRelinkStore {
     suspend fun candidates(): List<CoreSourceRelinkCandidate>
     suspend fun relink(candidate: CoreSourceRelinkCandidate): Boolean
 
-    /** Relinks every candidate in one pass and returns how many are bound to their native source. */
-    suspend fun relinkAll(candidates: List<CoreSourceRelinkCandidate>): Int = candidates.count { relink(it) }
+    /** Relinks every candidate in one pass; a store that cannot tell a move counts every bound row as one. */
+    suspend fun relinkAll(candidates: List<CoreSourceRelinkCandidate>): CoreSourceRelinkCount =
+        candidates.count { relink(it) }.let { CoreSourceRelinkCount(bound = it, moved = it) }
 }
 
 fun interface CoreSourceRegistry {
@@ -72,8 +78,9 @@ class CoreSourceRelinker(
         )
         CoreSourceRelinkResult(
             observed = candidates.size,
-            relinked = relinked,
-            pending = candidates.size - relinked,
+            relinked = relinked.bound,
+            pending = candidates.size - relinked.bound,
+            moved = relinked.moved,
         )
     }
 
@@ -132,21 +139,39 @@ class SqlDelightCoreSourceRelinkStore(
     }
 
     override suspend fun relink(candidate: CoreSourceRelinkCandidate): Boolean = database.await(inTransaction = true) {
-        relinkRow(candidate)
+        relinkRow(candidate, currentRow(candidate)) != RelinkOutcome.NOT_BOUND
     }
 
     // One transaction for the whole pass: per-row transactions re-ran every library query once per
-    // relinked work, which stalled the app for minutes after an extension install.
-    override suspend fun relinkAll(candidates: List<CoreSourceRelinkCandidate>): Int =
-        database.await(inTransaction = true) { candidates.count { relinkRow(it) } }
+    // relinked work, which stalled the app for minutes after an extension install. The current rows
+    // are read in one query too, since two lookups per work cost seconds on every sync.
+    override suspend fun relinkAll(candidates: List<CoreSourceRelinkCandidate>): CoreSourceRelinkCount =
+        database.await(inTransaction = true) {
+            val current = aethon_syncQueries.selectSuwayomiRelinkStates().executeAsList()
+                .associate { it.entity_id to RelinkRow(it.local_reference, it.source, it.url) }
+            val outcomes = candidates.map { relinkRow(it, current[it.entityId]) }
+            CoreSourceRelinkCount(
+                bound = outcomes.count { it != RelinkOutcome.NOT_BOUND },
+                moved = outcomes.count { it == RelinkOutcome.MOVED },
+            )
+        }
 
-    private fun Database.relinkRow(candidate: CoreSourceRelinkCandidate): Boolean {
+    private fun Database.currentRow(candidate: CoreSourceRelinkCandidate): RelinkRow? {
         val identity = aethon_syncQueries.selectIdentityByEntityId(candidate.entityId).executeAsOneOrNull()
-            ?: return false
-        if (identity.local_reference.toLongOrNull() != candidate.localMangaId) return false
-        val manga = mangasQueries.findById(candidate.localMangaId).executeAsOneOrNull()
-            ?: return false
-        if (manga.source == candidate.sourceId && manga.url == candidate.originalUrl) return true
+            ?: return null
+        val manga = identity.local_reference.toLongOrNull()
+            ?.let { mangasQueries.findById(it).executeAsOneOrNull() }
+            ?: return null
+        return RelinkRow(identity.local_reference, manga.source, manga.url)
+    }
+
+    /** [current] is the candidate's identity and local work as they are now, or null when either is gone. */
+    private fun Database.relinkRow(candidate: CoreSourceRelinkCandidate, current: RelinkRow?): RelinkOutcome {
+        current ?: return RelinkOutcome.NOT_BOUND
+        if (current.localReference.toLongOrNull() != candidate.localMangaId) return RelinkOutcome.NOT_BOUND
+        if (current.source == candidate.sourceId && current.url == candidate.originalUrl) {
+            return RelinkOutcome.ALREADY_BOUND
+        }
         mangasQueries.update(
             source = candidate.sourceId,
             url = candidate.originalUrl,
@@ -172,6 +197,10 @@ class SqlDelightCoreSourceRelinkStore(
             memo = memoColumnAdapter.encode(JsonObject(emptyMap())),
             mangaId = candidate.localMangaId,
         )
-        return true
+        return RelinkOutcome.MOVED
     }
+
+    private data class RelinkRow(val localReference: String, val source: Long, val url: String)
+
+    private enum class RelinkOutcome { NOT_BOUND, ALREADY_BOUND, MOVED }
 }

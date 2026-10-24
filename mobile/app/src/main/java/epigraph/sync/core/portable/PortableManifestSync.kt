@@ -63,6 +63,11 @@ class PortableManifestSync(
             ?.takeIf { it.phase == PortableBootstrapPhase.RECEIVING_MANIFEST }
             ?.currentItem
             ?.let(::decodeCursor)
+        val previousCompletion = previousBootstrap
+            ?.takeIf { it.phase == PortableBootstrapPhase.COMPLETED || it.phase == PortableBootstrapPhase.PARTIAL }
+            ?.currentItem
+            ?.let(::decodeCompletion)
+        var reusedCompletion: ManifestCompletion? = null
         val attemptCount = previousBootstrap?.attemptCount?.plus(1) ?: 1
         checkpoint(
             credentials,
@@ -167,6 +172,18 @@ class PortableManifestSync(
                 return CoreReplicaSyncOutcome.RETRY
             }
             if (page.snapshotExpiresAtMs <= page.generatedAtMs) return CoreReplicaSyncOutcome.RETRY
+            // The Core rebuilds the same snapshot fingerprint until its library changes, so an
+            // import of this exact snapshot whose memberships are all still here is not repeated.
+            if (
+                offset == 0L &&
+                previousCompletion?.covers(page, nowEpochMillis) == true &&
+                membershipCount(credentials) == previousCompletion.membershipCount
+            ) {
+                reusedCompletion = previousCompletion
+                observedCount = page.page.totalCount
+                omittedCount = previousCompletion.omittedCount
+                break
+            }
             if (!persistPage(credentials, page, observedAt, nowEpochMillis)) {
                 return CoreReplicaSyncOutcome.RETRY
             }
@@ -199,21 +216,28 @@ class PortableManifestSync(
             }
         }
         if (observedCount != expectedTotal) return CoreReplicaSyncOutcome.RETRY
-        checkpoint(
-            credentials,
-            bootstrapId,
-            PortableBootstrapPhase.IMPORTING_REFERENCES,
-            attemptCount,
-            nowEpochMillis,
-            manifestFingerprint = expectedFingerprint,
-        )
-        database.await(inTransaction = true) {
-            aethon_syncQueries.deleteStalePortableManifestMembershipsForEcosystem(
-                serverId = credentials.serverId,
-                profileId = credentials.profileId,
-                observedAt = observedAt,
-                ecosystem = PortableEcosystem.SUWAYOMI.name,
+        val membershipCount = reusedCompletion?.membershipCount ?: run {
+            checkpoint(
+                credentials,
+                bootstrapId,
+                PortableBootstrapPhase.IMPORTING_REFERENCES,
+                attemptCount,
+                nowEpochMillis,
+                manifestFingerprint = expectedFingerprint,
             )
+            database.await(inTransaction = true) {
+                aethon_syncQueries.deleteStalePortableManifestMembershipsForEcosystem(
+                    serverId = credentials.serverId,
+                    profileId = credentials.profileId,
+                    observedAt = observedAt,
+                    ecosystem = PortableEcosystem.SUWAYOMI.name,
+                )
+                aethon_syncQueries.countPortableManifestMembershipsForEcosystem(
+                    serverId = credentials.serverId,
+                    profileId = credentials.profileId,
+                    ecosystem = PortableEcosystem.SUWAYOMI.name,
+                ).executeAsOne()
+            }
         }
         checkpoint(
             credentials,
@@ -257,6 +281,15 @@ class PortableManifestSync(
             attemptCount,
             nowEpochMillis,
             manifestFingerprint = expectedFingerprint,
+            currentItem = encodeCompletion(
+                ManifestCompletion(
+                    snapshotFingerprint = requireNotNull(expectedSnapshotFingerprint),
+                    totalCount = requireNotNull(expectedTotal),
+                    membershipCount = membershipCount,
+                    omittedCount = omittedCount,
+                    importedAt = reusedCompletion?.importedAt ?: nowEpochMillis,
+                ),
+            ),
             lastReason = if (requiresUserAction) {
                 PortableBootstrapPhase.WAITING_TRUST.name
             } else if (omittedCount > 0) {
@@ -386,6 +419,21 @@ class PortableManifestSync(
         return mangasQueries.findById(localId).executeAsOneOrNull()?.source == expectedSourceId
     }
 
+    private suspend fun membershipCount(credentials: CoreCredentialSession): Long =
+        database.await(inTransaction = false) {
+            aethon_syncQueries.countPortableManifestMembershipsForEcosystem(
+                serverId = credentials.serverId,
+                profileId = credentials.profileId,
+                ecosystem = PortableEcosystem.SUWAYOMI.name,
+            ).executeAsOne()
+        }
+
+    private fun encodeCompletion(completion: ManifestCompletion): String =
+        Json.encodeToString(ManifestCompletion.serializer(), completion)
+
+    private fun decodeCompletion(value: String): ManifestCompletion? =
+        runCatching { Json.decodeFromString(ManifestCompletion.serializer(), value) }.getOrNull()
+
     private fun encodeCursor(cursor: ManifestCursor): String = Json.encodeToString(ManifestCursor.serializer(), cursor)
 
     private fun decodeCursor(value: String): ManifestCursor? =
@@ -420,10 +468,27 @@ class PortableManifestSync(
         val observedAt: Long,
     )
 
+    /** The last complete import, kept at a terminal phase so an unchanged snapshot is not re-imported. */
+    @Serializable
+    private data class ManifestCompletion(
+        val snapshotFingerprint: String,
+        val totalCount: Long,
+        val membershipCount: Long,
+        val omittedCount: Long,
+        val importedAt: Long,
+    ) {
+        /** A full import still runs periodically to repair bindings changed on this device. */
+        fun covers(page: CorePortableManifest, nowEpochMillis: Long): Boolean =
+            snapshotFingerprint == page.snapshotFingerprint &&
+                totalCount == page.page.totalCount &&
+                nowEpochMillis - importedAt in 0 until REIMPORT_INTERVAL_MS
+    }
+
     private companion object {
         const val DEFAULT_PAGE_SIZE = 100L
         const val MAX_PAGE_SIZE = 250L
         const val MAX_WORKS = 50_000L
+        const val REIMPORT_INTERVAL_MS = 6 * 60 * 60 * 1_000L
         const val LOG_TAG = "EpigraphCoreSync"
     }
 }

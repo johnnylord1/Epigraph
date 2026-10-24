@@ -155,3 +155,26 @@ Verified on 13/08/2026:
 - A physical-device pairing, explicit Store/repository approval, Package
   Installer flow, unpair/re-pair cycle and two-device causal convergence remain
   release evidence gates; they were not inferred from the emulator smoke.
+
+## Progress echo guard (2026-10-23)
+
+No schema change: `selectComicChapterProgressBackfill` only selects more columns of existing rows.
+
+- Chapter progress backfill skips chapters the paired desktop's Suwayomi already holds
+  (`CoreHeldChapterProgressFilter`). Titles the desktop does not serve keep the plain backfill;
+  a served title that cannot be checked waits, and is published after three failed checks.
+  Confirmed titles are remembered in the `epigraph_core_comic_progress_held` preferences by a
+  fingerprint of their exact local state, so a later local change is checked again.
+- The favorite outbox repair republishes a favorite only when neither its portable ID nor its
+  Suwayomi entity ID is known to Core.
+- The catalog gate reads the desktop's `suwayomiCatalogProjectionPending` and waits only for
+  catalog projections, not chapter progress. Desktops that predate the field keep the old gate.
+- The catalog apply stamp also keeps a short digest of each record it applied (the `<key>#records`
+  entry of the `epigraph_core_catalog_apply` preferences). Between full applies, every six hours,
+  only records whose digest changed are written again.
+
+Rollback: pass `ComicProgressBackfillFilter.NONE` to `backfillComicProgress` in
+`EpigraphCoreSyncWorker.repairLibraries` and delete the preferences file; restore the portable-ID
+only check in `LocalComicLibraryOutboxRepair`; ignore `suwayomiCatalogProjectionPending` in
+`SuwayomiCatalogSync`; delete the `epigraph_core_catalog_apply` preferences file to drop the record
+digests. None of these changes touches the database schema or the sync wire format.

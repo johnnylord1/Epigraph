@@ -19,8 +19,15 @@ import epigraph.sync.core.work.CoreRemoteProjectionState
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import epigraph.sync.core.work.CoreReplicaSyncPort
 import epigraph.sync.core.work.remoteProjectionState
+import android.content.Context
 import android.util.Log
 import eu.kanade.tachiyomi.BuildConfig
+import java.security.MessageDigest
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -48,6 +55,7 @@ class SuwayomiCatalogSync(
     private val covers: CoreCatalogCoverSink = DeferredCoreCatalogCoverSink,
     private val pageSize: Long = DEFAULT_PAGE_SIZE,
     private val projectionStatus: SuwayomiProjectionStatusSource = UnavailableSuwayomiProjectionStatusSource,
+    private val stamps: CatalogApplyStampStore? = null,
 ) : CoreReplicaSyncPort {
     init {
         require(pageSize in 1..MAX_PAGE_SIZE) { "pageSize is outside the Core catalog limit" }
@@ -68,14 +76,17 @@ class SuwayomiCatalogSync(
 
         // Mutations drained in this run reach Suwayomi asynchronously. Until the desktop reports
         // its projection queue empty, a catalog read may predate them and would undo the user's
-        // own favorite or category change, so retry instead of reconciling against it.
+        // own favorite or category change, so retry instead of reconciling against it. Chapter
+        // progress is not part of the catalog, so a desktop that counts it apart is not waited on
+        // for it.
         if (EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities)) {
             when (val status = projectionStatus.status(credentials, scopeId)) {
                 null -> Unit
-                is CoreHttpResult.Success ->
-                    if (status.value.remoteProjectionState() == CoreRemoteProjectionState.IN_PROGRESS) {
-                        return CoreReplicaSyncOutcome.RETRY
-                    }
+                is CoreHttpResult.Success -> {
+                    val catalogPending = status.value.suwayomiCatalogProjectionPending?.let { it > 0 }
+                        ?: (status.value.remoteProjectionState() == CoreRemoteProjectionState.IN_PROGRESS)
+                    if (catalogPending) return CoreReplicaSyncOutcome.RETRY
+                }
                 is CoreHttpResult.Failure -> return CoreReplicaSyncOutcome.RETRY
             }
         }
@@ -161,18 +172,41 @@ class SuwayomiCatalogSync(
             }
         }
 
+        val stampKey = "${credentials.serverId}:${credentials.profileId}"
+        val previousStamp = stamps?.get(stampKey)
+        val catalogDigest = catalogDigest(
+            SuwayomiCategoryCreateHook.isEnabled(capabilities),
+            mangaRecords + categoryRecords + assignmentRecords,
+        )
+        val recordDigests = (mangaRecords + categoryRecords + assignmentRecords)
+            .associate { record -> record.key to recordDigest(record) }
         // Applying only after both complete reads protects the local library from partial pages.
         // Reconciliation is intentionally limited to the authoritative library bit; local
         // metadata, chapters, progress and assets remain recoverable after an un-favorite.
-        database.await(inTransaction = true) {
+        val appliedStamp = database.await(inTransaction = true) {
             // Titles with local work still in flight keep their local library bit and category
             // links; the next catalog read after that work settles reconciles them.
             val protectedEntityIds = aethon_syncQueries
                 .selectUnsettledSuwayomiComicEntityIds(scopeId, credentials.profileId)
                 .executeAsList()
                 .toHashSet()
+            // The same catalog applied to the same local library changes nothing, so it is only
+            // re-applied periodically.
+            val localSignature = localLibrarySignature(scopeId)
+            if (
+                protectedEntityIds.isEmpty() &&
+                previousStamp?.covers(catalogDigest, localSignature, nowEpochMillis) == true
+            ) {
+                return@await previousStamp
+            }
+            // A record applied unchanged to this same local library since the last full apply
+            // needs no second write: a read on the desktop changes one title, not the other few
+            // hundred, and writing every title again took seconds.
+            val unchanged = previousStamp?.unchangedRecords(localSignature, nowEpochMillis).orEmpty()
+            fun CoreConfirmedRecord.changed() = recordDigests.getValue(key) !in unchanged
             mangaRecords
                 .filterNot { it.key.entityId in protectedEntityIds }
+                .filter { it.changed() }
                 .forEach { record -> projection.upsert(this, record) }
             // Restored titles are adopted just above, so a same-name phone folder only now counts as
             // holding comics. Its remote twin waits for the create hook to bind it by name instead
@@ -188,9 +222,16 @@ class SuwayomiCatalogSync(
             val appliedAssignmentRecords = assignmentRecords.filterNot { record ->
                 (record.record as JsonObject).getValue("categoryId").jsonPrimitive.content in deferredCategoryEntityIds
             }
-            appliedCategoryRecords.forEach { record -> projection.upsert(this, record) }
+            appliedCategoryRecords
+                .filter { it.changed() }
+                .forEach { record -> projection.upsert(this, record) }
+            val appliedAssignmentKeys = appliedAssignmentRecords.mapTo(HashSet()) { it.key }
+            val heldAssignments = appliedAssignmentRecords
+                .filter { record -> record.comicId() in protectedEntityIds }
+                .mapTo(HashSet()) { it.key }
             appliedAssignmentRecords
-                .filterNot { record -> record.comicId() in protectedEntityIds }
+                .filterNot { it.key in heldAssignments }
+                .filter { it.changed() }
                 .forEach { record -> projection.upsert(this, record) }
             projection.reconcileSuwayomiLibrary(
                 database = this,
@@ -211,7 +252,19 @@ class SuwayomiCatalogSync(
                 },
                 protectedEntityIds = protectedEntityIds,
             )
+            // Held-back titles and folders are applied by a later run, never counted as applied.
+            val held = mangaRecords.filter { it.key.entityId in protectedEntityIds }.mapTo(HashSet()) { it.key } +
+                categoryRecords.filter { it.key.entityId in deferredCategoryEntityIds }.map { it.key } +
+                assignmentRecords.map { it.key }.filterNot { it in appliedAssignmentKeys } +
+                heldAssignments
+            CatalogApplyStamp(
+                catalogDigest = if (held.isEmpty()) catalogDigest else "",
+                localSignature = localLibrarySignature(scopeId),
+                appliedAt = if (unchanged.isEmpty()) nowEpochMillis else previousStamp!!.appliedAt,
+                recordDigests = recordDigests.filterKeys { it !in held }.values.toSet(),
+            )
         }
+        stamps?.put(stampKey, appliedStamp)
 
         try {
             covers.materialize(
@@ -231,20 +284,28 @@ class SuwayomiCatalogSync(
         return CoreReplicaSyncOutcome.APPLIED
     }
 
+    /**
+     * Reads every page of [operation]. Once the first page gives the total, the remaining pages are
+     * requested a few at a time instead of one after another; each round trip to the desktop costs
+     * a few hundred milliseconds, which made a library of a few hundred titles take seconds. Pages
+     * are still checked in offset order, exactly as a sequential read would check them.
+     */
     private suspend fun fetchAll(
         credentials: CoreCredentialSession,
         operation: SuwayomiCatalogOperation,
         mangaId: Long? = null,
-    ): List<JsonObject> {
+    ): List<JsonObject> = coroutineScope {
         val nodes = ArrayList<JsonObject>()
         val observedIds = HashSet<Long>()
         var expectedTotal: Long? = null
         var offset = 0L
         var hasNext = true
+        val permits = Semaphore(PARALLEL_PAGE_READS)
+        val prefetched = HashMap<Long, Deferred<CoreHttpResult<SuwayomiCatalogResponse>>>()
         while (hasNext) {
             if (nodes.size >= MAX_ITEMS) throw CatalogSyncFailure.Protocol(ProtocolFailure.MAX_ITEMS)
             val response = when (
-                val result = pages.read(
+                val result = prefetched.remove(offset)?.await() ?: pages.read(
                     session = credentials,
                     operation = operation,
                     pageSize = pageSize,
@@ -259,7 +320,27 @@ class SuwayomiCatalogSync(
             val pageNodes = response.data.connectionNodes(operation)
             val total = response.page.totalCount
                 ?: throw CatalogSyncFailure.Protocol(ProtocolFailure.MISSING_TOTAL)
-            if (expectedTotal == null) expectedTotal = total
+            if (expectedTotal == null) {
+                expectedTotal = total
+                if (response.page.hasNextPage) {
+                    var next = offset + pageSize
+                    while (next < minOf(total, MAX_ITEMS.toLong()) && next <= Int.MAX_VALUE) {
+                        val pageOffset = next
+                        prefetched[pageOffset] = async {
+                            permits.withPermit {
+                                pages.read(
+                                    session = credentials,
+                                    operation = operation,
+                                    pageSize = pageSize,
+                                    offset = pageOffset,
+                                    mangaId = mangaId,
+                                )
+                            }
+                        }
+                        next += pageSize
+                    }
+                }
+            }
             if (expectedTotal != total || pageNodes.size.toLong() > response.page.pageSize) {
                 throw CatalogSyncFailure.Protocol(ProtocolFailure.INCONSISTENT_PAGE)
             }
@@ -287,10 +368,11 @@ class SuwayomiCatalogSync(
                 offset = nextOffset
             }
         }
+        prefetched.values.forEach { it.cancel() }
         if (nodes.size.toLong() != expectedTotal) {
             throw CatalogSyncFailure.Protocol(ProtocolFailure.COUNT_MISMATCH)
         }
-        return nodes
+        nodes
     }
 
     private fun validateResponse(
@@ -361,6 +443,34 @@ class SuwayomiCatalogSync(
             .with("coreProfileId", credentials.profileId),
     )
 
+    private fun catalogDigest(categoryCreateHook: Boolean, records: List<CoreConfirmedRecord>): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(if (categoryCreateHook) 1 else 0)
+        records.forEach { record ->
+            digest.update(record.key.entityType.toByteArray())
+            digest.update(0)
+            digest.update(record.key.entityId.toByteArray())
+            digest.update(0)
+            digest.update(record.record.toString().toByteArray())
+            digest.update(0)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** Short digest of one record; a stamp keeps one per record it applied. */
+    private fun recordDigest(record: CoreConfirmedRecord): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(record.key.entityType.toByteArray())
+        digest.update(0)
+        digest.update(record.key.entityId.toByteArray())
+        digest.update(0)
+        digest.update(record.record.toString().toByteArray())
+        return digest.digest().take(RECORD_DIGEST_BYTES).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun Database.localLibrarySignature(scopeId: String): String =
+        aethon_syncQueries.selectComicLibrarySignature(scopeId).executeAsOne().toString()
+
     private fun CatalogSyncFailure.outcome(): CoreReplicaSyncOutcome = when (this) {
         is CatalogSyncFailure.Http -> if (result.statusCode == 401 || result.statusCode == 403) {
             CoreReplicaSyncOutcome.NEEDS_USER_ACTION
@@ -414,6 +524,9 @@ class SuwayomiCatalogSync(
         const val DEFAULT_PAGE_SIZE = 100L
         const val MAX_PAGE_SIZE = 250L
         const val MAX_ITEMS = 50_000
+        const val PARALLEL_PAGE_READS = 4
+        const val REAPPLY_INTERVAL_MS = 6 * 60 * 60 * 1_000L
+        private const val RECORD_DIGEST_BYTES = 12
         const val SUWAYOMI_DEFAULT_CATEGORY_ID = 0L
         const val REMOTE_TYPE_SUWAYOMI_MANGA = "SUWAYOMI_MANGA"
 
@@ -732,6 +845,65 @@ internal fun suwayomiServerCategoryEntityId(serverId: String, profileId: String,
 
 private fun CoreConfirmedRecord.comicId(): String? =
     (record as? JsonObject)?.get("comicId")?.jsonPrimitive?.contentOrNull
+
+/** The last catalog fully applied for one Core profile, and the local library it left behind. */
+/**
+ * The last catalog applied to a local library. [appliedAt] is when every record was last written,
+ * so a full apply still runs every [SuwayomiCatalogSync.REAPPLY_INTERVAL_MS]; [recordDigests] are
+ * the records applied since, which a run over the same library does not write again.
+ */
+data class CatalogApplyStamp(
+    val catalogDigest: String,
+    val localSignature: String,
+    val appliedAt: Long,
+    val recordDigests: Set<String> = emptySet(),
+) {
+    fun covers(digest: String, signature: String, nowEpochMillis: Long): Boolean =
+        catalogDigest == digest && unchangedRecords(signature, nowEpochMillis) != null
+
+    fun unchangedRecords(signature: String, nowEpochMillis: Long): Set<String>? = recordDigests.takeIf {
+        localSignature == signature &&
+            nowEpochMillis - appliedAt in 0 until SuwayomiCatalogSync.REAPPLY_INTERVAL_MS
+    }
+}
+
+/** Replaceable cache of [CatalogApplyStamp]s; losing it only costs one full apply. */
+interface CatalogApplyStampStore {
+    fun get(key: String): CatalogApplyStamp?
+    fun put(key: String, stamp: CatalogApplyStamp)
+    fun remove(key: String)
+}
+
+class SharedPreferencesCatalogApplyStampStore(context: Context) : CatalogApplyStampStore {
+    private val preferences = context.applicationContext
+        .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+
+    override fun get(key: String): CatalogApplyStamp? {
+        val parts = preferences.getString(key, null)?.split('\n') ?: return null
+        if (parts.size != 3) return null
+        val records = preferences.getString(key + RECORDS_SUFFIX, null)
+            ?.split(',')
+            ?.filterTo(HashSet()) { it.isNotEmpty() }
+            .orEmpty()
+        return CatalogApplyStamp(parts[1], parts[2], parts[0].toLongOrNull() ?: return null, records)
+    }
+
+    override fun put(key: String, stamp: CatalogApplyStamp) {
+        preferences.edit()
+            .putString(key, "${stamp.appliedAt}\n${stamp.catalogDigest}\n${stamp.localSignature}")
+            .putString(key + RECORDS_SUFFIX, stamp.recordDigests.joinToString(","))
+            .apply()
+    }
+
+    override fun remove(key: String) {
+        preferences.edit().remove(key).remove(key + RECORDS_SUFFIX).apply()
+    }
+
+    private companion object {
+        const val PREFERENCES = "epigraph_core_catalog_apply"
+        const val RECORDS_SUFFIX = "#records"
+    }
+}
 
 /** Desktop Suwayomi projection readiness for a comics scope; null when the Core cannot report it. */
 fun interface SuwayomiProjectionStatusSource {

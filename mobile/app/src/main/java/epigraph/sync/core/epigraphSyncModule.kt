@@ -34,9 +34,12 @@ import epigraph.sync.core.extensions.ExtensionReconciliationNotifier
 import epigraph.sync.core.extensions.ExtensionReconciliationStore
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
 import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
+import epigraph.sync.core.suwayomi.CoreHeldChapterProgressFilter
+import epigraph.sync.core.suwayomi.COMIC_PROGRESS_HELD_PREFERENCES
 import epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook
 import epigraph.sync.core.suwayomi.SuwayomiExtensionPublishHook
 import epigraph.sync.core.suwayomi.PhoneExtensionState
+import epigraph.sync.core.suwayomi.SharedPreferencesCatalogApplyStampStore
 import epigraph.sync.core.suwayomi.SharedPreferencesPublishedExtensionLedger
 import epigraph.sync.core.suwayomi.UnpublishedComicCategorySource
 import epigraph.sync.core.suwayomi.UnpublishedComicCategory
@@ -133,6 +136,7 @@ import epigraph.sync.core.suwayomi.CoreSuwayomiProjectionStatusSource
 import epigraph.sync.core.suwayomi.SuwayomiCatalogPageSource
 import epigraph.sync.core.suwayomi.SuwayomiCatalogSync
 import epigraph.sync.core.suwayomi.EpigraphCoreCoverClient
+import epigraph.sync.core.suwayomi.BackgroundCoreCatalogCoverSink
 import epigraph.sync.core.suwayomi.CoreCatalogCoverCache
 import epigraph.sync.core.suwayomi.CoreCatalogCoverSink
 import epigraph.sync.core.suwayomi.CoreCatalogCoverStore
@@ -168,6 +172,9 @@ import eu.kanade.tachiyomi.BuildConfig
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -255,7 +262,12 @@ fun epigraphSyncModule(app: Application) = module {
             }
         }
     }
-    single<CoreCatalogCoverSink> { CoreCatalogCoverCache(get(), get()) }
+    single<CoreCatalogCoverSink> {
+        BackgroundCoreCatalogCoverSink(
+            CoreCatalogCoverCache(get(), get()),
+            CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        )
+    }
     single { AuthenticatedEpigraphCoreSourceGateway(get(), get(), get()) }
     single { EpigraphCoreSource(get<AuthenticatedEpigraphCoreSourceGateway>()) }
     single<BridgedChapterReadState> { get<CoreBridgedChapterReadState>() }
@@ -327,6 +339,13 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single { LocalNovelLibraryOutboxRepair(get(), get(), get(), get()) }
     single { LocalComicLibraryOutboxRepair(get(), get(), get(), get()) }
+    single {
+        CoreHeldChapterProgressFilter(
+            get(),
+            SessionCoreChapterCatalog(get(), get(), get()),
+            app.getSharedPreferences(COMIC_PROGRESS_HELD_PREFERENCES, Context.MODE_PRIVATE),
+        )
+    }
     single {
         LocalNovelDependencyPublisher(
             coordinator = get(),
@@ -418,7 +437,14 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single { SnapshotCoreReplicaSync(get(), get(), get(), get(), get()) }
     single<CoreReplicaSyncPort>(named(CATALOG_REPLICA)) {
-        SuwayomiCatalogSync(get(), get(), get(), get(), projectionStatus = get<CoreSuwayomiProjectionStatusSource>())
+        SuwayomiCatalogSync(
+            get(),
+            get(),
+            get(),
+            get(),
+            projectionStatus = get<CoreSuwayomiProjectionStatusSource>(),
+            stamps = SharedPreferencesCatalogApplyStampStore(app),
+        )
     }
     single<CoreReplicaSyncPort>(named(PORTABLE_MANIFEST_REPLICA)) {
         PortableManifestSync(get(), get(), get(), get())

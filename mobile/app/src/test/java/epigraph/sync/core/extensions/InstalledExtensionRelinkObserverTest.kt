@@ -120,16 +120,73 @@ class InstalledExtensionRelinkObserverTest {
         assertEquals(1, maxActiveCalls.get())
     }
 
+    @Test
+    fun `startup registry wakes a sync only when the relink changed a binding`() = runTest {
+        val source = source(SOURCE_ID)
+        val installed = MutableStateFlow(emptyList<Extension.Installed>())
+        val registered = MutableStateFlow(emptyList<CatalogueSource>())
+        val loaded = MutableStateFlow(false)
+        val calls = Channel<Unit>(Channel.UNLIMITED)
+        val wakes = AtomicInteger()
+        var moved = 0
+        val observer = observer(
+            installed,
+            registered,
+            StandardTestDispatcher(testScheduler),
+            wake = { wakes.incrementAndGet() },
+            loaded = loaded,
+        ) {
+            calls.send(Unit)
+            EMPTY_RESULT.copy(relinked = 1, moved = moved)
+        }
+
+        observer.start(backgroundScope)
+        installed.value = listOf(extension(versionCode = 1, source = source))
+        registered.value = listOf(source)
+        loaded.value = true
+        runCurrent()
+        awaitCall(calls)
+        runCurrent()
+        assertEquals(0, wakes.get())
+
+        installed.value = listOf(extension(versionCode = 2, source = source))
+        runCurrent()
+        awaitCall(calls)
+        runCurrent()
+        assertEquals(1, wakes.get())
+
+        moved = 1
+        val restarted = observer(
+            installed,
+            registered,
+            StandardTestDispatcher(testScheduler),
+            wake = { wakes.incrementAndGet() },
+            loaded = loaded,
+        ) {
+            calls.send(Unit)
+            EMPTY_RESULT.copy(relinked = 1, moved = moved)
+        }
+        restarted.start(backgroundScope)
+        runCurrent()
+        awaitCall(calls)
+        runCurrent()
+        assertEquals(2, wakes.get())
+    }
+
     private fun observer(
         installed: MutableStateFlow<List<Extension.Installed>>,
         registered: MutableStateFlow<List<CatalogueSource>>,
         dispatcher: CoroutineDispatcher,
+        wake: () -> Unit = {},
+        loaded: MutableStateFlow<Boolean> = MutableStateFlow(true),
         relink: suspend () -> CoreSourceRelinkResult,
     ) = InstalledExtensionRelinkObserver(
         installedExtensions = installed.asStateFlow(),
         catalogueSources = registered.asStateFlow(),
         relink = relink,
         dispatcher = dispatcher,
+        wakePortableSync = wake,
+        registryLoaded = loaded.asStateFlow(),
     )
 
     private fun source(id: Long): CatalogueSource = mockk {

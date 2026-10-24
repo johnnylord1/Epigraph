@@ -136,7 +136,9 @@ private val ChapterFetchOutcome.listed: Boolean
  *
  * A title whose desktop list added chapters may be asked again at once: it binds on the next sync
  * pass, and if its chapter is still missing the list comes back unchanged. Unchanged and failed
- * titles wait [COOLDOWN_MILLIS] before the desktop is asked again.
+ * titles wait [COOLDOWN_MILLIS] before the desktop is asked again. Titles the desktop library does
+ * not hold wait [NOT_HELD_COOLDOWN_MILLIS]: the extension serves them meanwhile, and asking again
+ * means reading the whole desktop library.
  */
 class CoreChapterListStage(
     private val catalog: CoreChapterCatalog,
@@ -160,6 +162,9 @@ class CoreChapterListStage(
                 val known = due.mapNotNull { target ->
                     library[CoreWorkKey(target.sourceId, target.key)]?.let { target to it }
                 }
+                val notHeldUntil = clock() + NOT_HELD_COOLDOWN_MILLIS
+                due.filter { CoreWorkKey(it.sourceId, it.key) !in library }
+                    .forEach { cooldown.record(it.localMangaId, notHeldUntil) }
                 val outcomes = java.util.concurrent.ConcurrentHashMap<Long, ChapterFetchOutcome>()
                 val queue = Channel<Pair<ChapterPrefetchTarget, Long>>(Channel.UNLIMITED)
                 known.forEach(queue::trySend)
@@ -207,6 +212,7 @@ class CoreChapterListStage(
         const val DEFAULT_READERS = 4
         const val DEFAULT_TITLE_TIMEOUT_MILLIS = 30_000L
         const val COOLDOWN_MILLIS = 10 * 60 * 1_000L
+        const val NOT_HELD_COOLDOWN_MILLIS = 60 * 60 * 1_000L
     }
 }
 
@@ -295,10 +301,19 @@ class SourceChapterListWriter(
  * The desktop list plus the chapters this device stores that the desktop does not list, so a
  * desktop that has not refreshed the title never removes a chapter (or its read state) here.
  * Stored chapters numbered past the desktop's newest go first; the others after its oldest.
+ *
+ * A stored chapter with the number and scanlator of a listed one is that chapter at an older
+ * address (the source moved to a new domain, or this device's extension is another version), so
+ * the desktop's copy replaces it instead of listing the chapter twice; [syncChaptersWithSource]
+ * carries its read and bookmark state over by number.
  */
 internal fun keepStoredChapters(desktop: List<SChapter>, stored: List<SChapter>): List<SChapter> {
     val listed = desktop.mapTo(HashSet()) { it.url }
-    val extra = stored.filter { it.url !in listed }
+    val listedNumbers = desktop.filter { it.chapter_number >= 0f }
+        .mapTo(HashSet()) { it.chapter_number to it.scanlator.orEmpty() }
+    val extra = stored.filter {
+        it.url !in listed && (it.chapter_number < 0f || (it.chapter_number to it.scanlator.orEmpty()) !in listedNumbers)
+    }
     if (extra.isEmpty()) return desktop
     val newestListed = desktop.maxOfOrNull { it.chapter_number } ?: -1f
     val (newer, older) = extra.partition { it.chapter_number >= 0f && it.chapter_number > newestListed }

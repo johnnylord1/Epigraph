@@ -88,8 +88,41 @@ class PortableManifestSyncTest {
         assertEquals(CoreReplicaSyncOutcome.APPLIED, synchronize(manifest(STORE_ONE)))
         assertEquals("TRUSTED", dependencies.comics(SERVER, PROFILE).single().trustState)
 
-        assertEquals(CoreReplicaSyncOutcome.APPLIED, synchronize(manifest(STORE_TWO)))
+        // The snapshot fingerprint covers the dependencies, so a new store is a new snapshot.
+        val moved = manifest(STORE_TWO).copy(snapshotFingerprint = "sha256:${"b".repeat(64)}")
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, synchronize(moved))
         assertEquals("APPROVAL_REQUIRED", dependencies.comics(SERVER, PROFILE).single().trustState)
+    }
+
+    @Test
+    fun `unchanged snapshot is not imported again until the reimport interval`() = runTest {
+        val titled = manifest(STORE_ONE).let { manifest ->
+            manifest.copy(works = manifest.works.map { it.copy(titleHint = "Core title") })
+        }
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, synchronize(titled))
+        val bindings = SqlDelightPortableBindingStore(database)
+        val portableId = PortableIdentityV3.workId(WORK_REF)
+        val imported = requireNotNull(bindings.work(WORK_REF))
+        bindings.upsertWork(imported.copy(titleHint = "Changed here"))
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, synchronize(titled, now = NOW + 1))
+        assertEquals("Changed here", bindings.work(WORK_REF)?.titleHint)
+
+        // A lost membership is repaired by importing the same snapshot again.
+        database.aethon_syncQueries.deleteStalePortableManifestMembershipsForEcosystem(
+            SERVER,
+            PROFILE,
+            Long.MAX_VALUE,
+            PortableEcosystem.SUWAYOMI.name,
+        )
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, synchronize(titled, now = NOW + 2))
+        assertEquals(listOf(portableId), bindings.pendingWorks(SERVER, PROFILE, 10).map { it.portableId })
+        assertEquals("Core title", bindings.work(WORK_REF)?.titleHint)
+
+        bindings.upsertWork(imported.copy(titleHint = "Changed again"))
+        val later = NOW + 2 + 6 * 60 * 60 * 1_000L
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, synchronize(titled, now = later))
+        assertEquals("Core title", bindings.work(WORK_REF)?.titleHint)
     }
 
     @Test

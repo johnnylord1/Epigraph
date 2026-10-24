@@ -465,6 +465,9 @@ CREATE TABLE aethon_core_lamport (
 selectIdentityByEntityId:
 SELECT * FROM aethon_content_identity WHERE entity_id = :entityId;
 
+selectContentIdentityReferences:
+SELECT entity_id, content_type, local_reference FROM aethon_content_identity;
+
 selectIdentityByLocalReference:
 SELECT * FROM aethon_content_identity
 WHERE content_type = :contentType AND local_reference = :localReference;
@@ -524,6 +527,9 @@ WHERE ecosystem = 'SUWAYOMI' AND source_id = :sourceId AND provider_key = :provi
 selectPortableWorkBindingByNovelRef:
 SELECT * FROM aethon_portable_work_binding
 WHERE ecosystem = 'LNREADER' AND plugin_id = :pluginId AND provider_key = :providerKey;
+
+selectAllPortableWorkBindings:
+SELECT * FROM aethon_portable_work_binding;
 
 selectPortableWorkBindingByLocalReference:
 SELECT * FROM aethon_portable_work_binding
@@ -726,6 +732,30 @@ WHERE server_id = :serverId
         AND binding.ecosystem = :ecosystem
   );
 
+countPortableManifestMembershipsForEcosystem:
+SELECT COUNT(*)
+FROM aethon_portable_manifest_work AS membership
+JOIN aethon_portable_work_binding AS binding ON binding.portable_id = membership.portable_id
+WHERE membership.server_id = :serverId
+  AND membership.profile_id = :profileId
+  AND binding.ecosystem = :ecosystem;
+
+-- Cheap fingerprint of the local comic library a catalog apply reconciles.
+selectComicLibrarySignature:
+SELECT
+    (SELECT COUNT(*) FROM mangas WHERE favorite = 1) AS favorites,
+    (SELECT TOTAL(_id) FROM mangas WHERE favorite = 1) AS favoriteIds,
+    (SELECT COUNT(*) FROM mangas_categories) AS assignments,
+    (SELECT TOTAL(manga_id * 65536 + category_id) FROM mangas_categories) AS assignmentIds,
+    (SELECT COUNT(*) FROM categories) AS categories,
+    (SELECT TOTAL(_id) FROM categories) AS categoryIds,
+    (
+        SELECT COUNT(*)
+        FROM aethon_core_replica_record
+        WHERE scope_id = :scopeId
+          AND entity_type IN ('comic.entry', 'comic.category', 'comic.category_assignment')
+    ) AS catalogRecords;
+
 insertBinding:
 INSERT INTO aethon_source_binding(
     binding_id, entity_id, ecosystem, repository, plugin_package,
@@ -769,6 +799,15 @@ JOIN aethon_content_identity AS identity ON identity.entity_id = binding.entity_
 WHERE binding.ecosystem = 'SUWAYOMI'
   AND binding.plugin_package <> 'unknown'
 ORDER BY binding.created_at, binding.entity_id;
+
+-- Current identity and local work row of every relink candidate, for one-pass relinking.
+selectSuwayomiRelinkStates:
+SELECT DISTINCT identity.entity_id, identity.local_reference, mangas.source, mangas.url
+FROM aethon_source_binding AS binding
+JOIN aethon_content_identity AS identity ON identity.entity_id = binding.entity_id
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE binding.ecosystem = 'SUWAYOMI'
+  AND binding.plugin_package <> 'unknown';
 
 -- A Core-backed row may be the only local representation until its exact native source is
 -- available. Reuse it during portable hydration instead of inserting a second favorite.
@@ -1617,6 +1656,92 @@ SELECT EXISTS(
     WHERE coverage_type = 'ALL' OR scope_id = :scopeId
 );
 
+-- Every comic favorite with what the library repair needs, in one pass instead of three lookups per
+-- favorite: its identity count, its manga identity and its latest bound portable binding.
+selectComicLibraryRepairRows:
+SELECT M._id AS manga_id, M.source, M.url,
+    (SELECT count(*) FROM aethon_content_identity AS IC
+     WHERE IC.content_type IN ('MANGA', 'NOVEL') AND IC.local_reference = CAST(M._id AS TEXT)) AS identity_count,
+    I.entity_id AS manga_entity_id,
+    B.portable_id AS binding_portable_id,
+    B.ecosystem AS binding_ecosystem
+FROM mangas AS M
+-- UNIQUE(content_type, local_reference) keeps this join to at most one row per favorite.
+LEFT JOIN aethon_content_identity AS I
+    ON I.content_type = 'MANGA' AND I.local_reference = CAST(M._id AS TEXT)
+LEFT JOIN aethon_portable_work_binding AS B ON B.portable_id = (
+    SELECT B2.portable_id FROM aethon_portable_work_binding AS B2
+    WHERE B2.local_reference = CAST(M._id AS TEXT) AND B2.resolution_state = 'BOUND'
+    ORDER BY B2.updated_at DESC
+    LIMIT 1
+)
+WHERE M.favorite = 1;
+
+-- The ids isEntityKnownToCore matches directly, read once for a whole scope and entity type:
+-- the Core holds or deleted them, or a local command for them is still in flight.
+selectCoreHeldEntityIds:
+SELECT entity_id FROM aethon_core_replica_record WHERE scope_id = :scopeId AND entity_type = :entityType
+UNION
+SELECT entity_id FROM aethon_core_replica_tombstone WHERE scope_id = :scopeId AND entity_type = :entityType;
+
+selectInFlightEntityIds:
+SELECT entity_id FROM aethon_sync_outbox WHERE scope_id = :scopeId AND entity_type = :entityType
+UNION
+SELECT entity_id FROM aethon_sync_replica_wait WHERE scope_id = :scopeId AND entity_type = :entityType
+UNION
+SELECT canonical_entity_id FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId AND entity_type = :entityType AND canonical_entity_id IS NOT NULL;
+
+selectEntityAliases:
+SELECT alias_entity_id, canonical_entity_id FROM aethon_entity_alias;
+
+-- Whole-table forms of selectAethonCoreMangaBySourceBinding and
+-- selectUnboundPortableComicIdsByCoreManga, so a pass over every tracker row resolves each one
+-- from memory instead of scanning the source bindings once per row.
+selectAethonCoreMangaSourceKeys:
+SELECT DISTINCT binding.source_id, binding.normalized_url, mangas._id AS manga_id
+FROM aethon_source_binding AS binding
+JOIN aethon_content_identity AS identity ON identity.entity_id = binding.entity_id
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE binding.ecosystem = 'SUWAYOMI'
+  AND mangas.source = :coreSourceId;
+
+selectUnboundPortableComicIdsByCoreMangas:
+SELECT DISTINCT mangas._id AS manga_id, work.portable_id
+FROM aethon_portable_work_binding AS work
+JOIN aethon_source_binding AS binding
+  ON binding.ecosystem = 'SUWAYOMI'
+  AND binding.source_id = work.source_id
+  AND binding.normalized_url = work.provider_key
+JOIN aethon_content_identity AS identity ON identity.entity_id = binding.entity_id
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE work.ecosystem = 'SUWAYOMI'
+  AND work.resolution_state <> 'BOUND'
+  AND mangas.source = :coreSourceId;
+
+selectFavoriteMangaIds:
+SELECT _id FROM mangas WHERE favorite = 1;
+
+selectCoreReplicaTombstoneVersionsByType:
+SELECT entity_id, server_version FROM aethon_core_replica_tombstone
+WHERE scope_id = :scopeId AND entity_type = :entityType;
+
+-- Entities of one type that have an outbox command or a replica wait; only these can be blocked.
+selectOutboxOrWaitEntityIdsForType:
+SELECT entity_id FROM aethon_sync_outbox
+WHERE scope_id = :scopeId AND entity_type = :entityType
+UNION
+SELECT entity_id FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId AND entity_type = :entityType
+UNION
+SELECT canonical_entity_id FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId AND entity_type = :entityType AND canonical_entity_id IS NOT NULL;
+
+selectCoreReplicaRecordVersionsByType:
+SELECT entity_id, record_json, server_version FROM aethon_core_replica_record
+WHERE scope_id = :scopeId AND entity_type = :entityType
+ORDER BY entity_id;
+
 -- Whether the paired Core holds, removed, or is about to receive this entity.
 isEntityKnownToCore:
 SELECT EXISTS(
@@ -1646,7 +1771,8 @@ SELECT EXISTS(
 -- paired Core neither holds, removed, nor is about to receive. A chapter without a portable binding
 -- is listed until its first publish creates one. Oldest reads first.
 selectComicChapterProgressBackfill:
-SELECT DISTINCT C._id AS chapter_id, C.manga_id, coalesce(H.history_last_read, 0) AS last_read_at, C.date_fetch
+SELECT DISTINCT C._id AS chapter_id, C.manga_id, coalesce(H.history_last_read, 0) AS last_read_at, C.date_fetch,
+    C.url, C.read, C.bookmark, C.last_page_read
 FROM aethon_portable_work_binding AS W
 -- Find the manga by primary key. Comparing text against CAST(C.manga_id) made SQLite pair every work
 -- with every favorite before reaching the chapters (minutes on a large library).

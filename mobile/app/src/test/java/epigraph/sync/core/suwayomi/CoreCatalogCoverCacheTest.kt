@@ -3,6 +3,8 @@ package epigraph.sync.core.suwayomi
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import java.nio.file.Path
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -117,6 +119,60 @@ class CoreCatalogCoverCacheTest {
 
         assertEquals(listOf(first, second), requested)
         assertTrue(store.target(second).isFile)
+    }
+
+    @Test
+    fun `stops at the time budget and resumes the remaining covers on the next pass`() = runTest {
+        val references = (21L..24L).map(::reference)
+        var now = 0L
+        var storedCursor = 0
+        val requested = mutableListOf<String>()
+        val store = object : CoreCatalogCoverStore {
+            override fun target(reference: String) = directory.resolve(reference.hashCode().toString()).toFile()
+            override fun loadCursor() = storedCursor
+            override fun saveCursor(cursor: Int) {
+                storedCursor = cursor
+            }
+        }
+        val cache = CoreCatalogCoverCache(
+            client = CoreCoverByteSource { reference ->
+                requested += reference
+                now += 1_000
+                CoreHttpResult.Failure(404, null)
+            },
+            store = store,
+            budgetMillis = 2_000,
+            elapsedMillis = { now },
+        )
+
+        cache.materialize(references.map(::CoreCatalogCoverReference))
+        assertEquals(references.take(2), requested)
+
+        cache.materialize(references.map(::CoreCatalogCoverReference))
+        assertEquals(references, requested)
+    }
+
+    @Test
+    fun `background sink returns at once and runs only the latest waiting request`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val passes = mutableListOf<List<String>>()
+        val sink = BackgroundCoreCatalogCoverSink(
+            delegate = CoreCatalogCoverSink { references ->
+                passes += references.map { it.reference }
+                if (passes.size == 1) release.await()
+            },
+            scope = backgroundScope,
+        )
+
+        sink.materialize(listOf(CoreCatalogCoverReference("one")))
+        runCurrent()
+        sink.materialize(listOf(CoreCatalogCoverReference("two")))
+        sink.materialize(listOf(CoreCatalogCoverReference("three")))
+        assertEquals(listOf(listOf("one")), passes)
+
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(listOf("one"), listOf("three")), passes)
     }
 
     private fun reference(id: Long) =

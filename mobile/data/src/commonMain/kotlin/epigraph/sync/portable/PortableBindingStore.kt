@@ -292,6 +292,10 @@ class SqlDelightPortableBindingStore(
             .mapNotNull { portableChapterId -> chapter(portableChapterId) }
     }
 
+    /** Every work binding at once, for passes that would otherwise look rows up one by one. */
+    fun allWorks(): List<PortableWorkBindingRecord> =
+        database.aethon_syncQueries.selectAllPortableWorkBindings().executeAsList().map(::mapWork)
+
     override fun workByLocalReference(localReference: String): PortableWorkBindingRecord? {
         requireIdentifier(localReference, "local reference")
         return database.aethon_syncQueries.selectPortableWorkBindingByLocalReference(localReference)

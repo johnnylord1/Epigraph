@@ -163,6 +163,33 @@ class CoreChapterListStageTest {
     }
 
     @Test
+    fun `titles the desktop does not hold wait before its library is read again`() = runTest {
+        val cooldown = MemoryCooldown()
+        var libraryReads = 0
+        val catalog = object : CoreChapterCatalog {
+            val inner = FakeCatalog(listed = setOf(1))
+            override suspend fun <T> withReader(block: suspend (CoreChapterCatalogReader) -> T): T? =
+                inner.withReader { reader ->
+                    block(
+                        object : CoreChapterCatalogReader by reader {
+                            override suspend fun libraryIds(): Map<CoreWorkKey, Long> {
+                                libraryReads++
+                                return reader.libraryIds()
+                            }
+                        },
+                    )
+                }
+        }
+        val stage = stage(catalog, cooldown)
+
+        assertEquals(mapOf(1L to ChapterFetchOutcome.ADDED), stage.run(listOf(target(1), target(9))) { false })
+        assertEquals(NOW + CoreChapterListStage.NOT_HELD_COOLDOWN_MILLIS, cooldown.until[9L])
+
+        assertEquals(emptyMap<Long, ChapterFetchOutcome>(), stage.run(listOf(target(9))) { false })
+        assertEquals(1, libraryReads)
+    }
+
+    @Test
     fun `the run deadline stops asking the desktop`() = runTest {
         val catalog = FakeCatalog(listed = setOf(1, 2, 3))
         val outcomes = stage(catalog).run((1L..3L).map(::target)) { true }
@@ -180,6 +207,29 @@ class CoreChapterListStageTest {
 
         assertEquals(listOf("/c/4", "/c/3", "/c/2", "/c/1", "/c/x"), merged.map { it.url })
         assertTrue(keepStoredChapters(desktop, desktop.take(1)) === desktop)
+    }
+
+    @Test
+    fun `a stored chapter at an older address is replaced by the desktop copy`() {
+        val desktop = listOf(chapter("https://new.example/c/3", 3f), chapter("https://new.example/c/2", 2f))
+        val stored = listOf(
+            chapter("https://old.example/c/3", 3f),
+            chapter("https://old.example/c/2", 2f),
+            chapter("https://old.example/c/2-other", 2f).apply { scanlator = "Other group" },
+            chapter("https://old.example/c/1", 1f),
+        )
+
+        val merged = keepStoredChapters(desktop, stored)
+
+        assertEquals(
+            listOf(
+                "https://new.example/c/3",
+                "https://new.example/c/2",
+                "https://old.example/c/2-other",
+                "https://old.example/c/1",
+            ),
+            merged.map { it.url },
+        )
     }
 
     @Test

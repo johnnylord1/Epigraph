@@ -495,6 +495,30 @@ class EpigraphReaderProgressRouterTest {
         assertTrue(queuedMutations().isEmpty())
     }
 
+    @Test
+    fun `backfill leaves out the chapters its filter withholds`() = runTest {
+        val (mangaId, chapterId) = bindReadComicChapter()
+        coverComicScope()
+        val router = backfillRouter()
+        val offered = mutableListOf<ComicBackfillCandidate>()
+        val holdAll = ComicProgressBackfillFilter { candidates ->
+            offered += candidates
+            candidates.mapTo(HashSet()) { it.chapterId }
+        }
+
+        // The title's reader position still goes out; only the withheld chapter state waits.
+        assertEquals(1, router.backfillComicProgress(filter = holdAll))
+        assertTrue(queuedMutations().none { it.entity_type == "comic.chapter_state" })
+        val candidate = offered.single()
+        assertEquals(mangaId, candidate.mangaId)
+        assertEquals(chapterId, candidate.chapterId)
+        assertTrue(candidate.read)
+        assertEquals(5, candidate.lastPageRead)
+
+        assertEquals(1, router.backfillComicProgress())
+        assertEquals(1, queuedMutations().count { it.entity_type == "comic.chapter_state" })
+    }
+
     private fun bindReadComicChapter(): Pair<Long, Long> {
         val mangaId = insertManga()
         val chapterId = insertChapter(mangaId)

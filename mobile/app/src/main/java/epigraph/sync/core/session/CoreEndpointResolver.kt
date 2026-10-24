@@ -10,6 +10,7 @@ import epigraph.sync.core.http.EpigraphCoreHttpClient
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.pairing.BootstrapBundleParser
 import epigraph.sync.core.pairing.transport.EpigraphCoreTlsClientFactory
+import eu.kanade.tachiyomi.BuildConfig
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -34,7 +35,7 @@ class AndroidCoreEndpointResolver(
 
     override suspend fun resolve(session: CoreCredentialSession): CoreEndpoint {
         val candidates = pairedEndpointCandidates(session)
-        Log.w(LOG_TAG, "endpoint candidates: ${candidates.joinToString()}")
+        if (BuildConfig.DEBUG) Log.d(LOG_TAG, "endpoint candidates: ${candidates.joinToString()}")
         candidates.forEachIndexed { index, origin ->
             if (probe(origin, session)) return CoreEndpoint(origin, discovered = false)
             Log.w(LOG_TAG, "paired endpoint probe failed: candidate=${index + 1}")

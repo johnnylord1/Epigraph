@@ -5,6 +5,7 @@ import yokai.data.memoColumnAdapter
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import kotlinx.coroutines.Dispatchers
+import kotlinx.serialization.json.JsonObject
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -34,6 +35,59 @@ class SqlDelightCoreSourceRelinkStoreTest {
         assertEquals("ext.example", packageFor("entity-a"))
         assertEquals("unknown", packageFor("entity-b"))
         assertEquals("unknown", packageFor("entity-legacy"))
+    }
+
+    @Test
+    fun `a pass moves a work once and then reports it as already bound`() = runTest {
+        val mangaId = insertManga(source = 99, url = "/core/a")
+        database.aethon_syncQueries.upsertIdentity("entity-a", "MANGA", mangaId.toString(), 1, 1)
+        database.aethon_syncQueries.insertBinding(
+            bindingId = "binding-entity-a",
+            entityId = "entity-a",
+            ecosystem = "SUWAYOMI",
+            repository = "core-server-a",
+            pluginPackage = "ext.example",
+            sourceId = "10",
+            normalizedUrl = "/a",
+            isPrimary = true,
+            createdAt = 1,
+        )
+        val candidates = store.candidates()
+        val missing = candidates.single().copy(entityId = "entity-gone")
+
+        assertEquals(CoreSourceRelinkCount(bound = 1, moved = 1), store.relinkAll(candidates + missing))
+        val manga = database.mangasQueries.findById(mangaId).executeAsOne()
+        assertEquals(10L, manga.source)
+        assertEquals("/a", manga.url)
+        assertEquals(CoreSourceRelinkCount(bound = 1, moved = 0), store.relinkAll(candidates + missing))
+    }
+
+    private fun insertManga(source: Long, url: String): Long {
+        database.mangasQueries.insert(
+            source = source,
+            url = url,
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Comic",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = null,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = null,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        return database.mangasQueries.selectLastInsertedRowId().executeAsOne()
     }
 
     private fun bind(entityId: String, serverId: String, status: String, url: String) {

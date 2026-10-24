@@ -76,9 +76,14 @@ class ExtensionReconciliationCoordinator(
     private val createExtensionRepo: CreateExtensionRepo,
     private val getExtensionRepo: GetExtensionRepo,
     private val portableTrust: PortableDependencyTrustCoordinator? = null,
+    private val elapsedMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val installationMutex = Mutex()
     private val repositoryMutex = Mutex()
+
+    /** When this process last read the repository indexes, and which repositories it read. */
+    @Volatile private var catalogRefreshedAt: Long? = null
+    @Volatile private var catalogRefreshedRepositories: Set<String> = emptySet()
     // Koin creates this coordinator while Application.onCreate is still on the UI thread. A
     // cached inventory can be large and SQLite may also be busy with bootstrap hydration, so a
     // synchronous read here can turn cold start into an ANR. Load persisted UI state explicitly
@@ -94,13 +99,33 @@ class ExtensionReconciliationCoordinator(
         // Repository refresh is best-effort. The desktop inventory is still authoritative for
         // parity, and installed/unavailable states must remain visible while the mobile catalog
         // is offline instead of silently suppressing the whole reconciliation report.
-        if (compareRepositories) extensionManager.findAvailableExtensions()
+        if (compareRepositories) refreshCatalogIfStale()
         val report = resolve(inventory, includeRepositoryCatalog = compareRepositories)
         relink(report)
         val shouldNotify = store.save(report)
         _state.value = _state.value.copy(report = report)
         if (shouldNotify && notifier.show(report)) {
             store.markNotified(report)
+        }
+    }
+
+    /**
+     * Every sync used to download every repository index again, which cost seconds per run. The
+     * catalog read is reused for [CATALOG_REFRESH_INTERVAL_MS] unless it is empty or the configured
+     * repositories changed since it was read.
+     */
+    private suspend fun refreshCatalogIfStale() {
+        val repositories = getExtensionRepo.getAll().mapTo(mutableSetOf()) { it.baseUrl }
+        val refreshedAt = catalogRefreshedAt
+        val now = elapsedMillis()
+        val fresh = refreshedAt != null &&
+            now - refreshedAt < CATALOG_REFRESH_INTERVAL_MS &&
+            repositories == catalogRefreshedRepositories &&
+            extensionManager.availableExtensionsFlow.value.isNotEmpty()
+        if (fresh) return
+        if (extensionManager.findAvailableExtensions()) {
+            catalogRefreshedAt = now
+            catalogRefreshedRepositories = repositories
         }
     }
 
@@ -664,6 +689,7 @@ class ExtensionReconciliationCoordinator(
         val INSTALLER_ABANDONED_MS = TimeUnit.SECONDS.toMillis(6)
         val INSTALLED_FLOW_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(15)
         const val DEVICE_STATE_DEBOUNCE_MS = 500L
+        val CATALOG_REFRESH_INTERVAL_MS = TimeUnit.MINUTES.toMillis(15)
     }
 }
 

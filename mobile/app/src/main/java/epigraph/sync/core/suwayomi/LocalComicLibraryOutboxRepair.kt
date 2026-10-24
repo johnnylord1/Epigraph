@@ -39,42 +39,52 @@ class LocalComicLibraryOutboxRepair(
 
         val candidates = database.await {
             val replicaCovered = aethon_syncQueries.hasCoreReplicaCoverageForScope(scopeId).executeAsOne()
-            mangasQueries.findFavorites().executeAsList().mapNotNull { manga ->
-                val identities = sequenceOf("MANGA", "NOVEL").mapNotNull { contentType ->
-                    aethon_syncQueries
-                        .selectIdentityByLocalReference(contentType, manga._id.toString())
-                        .executeAsOneOrNull()
-                }.toList()
-                val republish = identities.singleOrNull()?.content_type == "MANGA" && replicaCovered &&
-                    aethon_syncQueries.selectPortableWorkBindingByLocalReference(manga._id.toString())
-                        .executeAsOneOrNull()
-                        ?.takeIf { it.ecosystem == "SUWAYOMI" }
-                        ?.let { binding ->
-                            !aethon_syncQueries.isEntityKnownToCore(
-                                scopeId,
-                                EpigraphCoreEntityType.COMIC_ENTRY,
-                                binding.portable_id,
-                            ).executeAsOne()
-                        } == true
-                if (identities.isNotEmpty() && !republish) return@mapNotNull null
-                val categoryIds = categoriesQueries.findAllByMangaId(manga._id)
-                    .executeAsList()
-                    .mapTo(linkedSetOf()) { it._id }
-                Candidate(manga._id, manga.source, manga.url, categoryIds, republish)
+            // Read once for the whole library: one lookup per favorite took most of a sync on a
+            // large library. The sets mirror isEntityKnownToCore for comic entries.
+            val known by lazy {
+                val entityType = EpigraphCoreEntityType.COMIC_ENTRY
+                val held = aethon_syncQueries.selectCoreHeldEntityIds(scopeId, entityType).executeAsList().toHashSet()
+                val inFlight = aethon_syncQueries.selectInFlightEntityIds(scopeId, entityType).executeAsList()
+                    .mapNotNullTo(HashSet()) { it }
+                val aliases = aethon_syncQueries.selectEntityAliases().executeAsList()
+                    .associate { it.alias_entity_id to it.canonical_entity_id }
+                KnownEntities(held, inFlight, aliases)
+            }
+            aethon_syncQueries.selectComicLibraryRepairRows().executeAsList().mapNotNull { row ->
+                val identityEntityId = row.manga_entity_id?.takeIf { row.identity_count == 1L }
+                // The catalog sync stores the desktop's entries under the Suwayomi work identity,
+                // so an entry the desktop holds is known by either id and is never sent back.
+                val republish = identityEntityId != null && replicaCovered &&
+                    row.binding_ecosystem == "SUWAYOMI" &&
+                    sequenceOf(row.binding_portable_id!!, identityEntityId).distinct().none(known::contains)
+                if (row.identity_count > 0 && !republish) return@mapNotNull null
+                Candidate(row.manga_id, row.source, row.url, republish)
             }
         }
 
-        var emitted = 0
-        candidates.forEach { candidate ->
-            // Extension sources register asynchronously on a cold start.
+        // Extension sources register asynchronously on a cold start.
+        val publishable = candidates.mapNotNull { candidate ->
             val source = sources.awaitExtensionSource(candidate.sourceId)
-            if (source !is HttpSource || source is NovelSource) return@forEach
+            if (source !is HttpSource || source is NovelSource) null else candidate to source
+        }
+        if (publishable.isEmpty()) {
+            return 0
+        }
+        val categoryIds = database.await {
+            publishable.associate { (candidate, _) ->
+                candidate.mangaId to categoriesQueries.findAllByMangaId(candidate.mangaId)
+                    .executeAsList()
+                    .mapTo(linkedSetOf()) { it._id }
+            }
+        }
+        var emitted = 0
+        publishable.forEach { (candidate, source) ->
             try {
                 val result = router.setMembership(
                     mutation = LibraryMembershipMutation(
                         localMangaId = candidate.mangaId,
                         inLibrary = true,
-                        categoryIds = candidate.categoryIds,
+                        categoryIds = categoryIds.getValue(candidate.mangaId),
                         origin = EpigraphMutationOrigin.LOCAL_USER,
                         portableWorkRef = PortableWorkRef.Comic(
                             sourceId = DecimalSourceId(source.id.toString()),
@@ -100,7 +110,15 @@ class LocalComicLibraryOutboxRepair(
         val mangaId: Long,
         val sourceId: Long,
         val providerKey: String,
-        val categoryIds: Set<Long>,
         val republish: Boolean,
     )
+
+    private class KnownEntities(
+        private val held: Set<String>,
+        private val inFlight: Set<String>,
+        private val aliases: Map<String, String>,
+    ) {
+        fun contains(entityId: String): Boolean =
+            entityId in held || aliases[entityId] in held || entityId in inFlight
+    }
 }

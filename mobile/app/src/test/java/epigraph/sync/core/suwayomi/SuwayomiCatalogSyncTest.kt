@@ -19,6 +19,7 @@ import epigraph.sync.core.work.CompositeCoreReplicaSync
 import epigraph.sync.core.work.CoreReplicaSyncPort
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -595,9 +596,81 @@ class SuwayomiCatalogSyncTest {
     fun `catalog reconciles more than six hundred works without eager chapter requests`() = runTest {
         val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
         var chapterRequests = 0
-        val total = 601L
-        val pages = SuwayomiCatalogPageSource { _, operation, pageSize, offset, _ ->
+        val pages = largeLibraryPages(total = 601L) { operation, _ ->
             if (operation == SuwayomiCatalogOperation.CHAPTERS) chapterRequests += 1
+        }
+
+        val outcome = SuwayomiCatalogSync(
+            pages = pages,
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 100,
+        ).synchronize(session, capabilities(), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        assertEquals(601, database.mangasQueries.findFavorites().executeAsList().size)
+        assertEquals(0, chapterRequests)
+    }
+
+    @Test
+    fun `library pages after the first are read a few at a time`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        var inFlight = 0
+        var maxInFlight = 0
+        val pages = largeLibraryPages(total = 901L) { operation, _ ->
+            if (operation != SuwayomiCatalogOperation.LIBRARY) return@largeLibraryPages
+            inFlight += 1
+            maxInFlight = maxOf(maxInFlight, inFlight)
+            delay(100)
+            inFlight -= 1
+        }
+
+        val outcome = SuwayomiCatalogSync(
+            pages = pages,
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 100,
+        ).synchronize(session, capabilities(), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        assertEquals(901, database.mangasQueries.findFavorites().executeAsList().size)
+        assertTrue(maxInFlight in 2..SuwayomiCatalogSync.PARALLEL_PAGE_READS, "max in flight: $maxInFlight")
+    }
+
+    @Test
+    fun `a failed later library page retries without demoting library rows`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        SuwayomiCatalogSync(
+            pages = largeLibraryPages(total = 301L),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 100,
+        ).synchronize(session, capabilities(), 1000)
+
+        val healthy = largeLibraryPages(total = 301L)
+        val failing = SuwayomiCatalogPageSource { session, operation, pageSize, offset, mangaId ->
+            if (operation == SuwayomiCatalogOperation.LIBRARY && offset == 200L) {
+                CoreHttpResult.Failure(statusCode = 503, errorEnvelope = null)
+            } else {
+                healthy.read(session, operation, pageSize, offset, mangaId)
+            }
+        }
+        val outcome = SuwayomiCatalogSync(
+            pages = failing,
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 100,
+        ).synchronize(session, capabilities(), 2000)
+
+        assertEquals(CoreReplicaSyncOutcome.RETRY, outcome)
+        assertEquals(301, database.mangasQueries.findFavorites().executeAsList().size)
+    }
+
+    private fun largeLibraryPages(
+        total: Long,
+        onRead: suspend (SuwayomiCatalogOperation, Long) -> Unit = { _, _ -> },
+    ) = SuwayomiCatalogPageSource { _, operation, pageSize, offset, _ ->
+            onRead(operation, offset)
             val nodes = when (operation) {
                 SuwayomiCatalogOperation.LIBRARY -> (offset until minOf(offset + pageSize, total)).map { id ->
                     buildJsonObject {
@@ -638,18 +711,6 @@ class SuwayomiCatalogSyncTest {
                 ),
             )
         }
-
-        val outcome = SuwayomiCatalogSync(
-            pages = pages,
-            database = handler,
-            projection = EpigraphCoreDomainProjection(),
-            pageSize = 100,
-        ).synchronize(session, capabilities(), 1000)
-
-        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
-        assertEquals(601, database.mangasQueries.findFavorites().executeAsList().size)
-        assertEquals(0, chapterRequests)
-    }
 
     @Test
     fun `catalog retries without reading pages while desktop projection is pending`() = runTest {
@@ -750,6 +811,65 @@ class SuwayomiCatalogSyncTest {
 
         assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
         assertEquals(2, database.mangasQueries.findFavorites().executeAsList().size)
+    }
+
+    @Test
+    fun `catalog applies while the desktop applies only chapter progress`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            projectionStatus = FixtureStatus(
+                CoreHttpResult.Success(
+                    CoreSyncStatus(
+                        scopeId = "comics:profile:$PROFILE",
+                        currentServerVersion = 1,
+                        minReplayableServerVersion = 0,
+                        comicAuthorityMode = "suwayomi-confirmed-v1",
+                        suwayomiProjectionPending = 40,
+                        suwayomiProjectionBlocked = 0,
+                        suwayomiProjectionInFlight = 8,
+                        ready = false,
+                        suwayomiCatalogProjectionPending = 0,
+                    ),
+                ),
+            ),
+        ).synchronize(session, capabilities().copy(supportsSyncStatusV1 = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        assertEquals(2, database.mangasQueries.findFavorites().executeAsList().size)
+    }
+
+    @Test
+    fun `catalog retries while the desktop applies a catalog change`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            projectionStatus = FixtureStatus(
+                CoreHttpResult.Success(
+                    CoreSyncStatus(
+                        scopeId = "comics:profile:$PROFILE",
+                        currentServerVersion = 1,
+                        minReplayableServerVersion = 0,
+                        comicAuthorityMode = "suwayomi-confirmed-v1",
+                        suwayomiProjectionPending = 1,
+                        suwayomiProjectionBlocked = 0,
+                        suwayomiProjectionInFlight = 0,
+                        ready = false,
+                        suwayomiCatalogProjectionPending = 1,
+                    ),
+                ),
+            ),
+        ).synchronize(session, capabilities().copy(supportsSyncStatusV1 = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.RETRY, outcome)
     }
 
     @Test
@@ -1495,10 +1615,76 @@ class SuwayomiCatalogSyncTest {
         accessTokenUtf8 = byteArrayOf(1, 2, 3),
     )
 
+    @Test
+    fun `unchanged catalog over an unchanged library is not applied again`() = runTest {
+        val stamps = object : CatalogApplyStampStore {
+            val values = mutableMapOf<String, CatalogApplyStamp>()
+            override fun get(key: String) = values[key]
+            override fun put(key: String, stamp: CatalogApplyStamp) { values[key] = stamp }
+            override fun remove(key: String) { values.remove(key) }
+        }
+        val sync = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            stamps = stamps,
+        )
+        fun titles() = database.mangasQueries.findFavorites().executeAsList().map { it.title }.sorted()
+
+        sync.synchronize(session, capabilities(), 1000)
+        assertEquals(listOf("Suwayomi One", "Suwayomi Two"), titles())
+        assertEquals(1, stamps.values.size)
+
+        driver.execute(null, "UPDATE mangas SET title = 'Local edit' WHERE title = 'Suwayomi One'", 0)
+        sync.synchronize(session, capabilities(), 2000)
+        assertEquals(listOf("Local edit", "Suwayomi Two"), titles())
+
+        // A changed local library is reconciled even though the catalog is the same.
+        driver.execute(null, "UPDATE mangas SET favorite = 0 WHERE title = 'Local edit'", 0)
+        sync.synchronize(session, capabilities(), 3000)
+        assertEquals(listOf("Suwayomi One", "Suwayomi Two"), titles())
+
+        driver.execute(null, "UPDATE mangas SET title = 'Local edit' WHERE title = 'Suwayomi One'", 0)
+        sync.synchronize(session, capabilities(), 3000 + SuwayomiCatalogSync.REAPPLY_INTERVAL_MS)
+        assertEquals(listOf("Suwayomi One", "Suwayomi Two"), titles())
+    }
+
+    @Test
+    fun `a changed catalog writes only the titles that changed until the next full apply`() = runTest {
+        val stamps = object : CatalogApplyStampStore {
+            val values = mutableMapOf<String, CatalogApplyStamp>()
+            override fun get(key: String) = values[key]
+            override fun put(key: String, stamp: CatalogApplyStamp) { values[key] = stamp }
+            override fun remove(key: String) { values.remove(key) }
+        }
+        fun sync(secondTitle: String) = SuwayomiCatalogSync(
+            pages = FixturePages(secondTitle = secondTitle),
+            database = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            stamps = stamps,
+        )
+        fun titles() = database.mangasQueries.findFavorites().executeAsList().map { it.title }.sorted()
+
+        sync("Suwayomi Two").synchronize(session, capabilities(), 1000)
+        driver.execute(null, "UPDATE mangas SET title = 'Local edit' WHERE title = 'Suwayomi One'", 0)
+
+        sync("Renamed on desktop").synchronize(session, capabilities(), 2000)
+        assertEquals(listOf("Local edit", "Renamed on desktop"), titles())
+        assertEquals(1000, stamps.values.values.single().appliedAt)
+
+        sync("Renamed again").synchronize(session, capabilities(), 1000 + SuwayomiCatalogSync.REAPPLY_INTERVAL_MS)
+        assertEquals(listOf("Renamed again", "Suwayomi One"), titles())
+    }
+
     private class FixturePages(
         private val includeSecondManga: Boolean = true,
         private val includeCategoryAssignment: Boolean = true,
         private val categoryId: Long = 55,
+        private val secondTitle: String = "Suwayomi Two",
     ) : SuwayomiCatalogPageSource {
         override suspend fun read(
             session: CoreCredentialSession,
@@ -1510,7 +1696,7 @@ class SuwayomiCatalogSyncTest {
             val nodes = when (operation) {
                 SuwayomiCatalogOperation.LIBRARY -> when (offset) {
                     0L -> listOf(manga(7, "Suwayomi One"))
-                    else -> if (includeSecondManga) listOf(manga(8, "Suwayomi Two")) else emptyList()
+                    else -> if (includeSecondManga) listOf(manga(8, secondTitle)) else emptyList()
                 }
                 SuwayomiCatalogOperation.CATEGORIES -> listOf(
                     buildJsonObject {

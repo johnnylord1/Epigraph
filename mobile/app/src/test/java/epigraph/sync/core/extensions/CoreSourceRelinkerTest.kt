@@ -31,7 +31,7 @@ class CoreSourceRelinkerTest {
         val result = relinker.relinkAvailable()
 
         assertEquals(listOf("ready"), applied)
-        assertEquals(CoreSourceRelinkResult(observed = 2, relinked = 1, pending = 1), result)
+        assertEquals(CoreSourceRelinkResult(observed = 2, relinked = 1, pending = 1, moved = 1), result)
     }
 
     @Test

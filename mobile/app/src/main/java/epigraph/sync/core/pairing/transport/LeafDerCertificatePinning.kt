@@ -4,11 +4,13 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSession
 import javax.net.ssl.X509TrustManager
 import okhttp3.Authenticator
 import okhttp3.CertificatePinner
+import okhttp3.ConnectionPool
 import okhttp3.CookieJar
 import okhttp3.EventListener
 import okhttp3.OkHttpClient
@@ -143,5 +145,23 @@ class EpigraphCoreTlsClientFactory(
 ) {
     private val delegate = PinnedPairingClientFactory(baseClient)
 
-    fun create(tlsCertSha256: String): OkHttpClient = delegate.create(tlsCertSha256)
+    // A new socket factory per call made OkHttp see a new address each time, so no Core request
+    // reused a connection and every page of a sync paid a full TLS handshake. The client is kept
+    // per pinned certificate; its own short-lived pool stays under the Core's idle timeout, since
+    // a connection the Core already closed is not retried.
+    @Volatile
+    private var cached: Pair<String, OkHttpClient>? = null
+
+    fun create(tlsCertSha256: String): OkHttpClient {
+        cached?.takeIf { it.first == tlsCertSha256 }?.let { return it.second }
+        return delegate.create(tlsCertSha256).newBuilder()
+            .connectionPool(ConnectionPool(MAX_IDLE_CONNECTIONS, KEEP_ALIVE_SECONDS, TimeUnit.SECONDS))
+            .build()
+            .also { cached = tlsCertSha256 to it }
+    }
+
+    private companion object {
+        const val MAX_IDLE_CONNECTIONS = 4
+        const val KEEP_ALIVE_SECONDS = 15L
+    }
 }

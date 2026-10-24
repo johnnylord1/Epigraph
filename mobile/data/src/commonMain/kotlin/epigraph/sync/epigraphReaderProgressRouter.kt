@@ -57,6 +57,25 @@ data class ChapterStateMutationResult(
     val emittedCommandCount: Int,
 )
 
+/** A local comic chapter whose reading progress the backfill is about to publish. */
+data class ComicBackfillCandidate(
+    val mangaId: Long,
+    val chapterId: Long,
+    val url: String,
+    val read: Boolean,
+    val bookmarked: Boolean,
+    val lastPageRead: Long,
+)
+
+/** Picks the backfill candidates to leave out of this run, such as progress the desktop already holds. */
+fun interface ComicProgressBackfillFilter {
+    suspend fun withheld(candidates: List<ComicBackfillCandidate>): Set<Long>
+
+    companion object {
+        val NONE = ComicProgressBackfillFilter { emptySet() }
+    }
+}
+
 /**
  * Bridges the existing chapter reader to the Epigraph protocol without changing the reader's
  * domain semantics. If a source/chapter has not been assigned a stable Epigraph binding yet, the
@@ -458,20 +477,33 @@ class EpigraphReaderProgressRouter(
      * Every write is dated when the chapter was last read here (when it was fetched if it was never
      * opened in the reader), so Core keeps whichever device changed the chapter last. Waits until
      * the Core's snapshot has arrived, since that is what tells which chapters it already holds;
-     * titles without a bound portable identity wait for it. Returns the number of commands queued.
+     * titles without a bound portable identity wait for it. [filter] holds chapters back for this
+     * run, such as progress the desktop's Suwayomi already holds and would only receive as an echo.
+     * Returns the number of commands queued.
      */
-    suspend fun backfillComicProgress(maxCommands: Int = BACKFILL_MAX_COMMANDS): Int {
+    suspend fun backfillComicProgress(
+        maxCommands: Int = BACKFILL_MAX_COMMANDS,
+        filter: ComicProgressBackfillFilter = ComicProgressBackfillFilter.NONE,
+    ): Int {
         val scopes = pairedScopes() ?: return 0
         val comicScope = scopes.comics.value
-        val (chapters, histories) = coordinator.readLocal {
+        val (candidates, histories) = coordinator.readLocal {
             if (!aethon_syncQueries.hasCoreReplicaCoverageForScope(comicScope).executeAsOne()) {
-                return@readLocal emptyList<BackfillRow>() to emptyList<BackfillRow>()
+                return@readLocal emptyList<Pair<BackfillRow, ComicBackfillCandidate>>() to emptyList<BackfillRow>()
             }
             val chapterRows = aethon_syncQueries.selectComicChapterProgressBackfill(comicScope).executeAsList()
                 .distinctBy { it.chapter_id }
                 .map { row ->
                     val lastReadAt: Long? = row.last_read_at
-                    BackfillRow(row.manga_id, row.chapter_id, lastReadAt?.takeIf { it > 0 } ?: row.date_fetch)
+                    BackfillRow(row.manga_id, row.chapter_id, lastReadAt?.takeIf { it > 0 } ?: row.date_fetch) to
+                        ComicBackfillCandidate(
+                            mangaId = row.manga_id,
+                            chapterId = row.chapter_id,
+                            url = row.url,
+                            read = row.read,
+                            bookmarked = row.bookmark,
+                            lastPageRead = row.last_page_read,
+                        )
                 }
             val historyRows = aethon_syncQueries.selectComicHistoryBackfill(comicScope).executeAsList()
                 .distinctBy { it.manga_id }
@@ -481,6 +513,8 @@ class EpigraphReaderProgressRouter(
                 }
             chapterRows to historyRows
         }
+        val withheld = if (candidates.isEmpty()) emptySet() else filter.withheld(candidates.map { it.second })
+        val chapters = candidates.mapNotNull { (row, _) -> row.takeUnless { it.chapterId in withheld } }
         var emitted = 0
         val batches = chapters.chunked(BACKFILL_BATCH).map { it to false } +
             histories.chunked(BACKFILL_BATCH).map { it to true }

@@ -136,6 +136,8 @@ data class CoreSyncStatus(
     val suwayomiProjectionBlocked: Long,
     val suwayomiProjectionInFlight: Long,
     val ready: Boolean,
+    /** Queued projections other than chapter progress; absent from desktops that predate it. */
+    val suwayomiCatalogProjectionPending: Long? = null,
 )
 
 @Serializable
