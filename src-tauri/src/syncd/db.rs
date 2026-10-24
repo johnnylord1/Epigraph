@@ -9617,24 +9617,6 @@ pub async fn load_portable_chapter_binding(
     .await?)
 }
 
-pub async fn list_portable_chapter_bindings(
-    pool: &sqlx::SqlitePool,
-    profile_id: &str,
-    portable_work_id: &str,
-) -> anyhow::Result<Vec<PortableChapterBindingRow>> {
-    Ok(sqlx::query_as::<_, PortableChapterBindingRow>(
-        r#"
-        SELECT * FROM portable_chapter_bindings
-        WHERE profile_id = ? AND portable_work_id = ?
-        ORDER BY updated_at_ms, portable_chapter_id
-        "#,
-    )
-    .bind(profile_id)
-    .bind(portable_work_id)
-    .fetch_all(pool)
-    .await?)
-}
-
 fn validate_portable_persistence_input(value: &str, label: &str) -> anyhow::Result<()> {
     if value.is_empty()
         || value != value.trim()
