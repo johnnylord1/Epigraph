@@ -41,6 +41,31 @@ const LIBRARY_QUERY: &str = r#"
   }
 "#;
 
+/// [`LIBRARY_QUERY`] without the unread, download and chapter counts, which are most of its cost.
+const LIBRARY_WITHOUT_COUNTS_QUERY: &str = r#"
+  query EpigraphCatalogLibrary($first: Int!, $offset: Int!) {
+    mangas(condition: { inLibrary: true }, first: $first, offset: $offset) {
+      totalCount
+      pageInfo { hasNextPage }
+      nodes {
+        id
+        title
+        thumbnailUrl
+        realUrl
+        inLibrary
+        status
+        genre
+        description
+        author
+        artist
+        sourceId
+        url
+        source { id name lang displayName extension { pkgName } }
+      }
+    }
+  }
+"#;
+
 const CATEGORIES_QUERY: &str = r#"
   query EpigraphCatalogCategories($first: Int!, $offset: Int!) {
     categories(first: $first, offset: $offset) {
@@ -101,6 +126,10 @@ pub struct CatalogQuery {
     pub manga_id: Option<i64>,
     pub page_size: Option<i64>,
     pub offset: Option<i64>,
+    /// Library titles without their unread, download and chapter counts, for clients that do not
+    /// use them. Older Cores ignore the parameter and send the counts.
+    #[serde(default)]
+    pub without_counts: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -156,7 +185,7 @@ pub async fn get_catalog(
                 ));
             }
             (
-                LIBRARY_QUERY,
+                if query.without_counts { LIBRARY_WITHOUT_COUNTS_QUERY } else { LIBRARY_QUERY },
                 json!({ "first": page_size, "offset": offset }),
             )
         }
@@ -479,6 +508,13 @@ mod tests {
     fn library_manifest_exposes_the_extension_package_for_source_relinking() {
         assert!(LIBRARY_QUERY.contains("extension { pkgName }"));
         assert!(LIBRARY_QUERY.contains("realUrl"));
+    }
+
+    #[test]
+    fn library_without_counts_differs_only_by_the_counts() {
+        let counts = "        downloadCount\n        unreadCount\n        chapters { totalCount }\n";
+        assert!(LIBRARY_QUERY.contains(counts));
+        assert_eq!(LIBRARY_QUERY.replace(counts, ""), LIBRARY_WITHOUT_COUNTS_QUERY);
     }
 
     #[test]

@@ -52,14 +52,6 @@ const LIBRARY_WITH_PROGRESS_QUERY: &str = r#"
         sourceId
         unreadCount
         bookmarkCount
-        title
-        thumbnailUrl
-        realUrl
-        status
-        genre
-        description
-        author
-        artist
         chapters { totalCount }
         latestReadChapter {
           id
@@ -317,15 +309,10 @@ async fn mirror_profile(
     let server_identity = db::load_server_identity(&state.pool).await?;
     let server_id = &server_identity.server_id;
 
-    let revision_generation = catalog_revision::generation(profile_id);
-    let (library, revision_titles) = match fetch_library_with_progress(state, &session).await {
-        Ok(read) => read,
-        Err(error) => {
-            catalog_revision::invalidate(profile_id);
-            return Err(error);
-        }
-    };
-    catalog_revision::record(state, &session, server_id, revision_generation, revision_titles).await;
+    // Revisions first, from their own light read: devices hear about a catalog change without
+    // waiting for the progress read below.
+    catalog_revision::refresh(state, &session, server_id).await;
+    let library = fetch_library_with_progress(state, &session).await?;
     // Bookmarks keep their original eligibility (titles with read progress); chapter states below
     // cover the whole library.
     let manga_refs = library
@@ -1374,15 +1361,12 @@ impl ReadChapterNode {
 }
 
 /// Every library title, with its read-progress summary. Titles without a read chapter are
-/// included so their chapter state is mirrored too. Also returns what a paired device applies of
-/// each title, for the catalog revision, unless the library did not fit in the page bound.
+/// included so their chapter state is mirrored too.
 async fn fetch_library_with_progress(
     state: &SharedAppState,
     session: &AuthenticatedSession,
-) -> anyhow::Result<(Vec<(i64, LibraryMangaNode)>, Option<Vec<Value>>)> {
+) -> anyhow::Result<Vec<(i64, LibraryMangaNode)>> {
     let mut mangas = Vec::new();
-    let mut revision_titles = Vec::new();
-    let mut complete = false;
     for page in 0..MAX_MIRROR_PAGES {
         let offset = (page as i64).saturating_mul(MIRROR_PAGE_SIZE);
         let data = suwayomi_catalog::execute_graphql_document(
@@ -1410,7 +1394,6 @@ async fn fetch_library_with_progress(
             else {
                 continue;
             };
-            revision_titles.push(catalog_revision::title_input(node));
             let Some(source_id) = scalar_string(node.get("sourceId")) else {
                 continue;
             };
@@ -1458,11 +1441,10 @@ async fn fetch_library_with_progress(
             .and_then(Value::as_bool)
             .unwrap_or(false);
         if !has_next {
-            complete = true;
             break;
         }
     }
-    Ok((mangas, complete.then_some(revision_titles)))
+    Ok(mangas)
 }
 fn parse_read_chapter(chapter: &Value) -> Option<ReadChapterNode> {
     let chapter_id = chapter

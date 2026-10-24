@@ -1,7 +1,8 @@
 //! Revisions of the comic catalog a paired device applies, announced by `/v1/sync/status` so a
 //! device whose last apply carried the same revision can skip reading the catalog again.
 //!
-//! The progress mirror computes them from the Suwayomi reads it already makes. A write that may
+//! The progress mirror computes them at the start of each tick from a light read of what devices
+//! apply, before its own progress reads, which take seconds on a large library. A write that may
 //! change what a revision covers drops it until the next computation, and a computation that
 //! started before such a write is discarded. A device that gets no revision applies the catalog
 //! in full, so dropping one is always safe; announcing a stale one is not.
@@ -22,9 +23,35 @@ use super::models::{AuthenticatedSession, SharedAppState};
 use super::routes::{suwayomi_catalog, suwayomi_extensions};
 
 /// Bumped when what a revision covers changes, so devices apply in full once after an update.
-const REVISION_SCHEMA: u32 = 1;
+const REVISION_SCHEMA: u32 = 2;
 /// A revision the mirror has not confirmed for this long is not announced (it ticks every 45 s).
 const REVISION_TTL: Duration = Duration::from_secs(180);
+const LIBRARY_PAGE_SIZE: i64 = 250;
+/// A larger library gets no revision, so its devices always apply it in full.
+const MAX_LIBRARY_PAGES: usize = 32;
+
+/// The library fields a paired device applies. Unread, download and chapter counts are left out:
+/// devices do not apply them, and they are most of the cost of a library read.
+const LIBRARY_QUERY: &str = r#"
+  query EpigraphCatalogRevisionLibrary($first: Int!, $offset: Int!) {
+    mangas(condition: { inLibrary: true }, first: $first, offset: $offset) {
+      pageInfo { hasNextPage }
+      nodes {
+        id
+        url
+        sourceId
+        title
+        thumbnailUrl
+        realUrl
+        status
+        genre
+        description
+        author
+        artist
+      }
+    }
+  }
+"#;
 
 const CATEGORIES_QUERY: &str = r#"
   query EpigraphCatalogRevisionCategories {
@@ -74,8 +101,10 @@ const CATALOG_NEUTRAL_MUTATIONS: &[&str] = &[
 /// What a paired device applies from this profile's catalog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComicRevisions {
-    /// Library titles, categories and the extensions behind them: the catalog and manifest stages.
+    /// Library titles, categories and the extensions behind them: the catalog stage.
     pub library: String,
+    /// The same without categories: the portable manifest stage, which does not read them.
+    pub manifest: String,
     /// Installed extensions and their sources: the extension stage.
     pub extensions: String,
 }
@@ -255,8 +284,8 @@ fn top_level_fields(document: &str) -> Vec<String> {
 }
 
 /// What a paired device applies of one library title (the Core catalog operation's fields),
-/// leaving out the unread and download counts that change with every read on the desktop.
-pub(super) fn title_input(node: &Value) -> Value {
+/// leaving out the counts that change with every read or chapter fetch on the desktop.
+fn title_input(node: &Value) -> Value {
     json!([
         node.get("id"),
         node.get("url"),
@@ -269,34 +298,32 @@ pub(super) fn title_input(node: &Value) -> Value {
         node.get("description"),
         node.get("author"),
         node.get("artist"),
-        node.pointer("/chapters/totalCount"),
     ])
 }
 
-/// Computes the profile's revisions from the mirror's library read and stores them unless a write
-/// happened since `generation` was taken. Any failure drops them instead.
-pub(super) async fn record(
-    state: &SharedAppState,
-    session: &AuthenticatedSession,
-    server_id: &str,
-    generation: Generation,
-    titles: Option<Vec<Value>>,
-) {
+/// Reads what the profile's devices apply, computes its revisions and stores them unless a write
+/// happened since the read started. Any failure drops them instead.
+pub(super) async fn refresh(state: &SharedAppState, session: &AuthenticatedSession, server_id: &str) {
     let profile_id = session.profile_id.as_str();
+    let generation = generation(profile_id);
+    let (titles, categories, inventory) = tokio::join!(
+        library_titles(state, session),
+        suwayomi_catalog::execute_graphql_document(state, session, CATEGORIES_QUERY, json!({}), false),
+        suwayomi_extensions::load_inventory(state, session),
+    );
     let Some(titles) = titles else {
         invalidate(profile_id);
         return;
     };
-    let categories =
-        match suwayomi_catalog::execute_graphql_document(state, session, CATEGORIES_QUERY, json!({}), false).await {
-            Ok(data) => data.pointer("/categories/nodes").cloned().unwrap_or(Value::Null),
-            Err(error) => {
-                tracing::debug!(error = ?error, "catalog revision skipped: categories unavailable");
-                invalidate(profile_id);
-                return;
-            }
-        };
-    let inventory = match suwayomi_extensions::load_inventory(state, session).await {
+    let categories = match categories {
+        Ok(data) => data.pointer("/categories/nodes").cloned().unwrap_or(Value::Null),
+        Err(error) => {
+            tracing::debug!(error = ?error, "catalog revision skipped: categories unavailable");
+            invalidate(profile_id);
+            return;
+        }
+    };
+    let inventory = match inventory {
         Ok(inventory) => inventory,
         Err(error) => {
             tracing::debug!(error = ?error, "catalog revision skipped: extensions unavailable");
@@ -312,6 +339,7 @@ pub(super) async fn record(
         inventory.extensions,
     ]));
     let revisions = ComicRevisions {
+        manifest: manifest_revision(server_id, profile_id, titles.clone(), &extensions),
         library: library_revision(server_id, profile_id, titles, &categories, &extensions),
         extensions,
     };
@@ -320,6 +348,34 @@ pub(super) async fn record(
         // No receiver means no device is streaming; the send has nothing to do then.
         let _ = changes().send(profile_id.to_string());
     }
+}
+
+/// Every library title's revision input, or `None` when the library is unavailable or larger than
+/// the page bound.
+async fn library_titles(state: &SharedAppState, session: &AuthenticatedSession) -> Option<Vec<Value>> {
+    let mut titles = Vec::new();
+    for page in 0..MAX_LIBRARY_PAGES {
+        let offset = (page as i64).saturating_mul(LIBRARY_PAGE_SIZE);
+        let variables = json!({ "first": LIBRARY_PAGE_SIZE, "offset": offset });
+        let data = match suwayomi_catalog::execute_graphql_document(state, session, LIBRARY_QUERY, variables, false).await {
+            Ok(data) => data,
+            Err(error) => {
+                tracing::debug!(error = ?error, "catalog revision skipped: library unavailable");
+                return None;
+            }
+        };
+        let nodes = data.pointer("/mangas/nodes").and_then(Value::as_array)?;
+        titles.extend(
+            nodes
+                .iter()
+                .filter(|node| node.get("id").and_then(Value::as_i64).is_some_and(|id| id > 0))
+                .map(title_input),
+        );
+        if !data.pointer("/mangas/pageInfo/hasNextPage").and_then(Value::as_bool).unwrap_or(false) {
+            return Some(titles);
+        }
+    }
+    None
 }
 
 fn library_revision(server_id: &str, profile_id: &str, mut titles: Vec<Value>, categories: &Value, extensions: &str) -> String {
@@ -353,6 +409,11 @@ fn library_revision(server_id: &str, profile_id: &str, mut titles: Vec<Value>, c
     digest(&json!([REVISION_SCHEMA, server_id, profile_id, titles, categories, extensions]))
 }
 
+fn manifest_revision(server_id: &str, profile_id: &str, mut titles: Vec<Value>, extensions: &str) -> String {
+    titles.sort_by_key(|title| title.get(0).and_then(Value::as_i64).unwrap_or_default());
+    digest(&json!([REVISION_SCHEMA, "manifest", server_id, profile_id, titles, extensions]))
+}
+
 fn digest(value: &Value) -> String {
     format!("sha256:{:x}", Sha256::digest(serde_json::to_vec(value).unwrap_or_default()))
 }
@@ -362,7 +423,7 @@ mod tests {
     use super::*;
 
     fn revisions(library: &str) -> ComicRevisions {
-        ComicRevisions { library: library.to_string(), extensions: "e".to_string() }
+        ComicRevisions { library: library.to_string(), manifest: "m".to_string(), extensions: "e".to_string() }
     }
 
     #[test]
@@ -464,18 +525,41 @@ mod tests {
         assert_eq!(base, library_revision("s", "p", reordered, &reordered_categories, "e"));
 
         let read_on_desktop = vec![
-            title_input(&json!({ "id": 2, "url": "/b", "sourceId": "1", "title": "B", "unreadCount": 0, "downloadCount": 2, "chapters": { "totalCount": 5 } })),
+            title_input(&json!({ "id": 2, "url": "/b", "sourceId": "1", "title": "B", "unreadCount": 0, "downloadCount": 2, "chapters": { "totalCount": 6 } })),
             titles[1].clone(),
         ];
         assert_eq!(base, library_revision("s", "p", read_on_desktop, &categories, "e"));
 
-        let mut more_chapters = titles.clone();
-        more_chapters[0][11] = json!(6);
-        assert_ne!(base, library_revision("s", "p", more_chapters, &categories, "e"));
+        let mut retitled = titles.clone();
+        retitled[0][3] = json!("B2");
+        assert_ne!(base, library_revision("s", "p", retitled, &categories, "e"));
         let mut renamed = categories.clone();
         renamed[0]["name"] = json!("Z");
         assert_ne!(base, library_revision("s", "p", titles.clone(), &renamed, "e"));
         assert_ne!(base, library_revision("s", "p", titles.clone(), &categories, "f"));
         assert_ne!(base, library_revision("other-server", "p", titles, &categories, "e"));
+    }
+
+    #[test]
+    fn manifest_revision_follows_titles_and_extensions_but_not_categories() {
+        let titles = vec![
+            title_input(&json!({ "id": 2, "url": "/b", "sourceId": "1", "title": "B" })),
+            title_input(&json!({ "id": 1, "url": "/a", "sourceId": "1", "title": "A" })),
+        ];
+        let base = manifest_revision("s", "p", titles.clone(), "e");
+        let mut reordered = titles.clone();
+        reordered.reverse();
+        assert_eq!(base, manifest_revision("s", "p", reordered, "e"));
+        // Never equal to the library revision, even for a library without categories.
+        assert_ne!(base, library_revision("s", "p", titles.clone(), &json!([]), "e"));
+
+        let mut retitled = titles.clone();
+        retitled[0][3] = json!("B2");
+        assert_ne!(base, manifest_revision("s", "p", retitled, "e"));
+        let mut added = titles.clone();
+        added.push(title_input(&json!({ "id": 3, "url": "/c", "sourceId": "2", "title": "C" })));
+        assert_ne!(base, manifest_revision("s", "p", added, "e"));
+        assert_ne!(base, manifest_revision("s", "p", titles.clone(), "f"));
+        assert_ne!(base, manifest_revision("other-server", "p", titles, "e"));
     }
 }

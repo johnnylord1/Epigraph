@@ -102,6 +102,10 @@ pub struct SyncStatusResponse {
     /// Revision of the extension inventory, under the same rules.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comic_extensions_revision: Option<String>,
+    /// Revision of the library titles and extensions without categories, which the portable
+    /// manifest does not read, under the same rules.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comic_manifest_revision: Option<String>,
 }
 
 /// Returns server-side readiness for a comic scope. The mobile outbox is
@@ -161,9 +165,9 @@ pub async fn get_sync_status(
 
     let ready = pending == 0 && blocked == 0 && in_flight == 0;
     let revisions = announced_revisions(catalog_revision::current(profile_id), blocked, catalog_pending);
-    let (comic_library_revision, comic_extensions_revision) = match revisions {
-        Some(revisions) => (Some(revisions.library), Some(revisions.extensions)),
-        None => (None, None),
+    let (comic_library_revision, comic_extensions_revision, comic_manifest_revision) = match revisions {
+        Some(revisions) => (Some(revisions.library), Some(revisions.extensions), Some(revisions.manifest)),
+        None => (None, None, None),
     };
     Ok(Json(SyncStatusResponse {
         scope_id: query.scope_id,
@@ -177,6 +181,7 @@ pub async fn get_sync_status(
         ready,
         comic_library_revision,
         comic_extensions_revision,
+        comic_manifest_revision,
     }))
 }
 
@@ -200,6 +205,7 @@ mod tests {
         let revisions = || {
             Some(catalog_revision::ComicRevisions {
                 library: "library".to_string(),
+                manifest: "manifest".to_string(),
                 extensions: "extensions".to_string(),
             })
         };
