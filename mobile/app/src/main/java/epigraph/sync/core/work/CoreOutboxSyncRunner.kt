@@ -59,6 +59,9 @@ interface CorePendingOutbox {
     suspend fun countActive(policy: EffectiveSyncPolicy): Long = count()
 
     suspend fun unsettledCountActive(policy: EffectiveSyncPolicy): Long = unsettledCount()
+
+    /** Unsettled rows parked for a user decision, which no sync run sends until the user acts. */
+    suspend fun blockedCountActive(policy: EffectiveSyncPolicy): Long = 0
 }
 
 class CoordinatorPendingOutbox(
@@ -90,6 +93,9 @@ class CoordinatorPendingOutbox(
                 0
             })
         }
+
+    override suspend fun blockedCountActive(policy: EffectiveSyncPolicy): Long =
+        coordinator.blockedCount(policy.selectedScopes)
 
     override suspend fun unsettledCountActive(policy: EffectiveSyncPolicy): Long =
         coordinator.unsettledCount(policy.selectedScopes) + database.await {
@@ -670,6 +676,12 @@ enum class CoreUserActionReason {
 internal enum class CoreRemoteProjectionState { READY, IN_PROGRESS, BLOCKED }
 
 /** Mirrors syncd `routes/status.rs`: `ready = pending == 0 && blocked == 0 && inFlight == 0`. */
+/**
+ * What this device reports it still has to upload. Rows parked for a user decision stay unsettled
+ * here, but no run sends them on its own, so they must not hold a desktop's first run forever.
+ */
+internal fun uploadsStillToSend(unsettled: Long, blocked: Long): Long = (unsettled - blocked).coerceIn(0, unsettled)
+
 internal fun CoreSyncStatus.remoteProjectionState(): CoreRemoteProjectionState = when {
     ready -> CoreRemoteProjectionState.READY
     suwayomiProjectionPending > 0 || suwayomiProjectionInFlight > 0 -> CoreRemoteProjectionState.IN_PROGRESS
@@ -958,13 +970,14 @@ class CoreOutboxSyncRunner(
                 }
             }
             val unsettledAfter = pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) }
+            val uploadsLeft = uploadsStillToSend(unsettledAfter, pendingOutbox.blockedCountActive(policy))
             val remoteProjection = if (
                 EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities) &&
                     policy.syncComics
             ) {
                 val scopeId = "comics:profile:${session.profileId}"
                 try {
-                    when (val status = connection.syncStatus(scopeId, pendingUploads = unsettledAfter)) {
+                    when (val status = connection.syncStatus(scopeId, pendingUploads = uploadsLeft)) {
                         null -> CoreRemoteProjectionState.READY
                         is CoreHttpResult.Success -> {
                             if (status.value.comicAuthorityMode != "suwayomi-confirmed-v1") {
@@ -1002,7 +1015,7 @@ class CoreOutboxSyncRunner(
                     // Comics are off here, but a desktop's first run still waits for this
                     // device's upload report; send it and ignore the projection answer.
                     try {
-                        connection.syncStatus("comics:profile:${session.profileId}", pendingUploads = unsettledAfter)
+                        connection.syncStatus("comics:profile:${session.profileId}", pendingUploads = uploadsLeft)
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (failure: Throwable) {

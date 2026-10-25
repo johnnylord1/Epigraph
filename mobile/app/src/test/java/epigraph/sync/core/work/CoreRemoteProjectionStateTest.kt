@@ -6,6 +6,14 @@ import org.junit.jupiter.api.Test
 
 class CoreRemoteProjectionStateTest {
     @Test
+    fun `rows parked for a user decision are not reported as uploads left`() {
+        assertEquals(3L, uploadsStillToSend(unsettled = 7, blocked = 4))
+        assertEquals(0L, uploadsStillToSend(unsettled = 4, blocked = 4))
+        assertEquals(0L, uploadsStillToSend(unsettled = 2, blocked = 5))
+        assertEquals(0L, uploadsStillToSend(unsettled = 0, blocked = 0))
+    }
+
+    @Test
     fun `only blocked projections with nothing queued need desktop action`() {
         assertEquals(CoreRemoteProjectionState.READY, status(ready = true).remoteProjectionState())
         assertEquals(CoreRemoteProjectionState.BLOCKED, status(blocked = 2).remoteProjectionState())

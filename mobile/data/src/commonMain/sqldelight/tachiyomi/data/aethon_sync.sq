@@ -1226,6 +1226,10 @@ blockedMutationCount:
 SELECT COUNT(*) FROM aethon_sync_outbox
 WHERE status = 'ERROR' AND last_error LIKE 'blocked:%';
 
+blockedMutationCountForScopes:
+SELECT COUNT(*) FROM aethon_sync_outbox
+WHERE status = 'ERROR' AND last_error LIKE 'blocked:%' AND scope_id IN :scopeIds;
+
 selectBlockedMutations:
 SELECT sequence, scope_id, entity_type, entity_id, operation, last_error, created_at
 FROM aethon_sync_outbox

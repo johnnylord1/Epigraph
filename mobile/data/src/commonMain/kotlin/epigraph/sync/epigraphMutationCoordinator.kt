@@ -221,6 +221,13 @@ class EpigraphMutationCoordinator(
         aethon_syncQueries.blockedMutationCount().executeAsOne()
     }
 
+    suspend fun blockedCount(scopeIds: Set<String>): Long {
+        if (scopeIds.isEmpty()) return 0
+        return databaseHandler.await {
+            aethon_syncQueries.blockedMutationCountForScopes(scopeIds).executeAsOne()
+        }
+    }
+
     /** The parked rows themselves, oldest first, for the screen that lets the user decide. */
     suspend fun blockedMutations(): List<BlockedMutation> = databaseHandler.await {
         aethon_syncQueries.selectBlockedMutations().executeAsList().map { row ->

@@ -278,6 +278,9 @@ class EpigraphMutationCoordinatorTest {
         coordinator.markFailed(deviceId, blocked, "blocked:unsupported_entity", Long.MAX_VALUE)
 
         assertEquals(1, coordinator.blockedCount())
+        assertEquals(1, coordinator.blockedCount(setOf("comics:profile:main")))
+        assertEquals(0, coordinator.blockedCount(setOf("books:profile:other")))
+        assertEquals(0, coordinator.blockedCount(emptySet()))
         assertEquals(0, coordinator.claimReady(200, leaseDurationMillis = 1_000, limit = 10).size)
 
         coordinator.releaseRetryBackoff(200)
