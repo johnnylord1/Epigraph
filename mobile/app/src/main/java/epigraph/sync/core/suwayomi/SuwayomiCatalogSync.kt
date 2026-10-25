@@ -31,6 +31,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -185,36 +186,43 @@ class SuwayomiCatalogSync(
         // Applying only after both complete reads protects the local library from partial pages.
         // Reconciliation is intentionally limited to the authoritative library bit; local
         // metadata, chapters, progress and assets remain recoverable after an un-favorite.
-        val appliedStamp = database.await(inTransaction = true) {
-            // Titles with local work still in flight keep their local library bit and category
-            // links; the next catalog read after that work settles reconciles them.
-            val protectedEntityIds = aethon_syncQueries
-                .selectUnsettledSuwayomiComicEntityIds(scopeId, credentials.profileId)
-                .executeAsList()
-                .toHashSet()
+        val unchanged = database.await(inTransaction = true) {
             // The same catalog applied to the same local library changes nothing, so it is only
             // re-applied periodically.
             val localSignature = localLibrarySignature(scopeId)
             if (
-                protectedEntityIds.isEmpty() &&
+                unsettledComicEntityIds(scopeId, credentials).isEmpty() &&
                 previousStamp?.covers(catalogDigest, localSignature, nowEpochMillis) == true
             ) {
-                return@await previousStamp
+                return@await null
             }
             // A record applied unchanged to this same local library since the last full apply
             // needs no second write: a read on the desktop changes one title, not the other few
-            // hundred, and writing every title again took seconds.
-            val unchanged = previousStamp?.unchangedRecords(localSignature, nowEpochMillis).orEmpty()
+            // hundred, and writing every title again took seconds. After a change to the local
+            // library, only the records it no longer shows are written again.
+            previousStamp?.unchangedRecords(localSignature, nowEpochMillis)
+                ?: previousStamp?.recentRecords(nowEpochMillis)?.let { recent ->
+                    stillShown(mangaRecords + categoryRecords + assignmentRecords, recordDigests, recent)
+                }
+                ?: emptySet()
+        }
+        val appliedStamp = if (unchanged == null) {
+            previousStamp!!
+        } else {
             fun CoreConfirmedRecord.changed() = recordDigests.getValue(key) !in unchanged
-            mangaRecords
-                .filterNot { it.key.entityId in protectedEntityIds }
-                .filter { it.changed() }
-                .forEach { record -> projection.upsert(this, record) }
+            // Titles with local work still in flight keep their local library bit and category
+            // links; the next catalog read after that work settles reconciles them.
+            val heldEntityIds = HashSet<String>()
+            applyInBatches(scopeId, credentials, mangaRecords.filter { it.changed() }, heldEntityIds) { record ->
+                record.key.entityId in heldEntityIds
+            }
             // Restored titles are adopted just above, so a same-name phone folder only now counts as
             // holding comics. Its remote twin waits for the create hook to bind it by name instead
             // of arriving as a second folder with the same name.
             val deferredCategoryEntityIds = if (SuwayomiCategoryCreateHook.isEnabled(capabilities)) {
-                val kept = withoutCategoriesAwaitingBind(this, credentials, categories).toSet()
+                val kept = database.await(inTransaction = true) {
+                    withoutCategoriesAwaitingBind(this, credentials, categories).toSet()
+                }
                 categories.filterNot { it in kept }
                     .mapNotNullTo(HashSet()) { node -> node.long("id")?.let(categoryEntityIds::get) }
             } else {
@@ -224,47 +232,44 @@ class SuwayomiCatalogSync(
             val appliedAssignmentRecords = assignmentRecords.filterNot { record ->
                 (record.record as JsonObject).getValue("categoryId").jsonPrimitive.content in deferredCategoryEntityIds
             }
-            appliedCategoryRecords
-                .filter { it.changed() }
-                .forEach { record -> projection.upsert(this, record) }
-            val appliedAssignmentKeys = appliedAssignmentRecords.mapTo(HashSet()) { it.key }
-            val heldAssignments = appliedAssignmentRecords
-                .filter { record -> record.comicId() in protectedEntityIds }
-                .mapTo(HashSet()) { it.key }
-            appliedAssignmentRecords
-                .filterNot { it.key in heldAssignments }
-                .filter { it.changed() }
-                .forEach { record -> projection.upsert(this, record) }
-            projection.reconcileSuwayomiLibrary(
-                database = this,
-                serverId = credentials.serverId,
-                profileId = credentials.profileId,
-                observedEntityIds = mangaRecords.mapTo(mutableSetOf()) { it.key.entityId },
-                protectedEntityIds = protectedEntityIds,
-            )
-            projection.reconcileSuwayomiCategoryAssignments(
-                database = this,
-                serverId = credentials.serverId,
-                profileId = credentials.profileId,
-                observedCategoryEntityIds = appliedCategoryRecords.mapTo(mutableSetOf()) { it.key.entityId },
-                observedAssignments = appliedAssignmentRecords.mapTo(mutableSetOf()) { record ->
-                    val payload = record.record as JsonObject
-                    payload.getValue("comicId").jsonPrimitive.content to
-                        payload.getValue("categoryId").jsonPrimitive.content
-                },
-                protectedEntityIds = protectedEntityIds,
-            )
-            // Held-back titles and folders are applied by a later run, never counted as applied.
-            val held = mangaRecords.filter { it.key.entityId in protectedEntityIds }.mapTo(HashSet()) { it.key } +
-                categoryRecords.filter { it.key.entityId in deferredCategoryEntityIds }.map { it.key } +
-                assignmentRecords.map { it.key }.filterNot { it in appliedAssignmentKeys } +
-                heldAssignments
-            CatalogApplyStamp(
-                catalogDigest = if (held.isEmpty()) catalogDigest else "",
-                localSignature = localLibrarySignature(scopeId),
-                appliedAt = if (unchanged.isEmpty()) nowEpochMillis else previousStamp!!.appliedAt,
-                recordDigests = recordDigests.filterKeys { it !in held }.values.toSet(),
-            )
+            applyInBatches(scopeId, credentials, appliedCategoryRecords.filter { it.changed() }, heldEntityIds) { false }
+            applyInBatches(scopeId, credentials, appliedAssignmentRecords.filter { it.changed() }, heldEntityIds) { record ->
+                record.comicId() in heldEntityIds
+            }
+            database.await(inTransaction = true) {
+                heldEntityIds += unsettledComicEntityIds(scopeId, credentials)
+                projection.reconcileSuwayomiLibrary(
+                    database = this,
+                    serverId = credentials.serverId,
+                    profileId = credentials.profileId,
+                    observedEntityIds = mangaRecords.mapTo(mutableSetOf()) { it.key.entityId },
+                    protectedEntityIds = heldEntityIds,
+                )
+                projection.reconcileSuwayomiCategoryAssignments(
+                    database = this,
+                    serverId = credentials.serverId,
+                    profileId = credentials.profileId,
+                    observedCategoryEntityIds = appliedCategoryRecords.mapTo(mutableSetOf()) { it.key.entityId },
+                    observedAssignments = appliedAssignmentRecords.mapTo(mutableSetOf()) { record ->
+                        val payload = record.record as JsonObject
+                        payload.getValue("comicId").jsonPrimitive.content to
+                            payload.getValue("categoryId").jsonPrimitive.content
+                    },
+                    protectedEntityIds = heldEntityIds,
+                )
+                // Held-back titles and folders are applied by a later run, never counted as applied.
+                val appliedAssignmentKeys = appliedAssignmentRecords.mapTo(HashSet()) { it.key }
+                val held = mangaRecords.filter { it.key.entityId in heldEntityIds }.mapTo(HashSet()) { it.key } +
+                    categoryRecords.filter { it.key.entityId in deferredCategoryEntityIds }.map { it.key } +
+                    assignmentRecords.map { it.key }.filterNot { it in appliedAssignmentKeys } +
+                    appliedAssignmentRecords.filter { it.comicId() in heldEntityIds }.map { it.key }
+                CatalogApplyStamp(
+                    catalogDigest = if (held.isEmpty()) catalogDigest else "",
+                    localSignature = localLibrarySignature(scopeId),
+                    appliedAt = if (unchanged.isEmpty()) nowEpochMillis else previousStamp!!.appliedAt,
+                    recordDigests = recordDigests.filterKeys { it !in held }.values.toSet(),
+                )
+            }
         }
         stamps?.put(stampKey, appliedStamp)
 
@@ -495,6 +500,61 @@ class SuwayomiCatalogSync(
         return String(chars)
     }
 
+    /**
+     * Upserts [records] a batch per transaction, so a full apply never holds the database long
+     * enough to delay a progress write from the reader or from another sync. Every batch reads the
+     * titles with local work in flight again, since that work may start while the apply runs.
+     */
+    private suspend fun applyInBatches(
+        scopeId: String,
+        credentials: CoreCredentialSession,
+        records: List<CoreConfirmedRecord>,
+        heldEntityIds: MutableSet<String>,
+        isHeld: (CoreConfirmedRecord) -> Boolean,
+    ) {
+        records.chunked(APPLY_BATCH_SIZE).forEach { batch ->
+            database.await(inTransaction = true) {
+                heldEntityIds += unsettledComicEntityIds(scopeId, credentials)
+                batch.filterNot(isHeld).forEach { record -> projection.upsert(this, record) }
+            }
+        }
+    }
+
+    private fun Database.unsettledComicEntityIds(scopeId: String, credentials: CoreCredentialSession): List<String> =
+        aethon_syncQueries.selectUnsettledSuwayomiComicEntityIds(scopeId, credentials.profileId).executeAsList()
+
+    /**
+     * The digests among [recent] whose records the local library still shows, from three reads
+     * instead of one projection per record. A title out of the library, a renamed or missing
+     * folder, or a missing assignment is written again.
+     */
+    private fun Database.stillShown(
+        records: List<CoreConfirmedRecord>,
+        recordDigests: Map<CoreReplicaKey, String>,
+        recent: Set<String>,
+    ): Set<String> {
+        val favorites = aethon_syncQueries.selectComicEntityFavorites().executeAsList()
+            .associate { it.entity_id to it.favorite }
+        val categories = aethon_syncQueries.selectComicCategoryStates().executeAsList()
+            .associateBy { it.entity_id }
+        val assignments = aethon_syncQueries.selectComicCategoryAssignmentEntityIds().executeAsList()
+            .mapTo(HashSet()) { it.comic_entity_id to it.category_entity_id }
+        return records.mapNotNullTo(HashSet()) { record ->
+            val digest = recordDigests.getValue(record.key).takeIf { it in recent } ?: return@mapNotNullTo null
+            val body = record.record as? JsonObject ?: return@mapNotNullTo null
+            val shown = when (record.key.entityType) {
+                "comic.entry" -> favorites[record.key.entityId]
+                    ?.let { favorite -> favorite == (body.boolean("inLibrary") ?: favorite) } == true
+                "comic.category" -> categories[record.key.entityId]?.let { local ->
+                    local.name == body.string("name") && local.sort == (body.long("order")?.coerceAtLeast(0) ?: 0L)
+                } == true
+                "comic.category_assignment" -> (body.string("comicId") to body.string("categoryId")) in assignments
+                else -> false
+            }
+            digest.takeIf { shown }
+        }
+    }
+
     private fun Database.localLibrarySignature(scopeId: String): String =
         aethon_syncQueries.selectComicLibrarySignature(scopeId).executeAsOne().toString()
 
@@ -553,6 +613,7 @@ class SuwayomiCatalogSync(
         const val MAX_ITEMS = 50_000
         const val PARALLEL_PAGE_READS = 4
         const val REAPPLY_INTERVAL_MS = 6 * 60 * 60 * 1_000L
+        private const val APPLY_BATCH_SIZE = 50
         private const val RECORD_DIGEST_BYTES = 12
         private val HEX_DIGITS = "0123456789abcdef".toCharArray()
         const val SUWAYOMI_DEFAULT_CATEGORY_ID = 0L
@@ -859,6 +920,9 @@ class SuwayomiCatalogSync(
         fun JsonObject.string(key: String): String? =
             this[key]?.jsonPrimitive?.contentOrNull
 
+        fun JsonObject.boolean(key: String): Boolean? =
+            this[key]?.jsonPrimitive?.booleanOrNull
+
         fun JsonElement?.asJsonArray(): JsonArray? = this as? JsonArray
 
     }
@@ -889,9 +953,12 @@ data class CatalogApplyStamp(
     fun covers(digest: String, signature: String, nowEpochMillis: Long): Boolean =
         catalogDigest == digest && unchangedRecords(signature, nowEpochMillis) != null
 
-    fun unchangedRecords(signature: String, nowEpochMillis: Long): Set<String>? = recordDigests.takeIf {
-        localSignature == signature &&
-            nowEpochMillis - appliedAt in 0 until SuwayomiCatalogSync.REAPPLY_INTERVAL_MS
+    fun unchangedRecords(signature: String, nowEpochMillis: Long): Set<String>? =
+        recentRecords(nowEpochMillis)?.takeIf { localSignature == signature }
+
+    /** The records applied since the last full apply, whatever the local library looks like now. */
+    fun recentRecords(nowEpochMillis: Long): Set<String>? = recordDigests.takeIf {
+        nowEpochMillis - appliedAt in 0 until SuwayomiCatalogSync.REAPPLY_INTERVAL_MS
     }
 }
 

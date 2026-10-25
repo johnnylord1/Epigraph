@@ -756,6 +756,28 @@ SELECT
           AND entity_type IN ('comic.entry', 'comic.category', 'comic.category_assignment')
     ) AS catalogRecords;
 
+-- The local side of each catalog record kind, read once per apply instead of once per record.
+selectComicEntityFavorites:
+SELECT identity.entity_id, mangas.favorite
+FROM aethon_content_identity identity
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE identity.content_type = 'MANGA';
+
+selectComicCategoryStates:
+SELECT identity.entity_id, categories.name, categories.sort
+FROM aethon_category_identity identity
+JOIN categories ON categories._id = identity.local_category_id
+WHERE identity.content_scope = 'MANGA';
+
+selectComicCategoryAssignmentEntityIds:
+SELECT manga_identity.entity_id AS comic_entity_id, category_identity.entity_id AS category_entity_id
+FROM mangas_categories assignment
+JOIN aethon_content_identity manga_identity
+  ON manga_identity.content_type = 'MANGA'
+ AND manga_identity.local_reference = CAST(assignment.manga_id AS TEXT)
+JOIN aethon_category_identity category_identity
+  ON category_identity.local_category_id = assignment.category_id;
+
 insertBinding:
 INSERT INTO aethon_source_binding(
     binding_id, entity_id, ecosystem, repository, plugin_package,

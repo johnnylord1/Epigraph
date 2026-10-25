@@ -1652,6 +1652,45 @@ class SuwayomiCatalogSyncTest {
     }
 
     @Test
+    fun `a local library change rewrites only the records the library no longer shows`() = runTest {
+        val stamps = object : CatalogApplyStampStore {
+            val values = mutableMapOf<String, CatalogApplyStamp>()
+            override fun get(key: String) = values[key]
+            override fun put(key: String, stamp: CatalogApplyStamp) { values[key] = stamp }
+            override fun remove(key: String) { values.remove(key) }
+        }
+        val sync = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            stamps = stamps,
+        )
+        fun titles() = database.mangasQueries.findFavorites().executeAsList().map { it.title }.sorted()
+        fun assignments() = driver.executeQuery(
+            null,
+            "SELECT COUNT(*) FROM mangas_categories",
+            { cursor -> app.cash.sqldelight.db.QueryResult.Value(if (cursor.next().value) cursor.getLong(0) else null) },
+            0,
+        ).value
+
+        sync.synchronize(session, capabilities(), 1000)
+        assertEquals(1L, assignments())
+        driver.execute(null, "UPDATE mangas SET title = 'Local two' WHERE title = 'Suwayomi Two'", 0)
+        driver.execute(null, "UPDATE mangas SET favorite = 0 WHERE title = 'Suwayomi One'", 0)
+        driver.execute(null, "DELETE FROM mangas_categories", 0)
+
+        sync.synchronize(session, capabilities(), 2000)
+
+        // The title out of the library and the missing assignment come back; the title the
+        // library still shows is not written again, so its local edit stays until a full apply.
+        assertEquals(listOf("Local two", "Suwayomi One"), titles())
+        assertEquals(1L, assignments())
+        assertEquals(1000, stamps.values.values.single().appliedAt)
+    }
+
+    @Test
     fun `a changed catalog writes only the titles that changed until the next full apply`() = runTest {
         val stamps = object : CatalogApplyStampStore {
             val values = mutableMapOf<String, CatalogApplyStamp>()
