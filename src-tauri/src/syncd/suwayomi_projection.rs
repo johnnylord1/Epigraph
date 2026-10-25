@@ -482,7 +482,7 @@ async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionR
 }
 
 async fn claim_next_at(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Option<ProjectionRow>> {
-    let mut tx = pool.begin().await?;
+    let mut tx = super::db::begin_write(pool).await?;
     sqlx::query(
         r#"
         UPDATE suwayomi_projection_outbox
@@ -590,7 +590,7 @@ async fn claim_group_at(
     first: &ProjectionRow,
     change: &Value,
 ) -> anyhow::Result<Vec<ProjectionRow>> {
-    let mut tx = pool.begin().await?;
+    let mut tx = super::db::begin_write(pool).await?;
     let candidates = sqlx::query_as::<_, ProjectionRow>(
         r#"
         SELECT operation_id, profile_id, operation_name, variables_json, attempt_count

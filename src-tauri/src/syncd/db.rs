@@ -7115,7 +7115,7 @@ pub async fn reproject_comic_chapter_states(
     .await
     .context("failed to load stored chapter progress to project again")?;
     let now = now_ms();
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let mut queued = 0;
     for (entity_id, record_json, server_version) in rows {
         let Ok(record) = serde_json::from_str::<Value>(&record_json) else {
@@ -9246,7 +9246,7 @@ pub async fn upsert_portable_work_binding(
     record_lamport: i64,
     updated_at_ms: i64,
 ) -> anyhow::Result<()> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     write_portable_work_binding(
         &mut tx,
         profile_id,
@@ -9292,7 +9292,7 @@ pub async fn upsert_bound_portable_works(
     if works.is_empty() {
         return Ok(());
     }
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     for work in works {
         write_portable_work_binding(
             &mut tx,
