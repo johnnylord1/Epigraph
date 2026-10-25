@@ -292,4 +292,23 @@ describe("built-in Cloudflare solver endpoint", () => {
       flareSolverrAsResponseFallback: false,
     }));
   });
+
+  it("replaces the endpoint of an earlier launch with this launch's endpoint", async () => {
+    const { enableBuiltinCloudflareSolver } = await import("./flaresolverr");
+    vi.clearAllMocks();
+    const stale = `http://127.0.0.1:51104/epigraph-cf-${"c".repeat(32)}`;
+    const endpoint = `http://127.0.0.1:59266/epigraph-cf-${"d".repeat(32)}`;
+    Object.assign(settings, { flareSolverrEnabled: true, flareSolverrUrl: stale });
+    invoke.mockResolvedValueOnce(endpoint);
+    gql.mockResolvedValueOnce({});
+    try {
+      await expect(enableBuiltinCloudflareSolver()).resolves.toBe(true);
+      expect(gql).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        flareSolverrEnabled: true,
+        flareSolverrUrl: endpoint,
+      }));
+    } finally {
+      Object.assign(settings, { flareSolverrEnabled: false, flareSolverrUrl: "http://localhost:8191" });
+    }
+  });
 });

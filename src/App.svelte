@@ -90,6 +90,7 @@
     maybeStandbyLocalServer,
     notifyServerReady,
     prepareManagedServerStartup,
+    SERVER_READY_EVENT,
   } from "./lib/serverLifecycle";
   import type { SyncdReplicationSnapshot } from "./lib/syncdDesktop";
   import type { TrackerCompletionTracker } from "./lib/library/completion";
@@ -2696,6 +2697,12 @@
     window.addEventListener("focus", handleWindowFocusStateChange, { passive: true });
     window.addEventListener("blur", handleWindowFocusStateChange, { passive: true });
     window.addEventListener("storage", refreshAppReadingStateFromPersistence, { passive: true });
+    // The server restarts on a new port or after a slow boot, so the built-in solver endpoint of
+    // this launch is applied again whenever it becomes ready.
+    const reapplyBuiltinCloudflareSolver = () => {
+      void enableBuiltinCloudflareSolver().catch(() => {});
+    };
+    window.addEventListener(SERVER_READY_EVENT, reapplyBuiltinCloudflareSolver);
     libraryUpdateInterval = setInterval(() => {
       void runAutomaticLibraryUpdate("interval");
       void maybeStandbyAfterIdle("periodic-idle-check");
@@ -2838,7 +2845,8 @@
         }
       }
       void (async () => {
-        // The server may still be booting; the built-in solver is re-applied every launch.
+        // The server may still be booting; the built-in solver is re-applied every launch, and
+        // again on every server-ready event for a boot slower than these attempts.
         for (let attempt = 0; attempt < 6; attempt += 1) {
           try {
             await enableBuiltinCloudflareSolver();
@@ -2882,6 +2890,7 @@
       window.removeEventListener("blur", handleWindowFocusStateChange);
       reducedMotionQuery.removeEventListener("change", updateReducedMotion);
       window.removeEventListener("storage", refreshAppReadingStateFromPersistence);
+      window.removeEventListener(SERVER_READY_EVENT, reapplyBuiltinCloudflareSolver);
       unlistenResize();
       unlistenScale();
       unlistenFocus();
