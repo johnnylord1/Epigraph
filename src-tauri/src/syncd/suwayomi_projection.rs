@@ -78,6 +78,11 @@ const PORTABLE_WORK_NOT_FOUND: &str = "portable_work_not_found";
 /// Rows waiting on their own work or chapter to appear here. They concern no other work, so they
 /// do not hold later rows of the profile: one comic whose source is down must not stall the rest.
 const UNBOUND_WORK_CODES: [&str; 2] = ["portable_work_not_bound", "portable_chapter_not_resolved"];
+/// Chapter progress whose chapter this Suwayomi still lacks after [MAX_CONFIRMATION_ATTEMPTS]
+/// lookups. It keeps retrying on the slow backoff, since the chapter can appear on a later library
+/// update, but it stops counting as pending: a source whose chapter keys differ between devices
+/// would otherwise keep every device syncing forever.
+const WAITING_CHAPTER_CODE: &str = UNBOUND_WORK_CODES[1];
 const PORTABLE_CHAPTER_PAGE_SIZE: i64 = 250;
 const MAX_PORTABLE_CHAPTER_PAGES: usize = 80;
 const CATEGORY_ASSIGNMENT_PAGE_SIZE: i64 = 100;
@@ -304,13 +309,64 @@ impl MaintenanceWatch {
     }
 }
 
+/// Projections still expected to land without a user action. Blocked rows and chapter progress
+/// still waiting for its chapter are left out, so they cannot hold the first run forever.
 pub async fn pending_projection_count(state: &SharedAppState) -> anyhow::Result<i64> {
+    pending_projection_count_in(&state.pool).await
+}
+
+async fn pending_projection_count_in(pool: &sqlx::SqlitePool) -> anyhow::Result<i64> {
     sqlx::query_scalar(
-        "SELECT COUNT(*) FROM suwayomi_projection_outbox WHERE status IN ('pending', 'in_flight', 'retry', 'blocked')",
+        r#"
+        SELECT COUNT(*) FROM suwayomi_projection_outbox
+        WHERE status IN ('pending', 'in_flight', 'retry')
+          AND NOT (status = 'retry' AND last_error IS ? AND attempt_count >= ?)
+        "#,
     )
-    .fetch_one(&state.pool)
+    .bind(WAITING_CHAPTER_CODE)
+    .bind(MAX_CONFIRMATION_ATTEMPTS)
+    .fetch_one(pool)
     .await
     .context("failed to count pending Suwayomi projections")
+}
+
+/// A profile's projection counts for `/v1/sync/status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRow)]
+pub struct ProjectionStatusCounts {
+    pub pending: i64,
+    pub blocked: i64,
+    pub in_flight: i64,
+    /// Rows other than chapter progress still to project, which hold the catalog revisions back.
+    pub catalog_pending: i64,
+}
+
+pub async fn projection_status_counts(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+) -> anyhow::Result<ProjectionStatusCounts> {
+    sqlx::query_as(
+        r#"
+        SELECT
+            COALESCE(SUM(CASE WHEN status IN ('pending', 'retry') AND NOT waiting THEN 1 ELSE 0 END), 0)
+                AS pending,
+            COALESCE(SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), 0) AS blocked,
+            COALESCE(SUM(CASE WHEN status = 'in_flight' THEN 1 ELSE 0 END), 0) AS in_flight,
+            COALESCE(SUM(CASE WHEN status IN ('pending', 'retry', 'in_flight') AND NOT waiting
+                AND operation_name <> 'UpdateChaptersProgress' THEN 1 ELSE 0 END), 0) AS catalog_pending
+        FROM (
+            SELECT status, operation_name,
+                (status = 'retry' AND last_error IS ? AND attempt_count >= ?) AS waiting
+            FROM suwayomi_projection_outbox
+            WHERE profile_id = ?
+        )
+        "#,
+    )
+    .bind(WAITING_CHAPTER_CODE)
+    .bind(MAX_CONFIRMATION_ATTEMPTS)
+    .bind(profile_id)
+    .fetch_one(pool)
+    .await
+    .context("failed to count Suwayomi projections for the sync status")
 }
 
 /// Projections this process has applied to Suwayomi. The desktop UI watches it to reload what it
@@ -2223,6 +2279,48 @@ mod tests {
         .await
         .unwrap();
         assert!(claim_next_at(&pool, 600).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn chapter_progress_still_waiting_for_its_chapter_stops_counting_as_pending() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        for (id, operation, status, attempts, error) in [
+            ("waiting", "UpdateChaptersProgress", "retry", MAX_CONFIRMATION_ATTEMPTS, Some(WAITING_CHAPTER_CODE)),
+            ("young", "UpdateChaptersProgress", "retry", MAX_CONFIRMATION_ATTEMPTS - 1, Some(WAITING_CHAPTER_CODE)),
+            ("outage", "UpdateChaptersProgress", "retry", 9, Some("runtime_unavailable")),
+            ("fresh", "UpdateManga", "pending", 0, None),
+            ("library", "UpdateManga", "retry", 9, Some(WAITING_CHAPTER_CODE)),
+            ("gave_up", "UpdateManga", "blocked", 5, Some(PORTABLE_WORK_NOT_FOUND)),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', ?, '{}', 'comic.history', ?, 1, ?, ?, 0, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(operation)
+            .bind(id)
+            .bind(status)
+            .bind(attempts)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let counts = projection_status_counts(&pool, "main").await.unwrap();
+        assert_eq!(
+            counts,
+            ProjectionStatusCounts { pending: 3, blocked: 1, in_flight: 0, catalog_pending: 1 }
+        );
+        assert_eq!(projection_status_counts(&pool, "other").await.unwrap().pending, 0);
+        // The first run waits only on rows that can still land on their own.
+        assert_eq!(pending_projection_count_in(&pool).await.unwrap(), 3);
     }
 
     #[test]

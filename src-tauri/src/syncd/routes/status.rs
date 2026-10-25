@@ -7,7 +7,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::syncd::middleware::validate_scope;
-use crate::syncd::{catalog_revision, db};
+use crate::syncd::{catalog_revision, db, suwayomi_projection};
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
 
 #[derive(Debug, Deserialize)]
@@ -146,22 +146,10 @@ pub async fn get_sync_status(
     let runtime = db::load_server_runtime(&state.pool)
         .await
         .map_err(|_| AppError::Internal("Failed to load sync status.".to_string()))?;
-    let (pending, blocked, in_flight, catalog_pending): (i64, i64, i64, i64) = sqlx::query_as(
-        r#"
-        SELECT
-            COALESCE(SUM(CASE WHEN status IN ('pending', 'retry') THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN status = 'in_flight' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN status IN ('pending', 'retry', 'in_flight')
-                AND operation_name <> 'UpdateChaptersProgress' THEN 1 ELSE 0 END), 0)
-        FROM suwayomi_projection_outbox
-        WHERE profile_id = ?
-        "#,
-    )
-    .bind(profile_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| AppError::Internal("Failed to load Suwayomi projection status.".to_string()))?;
+    let suwayomi_projection::ProjectionStatusCounts { pending, blocked, in_flight, catalog_pending } =
+        suwayomi_projection::projection_status_counts(&state.pool, profile_id)
+            .await
+            .map_err(|_| AppError::Internal("Failed to load Suwayomi projection status.".to_string()))?;
 
     let ready = pending == 0 && blocked == 0 && in_flight == 0;
     let revisions = announced_revisions(catalog_revision::current(profile_id), blocked, catalog_pending);
