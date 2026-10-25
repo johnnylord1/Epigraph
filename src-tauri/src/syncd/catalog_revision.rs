@@ -197,6 +197,12 @@ pub fn subscribe() -> broadcast::Receiver<String> {
     changes().subscribe()
 }
 
+/// Whether a device stream is listening for catalog changes, so a catalog edit made outside Core
+/// is worth looking for between progress ticks.
+pub fn has_listeners() -> bool {
+    changes().receiver_count() > 0
+}
+
 /// Announces a change without a computation, for stream tests.
 #[cfg(test)]
 pub(crate) fn announce_change_for_test(profile_id: &str) {

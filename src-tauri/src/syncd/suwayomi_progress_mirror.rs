@@ -25,6 +25,10 @@ const MIN_REQUESTED_INTERVAL: Duration = Duration::from_millis(1_500);
 /// Lower bound between two catalog revision computations, so a burst of writes, each of which
 /// would discard a computation still reading, shares one.
 const MIN_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_millis(400);
+/// How often the catalog revisions are computed while a device streams catalog events. Edits made
+/// in Suwayomi itself bypass Core, so only a computation notices them; it reads the library's
+/// light fields in tens of milliseconds, which would otherwise wait for the next progress tick.
+const CATALOG_WATCH_INTERVAL: Duration = Duration::from_secs(5);
 const MIRROR_PAGE_SIZE: i64 = 250;
 const MAX_MIRROR_PAGES: usize = 32;
 const MIRROR_DEVICE_ID: &str = "epigraph-core-mirror";
@@ -205,8 +209,9 @@ pub fn request_catalog_refresh() {
     catalog_refresh_requests().notify_one();
 }
 
-/// Spawns the task that computes catalog revisions on request. Requests made while it computes
-/// coalesce into one more computation.
+/// Spawns the task that computes catalog revisions on request, and on its own every
+/// [`CATALOG_WATCH_INTERVAL`] while a device streams catalog events. Requests made while it
+/// computes coalesce into one more computation.
 pub fn spawn_catalog_refresh_task(
     state: SharedAppState,
     mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
@@ -214,9 +219,20 @@ pub fn spawn_catalog_refresh_task(
     tokio::spawn(async move {
         let requests = catalog_refresh_requests();
         let mut last_refresh: Option<tokio::time::Instant> = None;
+        let mut watch = tokio::time::interval_at(
+            tokio::time::Instant::now() + CATALOG_WATCH_INTERVAL,
+            CATALOG_WATCH_INTERVAL,
+        );
+        watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 _ = requests.notified() => {}
+                _ = watch.tick() => {
+                    let recent = last_refresh.is_some_and(|at| at.elapsed() < CATALOG_WATCH_INTERVAL);
+                    if recent || !catalog_revision::has_listeners() {
+                        continue;
+                    }
+                }
                 _ = wait_for_shutdown_request(&mut shutdown) => break,
             }
             let wait = last_refresh
