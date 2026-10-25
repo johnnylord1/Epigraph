@@ -1258,9 +1258,19 @@ FROM aethon_sync_outbox
 WHERE status = 'ERROR' AND last_error LIKE 'blocked:%'
 ORDER BY sequence;
 
+selectBlockedMutationPayload:
+SELECT payload_json FROM aethon_sync_outbox
+WHERE sequence = :sequence AND status = 'ERROR' AND last_error LIKE 'blocked:%';
+
+selectBlockedMutationSequencesWithError:
+SELECT sequence FROM aethon_sync_outbox
+WHERE status = 'ERROR' AND last_error = :lastError
+ORDER BY sequence;
+
 retryBlockedMutation:
 UPDATE aethon_sync_outbox
 SET client_mutation_id = :newClientMutationId,
+    payload_json = :payloadJson,
     status = 'PENDING',
     attempt_count = 0,
     next_attempt_at = :now,

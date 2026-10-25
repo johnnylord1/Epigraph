@@ -38,6 +38,7 @@ import epigraph.sync.core.suwayomi.SuwayomiMutationQueueDrainer
 import epigraph.sync.core.protocol.CoreTrackerCredentialDelete
 import epigraph.sync.core.protocol.CoreTrackerCredentialWrite
 import epigraph.sync.core.trackers.TrackerCredentialChannel
+import epigraph.contract.ClientMutationId
 import epigraph.sync.EpigraphMutationCoordinator
 import android.util.Log
 import co.touchlab.kermit.Logger
@@ -46,6 +47,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import yokai.data.DatabaseHandler
+import java.util.UUID
 
 private val coreSyncLogger = Logger.withTag("EpigraphCoreSync")
 
@@ -62,6 +64,9 @@ interface CorePendingOutbox {
 
     /** Unsettled rows parked for a user decision, which no sync run sends until the user acts. */
     suspend fun blockedCountActive(policy: EffectiveSyncPolicy): Long = 0
+
+    /** Queues again the parked rows this version can now repair, before the run counts them. */
+    suspend fun retryRepairable(nowEpochMillis: Long) = Unit
 }
 
 class CoordinatorPendingOutbox(
@@ -96,6 +101,10 @@ class CoordinatorPendingOutbox(
 
     override suspend fun blockedCountActive(policy: EffectiveSyncPolicy): Long =
         coordinator.blockedCount(policy.selectedScopes)
+
+    override suspend fun retryRepairable(nowEpochMillis: Long) {
+        coordinator.retryRepairablePageCounts(nowEpochMillis) { ClientMutationId(UUID.randomUUID().toString()) }
+    }
 
     override suspend fun unsettledCountActive(policy: EffectiveSyncPolicy): Long =
         coordinator.unsettledCount(policy.selectedScopes) + database.await {
@@ -717,6 +726,7 @@ class CoreOutboxSyncRunner(
         restartAfterLegacyUpgrade: Boolean,
     ): CoreOutboxSyncOutcome {
         require(nowEpochMillis >= 0) { "sync timestamp must be epoch milliseconds" }
+        pendingOutbox.retryRepairable(nowEpochMillis)
         val pendingBefore = pendingOutbox.unsettledCount().also { require(it >= 0) }
         val credential = try {
             credentials.load()

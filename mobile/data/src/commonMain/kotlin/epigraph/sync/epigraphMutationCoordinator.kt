@@ -4,9 +4,12 @@ import epigraph.contract.EpigraphEntityId
 import epigraph.contract.EpigraphIdentityRules
 import epigraph.contract.ClientMutationId
 import epigraph.contract.DeviceId
+import epigraph.contract.ReaderLocator
+import epigraph.contract.SyncCommand
 import epigraph.contract.SyncCommandEnvelope
 import epigraph.contract.SyncScopeId
 import epigraph.contract.operationWireName
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import tachiyomi.data.Aethon_sync_outbox
@@ -250,12 +253,56 @@ class EpigraphMutationCoordinator(
     suspend fun retryBlocked(sequence: Long, newClientMutationId: ClientMutationId, nowEpochMillis: Long) {
         require(nowEpochMillis >= 0) { "retry timestamp must be epoch milliseconds" }
         databaseHandler.await(inTransaction = true) {
-            aethon_syncQueries.retryBlockedMutation(
-                newClientMutationId = newClientMutationId.value,
-                now = nowEpochMillis,
-                sequence = sequence,
-            )
+            retryParked(sequence, newClientMutationId, nowEpochMillis) { it }
         }
+    }
+
+    /**
+     * Sends again the progress and bookmark rows the Core refused because their page count did not
+     * cover the page index, which the reader queued for read chapters before it was fixed. The stored
+     * count is repaired with the new ID, so a row refused again stays parked instead of looping.
+     */
+    suspend fun retryRepairablePageCounts(nowEpochMillis: Long, newClientMutationId: () -> ClientMutationId): Int {
+        require(nowEpochMillis >= 0) { "retry timestamp must be epoch milliseconds" }
+        return databaseHandler.await(inTransaction = true) {
+            aethon_syncQueries.selectBlockedMutationSequencesWithError(BLOCKED_PREFIX + INVALID_PAGE_COUNT)
+                .executeAsList()
+                .count { sequence ->
+                    var repaired = false
+                    retryParked(sequence, newClientMutationId(), nowEpochMillis) { command ->
+                        command.withPageCountCoveringPageIndex()?.also { repaired = true }
+                    }
+                    repaired
+                }
+        }
+    }
+
+    /**
+     * The Core keys a receipt by the ID inside the stored envelope, and the drainer refuses a row
+     * whose column and envelope IDs differ, so both carry the new ID. [repair] returns null to leave
+     * the row parked.
+     */
+    private fun Database.retryParked(
+        sequence: Long,
+        newClientMutationId: ClientMutationId,
+        nowEpochMillis: Long,
+        repair: (SyncCommand) -> SyncCommand?,
+    ) {
+        val payloadJson = aethon_syncQueries.selectBlockedMutationPayload(sequence).executeAsOneOrNull() ?: return
+        val envelope = runCatching { json.decodeFromString<SyncCommandEnvelope>(payloadJson) }.getOrNull()
+        val retried = if (envelope == null) {
+            // An unreadable envelope is refused again by the drainer; the row keeps what it had.
+            payloadJson
+        } else {
+            val command = repair(envelope.command) ?: return
+            json.encodeToString(envelope.copy(clientMutationId = newClientMutationId, command = command))
+        }
+        aethon_syncQueries.retryBlockedMutation(
+            newClientMutationId = newClientMutationId.value,
+            payloadJson = retried,
+            now = nowEpochMillis,
+            sequence = sequence,
+        )
     }
 
     /** Drops a parked row the user chose not to send. The local change itself stays on this phone. */
@@ -395,3 +442,17 @@ data class BlockedMutation(
 )
 
 private const val BLOCKED_PREFIX = "blocked:"
+private const val INVALID_PAGE_COUNT = "INVALID_PAGE_COUNT"
+
+private fun SyncCommand.withPageCountCoveringPageIndex(): SyncCommand? = when (this) {
+    is SyncCommand.SetProgress -> locator.withPageCountCoveringPageIndex()?.let { copy(locator = it) }
+    is SyncCommand.SetBookmark -> locator.withPageCountCoveringPageIndex()?.let { copy(locator = it) }
+    else -> null
+}
+
+private fun ReaderLocator.withPageCountCoveringPageIndex(): ReaderLocator? {
+    if (this !is ReaderLocator.Manga) return null
+    val pageCount = pageCount ?: return null
+    val covering = comicPageCountCovering(pageIndex, pageCount)
+    return if (covering == pageCount) null else copy(pageCount = covering)
+}

@@ -4,6 +4,7 @@ import epigraph.contract.EpigraphEntityId
 import epigraph.contract.EpigraphSyncProtocol
 import epigraph.contract.ClientMutationId
 import epigraph.contract.DeviceId
+import epigraph.contract.ReaderLocator
 import epigraph.contract.SyncCommand
 import epigraph.contract.SyncCommandEnvelope
 import epigraph.contract.SyncEntityType
@@ -292,6 +293,48 @@ class EpigraphMutationCoordinatorTest {
     }
 
     @Test
+    fun `retry sends a parked row under the new ID in both the row and its envelope`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        coordinator.mutateLocal(envelope(deviceId, ClientMutationId("refused")), 100) { Unit }
+        coordinator.claimReady(100, leaseDurationMillis = 1_000, limit = 10)
+        coordinator.markFailed(deviceId, ClientMutationId("refused"), "blocked:unsupported_entity", Long.MAX_VALUE)
+
+        coordinator.retryBlocked(coordinator.blockedMutations().single().sequence, ClientMutationId("again"), 200)
+
+        val row = coordinator.claimReady(200, leaseDurationMillis = 1_000, limit = 10).single()
+        assertEquals("again", row.client_mutation_id)
+        assertTrue(row.payload_json.contains("\"clientMutationId\":\"again\""), row.payload_json)
+        assertEquals(0, coordinator.blockedCount())
+    }
+
+    @Test
+    fun `parked page counts one short of a read chapter are repaired and sent again once`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        suspend fun park(id: String, pageIndex: Int, pageCount: Int, error: String) {
+            coordinator.mutateLocal(progressEnvelope(deviceId, ClientMutationId(id), pageIndex, pageCount), 100) { Unit }
+            coordinator.claimReady(100, leaseDurationMillis = 1_000, limit = 10)
+            coordinator.markFailed(deviceId, ClientMutationId(id), error, Long.MAX_VALUE)
+        }
+        park("read-chapter", pageIndex = 11, pageCount = 11, error = "blocked:INVALID_PAGE_COUNT")
+        park("other-count", pageIndex = 3, pageCount = 10, error = "blocked:INVALID_PAGE_COUNT")
+        park("other-reason", pageIndex = 11, pageCount = 11, error = "blocked:unsupported_entity")
+        var ids = 0
+
+        assertEquals(1, coordinator.retryRepairablePageCounts(200) { ClientMutationId("repaired-${ids++}") })
+
+        val row = coordinator.claimReady(200, leaseDurationMillis = 1_000, limit = 10).single()
+        assertEquals("repaired-0", row.client_mutation_id)
+        assertTrue(row.payload_json.contains("\"pageCount\":12"), row.payload_json)
+        assertTrue(row.payload_json.contains("\"clientMutationId\":\"repaired-0\""), row.payload_json)
+        assertEquals(2, coordinator.blockedCount())
+
+        // Refused again after the repair, the row stays parked for the user instead of looping.
+        coordinator.markFailed(deviceId, ClientMutationId("repaired-0"), "blocked:INVALID_PAGE_COUNT", Long.MAX_VALUE)
+        assertEquals(0, coordinator.retryRepairablePageCounts(300) { ClientMutationId("repaired-${ids++}") })
+        assertEquals(3, coordinator.blockedCount())
+    }
+
+    @Test
     fun `local progress remains writable after a newer remote revision`() = runTest {
         database.aethon_syncQueries.upsertIdentity(
             entityId = "manga:progress",
@@ -340,6 +383,25 @@ class EpigraphMutationCoordinatorTest {
             database.aethon_syncQueries.selectReaderProgress("manga:progress").executeAsOne().locator_json,
         )
     }
+
+    private fun progressEnvelope(deviceId: DeviceId, mutationId: ClientMutationId, pageIndex: Int, pageCount: Int) =
+        SyncCommandEnvelope(
+            protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
+            deviceId = deviceId,
+            clientMutationId = mutationId,
+            scopeId = SyncScopeId("comics:profile:main"),
+            entityType = SyncEntityType("comic.history"),
+            command = SyncCommand.SetProgress(
+                entityId = EpigraphEntityId("manga:example:42"),
+                locator = ReaderLocator.Manga(
+                    entityId = EpigraphEntityId("manga:example:42"),
+                    chapterId = "chapter-1",
+                    pageIndex = pageIndex,
+                    pageCount = pageCount,
+                    progression = 1.0,
+                ),
+            ),
+        )
 
     private fun envelope(deviceId: DeviceId, mutationId: ClientMutationId) = SyncCommandEnvelope(
         protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
