@@ -305,6 +305,7 @@ pub(crate) async fn execute_graphql_document(
         // Recompute now so other devices hear about a device's change in seconds. The mirrors'
         // own writes happen inside that recomputation, so they must not ask for another one.
         if !written_by_a_mirror(session) {
+            suwayomi_progress_mirror::request_catalog_refresh();
             suwayomi_progress_mirror::request_immediate_mirror(&[], &[]);
         }
     }

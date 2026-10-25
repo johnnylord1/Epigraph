@@ -111,6 +111,10 @@ pub async fn run() -> anyhow::Result<()> {
         state.clone(),
         shutdown.subscribe(),
     );
+    super::suwayomi_progress_mirror::spawn_catalog_refresh_task(
+        state.clone(),
+        shutdown.subscribe(),
+    );
     super::suwayomi_tracking_mirror::spawn_tracking_mirror_task(
         state.clone(),
         shutdown.subscribe(),

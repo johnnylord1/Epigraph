@@ -22,6 +22,9 @@ const MIRROR_INTERVAL: Duration = Duration::from_secs(45);
 /// Lower bound between two ticks requested by desktop edits, so a burst of edits shares one
 /// Suwayomi round trip instead of queueing a tick per click.
 const MIN_REQUESTED_INTERVAL: Duration = Duration::from_millis(1_500);
+/// Lower bound between two catalog revision computations, so a burst of writes, each of which
+/// would discard a computation still reading, shares one.
+const MIN_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_millis(400);
 const MIRROR_PAGE_SIZE: i64 = 250;
 const MAX_MIRROR_PAGES: usize = 32;
 const MIRROR_DEVICE_ID: &str = "epigraph-core-mirror";
@@ -191,6 +194,62 @@ pub fn request_immediate_mirror(manga_ids: &[i64], chapter_ids: &[i64]) {
     requests.wake.notify_one();
 }
 
+fn catalog_refresh_requests() -> &'static Notify {
+    static REQUESTS: OnceLock<Notify> = OnceLock::new();
+    REQUESTS.get_or_init(Notify::new)
+}
+
+/// Asks for the catalog revisions to be computed again now. They run on their own task, so a catalog
+/// change is announced without waiting for a progress tick that is reading the whole library.
+pub fn request_catalog_refresh() {
+    catalog_refresh_requests().notify_one();
+}
+
+/// Spawns the task that computes catalog revisions on request. Requests made while it computes
+/// coalesce into one more computation.
+pub fn spawn_catalog_refresh_task(
+    state: SharedAppState,
+    mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
+) {
+    tokio::spawn(async move {
+        let requests = catalog_refresh_requests();
+        let mut last_refresh: Option<tokio::time::Instant> = None;
+        loop {
+            tokio::select! {
+                _ = requests.notified() => {}
+                _ = wait_for_shutdown_request(&mut shutdown) => break,
+            }
+            let wait = last_refresh
+                .map(|at| MIN_CATALOG_REFRESH_INTERVAL.saturating_sub(at.elapsed()))
+                .unwrap_or_default();
+            if !wait.is_zero() {
+                tokio::select! {
+                    _ = tokio::time::sleep(wait) => {}
+                    _ = wait_for_shutdown_request(&mut shutdown) => break,
+                }
+            }
+            for instance in suwayomi_process::attach_owned_instances() {
+                let session = mirror_session(&instance.profile_key);
+                match db::load_server_identity(&state.pool).await {
+                    Ok(identity) => catalog_revision::refresh(&state, &session, &identity.server_id).await,
+                    Err(error) => tracing::debug!(error = %error, "catalog revision skipped: no server identity"),
+                }
+            }
+            last_refresh = Some(tokio::time::Instant::now());
+        }
+    });
+}
+
+fn mirror_session(profile_id: &str) -> AuthenticatedSession {
+    AuthenticatedSession {
+        token_id: MIRROR_TOKEN_ID.to_string(),
+        device_id: MIRROR_DEVICE_ID.to_string(),
+        profile_id: profile_id.to_string(),
+        scopes: BTreeSet::from([format!("comics:profile:{profile_id}")]),
+        mutation_receipt: None,
+    }
+}
+
 fn take_mirror_hints() -> MirrorHints {
     std::mem::take(
         &mut *mirror_requests()
@@ -297,21 +356,15 @@ async fn mirror_profile(
     memory: &mut ProfileMirrorMemory,
     hints: &MirrorHints,
 ) -> anyhow::Result<usize> {
-    let session = AuthenticatedSession {
-        token_id: MIRROR_TOKEN_ID.to_string(),
-        device_id: MIRROR_DEVICE_ID.to_string(),
-        profile_id: profile_id.to_string(),
-        scopes: BTreeSet::from([format!("comics:profile:{profile_id}")]),
-        mutation_receipt: None,
-    };
+    let session = mirror_session(profile_id);
     let scope_id = format!("comics:profile:{profile_id}");
     let retention_window = state.config.retention_window;
     let server_identity = db::load_server_identity(&state.pool).await?;
     let server_id = &server_identity.server_id;
 
-    // Revisions first, from their own light read: devices hear about a catalog change without
-    // waiting for the progress read below.
-    catalog_revision::refresh(state, &session, server_id).await;
+    // The revisions are computed on their own task, so devices hear about a catalog change without
+    // waiting for the progress read below; this keeps them from expiring.
+    request_catalog_refresh();
     let library = fetch_library_with_progress(state, &session).await?;
     // Bookmarks keep their original eligibility (titles with read progress); chapter states below
     // cover the whole library.

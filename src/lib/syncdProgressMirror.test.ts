@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 import {
   mutationMayChangeCatalog,
+  CATALOG_MIRROR_DEBOUNCE_MS,
   PROGRESS_MIRROR_DEBOUNCE_MS,
   requestCatalogMirror,
   requestProgressMirror,
@@ -51,7 +52,12 @@ describe("progress mirror requests", () => {
   test("a catalog edit requests a tick flagged as a catalog change", () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     requestCatalogMirror();
-    vi.advanceTimersByTime(PROGRESS_MIRROR_DEBOUNCE_MS);
+    vi.advanceTimersByTime(CATALOG_MIRROR_DEBOUNCE_MS - 1);
+    // A progress edit in the same batch does not push the catalog request back.
+    requestProgressMirror({ mangaIds: [-1] });
+    vi.advanceTimersByTime(CATALOG_MIRROR_DEBOUNCE_MS - 1);
+    expect(invokeMock).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
     expect(invokeMock).toHaveBeenCalledWith("syncd_request_progress_mirror", { mangaIds: [], chapterIds: [], catalog: true });
 
     // The flag is consumed by the request it rode on.

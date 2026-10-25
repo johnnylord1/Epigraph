@@ -95,6 +95,7 @@ pub async fn post_local_progress_mirror(
     // A bare hint comes from a shell too old to say what it changed.
     if request.catalog || (request.manga_ids.is_empty() && request.chapter_ids.is_empty()) {
         crate::syncd::catalog_revision::invalidate_all();
+        suwayomi_progress_mirror::request_catalog_refresh();
     }
     suwayomi_progress_mirror::request_immediate_mirror(&request.manga_ids, &request.chapter_ids);
     Ok(StatusCode::ACCEPTED)

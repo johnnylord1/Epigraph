@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 /** Edits within this window share one request; Core also spaces requested mirror ticks. */
 export const PROGRESS_MIRROR_DEBOUNCE_MS = 750;
+/** Shorter for catalog edits, which paired devices wait on; Core coalesces close requests itself. */
+export const CATALOG_MIRROR_DEBOUNCE_MS = 150;
 /** Core rejects larger lists; past this the title ids alone still trigger a rescan. */
 const MAX_IDS_PER_REQUEST = 1_000;
 
@@ -107,8 +109,12 @@ export function requestProgressMirror(edit: { mangaIds?: readonly number[]; chap
   if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
   addIds(pendingMangaIds, edit.mangaIds);
   addIds(pendingChapterIds, edit.chapterIds);
+  schedule();
+}
+
+function schedule() {
   if (timer !== null) clearTimeout(timer);
-  timer = setTimeout(flush, PROGRESS_MIRROR_DEBOUNCE_MS);
+  timer = setTimeout(flush, pendingCatalog ? CATALOG_MIRROR_DEBOUNCE_MS : PROGRESS_MIRROR_DEBOUNCE_MS);
 }
 
 /**
@@ -119,8 +125,7 @@ export function requestProgressMirror(edit: { mangaIds?: readonly number[]; chap
 export function requestCatalogMirror() {
   if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
   pendingCatalog = true;
-  if (timer !== null) clearTimeout(timer);
-  timer = setTimeout(flush, PROGRESS_MIRROR_DEBOUNCE_MS);
+  schedule();
 }
 
 export function resetProgressMirrorRequestsForTests() {
