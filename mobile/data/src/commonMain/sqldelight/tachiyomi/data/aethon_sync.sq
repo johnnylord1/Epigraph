@@ -465,6 +465,10 @@ CREATE TABLE aethon_core_lamport (
 selectIdentityByEntityId:
 SELECT * FROM aethon_content_identity WHERE entity_id = :entityId;
 
+selectIdentityEntityIdsInRange:
+SELECT entity_id FROM aethon_content_identity
+WHERE entity_id >= :fromInclusive AND entity_id < :toExclusive;
+
 selectContentIdentityReferences:
 SELECT entity_id, content_type, local_reference FROM aethon_content_identity;
 

@@ -117,9 +117,11 @@ class SuwayomiCatalogSync(
         }
 
         val mangaEntityIds = database.await(inTransaction = false) {
+            // One read of the identities this server already owns spares a lookup per title.
+            val known = serverMangaEntityIds(this, credentials)
             library.mapNotNull { node ->
                 node.long("id")?.let { mangaId ->
-                    mangaId to resolveMangaEntityId(this, credentials, mangaId)
+                    mangaId to resolveMangaEntityId(this, credentials, mangaId, known)
                 }
             }.toMap()
         }
@@ -647,14 +649,29 @@ class SuwayomiCatalogSync(
                 )
             }
 
+        /** The server-scoped comic identities that exist locally for this server and profile. */
+        fun serverMangaEntityIds(database: yokai.data.Database, credentials: CoreCredentialSession): Set<String> {
+            if (credentials.serverId == LEGACY_UNBOUND_SERVER_ID) return emptySet()
+            val prefix = serverMangaEntityId(credentials, 0).removeSuffix("0")
+            // Every id with the prefix sorts below the prefix with its last character incremented.
+            val upper = prefix.dropLast(1) + (prefix.last() + 1)
+            return database.aethon_syncQueries.selectIdentityEntityIdsInRange(prefix, upper)
+                .executeAsList()
+                .toHashSet()
+        }
+
         fun resolveMangaEntityId(
             database: yokai.data.Database,
             credentials: CoreCredentialSession,
             mangaId: Long,
+            knownServerScoped: Set<String> = emptySet(),
         ): String {
             val serverScoped = serverMangaEntityId(credentials, mangaId)
             if (credentials.serverId == LEGACY_UNBOUND_SERVER_ID) return serverScoped
-            if (database.aethon_syncQueries.selectIdentityByEntityId(serverScoped).executeAsOneOrNull() != null) {
+            if (
+                serverScoped in knownServerScoped ||
+                database.aethon_syncQueries.selectIdentityByEntityId(serverScoped).executeAsOneOrNull() != null
+            ) {
                 return serverScoped
             }
             // A desktop identity can change across reinstalls or data resets. Works materialized

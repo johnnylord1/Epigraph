@@ -58,6 +58,34 @@ class SuwayomiCatalogSyncTest {
     }
 
     @Test
+    fun `the batched identity read returns only this server and profile's comics`() {
+        listOf(
+            "suwayomi:server:$SERVER:profile:$PROFILE:manga:7",
+            "suwayomi:server:$SERVER:profile:$PROFILE:manga:70",
+            "suwayomi:server:$SERVER:profile:$PROFILE:category:7",
+            "suwayomi:server:$SERVER:profile:${PROFILE}2:manga:7",
+            "suwayomi:server:${SERVER}2:profile:$PROFILE:manga:7",
+            "suwayomi:profile:$PROFILE:manga:7",
+        ).forEachIndexed { index, entityId ->
+            database.aethon_syncQueries.upsertIdentity(entityId, "MANGA", "${index + 1}", 0, 0)
+        }
+
+        val known = SuwayomiCatalogSync.serverMangaEntityIds(database, session)
+
+        assertEquals(
+            setOf(
+                "suwayomi:server:$SERVER:profile:$PROFILE:manga:7",
+                "suwayomi:server:$SERVER:profile:$PROFILE:manga:70",
+            ),
+            known,
+        )
+        assertEquals(
+            "suwayomi:server:$SERVER:profile:$PROFILE:manga:70",
+            SuwayomiCatalogSync.resolveMangaEntityId(database, session, 70, known),
+        )
+    }
+
+    @Test
     fun `stale server references are rebound to the current core instead of duplicating`() = runTest {
         val staleServer = "desktop-zero"
         val staleEntityId = "suwayomi:server:$staleServer:profile:$PROFILE:manga:7"
