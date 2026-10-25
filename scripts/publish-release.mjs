@@ -180,7 +180,7 @@ function publishDesktop(version) {
     fs.writeFileSync(bodyFile, `## Windows\n\n${notes}\n`);
     gh(["release", "edit", tag, "--notes-file", bodyFile], { mutating: true });
   }
-  gh(["release", "edit", tag, "--draft=false", "--latest=false", "--title", `Epigraph Desktop ${version}`], { mutating: true });
+  gh(["release", "edit", tag, "--draft=false", "--prerelease", "--latest=false", "--title", `Epigraph Desktop ${version}`], { mutating: true });
   gh(["release", "upload", STABLE, latestJson, "--clobber"], { mutating: true });
   const bodyFile = writeStableBody({
     desktop: version,
@@ -210,7 +210,7 @@ function publishMobile(version, apkDir) {
   const bodyFile = path.join(dir, "mobile.md");
   fs.writeFileSync(bodyFile, `## Android\n\n${notes}\n`);
   gh(
-    ["release", "create", tag, ...apks, "--title", `Epigraph Mobile ${version}`, "--notes-file", bodyFile, "--latest=false", "--target", "main"],
+    ["release", "create", tag, ...apks, "--title", `Epigraph Mobile ${version}`, "--notes-file", bodyFile, "--prerelease", "--latest=false", "--target", "main"],
     { mutating: true },
   );
   // Upload first so `stable` never goes without an APK, then drop the previous version's.

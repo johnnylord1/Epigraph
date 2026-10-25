@@ -3,11 +3,11 @@
 Desktop and mobile ship on their own schedules. Each build gets its own release,
 and one fixed release, `stable`, always holds the current version of both apps.
 
-| Release | Tag | Contents | Latest? |
+| Release | Tag | Contents | Marked |
 | --- | --- | --- | --- |
-| Epigraph Desktop 0.0.8 | `desktop-v0.0.8` | installer, `.sig`, `latest.json` | no |
-| Epigraph Mobile 0.1.0-alpha.7 | `mobile-v0.1.0-alpha.7` | `Epigraph-mobile_<version>_<abi>.apk` | no |
-| Epigraph — current versions | `stable` | current `latest.json` and current APKs | yes |
+| Epigraph Desktop 0.0.8 | `desktop-v0.0.8` | installer, `.sig`, `latest.json` | Pre-release |
+| Epigraph Mobile 0.1.0-alpha.7 | `mobile-v0.1.0-alpha.7` | `Epigraph-mobile_<version>_<abi>.apk` | Pre-release |
+| Epigraph — current versions | `stable` | current `latest.json` and current APKs | Latest |
 
 The updaters only read the release marked Latest, which is always `stable`:
 
@@ -17,8 +17,11 @@ The updaters only read the release marked Latest, which is always `stable`:
   (`AppUpdateChecker.kt`, `GithubRelease.kt`). With betas enabled it reads the 10 newest
   releases and picks the highest APK version.
 
-Old versions stay in their `desktop-v…` / `mobile-v…` releases. The `v0.0.1`–`v0.0.7`
-releases predate this split and stay as they are.
+Old versions stay in their `desktop-v…` / `mobile-v…` releases, which the script marks
+Pre-release so the release list sets them apart from `stable`. With betas enabled, the
+mobile app labels an update found in one of them as a beta. Publish fewer, batched
+releases rather than one per fix. The `v0.0.1`–`v0.0.7` releases predated this split and
+were deleted on 2026-10-25; their git tags remain.
 
 All commands below run from the desktop checkout with an authenticated `gh`, and
 accept `--dry-run` to print the plan first.
@@ -35,7 +38,7 @@ accept `--dry-run` to print the plan first.
    node scripts/publish-release.mjs desktop 0.0.8 --notes notes-desktop.md
    ```
 
-   This publishes the draft without marking it Latest, copies its `latest.json` to
+   This publishes the draft as a pre-release without marking it Latest, copies its `latest.json` to
    `stable`, rewrites the `## Windows` section of `stable` and marks `stable` Latest.
 
 ## Mobile
@@ -50,7 +53,7 @@ accept `--dry-run` to print the plan first.
    node scripts/publish-release.mjs mobile 0.1.0-alpha.7 path/to/apks --notes notes-android.md
    ```
 
-   This creates `mobile-v<version>`, replaces the APKs in `stable`, rewrites its
+   This creates the pre-release `mobile-v<version>`, replaces the APKs in `stable`, rewrites its
    `## Android` section and marks `stable` Latest.
 
 ## Other commands
