@@ -342,7 +342,7 @@ class EpigraphReaderProgressRouter(
                 chapterId = chapterEntityId,
                 pageIndex = pageIndex,
                 pageOffset = pageOffset,
-                pageCount = pageCount,
+                pageCount = pageCount?.let { comicPageCountCovering(pageIndex, it) },
                 progression = progression,
                 portableWork = portableWork,
                 portableChapter = portableChapter,
@@ -587,6 +587,7 @@ class EpigraphReaderProgressRouter(
         val pageCount = (chapter.last_page_read + chapter.pages_left)
             .takeIf { it in 1..Int.MAX_VALUE.toLong() }
             ?.toInt()
+            ?.let { comicPageCountCovering(pageIndex, it) }
         val progression = when {
             chapter.read -> 1.0
             pageCount != null -> ((pageIndex + 1).toDouble() / pageCount).coerceIn(0.0, 1.0)
@@ -868,3 +869,10 @@ class EpigraphReaderProgressRouter(
         fun JsonObject.double(key: String): Double? = this[key]?.jsonPrimitive?.doubleOrNull
     }
 }
+
+/**
+ * A chapter marked read keeps `pages_left` at 0, so `last_page_read + pages_left` counts one page short of
+ * the zero-based index of the last page. Core rejects a page count that does not cover the page index.
+ */
+fun comicPageCountCovering(pageIndex: Int, pageCount: Int): Int =
+    if (pageIndex < Int.MAX_VALUE) maxOf(pageCount, pageIndex + 1) else pageCount

@@ -11,6 +11,7 @@ import epigraph.contract.SyncCommandEnvelope
 import epigraph.contract.TrackingField
 import epigraph.contract.NovelEntrySnapshot
 import epigraph.contract.operationWireName
+import epigraph.sync.comicPageCountCovering
 import epigraph.sync.core.novels.CoreNovelDependencyIds
 import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
 import epigraph.sync.core.protocol.EpigraphCoreEntityType
@@ -663,8 +664,10 @@ class CoreV1OutboxAdapter(
                 put("comicId", comicId)
                 put("chapterId", chapterId)
                 put("pageIndex", locator.pageIndex)
-                if (locator.pageCount != null) {
-                    put("pageCount", locator.pageCount)
+                val pageCount = locator.pageCount
+                if (pageCount != null) {
+                    // Rows queued before the reader fixed this can still carry the count of a read chapter.
+                    put("pageCount", comicPageCountCovering(locator.pageIndex, pageCount))
                 } else {
                     put("pageCount", JsonNull)
                 }

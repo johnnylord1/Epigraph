@@ -542,6 +542,34 @@ class CoreV1OutboxAdapterTest {
     }
 
     @Test
+    fun `a queued read chapter whose page count equals its page index still reaches Core`() {
+        val command = SyncCommand.SetProgress(
+            COMIC_ID,
+            ReaderLocator.Manga(
+                entityId = COMIC_ID,
+                chapterId = "chapter-7",
+                pageIndex = 161,
+                pageCount = 161,
+                progression = 1.0,
+            ),
+        )
+        val ready = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(
+                record = record(EpigraphCoreEntityType.COMIC_HISTORY, COMIC_SCOPE, command),
+                authenticatedDeviceId = DEVICE_ID,
+                capabilities = capabilities(setOf(EpigraphCoreEntityType.COMIC_HISTORY)),
+                lamport = 12,
+            ),
+        )
+
+        val patch = ready.mutation.patch!!
+        assertEquals("161", patch["pageIndex"]?.jsonPrimitive?.content)
+        assertEquals("162", patch["pageCount"]?.jsonPrimitive?.content)
+        assertEquals("1.0", patch["progressPercent"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `projects comic chapter state with a stable chapter entity`() {
         val command = SyncCommand.SetChapterState(
             entityId = COMIC_ID,

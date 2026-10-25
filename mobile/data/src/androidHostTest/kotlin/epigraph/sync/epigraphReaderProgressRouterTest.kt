@@ -460,6 +460,30 @@ class EpigraphReaderProgressRouterTest {
     }
 
     @Test
+    fun `a read chapter publishes a page count that covers its last page`() = runTest {
+        val (mangaId, chapterId) = bindReadComicChapter()
+        driver.execute(null, "UPDATE chapters SET pages_left = 0 WHERE _id = $chapterId", 0)
+        coverComicScope()
+        val router = backfillRouter()
+
+        assertEquals(2, router.backfillComicProgress())
+        val backfilled = commandOf(queuedMutations().single { it.entity_type == "comic.history" })["locator"]!!.jsonObject
+        assertEquals("5", backfilled["pageIndex"]!!.jsonPrimitive.content)
+        assertEquals("6", backfilled["pageCount"]!!.jsonPrimitive.content)
+
+        driver.execute(null, "DELETE FROM aethon_sync_outbox", 0)
+        router.setComicProgress(
+            localMangaId = mangaId,
+            localChapterId = chapterId,
+            pageIndex = 5,
+            pageCount = 5,
+            progression = 1.0,
+        )
+        val read = commandOf(queuedMutations().single { it.entity_type == "comic.history" })["locator"]!!.jsonObject
+        assertEquals("6", read["pageCount"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `backfill skips unread chapters and progress the paired Core already holds`() = runTest {
         val (mangaId, _) = bindReadComicChapter()
         database.chaptersQueries.insert(
