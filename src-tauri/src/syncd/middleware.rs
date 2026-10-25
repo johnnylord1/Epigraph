@@ -22,6 +22,10 @@ pub const ASSET_SHA256_HEADER: HeaderName = HeaderName::from_static("x-epigraph-
 pub const LEGACY_ASSET_SHA256_HEADER: HeaderName =
     HeaderName::from_static("x-aethon-asset-sha256");
 pub const CURRENT_CLIENT_VERSION: &str = "0.1.0";
+/// A request extends a token's inactivity window only once the extension is at least this long.
+/// Every request used to write, so a sync reading a few pages in parallel queued its requests
+/// behind each other and behind the mirrors on the database write lock.
+const TOKEN_ACTIVITY_REFRESH_MS: i64 = 60_000;
 
 pub async fn require_authenticated_session(
     State(state): State<SharedAppState>,
@@ -211,9 +215,11 @@ async fn authenticate_token(
     }
 
     let new_expiry = now_ms + state.config.token_inactivity_window.as_millis() as i64;
-    refresh_token_activity(&state.pool, &token_id, now_ms, new_expiry)
-        .await
-        .map_err(|_| AppError::Internal("Failed to refresh token activity window.".to_string()))?;
+    if new_expiry - inactivity_expires_at_ms >= TOKEN_ACTIVITY_REFRESH_MS {
+        refresh_token_activity(&state.pool, &token_id, now_ms, new_expiry)
+            .await
+            .map_err(|_| AppError::Internal("Failed to refresh token activity window.".to_string()))?;
+    }
 
     let scope_rows = sqlx::query("SELECT scope_id FROM paired_device_scopes WHERE token_id = ?")
         .bind(&token_id)
@@ -462,6 +468,29 @@ mod tests {
         let session = authenticate_token(&state, "secret-token").await.unwrap();
         assert_eq!(session.profile_id, "main");
         assert!(session.scopes.contains("books:global"));
+
+        let token_hash = hash_token("secret-token");
+        let window = state.config.token_inactivity_window.as_millis() as i64;
+        let load = || async { db::load_token_state(&state.pool, &token_hash).await.unwrap().unwrap() };
+        let refreshed = load().await;
+        assert!(refreshed.inactivity_expires_at_ms > db::now_ms() + window - 10_000);
+
+        // A request right after another leaves the window as it was instead of writing again.
+        authenticate_token(&state, "secret-token").await.unwrap();
+        let unchanged = load().await;
+        assert_eq!(unchanged.last_seen_at_ms, refreshed.last_seen_at_ms);
+        assert_eq!(unchanged.inactivity_expires_at_ms, refreshed.inactivity_expires_at_ms);
+
+        // Once the window has aged, the next request extends it again.
+        let aged = refreshed.inactivity_expires_at_ms - TOKEN_ACTIVITY_REFRESH_MS;
+        sqlx::query("UPDATE paired_device_tokens SET inactivity_expires_at_ms = ? WHERE token_hash = ?")
+            .bind(aged)
+            .bind(&token_hash)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        authenticate_token(&state, "secret-token").await.unwrap();
+        assert!(load().await.inactivity_expires_at_ms > aged);
     }
 
     #[tokio::test]
