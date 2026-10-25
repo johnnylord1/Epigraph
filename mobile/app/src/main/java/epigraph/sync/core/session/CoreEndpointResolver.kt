@@ -3,6 +3,7 @@ package epigraph.sync.core.session
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.SystemClock
 import android.util.Log
 import epigraph.sync.core.credentials.CoreCredentialSession
 import epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID
@@ -14,6 +15,8 @@ import eu.kanade.tachiyomi.BuildConfig
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
@@ -33,7 +36,40 @@ class AndroidCoreEndpointResolver(
 ) : CoreEndpointResolver {
     private val nsd = context.applicationContext.getSystemService(NsdManager::class.java)
 
-    override suspend fun resolve(session: CoreCredentialSession): CoreEndpoint {
+    // Every Core request resolves its endpoint first, and one sync makes a dozen requests within a
+    // few seconds, so probing each time doubled its round trips. A probe that just succeeded is
+    // reused briefly by the same credential; a request that then fails is retried as before.
+    // Stages start in parallel, so callers wait for one probe instead of each sending their own.
+    private val probing = Mutex()
+    private var recentProbe: RecentProbe? = null
+
+    private data class RecentProbe(
+        val tokenId: String,
+        val serverId: String,
+        val tlsCertSha256: String,
+        val endpoint: CoreEndpoint,
+        val probedAtMs: Long,
+    )
+
+    override suspend fun resolve(session: CoreCredentialSession): CoreEndpoint = probing.withLock {
+        recentProbe?.takeIf { probe ->
+            probe.tokenId == session.tokenId &&
+                probe.serverId == session.serverId &&
+                probe.tlsCertSha256.equals(session.tlsCertSha256, ignoreCase = true) &&
+                SystemClock.elapsedRealtime() - probe.probedAtMs in 0 until PROBE_REUSE_MS
+        }?.let { return@withLock it.endpoint }
+        probeEndpoint(session).also { endpoint ->
+            recentProbe = RecentProbe(
+                tokenId = session.tokenId,
+                serverId = session.serverId,
+                tlsCertSha256 = session.tlsCertSha256,
+                endpoint = endpoint,
+                probedAtMs = SystemClock.elapsedRealtime(),
+            )
+        }
+    }
+
+    private suspend fun probeEndpoint(session: CoreCredentialSession): CoreEndpoint {
         val candidates = pairedEndpointCandidates(session)
         if (BuildConfig.DEBUG) Log.d(LOG_TAG, "endpoint candidates: ${candidates.joinToString()}")
         candidates.forEachIndexed { index, origin ->
@@ -198,6 +234,7 @@ class AndroidCoreEndpointResolver(
         const val DEFAULT_SERVICE_TYPE = "_epigraph-sync._tcp."
         const val LEGACY_SERVICE_TYPE = "_aethon-sync._tcp."
         const val DISCOVERY_TIMEOUT_MS = 5_000L
+        const val PROBE_REUSE_MS = 10_000L
         const val FINGERPRINT_MISMATCH_MESSAGE = "fingerprint does not match"
         const val MAX_CAUSE_DEPTH = 8
     }

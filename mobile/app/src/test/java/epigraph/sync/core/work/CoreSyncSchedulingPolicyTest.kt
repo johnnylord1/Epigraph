@@ -46,6 +46,25 @@ class CoreSyncSchedulingPolicyTest {
     }
 
     @Test
+    fun `a wake after the last drain gets a follow-up appended behind the finishing worker`() {
+        assertTrue(scheduler.missedWakeAfterDrain(drainedGeneration = 4, currentGeneration = 5, usesWorkManagerBackoff = false))
+        // No wake since the last drain, a run that never drained, or a run that backs off by itself.
+        assertFalse(scheduler.missedWakeAfterDrain(drainedGeneration = 5, currentGeneration = 5, usesWorkManagerBackoff = false))
+        assertFalse(scheduler.missedWakeAfterDrain(drainedGeneration = null, currentGeneration = 5, usesWorkManagerBackoff = false))
+        assertFalse(scheduler.missedWakeAfterDrain(drainedGeneration = 4, currentGeneration = 5, usesWorkManagerBackoff = true))
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, scheduler.followUpWorkPolicy())
+    }
+
+    @Test
+    fun `a pass leaves the progress backfill to the next pass only when one will run`() {
+        assertTrue(scheduler.deferProgressBackfill(pass = 0, passGeneration = 4, currentGeneration = 5))
+        assertTrue(scheduler.deferProgressBackfill(pass = 2, passGeneration = 4, currentGeneration = 5))
+        // No newer wake, or the last pass allowed by the drain cap.
+        assertFalse(scheduler.deferProgressBackfill(pass = 0, passGeneration = 5, currentGeneration = 5))
+        assertFalse(scheduler.deferProgressBackfill(pass = 3, passGeneration = 4, currentGeneration = 5))
+    }
+
+    @Test
     fun `failures that stop the outbox itself keep WorkManager backoff`() {
         listOf(
             CoreOutboxRetryReason.CONNECTION,

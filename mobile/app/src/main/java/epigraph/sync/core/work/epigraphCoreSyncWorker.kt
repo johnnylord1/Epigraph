@@ -56,6 +56,8 @@ class EpigraphCoreSyncWorker(
         if (!EXECUTION_MUTEX.tryLock()) {
             return Result.success(workDataOf(OUTPUT_STATE to STATE_COALESCED))
         }
+        var drainedGeneration: Long? = null
+        var usesBackoff = false
         return try {
             val notifier = get<CoreSyncNotifier>()
             val outbox = get<CorePendingOutbox>()
@@ -65,11 +67,19 @@ class EpigraphCoreSyncWorker(
                 var observedGeneration: Long
                 do {
                     observedGeneration = WAKE_GENERATION.get()
-                    drained = runOnce()
+                    val passGeneration = observedGeneration
+                    val pass = attempts
+                    drained = runOnce(
+                        deferProgress = {
+                            deferProgressBackfill(pass, passGeneration, WAKE_GENERATION.get())
+                        },
+                    )
                     attempts += 1
                 } while (attempts < MAX_GENERATION_DRAINS && observedGeneration != WAKE_GENERATION.get())
+                drainedGeneration = observedGeneration
                 drained
             }
+            usesBackoff = execution.usesWorkManagerBackoff
             runCatching { get<CoreSyncRunStore>().lastRun.value?.let(notifier::update) }
                 .onFailure { failure -> Log.w(LOG_TAG, "sync notice could not be updated", failure) }
             if (shouldScheduleFollowUp(execution.usesWorkManagerBackoff, execution.awaitingExternalAction)) {
@@ -85,11 +95,19 @@ class EpigraphCoreSyncWorker(
             execution.result
         } finally {
             EXECUTION_MUTEX.unlock()
+            // A wake that arrived after the last drain started was coalesced or kept behind this
+            // run while the mutex was held; nothing else would run it.
+            if (missedWakeAfterDrain(drainedGeneration, WAKE_GENERATION.get(), usesBackoff)) {
+                enqueueFollowUp(applicationContext)
+            }
         }
     }
 
-    /** [checkWithCore] lets the progress backfill ask the desktop which chapters it already holds. */
-    private suspend fun repairLibraries(checkWithCore: Boolean): Int {
+    /**
+     * [includeProgress] adds the reading-progress backfill, which scans every read chapter of the library;
+     * [checkWithCore] lets it ask the desktop which chapters it already holds.
+     */
+    private suspend fun repairLibraries(includeProgress: Boolean, checkWithCore: Boolean): Int {
         val novels = runCatching { get<LocalNovelLibraryOutboxRepair>().repair() }
             .onFailure { failure ->
                 Log.w(LOG_TAG, "local novel library repair failed", failure)
@@ -100,6 +118,7 @@ class EpigraphCoreSyncWorker(
                 Log.w(LOG_TAG, "local comic library repair failed", failure)
             }
             .getOrDefault(0)
+        if (!includeProgress) return novels + comics
         // After the comic repair, so favorites it just bound already carry their reading progress.
         val progress = runCatching {
             val held = get<CoreHeldChapterProgressFilter>()
@@ -114,12 +133,14 @@ class EpigraphCoreSyncWorker(
         return novels + comics + progress
     }
 
-    private suspend fun runOnce(): WorkerExecution {
-        // Backfill favorites and reading progress recorded on this device before pairing (or by
-        // older builds) before counting/draining the outbox. The repairs are idempotent and no-ops
-        // until paired. Progress the desktop has not been asked about waits for the pass after the
-        // first drain, so checking it never delays this device's own pending changes.
-        repairLibraries(checkWithCore = false)
+    /** [deferProgress] says, after the drain, that a newer wake will run another pass of this worker. */
+    private suspend fun runOnce(deferProgress: () -> Boolean): WorkerExecution {
+        // Backfill favorites recorded on this device before pairing (or by older builds) before
+        // counting/draining the outbox, so the catalog read sees them. The repairs are idempotent and
+        // no-ops until paired. Reading progress is not part of the catalog and its backfill scans every
+        // read chapter, which took seconds on a large library, so it waits for the pass after the first
+        // drain instead of delaying a desktop change.
+        repairLibraries(includeProgress = false, checkWithCore = false)
         val outcome = try {
             val runner = get<CoreOutboxSyncRunner>()
             val first = runner.run(
@@ -128,7 +149,12 @@ class EpigraphCoreSyncWorker(
             )
             // The first snapshot from a newly paired or rewound Core shows which local favorites and
             // reading progress it lacks; publish them in this run instead of waiting for the next wake.
-            if (first !is CoreOutboxSyncOutcome.Retry && repairLibraries(checkWithCore = true) > 0) {
+            // A run that must retry still queues the progress the desktop is known to hold, for the next one.
+            val reachable = first !is CoreOutboxSyncOutcome.Retry
+            // A desktop change that arrived during this pass waits for it to end; the next pass runs
+            // the backfill instead, so it no longer delays that change by the length of a library scan.
+            val repaired = if (deferProgress()) 0 else repairLibraries(includeProgress = true, checkWithCore = reachable)
+            if (reachable && repaired > 0) {
                 runner.run(
                     nowEpochMillis = System.currentTimeMillis(),
                     synchronizeReplica = true,
@@ -360,6 +386,31 @@ class EpigraphCoreSyncWorker(
             workManager.pruneWork()
         }
 
+        /** Runs once more right after the current unique work, without cancelling it. */
+        private fun enqueueFollowUp(context: Context) {
+            val request = OneTimeWorkRequestBuilder<EpigraphCoreSyncWorker>()
+                .setConstraints(NETWORK_CONSTRAINTS)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    WorkRequest.MIN_BACKOFF_MILLIS,
+                    TimeUnit.MILLISECONDS,
+                )
+                .setInputData(
+                    workDataOf(
+                        INPUT_REASON to CoreBackgroundSyncReason.APP_START.name.lowercase(),
+                        INPUT_SCHEDULER_VERSION to SCHEDULER_VERSION,
+                    ),
+                )
+                .addTag(TAG)
+                .addTag(IMMEDIATE_TAG)
+                .build()
+            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+                UNIQUE_SYNC,
+                followUpWorkPolicy(),
+                request,
+            )
+        }
+
         private fun enqueueDelayed(context: Context, delayMillis: Long) {
             val request = OneTimeWorkRequestBuilder<EpigraphCoreSyncWorker>()
                 .setConstraints(NETWORK_CONSTRAINTS)
@@ -392,6 +443,28 @@ class EpigraphCoreSyncWorker(
          * previously failed/cancelled chain.
          */
         internal fun delayedWorkPolicy(): ExistingWorkPolicy = ExistingWorkPolicy.APPEND_OR_REPLACE
+
+        /** The finishing worker may still be RUNNING in [UNIQUE_SYNC]; see [delayedWorkPolicy]. */
+        internal fun followUpWorkPolicy(): ExistingWorkPolicy = ExistingWorkPolicy.APPEND_OR_REPLACE
+
+        /**
+         * Whether a pass (0-based) can leave the progress backfill to the next one: a wake came in
+         * after it read the generation and the drain cap still allows another pass, which always
+         * runs the backfill when it is the last.
+         */
+        internal fun deferProgressBackfill(pass: Int, passGeneration: Long, currentGeneration: Long): Boolean =
+            pass + 1 < MAX_GENERATION_DRAINS && passGeneration != currentGeneration
+
+        /**
+         * Whether a wake came in after the last drain read the generation: its worker was coalesced
+         * or kept behind this run, or the drain cap was reached. A run that backs off reruns by
+         * itself, and a follow-up appended behind it would only wait for that retry.
+         */
+        internal fun missedWakeAfterDrain(
+            drainedGeneration: Long?,
+            currentGeneration: Long,
+            usesWorkManagerBackoff: Boolean,
+        ): Boolean = drainedGeneration != null && !usesWorkManagerBackoff && drainedGeneration != currentGeneration
 
         /**
          * Only failures that stop the outbox itself (Core unreachable, capabilities, credential
