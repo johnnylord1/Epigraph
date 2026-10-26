@@ -1322,7 +1322,7 @@ dependencies = [
 
 [[package]]
 name = "epigraph"
-version = "0.0.19"
+version = "0.0.20"
 dependencies = [
  "anyhow",
  "async-stream",
