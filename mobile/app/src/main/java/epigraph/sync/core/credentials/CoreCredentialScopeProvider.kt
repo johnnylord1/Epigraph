@@ -16,12 +16,14 @@ class CoreCredentialScopeProvider(
     override suspend fun current(): EpigraphSyncScopes = withContext(ioDispatcher) {
         // After "forget connection" edits keep queuing for the last profile, so a later re-pair
         // publishes them with their original timestamps and the newest edit wins on either side.
-        val profileId = credentials.load()?.use { it.profileId }?.also(lastPairedProfile::remember)
+        val session = credentials.load()?.use { it.profileId to it.serverId }
+        val profileId = session?.first?.also(lastPairedProfile::remember)
             ?: lastPairedProfile.load()
             ?: throw CoreProfileNotPairedException()
         EpigraphSyncScopes(
             novels = SyncScopeId("novels:profile:$profileId"),
             comics = SyncScopeId("comics:profile:$profileId"),
+            serverId = session?.second?.takeUnless { it == LEGACY_UNBOUND_SERVER_ID },
         )
     }
 }

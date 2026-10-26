@@ -223,7 +223,13 @@ class EpigraphLibraryMutationRouter(
                 val categoryIdentity = aethon_syncQueries
                     .selectCategoryIdentityByLocalIdAndScope(categoryId, if (isNovel) "NOVEL" else "MANGA")
                     .executeAsOneOrNull()
-                if (categoryIdentity != null) {
+                if (categoryIdentity != null && !isNovel &&
+                    isOtherSuwayomiServer(categoryIdentity.entity_id, currentScopes.serverId)
+                ) {
+                    // Still bound to a previous desktop install: keep the local assignment and let
+                    // the catalog sync rebind the folder by name, which then publishes its comics.
+                    null
+                } else if (categoryIdentity != null) {
                     categoryId to EpigraphEntityId(categoryIdentity.entity_id)
                 } else if (isNovel) {
                     // Categories created locally before the first Core bootstrap still need a

@@ -59,6 +59,7 @@ class EpigraphCategoryMutationRouter(
                 identities.mapNotNull { (localId, rows) ->
                     rows.firstOrNull { it.content_scope == "MANGA" }?.let { localId to it }
                 }.toMap(),
+                scopes.serverId,
             )
             val positions = booksAndNovelsPositions()
 
@@ -304,15 +305,17 @@ class EpigraphCategoryMutationRouter(
 
     /**
      * Suwayomi reserves position 0 for its default category, so user categories of one profile are
-     * ranked 1..n following the local order.
+     * ranked 1..n following the local order. Categories of another server are left out.
      */
     private fun comicRanks(
         orderedLocalIds: List<Long>,
         identities: Map<Long, Aethon_category_identity>,
+        serverId: String?,
     ): Map<Long, Long> = orderedLocalIds
         .mapNotNull { localId ->
             val identity = identities[localId]?.takeIf { it.content_scope == "MANGA" } ?: return@mapNotNull null
             if (suwayomiCategoryIdForEntity(identity.entity_id) == null) return@mapNotNull null
+            if (isOtherSuwayomiServer(identity.entity_id, serverId)) return@mapNotNull null
             val profile = suwayomiProfileIdForEntity(identity.entity_id) ?: return@mapNotNull null
             profile to localId
         }
@@ -326,8 +329,11 @@ class EpigraphCategoryMutationRouter(
             "NOVEL" -> CategoryTarget(CategoryScope.NOVEL, scopes.novels, NOVEL_CATEGORY, null)
             "BOOK" -> CategoryTarget(CategoryScope.BOOK, BOOKS_SCOPE, BOOK_CATEGORY, null)
             "MANGA" -> {
-                // A local-only comic category has no Suwayomi ID the Core could project.
-                if (suwayomiCategoryIdForEntity(entity_id) == null) {
+                // A local-only comic category has no Suwayomi ID the Core could project, and one
+                // still bound to a previous desktop install waits for the catalog sync to rebind it.
+                if (suwayomiCategoryIdForEntity(entity_id) == null ||
+                    isOtherSuwayomiServer(entity_id, scopes.serverId)
+                ) {
                     null
                 } else {
                     CategoryTarget(

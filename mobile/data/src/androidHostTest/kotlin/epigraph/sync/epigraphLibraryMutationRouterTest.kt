@@ -716,6 +716,45 @@ class EpigraphLibraryMutationRouterTest {
         assertEquals(work, command.portableWorkRef)
     }
 
+    @Test
+    fun `comic category of a previous desktop install stays local`() = runTest {
+        val mangaId = insertManga(favorite = false)
+        val stale = insertCategory("Old", sort = 0)
+        val current = insertCategory("Current", sort = 1)
+        bindMangaIdentity(mangaId, "suwayomi:server:desk:profile:main:manga:9")
+        bindCategoryIdentity(stale, "suwayomi:server:old:profile:main:category:21", "Old", 1)
+        bindCategoryIdentity(current, "suwayomi:server:desk:profile:main:category:42", "Current", 2)
+        val router = EpigraphLibraryMutationRouter(
+            coordinator = coordinator,
+            deviceId = DeviceId("phone-a"),
+            scopeId = SyncScopeId("comics:profile:main"),
+            mutationIds = sequentialMutationIds(),
+            scopeProvider = EpigraphSyncScopeProvider {
+                EpigraphSyncScopes(SyncScopeId("novels:profile:main"), SyncScopeId("comics:profile:main"), "desk")
+            },
+        )
+
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = setOf(stale, current),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        val categories = coordinator.claimReady(100, 1_000, 10)
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+            .filterIsInstance<SyncCommand.SetCategoryAssignment>()
+            .map { it.categoryId.value }
+        assertEquals(listOf("suwayomi:server:desk:profile:main:category:42"), categories)
+        assertEquals(
+            setOf(stale, current),
+            database.categoriesQueries.findAllByMangaId(mangaId).executeAsList().map { it._id }.toSet(),
+        )
+    }
+
     private fun router(
         mutationIds: ClientMutationIdFactory,
         scope: String = "comics:profile:main",

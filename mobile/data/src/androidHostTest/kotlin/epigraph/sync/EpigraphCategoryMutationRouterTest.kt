@@ -560,6 +560,35 @@ class EpigraphCategoryMutationRouterTest {
         )
     }
 
+    @Test
+    fun `categories of a previous desktop install are not published`() = runTest {
+        val stale = insertCategory("Old", sort = 0)
+        bindCategory(stale, "suwayomi:server:old:profile:main:category:9", "MANGA", "Old", 1)
+        val current = insertCategory("Current", sort = 1)
+        bindCategory(current, "suwayomi:server:desk:profile:main:category:42", "MANGA", "Current", 2)
+        val comic = insertManga()
+        bindWork(comic, "suwayomi:server:old:profile:main:manga:7", "MANGA")
+        database.aethon_syncQueries.insertMangaCategoryAssignment(comic, stale)
+        val paired = router(
+            EpigraphSyncScopeProvider {
+                EpigraphSyncScopes(SyncScopeId("novels:profile:main"), SyncScopeId("comics:profile:main"), "desk")
+            },
+        )
+
+        paired.updateCategories(setOf(stale, current)) {
+            categoriesQueries.update(id = stale, name = "Old renamed", mangaOrder = null, sort = null, flags = null)
+            categoriesQueries.update(id = current, name = "Current renamed", mangaOrder = null, sort = null, flags = null)
+        }
+        paired.deleteCategory(stale) { categoriesQueries.delete(stale) }
+
+        // The current category is ranked first now that the stale one is left out.
+        val upsert = queued().single().command as SyncCommand.UpsertCategory
+        assertEquals("suwayomi:server:desk:profile:main:category:42", upsert.entityId.value)
+        assertEquals("Current renamed", upsert.name)
+        assertEquals(1, upsert.position)
+        assertEquals(listOf("Current renamed"), database.categoriesQueries.findAll().executeAsList().map { it.name })
+    }
+
     private fun router(
         scopes: EpigraphSyncScopeProvider = EpigraphSyncScopeProvider {
             EpigraphSyncScopes(SyncScopeId("novels:profile:main"), SyncScopeId("comics:profile:main"))

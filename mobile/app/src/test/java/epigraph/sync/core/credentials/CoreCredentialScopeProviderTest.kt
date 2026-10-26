@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
@@ -16,10 +17,23 @@ class CoreCredentialScopeProviderTest {
 
         credentials.session = session()
         assertEquals("comics:profile:main", provider.current().comics.value)
+        assertEquals("server-a", provider.current().serverId)
 
         credentials.session = null
         assertEquals("comics:profile:main", provider.current().comics.value)
         assertEquals("novels:profile:main", provider.current().novels.value)
+        // The server is unknown until the next pairing.
+        assertNull(provider.current().serverId)
+    }
+
+    @Test
+    fun `a legacy session has no known server`() = runTest {
+        val credentials = MemoryCredentialStore()
+        val provider = CoreCredentialScopeProvider(credentials, MemoryLastProfileStore(), Dispatchers.Unconfined)
+
+        credentials.session = session(serverId = LEGACY_UNBOUND_SERVER_ID)
+
+        assertNull(provider.current().serverId)
     }
 
     @Test
@@ -62,7 +76,7 @@ class CoreCredentialScopeProviderTest {
         }
     }
 
-    private fun session() = CoreCredentialSession(
+    private fun session(serverId: String = "server-a") = CoreCredentialSession(
         origin = "https://desktop.local:4777",
         tlsCertSha256 = "a".repeat(64),
         pairingSessionId = "bootstrap-019f57b6-1c7b-7862-bc7b-15d17593f9d3",
@@ -70,7 +84,7 @@ class CoreCredentialScopeProviderTest {
         tokenId = "token-1",
         scopes = listOf("books:global", "comics:profile:main"),
         inactivityExpiresAtMs = 1_900_000_000_000L,
-        serverId = "server-a",
+        serverId = serverId,
         accessTokenUtf8 = "secret-token".toByteArray(StandardCharsets.UTF_8),
     )
 }

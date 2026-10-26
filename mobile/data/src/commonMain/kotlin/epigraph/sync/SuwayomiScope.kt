@@ -49,6 +49,19 @@ internal fun suwayomiProfileIdForEntity(entityId: String): String? {
     return profileAndRemote.substring(0, remoteMarker).takeIf { it.isCanonicalIdentitySegment() }
 }
 
+/**
+ * True when [entityId] names a Suwayomi server other than [currentServerId]. A desktop gets a new
+ * server id when it is reinstalled, and local identities keep the old one until the catalog sync
+ * rebinds them by name; the Core refuses such ids, so they are never published. Unknown servers
+ * (null) and legacy ids without a server match.
+ */
+internal fun isOtherSuwayomiServer(entityId: String, currentServerId: String?): Boolean {
+    if (currentServerId == null || !entityId.startsWith(SERVER_PREFIX)) return false
+    val profileMarker = entityId.indexOf(PROFILE_MARKER, SERVER_PREFIX.length)
+    if (profileMarker <= SERVER_PREFIX.length) return false
+    return entityId.substring(SERVER_PREFIX.length, profileMarker) != currentServerId
+}
+
 private fun suwayomiNumericIdForEntity(entityId: String, marker: String): Long? {
     val markerIndex = entityId.lastIndexOf(marker)
     if (markerIndex < 0) return null
