@@ -1819,7 +1819,8 @@
     color: var(--component-reader-core-action-subtle-hover-fg);
   }
 
-  .viewer { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; -webkit-overflow-scrolling: touch; position: relative; }
+  /* `safe` keeps a page taller than the viewer scrollable from its top instead of centering it past the top edge. */
+  .viewer { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; align-items: center; justify-content: safe center; -webkit-overflow-scrolling: touch; position: relative; }
   .viewer.strip { justify-content: flex-start; padding: var(--sp-4) 0; }
   .viewer:focus { outline: none; }
 
@@ -1829,6 +1830,10 @@
   .fit-height   { max-height: calc(100vh - 80px); width: auto; max-width: var(--effective-width, 100%); height: auto; }
   .fit-screen   { max-width: var(--effective-width, 100%); max-height: calc(100vh - 80px); object-fit: contain; height: auto; }
   .fit-original { max-width: 100%; width: auto; height: auto; }
+  /* A strip page is one slice of a continuous image: capping each slice to the viewport height
+     shrank the tall ones to a narrower width than their neighbours. Cap the width only. */
+  .viewer.strip .fit-height,
+  .viewer.strip .fit-screen { max-height: none; }
   .strip-gap { margin-bottom: var(--component-reader-core-strip-gap); }
 
   .double-wrap { display: flex; align-items: flex-start; justify-content: center; max-width: calc(var(--effective-width, 100%) * 2); width: 100%; }

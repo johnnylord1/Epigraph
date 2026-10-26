@@ -159,6 +159,37 @@ describe("manga reader progress lifecycle", () => {
     }
   });
 
+  test.each(["height", "screen"] as const)("keeps longstrip slices of one width aligned when fitting to %s", async (fitMode) => {
+    const slice = (height: number) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="${height}"><rect width="400" height="${height}" fill="white"/></svg>`)}`;
+    fetchPages.mockResolvedValue({ fetchChapterPages: { pages: [slice(600), slice(3000), slice(600), slice(3000)] } });
+    store.settings.pageStyle = "longstrip";
+    store.settings.fitMode = fitMode;
+    store.settings.autoNextChapter = false;
+    const { container } = render(Reader);
+    await waitFor(() => expect(container.querySelectorAll("img[data-local-page]")).toHaveLength(4));
+    const images = [...container.querySelectorAll<HTMLImageElement>("img[data-local-page]")];
+    await waitFor(() => expect(images.every((img) => img.complete && img.naturalHeight > 0)).toBe(true));
+    // A slice taller than the viewer used to be capped to its height and shrink narrower.
+    expect(new Set(images.map((img) => Math.round(img.getBoundingClientRect().width)))).toEqual(new Set([400]));
+  });
+
+  test("opens a page taller than the viewer at its top", async () => {
+    const tall = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="3000"><rect width="400" height="3000" fill="white"/></svg>')}`;
+    fetchPages.mockResolvedValue({ fetchChapterPages: { pages: [tall, tall] } });
+    store.settings.fitMode = "original";
+    const { container } = render(Reader);
+    await waitFor(() => expect(store.pageUrls).toHaveLength(2));
+    const viewer = container.querySelector<HTMLElement>(".viewer")!;
+    const image = await waitFor(() => {
+      const img = viewer.querySelector<HTMLImageElement>("img")!;
+      expect(img.complete && img.naturalHeight > 0).toBe(true);
+      return img;
+    });
+    viewer.scrollTop = 0;
+    // Centering alone pushed the top of the page above the viewer, out of scroll reach.
+    expect(image.getBoundingClientRect().top).toBeGreaterThanOrEqual(viewer.getBoundingClientRect().top - 1);
+  });
+
   test("opening an unread chapter at its saved final page does not complete it", async () => {
     store.activeChapter = { ...store.activeChapter!, lastPageRead: 9 };
     store.activeChapterList = [store.activeChapter];
