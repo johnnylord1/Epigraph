@@ -54,6 +54,27 @@ class CoreDrainLoopTest {
     }
 
     @Test
+    fun `reports between batches only while more rows remain`() = runTest {
+        var pending = 20L
+        val seen = mutableListOf<Long>()
+
+        drainCoreBacklog(
+            countPending = { pending },
+            drainBatch = {
+                val settled = minOf(8L, pending).toInt()
+                pending -= settled
+                CoreDrainBatch(
+                    suwayomi = SuwayomiMutationDrainReport(settled, settled, 0, 0, pending),
+                    core = CoreOutboxDrainReport(0, 0, 0, 0, 0),
+                )
+            },
+            onBatchWithMorePending = { seen += pending },
+        )
+
+        assertEquals(listOf(12L, 4L), seen)
+    }
+
+    @Test
     fun `delayed backlog defers successfully when no ready row can progress`() = runTest {
         val result = drainCoreBacklog(
             countPending = { 5 },

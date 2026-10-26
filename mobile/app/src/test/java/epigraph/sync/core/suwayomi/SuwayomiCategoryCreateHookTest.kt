@@ -172,6 +172,39 @@ class SuwayomiCategoryCreateHookTest {
     }
 
     @Test
+    fun `releases bindings to a previous server before listing the folders`() = runTest {
+        val events = mutableListOf<String>()
+        val channel = FakeChannel(answers = mutableListOf(created(42, "Reading", 1)))
+        val hook = SuwayomiCategoryCreateHook(
+            categories = UnpublishedComicCategorySource {
+                events += "list"
+                listOf(UnpublishedComicCategory(1, "Reading"))
+            },
+            binder = binder,
+            previousServer = PreviousServerComicCategoryReleaser { serverId, profileId ->
+                events += "release:$serverId:$profileId"
+            },
+        )
+
+        hook.onNegotiated(capabilities(), FakeConnection(channel))
+
+        assertEquals(listOf("release:desk:main", "list"), events)
+        assertEquals(listOf("suwayomi:server:desk:profile:main:category:42"), bound.map { it.entityId })
+    }
+
+    @Test
+    fun `keeps previous server bindings for a legacy session`() = runTest {
+        var released = false
+        SuwayomiCategoryCreateHook(
+            categories = source("Reading"),
+            binder = binder,
+            previousServer = PreviousServerComicCategoryReleaser { _, _ -> released = true },
+        ).onNegotiated(capabilities(), FakeConnection(FakeChannel(serverId = LEGACY_UNBOUND_SERVER_ID)))
+
+        assertTrue(!released)
+    }
+
+    @Test
     fun `respects the per-session limit`() = runTest {
         val channel = FakeChannel(answers = mutableListOf(created(42, "Reading", 1), created(43, "Done", 2)))
 

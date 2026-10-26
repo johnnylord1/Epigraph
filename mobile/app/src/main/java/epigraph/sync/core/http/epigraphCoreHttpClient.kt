@@ -187,14 +187,20 @@ class EpigraphCoreHttpClient internal constructor(
         accessToken: String,
         scopeId: String,
         pendingUploads: Long? = null,
+        pendingLibraryUploads: Long? = null,
     ): CoreHttpResult<CoreSyncStatus> {
         require(scopeId.isNotBlank()) { "scopeId must not be blank" }
         require(pendingUploads == null || pendingUploads >= 0) { "pendingUploads must not be negative" }
+        require(pendingLibraryUploads == null || pendingLibraryUploads >= 0) {
+            "pendingLibraryUploads must not be negative"
+        }
         val url = endpoint("v1/sync/status")
             .newBuilder()
             .addQueryParameter("scopeId", scopeId)
             .addQueryParameter("reportsUploads", "true")
             .apply { pendingUploads?.let { addQueryParameter("pendingUploads", it.toString()) } }
+            // Older Cores ignore this parameter.
+            .apply { pendingLibraryUploads?.let { addQueryParameter("pendingLibraryUploads", it.toString()) } }
             .build()
         return execute(
             protectedRequestBuilder(url, accessToken)

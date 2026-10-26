@@ -1402,6 +1402,57 @@ class SuwayomiCatalogSyncTest {
     }
 
     @Test
+    fun `a re-pair releases only this profile's previous server bindings before the catalog read`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val previous = session("desktop-zero")
+        try {
+            SuwayomiCatalogSync(
+                pages = FixturePages(),
+                database = handler,
+                projection = EpigraphCoreDomainProjection(),
+                pageSize = 1,
+            ).synchronize(previous, capabilities(categoryCreate = true), 1000)
+        } finally {
+            previous.close()
+        }
+        val folder = database.categoriesQueries.findAll().executeAsList().single { it.name == "Remote Favorites" }
+        val held = database.aethon_syncQueries.selectMangaIdsByCategory(folder._id).executeAsList()
+        database.categoriesQueries.insert("Other profile", 3, 0, "a")
+        val otherFolder = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            "suwayomi:server:desktop-zero:profile:other:category:9", otherFolder, "MANGA", "Other profile", 0, 1,
+        )
+        assertTrue(database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList().isEmpty())
+
+        val released = handler.await(inTransaction = true) {
+            epigraph.sync.core.replica.releasePreviousServerComicCategories(this, SERVER, PROFILE)
+        }
+
+        assertEquals(1, released)
+        assertNull(
+            database.aethon_syncQueries
+                .selectCategoryIdentityByEntityId("suwayomi:server:desktop-zero:profile:$PROFILE:category:55")
+                .executeAsOneOrNull(),
+        )
+        assertTrue(
+            database.aethon_syncQueries
+                .selectCategoryIdentityByEntityId("suwayomi:server:desktop-zero:profile:other:category:9")
+                .executeAsOneOrNull() != null,
+        )
+        // The folder keeps its comics and is now published by name in this run.
+        assertTrue(database.aethon_syncQueries.selectMangaIdsByCategory(folder._id).executeAsList().containsAll(held))
+        assertEquals(
+            listOf(folder._id),
+            database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList().map { it._id },
+        )
+        // A legacy session proves nothing about the server.
+        assertEquals(
+            0,
+            handler.await { epigraph.sync.core.replica.releasePreviousServerComicCategories(this, LEGACY_UNBOUND_SERVER_ID, PROFILE) },
+        )
+    }
+
+    @Test
     fun `remote comic category joins a same-named folder that holds no comics`() = runTest {
         val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
         database.categoriesQueries.insert("Remote Favorites", 0, 0, "a")

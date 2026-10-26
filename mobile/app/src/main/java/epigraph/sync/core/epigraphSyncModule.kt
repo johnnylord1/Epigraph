@@ -47,6 +47,8 @@ import epigraph.sync.core.suwayomi.SharedPreferencesPublishedExtensionLedger
 import epigraph.sync.core.suwayomi.UnpublishedComicCategorySource
 import epigraph.sync.core.suwayomi.UnpublishedComicCategory
 import epigraph.sync.core.suwayomi.CreatedComicCategoryBinder
+import epigraph.sync.core.suwayomi.PreviousServerComicCategoryReleaser
+import epigraph.sync.core.replica.releasePreviousServerComicCategories
 import epigraph.sync.core.outbox.EpigraphCoordinatorOutboxStore
 import epigraph.sync.core.outbox.CoreLamportSource
 import epigraph.sync.core.outbox.CoreOutboxRetryPlanner
@@ -555,6 +557,11 @@ fun epigraphSyncModule(app: Application) = module {
                     },
                     binder = CreatedComicCategoryBinder { localCategoryId, expectedName, categoryEntityId, suwayomiOrder ->
                         categoryRouter.bindCreatedComicCategory(localCategoryId, expectedName, categoryEntityId, suwayomiOrder)
+                    },
+                    previousServer = PreviousServerComicCategoryReleaser { serverId, profileId ->
+                        database.await(inTransaction = true) {
+                            releasePreviousServerComicCategories(this, serverId, profileId)
+                        }
                     },
                 ),
                 SuwayomiExtensionPublishHook(

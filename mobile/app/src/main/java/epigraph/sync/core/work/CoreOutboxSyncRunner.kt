@@ -65,6 +65,12 @@ interface CorePendingOutbox {
     /** Unsettled rows parked for a user decision, which no sync run sends until the user acts. */
     suspend fun blockedCountActive(policy: EffectiveSyncPolicy): Long = 0
 
+    /**
+     * Unsent library rows (entries, folders, assignments) without reading state or blocked rows;
+     * null when unknown. Once it reaches zero the desktop's first run can let the user continue.
+     */
+    suspend fun libraryCountActive(policy: EffectiveSyncPolicy): Long? = null
+
     /** Queues again the parked rows this version can now repair, before the run counts them. */
     suspend fun retryRepairable(nowEpochMillis: Long) = Unit
 }
@@ -101,6 +107,13 @@ class CoordinatorPendingOutbox(
 
     override suspend fun blockedCountActive(policy: EffectiveSyncPolicy): Long =
         coordinator.blockedCount(policy.selectedScopes)
+
+    override suspend fun libraryCountActive(policy: EffectiveSyncPolicy): Long =
+        coordinator.pendingLibraryCount(policy.selectedScopes) + if (policy.syncComics) {
+            database.await { aethon_suwayomi_mutation_queueQueries.pendingCount().executeAsOne() }
+        } else {
+            0
+        }
 
     override suspend fun retryRepairable(nowEpochMillis: Long) {
         coordinator.retryRepairablePageCounts(nowEpochMillis) { ClientMutationId(UUID.randomUUID().toString()) }
@@ -160,11 +173,13 @@ interface CoreOutboxSyncConnection {
 
     /**
      * Optional server-side projection readiness; older Core versions return null. [pendingUploads]
-     * tells the Core what this device still has to send after the run.
+     * tells the Core what this device still has to send after the run, and [pendingLibraryUploads]
+     * how much of it is library rather than reading state; null leaves the Core's last count.
      */
     suspend fun syncStatus(
         scopeId: String,
         pendingUploads: Long? = null,
+        pendingLibraryUploads: Long? = null,
     ): CoreHttpResult<epigraph.sync.core.protocol.CoreSyncStatus>? = null
 
     suspend fun drainBookAssets(nowEpochMillis: Long): BookAssetDrainReport =
@@ -247,8 +262,11 @@ class PinnedCoreOutboxSyncConnectionFactory(
             override suspend fun syncStatus(
                 scopeId: String,
                 pendingUploads: Long?,
+                pendingLibraryUploads: Long?,
             ): CoreHttpResult<epigraph.sync.core.protocol.CoreSyncStatus> =
-                credentials.withAccessTokenString { token -> http.syncStatus(token, scopeId, pendingUploads) }
+                credentials.withAccessTokenString { token ->
+                    http.syncStatus(token, scopeId, pendingUploads, pendingLibraryUploads)
+                }
 
             override suspend fun drainBookAssets(nowEpochMillis: Long): BookAssetDrainReport =
                 bookAssets.drainPendingTransfers(transport.assets, credentials, nowEpochMillis)
@@ -917,9 +935,33 @@ class CoreOutboxSyncRunner(
                 return CoreOutboxSyncOutcome.Retry(pendingBefore, CoreOutboxRetryReason.CREDENTIAL_IO)
             }
 
+            // The desktop's first run lets the user continue once the library and folders are in,
+            // so say so as soon as only reading state is left instead of after all of it.
+            var libraryReported = false
+            val reportLibraryUploaded: suspend () -> Unit = report@{
+                if (libraryReported || !EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities)) {
+                    return@report
+                }
+                if (pendingOutbox.libraryCountActive(policy) != 0L) return@report
+                libraryReported = true
+                try {
+                    connection.syncStatus(
+                        "comics:profile:${session.profileId}",
+                        pendingUploads = null,
+                        pendingLibraryUploads = 0,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    reportCoreSyncFailure("connection.syncStatus", failure)
+                }
+            }
+
             val drain = try {
+                reportLibraryUploaded()
                 drainCoreBacklog(
                     countPending = { pendingOutbox.countActive(policy) },
+                    onBatchWithMorePending = reportLibraryUploaded,
                     drainBatch = {
                         val assets = if (policy.transferBookAssets) {
                             connection.drainBookAssets(nowEpochMillis)
@@ -981,13 +1023,20 @@ class CoreOutboxSyncRunner(
             }
             val unsettledAfter = pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) }
             val uploadsLeft = uploadsStillToSend(unsettledAfter, pendingOutbox.blockedCountActive(policy))
+            val libraryUploadsLeft = pendingOutbox.libraryCountActive(policy)?.coerceAtLeast(0)
             val remoteProjection = if (
                 EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities) &&
                     policy.syncComics
             ) {
                 val scopeId = "comics:profile:${session.profileId}"
                 try {
-                    when (val status = connection.syncStatus(scopeId, pendingUploads = uploadsLeft)) {
+                    when (
+                        val status = connection.syncStatus(
+                            scopeId,
+                            pendingUploads = uploadsLeft,
+                            pendingLibraryUploads = libraryUploadsLeft,
+                        )
+                    ) {
                         null -> CoreRemoteProjectionState.READY
                         is CoreHttpResult.Success -> {
                             if (status.value.comicAuthorityMode != "suwayomi-confirmed-v1") {
@@ -1025,7 +1074,11 @@ class CoreOutboxSyncRunner(
                     // Comics are off here, but a desktop's first run still waits for this
                     // device's upload report; send it and ignore the projection answer.
                     try {
-                        connection.syncStatus("comics:profile:${session.profileId}", pendingUploads = uploadsLeft)
+                        connection.syncStatus(
+                            "comics:profile:${session.profileId}",
+                            pendingUploads = uploadsLeft,
+                            pendingLibraryUploads = libraryUploadsLeft,
+                        )
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (failure: Throwable) {
@@ -1108,6 +1161,7 @@ internal data class CoreDrainLoopResult(
 internal suspend fun drainCoreBacklog(
     countPending: suspend () -> Long,
     drainBatch: suspend () -> CoreDrainBatch,
+    onBatchWithMorePending: suspend () -> Unit = {},
 ): CoreDrainLoopResult {
     var aggregate = CoreOutboxDrainReport(0, 0, 0, 0, 0)
     var transientFailure = false
@@ -1131,6 +1185,7 @@ internal suspend fun drainCoreBacklog(
         if (settled == 0) {
             return CoreDrainLoopResult(aggregate, pending, transientFailure, coreTransientFailure)
         }
+        onBatchWithMorePending()
     }
 }
 

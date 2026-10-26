@@ -1203,6 +1203,9 @@ WHERE (
 ORDER BY sequence ASC
 LIMIT :limit;
 
+-- Library rows (entries, folders, assignments, chapters, plugins) leave before reading state, so a
+-- first pairing shows the library while years of progress are still uploading. Each entity keeps
+-- its own order: all its rows share one entity type, and the drain re-sorts a claim by sequence.
 selectReadyMutationsForScopes:
 SELECT * FROM aethon_sync_outbox
 WHERE scope_id IN :scopeIds
@@ -1210,8 +1213,24 @@ WHERE scope_id IN :scopeIds
     (status IN ('PENDING', 'ERROR') AND next_attempt_at <= :now)
     OR (status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now)
   )
-ORDER BY sequence ASC
+ORDER BY entity_type IN (
+    'comic.chapter_state', 'comic.history', 'comic.page_bookmark',
+    'novel.progress', 'novel.history', 'novel.bookmark',
+    'book.progress', 'book.history', 'book.bookmark', 'book.highlight'
+  ) ASC,
+  sequence ASC
 LIMIT :limit;
+
+-- Rows the first-run screen waits for: everything except reading state and rows held as blocked.
+pendingLibraryMutationCountForScopes:
+SELECT COUNT(*) FROM aethon_sync_outbox
+WHERE scope_id IN :scopeIds
+  AND entity_type NOT IN (
+    'comic.chapter_state', 'comic.history', 'comic.page_bookmark',
+    'novel.progress', 'novel.history', 'novel.bookmark',
+    'book.progress', 'book.history', 'book.bookmark', 'book.highlight'
+  )
+  AND (status != 'ERROR' OR last_error IS NULL OR last_error NOT LIKE 'blocked:%');
 
 hasPendingMutationForEntity:
 SELECT EXISTS(

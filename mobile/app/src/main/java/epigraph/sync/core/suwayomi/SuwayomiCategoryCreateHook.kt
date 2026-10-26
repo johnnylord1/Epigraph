@@ -32,6 +32,11 @@ fun interface CreatedComicCategoryBinder {
     suspend fun bind(localCategoryId: Long, expectedName: String, categoryEntityId: String, suwayomiOrder: Long)
 }
 
+fun interface PreviousServerComicCategoryReleaser {
+    /** Drops comic category bindings to another server of [profileId], keeping the folders and their assignments. */
+    suspend fun release(serverId: String, profileId: String)
+}
+
 /**
  * Creates phone-only comic categories on the desktop Suwayomi through the Core, then binds each
  * local category to the confirmed Suwayomi id so its assignments can sync.
@@ -39,7 +44,8 @@ fun interface CreatedComicCategoryBinder {
 class SuwayomiCategoryCreateHook(
     private val categories: UnpublishedComicCategorySource,
     private val binder: CreatedComicCategoryBinder,
-    private val maxPerSession: Int = 20,
+    private val previousServer: PreviousServerComicCategoryReleaser = PreviousServerComicCategoryReleaser { _, _ -> },
+    private val maxPerSession: Int = 100,
 ) : CoreNegotiatedSessionHook {
 
     override suspend fun onNegotiated(
@@ -51,6 +57,10 @@ class SuwayomiCategoryCreateHook(
         // A legacy session is upgraded to a server-bound id on this run; binding a legacy id now
         // would duplicate the category on the next catalog run.
         if (channel.serverId == LEGACY_UNBOUND_SERVER_ID) return
+        // After a re-pair (or a reinstalled desktop) the folders are still bound to the old server.
+        // Releasing them here binds them by name in this run, before any reading progress is sent,
+        // instead of only after a full catalog read and a second sync.
+        previousServer.release(channel.serverId, channel.profileId)
 
         for (entry in categories.list().filter { isPublishableName(it.name) }.take(maxPerSession)) {
             val name = entry.name

@@ -164,7 +164,7 @@ class ExponentialCoreOutboxRetryPlanner(
 }
 
 data class CoreOutboxDrainConfig(
-    val claimLimit: Long = 50,
+    val claimLimit: Long = 100,
     val leaseDurationMillis: Long = 60_000,
 ) {
     init {

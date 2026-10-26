@@ -221,21 +221,15 @@ class EpigraphCoreDomainProjection(
                 database.aethon_syncQueries.deleteMangaCategoryAssignment(mangaId, categoryId)
             }
 
+        releasePreviousServerComicCategories(database, serverId, profileId)
+
         // A complete catalog read is authoritative for Core-owned categories.
         database.aethon_syncQueries.selectCategoryIdentitiesByContentScope("MANGA")
             .executeAsList()
             .forEach { identity ->
                 val id = identity.entity_id
                 val belongsToCurrent = id.startsWith(categoryPrefix)
-                val belongsToPreviousServer = id.startsWith("suwayomi:server:") &&
-                    ":profile:$profileId:category:" in id &&
-                    !belongsToCurrent
                 when {
-                    // Re-pairing to another Core (or a reinstalled desktop) says nothing about the
-                    // user's folder: only the binding to the old server is dropped. The folder and its
-                    // assignments stay; a folder holding comics is created on the new server by
-                    // SuwayomiCategoryCreateHook, any other joins a same-named category.
-                    belongsToPreviousServer -> database.aethon_syncQueries.deleteCategoryIdentity(id)
                     belongsToCurrent && id !in observedCategoryEntityIds -> {
                         // Deleted on the desktop (or gone after a Suwayomi restore). A folder that also
                         // belongs to the novel or book library, or holds novels or books, outlives its
@@ -2477,6 +2471,27 @@ class EpigraphCoreDomainProjection(
  * `chapter:novel:<plugin>:<work key>:<chapter key>`, keys percent-encoded; the decoded work must
  * hash to the record's novel id.
  */
+/**
+ * Re-pairing to another Core (or a reinstalled desktop) says nothing about the user's folders: only
+ * their comic bindings to the old server of this profile are dropped. The folders and assignments
+ * stay; SuwayomiCategoryCreateHook then creates each folder on the new server, or joins the
+ * same-named category there, in the same sync instead of after a full catalog read.
+ */
+internal fun releasePreviousServerComicCategories(database: Database, serverId: String, profileId: String): Int {
+    if (serverId.isBlank() || profileId.isBlank() || serverId == LEGACY_UNBOUND_SERVER_ID) return 0
+    val currentPrefix = "suwayomi:server:$serverId:profile:$profileId:category:"
+    val previous = database.aethon_syncQueries.selectCategoryIdentitiesByContentScope("MANGA")
+        .executeAsList()
+        .map { it.entity_id }
+        .filter { id ->
+            id.startsWith("suwayomi:server:") &&
+                ":profile:$profileId:category:" in id &&
+                !id.startsWith(currentPrefix)
+        }
+    previous.forEach { database.aethon_syncQueries.deleteCategoryIdentity(it) }
+    return previous.size
+}
+
 internal fun novelHistoryChapter(record: JsonObject): Pair<String, String>? {
     val novelId = (record["novelId"] as? JsonPrimitive)?.contentOrNull ?: return null
     val parts = (record["chapterId"] as? JsonPrimitive)?.contentOrNull?.split(':') ?: return null

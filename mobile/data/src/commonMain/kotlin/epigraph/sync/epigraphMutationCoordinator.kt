@@ -215,6 +215,14 @@ class EpigraphMutationCoordinator(
         }
     }
 
+    /** Unsent rows other than reading state (progress, history, bookmarks), blocked rows excluded. */
+    suspend fun pendingLibraryCount(scopeIds: Set<String>): Long {
+        if (scopeIds.isEmpty()) return 0
+        return databaseHandler.await {
+            aethon_syncQueries.pendingLibraryMutationCountForScopes(scopeIds).executeAsOne()
+        }
+    }
+
     suspend fun unsettledCount(): Long = databaseHandler.await {
         aethon_syncQueries.unsettledMutationCount().executeAsOne()
     }

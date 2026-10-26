@@ -74,6 +74,44 @@ class CoreReplicaSqlDelightTest {
     }
 
     @Test
+    fun `library rows are claimed before older reading state and counted apart`() {
+        fun enqueue(id: String, scope: String, type: String) = queries.enqueueMutation(
+            clientMutationId = id,
+            deviceId = "phone-a",
+            scopeId = scope,
+            entityType = type,
+            entityId = "entity-$id",
+            operation = "merge",
+            payloadJson = "{}",
+            createdAt = 1,
+            nextAttemptAt = 1,
+        )
+        enqueue("progress", "comics:profile:main", "comic.chapter_state")
+        enqueue("history", "comics:profile:main", "comic.history")
+        enqueue("entry", "comics:profile:main", "comic.entry")
+        enqueue("book-progress", "books:global", "book.progress")
+        enqueue("assignment", "comics:profile:main", "comic.category_assignment")
+        enqueue("blocked", "comics:profile:main", "comic.category")
+        enqueue("other-scope", "novels:profile:main", "novel.entry")
+        queries.markMutationFailed(
+            nextAttemptAt = Long.MAX_VALUE,
+            lastError = "blocked:test",
+            deviceId = "phone-a",
+            clientMutationId = "blocked",
+        )
+        val scopes = listOf("comics:profile:main", "books:global")
+
+        val claimed = queries.selectReadyMutationsForScopes(scopes, 10, 10).executeAsList()
+
+        assertEquals(
+            listOf("entry", "assignment", "progress", "history", "book-progress"),
+            claimed.map { it.client_mutation_id },
+        )
+        assertEquals(2L, queries.pendingLibraryMutationCountForScopes(scopes).executeAsOne())
+        assertEquals(1L, queries.pendingLibraryMutationCountForScopes(listOf("novels:profile:main")).executeAsOne())
+    }
+
+    @Test
     fun `inbox event id is globally idempotent`() {
         queries.insertCoreReplicaInboxEvent(
             7,

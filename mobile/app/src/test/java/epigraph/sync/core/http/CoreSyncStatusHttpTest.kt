@@ -24,6 +24,7 @@ class CoreSyncStatusHttpTest {
                 assertEquals("comics:profile:profile-a", request.url.queryParameter("scopeId"))
                 assertEquals("true", request.url.queryParameter("reportsUploads"))
                 assertEquals(null, request.url.queryParameter("pendingUploads"))
+                assertEquals(null, request.url.queryParameter("pendingLibraryUploads"))
                 assertEquals("Bearer token", request.header("Authorization"))
                 Response.Builder()
                     .request(request)
@@ -55,6 +56,7 @@ class CoreSyncStatusHttpTest {
                 val request = chain.request()
                 assertEquals("true", request.url.queryParameter("reportsUploads"))
                 assertEquals("37", request.url.queryParameter("pendingUploads"))
+                assertEquals("0", request.url.queryParameter("pendingLibraryUploads"))
                 Response.Builder()
                     .request(request)
                     .protocol(Protocol.HTTP_1_1)
@@ -69,7 +71,12 @@ class CoreSyncStatusHttpTest {
             preserveInterceptorsForTests = true,
         )
 
-        val result = client.syncStatus("token", "comics:profile:profile-a", pendingUploads = 37)
+        val result = client.syncStatus(
+            "token",
+            "comics:profile:profile-a",
+            pendingUploads = 37,
+            pendingLibraryUploads = 0,
+        )
 
         assertInstanceOf(CoreHttpResult.Success::class.java, result)
     }
