@@ -82,19 +82,22 @@
     if (!libraryRead) return "syncing";
     return hostPeer ? "ready" : "empty";
   }
-  /* Synced comics become Suwayomi works through Core's import; the step is ready once they are
-     applied. Details and chapter lists of imported works keep arriving from their sources
-     afterwards, and synced tracker logins keep signing in, without holding the step. */
+  /* Synced comics become Suwayomi works through Core's import; the step is ready once the library,
+     its categories and assignments are applied. Chapter progress (tens of thousands of rows after
+     a first sync), details and chapter lists of imported works keep arriving afterwards, and synced
+     tracker logins keep signing in, without holding the step. An older Core reports only the total. */
   /* A phone reports what it still has to send once a sync run sent what it could; until then
      Core's counts can read zero only because nothing has arrived yet. */
   const uploadsDone = $derived(!peerIsPhone || !progress || progress.pendingUploads === undefined || progress.pendingUploads === 0);
-  const applied = $derived(progressChecked && uploadsDone && (!progress || progress.pendingProjections === 0));
+  const pendingCatalog = $derived(progress ? (progress.pendingCatalogProjections ?? progress.pendingProjections) : 0);
+  const finishing = $derived((progress?.pendingDetails ?? 0) > 0 || (progress?.pendingProjections ?? 0) > 0);
+  const applied = $derived(progressChecked && uploadsDone && pendingCatalog === 0);
   function comicsState(): ScopeState {
     const base = scopeState(snapshot?.comicsScopeCheckpoint);
     if (base === "syncing") return base;
-    if (!ready && (progress?.pendingProjections ?? 0) > 0) return "importing";
+    if (!ready && pendingCatalog > 0) return "importing";
     if (!ready && !uploadsDone) return "syncing";
-    if (ready && (progress?.pendingDetails ?? 0) > 0) return "background";
+    if (ready && finishing) return "background";
     return base;
   }
   /* Tracker logins sign in against each tracker, which can be slow or offline; the row shows they
@@ -248,8 +251,8 @@
     return () => { current = false; };
   });
 
-  /* While syncing, and afterwards until imported works are complete and tracker logins signed in,
-     Core reports what it has still to apply. */
+  /* While syncing, and afterwards until imported works are complete, chapter progress applied and
+     tracker logins signed in, Core reports what it has still to apply. */
   $effect(() => {
     if (stage !== "syncing" && stage !== "done") return;
     let cancelled = false;
@@ -264,7 +267,7 @@
         console.warn("First-run sync could not read sync progress.", error);
       }
       progressChecked = true;
-      if (ready && (progress?.pendingDetails ?? 0) === 0 && (progress?.pendingTrackerLogins ?? 0) === 0) return;
+      if (ready && !finishing && (progress?.pendingTrackerLogins ?? 0) === 0) return;
       timer = setTimeout(poll, PROGRESS_INTERVAL_MS);
     };
     void poll();

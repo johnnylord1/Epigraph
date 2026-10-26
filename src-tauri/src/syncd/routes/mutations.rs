@@ -7196,6 +7196,11 @@ mod tests {
     #[tokio::test]
     async fn accepts_server_scoped_comic_catalog_state_and_queues_official_projections() {
         let (_temp, state) = build_state().await;
+        // Only ids naming this Core's server are projected onto its Suwayomi.
+        sqlx::query("UPDATE server_identity SET server_id = 'desktop-a' WHERE singleton_id = 1")
+            .execute(&state.pool)
+            .await
+            .unwrap();
         let app = build_test_router(state.clone());
         let comic_id = "suwayomi:server:desktop-a:profile:main:manga:42";
         let category_id = "suwayomi:server:desktop-a:profile:main:category:3";

@@ -68,14 +68,16 @@ pub(super) async fn mirror_categories(
     library: &[LibraryTitle],
     retention_window: Duration,
 ) -> anyhow::Result<usize> {
-    if suwayomi_projection::pending_projection_count(state).await? > 0 {
+    // Queued library and category edits must land before Suwayomi is read back over them; chapter
+    // progress touches neither, so a long progress backlog does not hold the mirror.
+    if suwayomi_projection::pending_projection_counts(state).await?.catalog > 0 {
         return Ok(0);
     }
     let observed_at_ms = db::now_ms();
     let categories = fetch_categories(state, session).await?;
     let stored = load_stored(state, scope_id).await?;
     // A phone edit may have been queued while Suwayomi was being read.
-    if suwayomi_projection::pending_projection_count(state).await? > 0 {
+    if suwayomi_projection::pending_projection_counts(state).await?.catalog > 0 {
         return Ok(0);
     }
     let plan = plan_category_mirror(server_id, profile_id, &categories, library, &stored);

@@ -69,7 +69,7 @@ const MAX_CONFIRMATION_ATTEMPTS: i64 = 5;
 /// until a newer version supersedes them.
 const RECOVERABLE_BLOCKED_CODES: [&str; 3] = [
     "confirmation_mismatch",
-    "command_failed",
+    COMMAND_FAILED,
     PORTABLE_WORK_NOT_FOUND,
 ];
 /// A device added a work Suwayomi could not find, for example because its extension is not
@@ -83,6 +83,16 @@ const UNBOUND_WORK_CODES: [&str; 2] = ["portable_work_not_bound", "portable_chap
 /// update, but it stops counting as pending: a source whose chapter keys differ between devices
 /// would otherwise keep every device syncing forever.
 const WAITING_CHAPTER_CODE: &str = UNBOUND_WORK_CODES[1];
+/// A command Suwayomi answered with a non-retryable error (for example a category id it does not
+/// have). Its few remaining retries do not hold later rows: a rejection is not an outage, and each
+/// rejected row used to stall every later row of the profile for its whole retry cycle.
+const COMMAND_FAILED: &str = "command_failed";
+/// Retry codes that never hold later rows of the profile in the ordered queue.
+const NON_HOLDING_RETRY_CODES: [&str; 3] =
+    [UNBOUND_WORK_CODES[0], UNBOUND_WORK_CODES[1], COMMAND_FAILED];
+/// A row whose record names a category of another Core server (the desktop before a reinstall).
+/// Its numeric id means nothing to this Suwayomi, so it stays blocked.
+const FOREIGN_SERVER_IDENTITY: &str = "foreign_server_identity";
 const PORTABLE_CHAPTER_PAGE_SIZE: i64 = 250;
 const MAX_PORTABLE_CHAPTER_PAGES: usize = 80;
 const CATEGORY_ASSIGNMENT_PAGE_SIZE: i64 = 100;
@@ -144,6 +154,15 @@ pub fn spawn_projection_task(
                 }
                 Err(error) => {
                     tracing::warn!(error = %error, "failed to requeue blocked Suwayomi projections")
+                }
+            }
+            match block_foreign_server_projections(&state.pool, super::db::now_ms()).await {
+                Ok(0) => {}
+                Ok(count) => {
+                    tracing::info!(count, "blocked Suwayomi projections of another Core server")
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to block foreign Suwayomi projections")
                 }
             }
             match rearm_runtime_retries(&state.pool, super::db::now_ms(), None).await {
@@ -311,14 +330,28 @@ impl MaintenanceWatch {
 
 /// Projections still expected to land without a user action. Blocked rows and chapter progress
 /// still waiting for its chapter are left out, so they cannot hold the first run forever.
-pub async fn pending_projection_count(state: &SharedAppState) -> anyhow::Result<i64> {
-    pending_projection_count_in(&state.pool).await
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRow)]
+pub struct PendingProjectionCounts {
+    pub total: i64,
+    /// Rows other than chapter progress: the library, its categories and assignments. Chapter
+    /// progress can number in the tens of thousands after a first sync and lands afterwards.
+    pub catalog: i64,
 }
 
-async fn pending_projection_count_in(pool: &sqlx::SqlitePool) -> anyhow::Result<i64> {
-    sqlx::query_scalar(
+pub async fn pending_projection_counts(
+    state: &SharedAppState,
+) -> anyhow::Result<PendingProjectionCounts> {
+    pending_projection_counts_in(&state.pool).await
+}
+
+async fn pending_projection_counts_in(
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<PendingProjectionCounts> {
+    sqlx::query_as(
         r#"
-        SELECT COUNT(*) FROM suwayomi_projection_outbox
+        SELECT COUNT(*) AS total,
+               COALESCE(SUM(operation_name <> 'UpdateChaptersProgress'), 0) AS catalog
+        FROM suwayomi_projection_outbox
         WHERE status IN ('pending', 'in_flight', 'retry')
           AND NOT (status = 'retry' AND last_error IS ? AND attempt_count >= ?)
         "#,
@@ -498,25 +531,28 @@ async fn claim_next_at(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Opti
     .await?;
     let row = sqlx::query_as::<_, ProjectionRow>(
         r#"
-        SELECT operation_id, profile_id, operation_name, variables_json, attempt_count
+        WITH barrier AS (
+            SELECT profile_id, MIN(source_server_version) AS version
+            FROM suwayomi_projection_outbox
+            WHERE status = 'retry' AND attempt_count < ?
+              AND COALESCE(last_error, '') NOT IN (?, ?, ?)
+            GROUP BY profile_id
+        )
+        SELECT candidate.operation_id, candidate.profile_id, candidate.operation_name,
+               candidate.variables_json, candidate.attempt_count
         FROM suwayomi_projection_outbox AS candidate
-        WHERE status IN ('pending', 'retry') AND next_attempt_at_ms <= ?
-          AND NOT EXISTS (
-            SELECT 1 FROM suwayomi_projection_outbox AS earlier
-            WHERE earlier.profile_id = candidate.profile_id
-              AND earlier.source_server_version < candidate.source_server_version
-              AND earlier.status = 'retry'
-              AND earlier.attempt_count < ?
-              AND COALESCE(earlier.last_error, '') NOT IN (?, ?)
-          )
-        ORDER BY source_server_version ASC
+        LEFT JOIN barrier ON barrier.profile_id = candidate.profile_id
+        WHERE candidate.status IN ('pending', 'retry') AND candidate.next_attempt_at_ms <= ?
+          AND (barrier.version IS NULL OR candidate.source_server_version <= barrier.version)
+        ORDER BY candidate.source_server_version ASC
         LIMIT 1
         "#,
     )
-    .bind(now)
     .bind(ORDERED_RETRY_ATTEMPTS)
-    .bind(UNBOUND_WORK_CODES[0])
-    .bind(UNBOUND_WORK_CODES[1])
+    .bind(NON_HOLDING_RETRY_CODES[0])
+    .bind(NON_HOLDING_RETRY_CODES[1])
+    .bind(NON_HOLDING_RETRY_CODES[2])
+    .bind(now)
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(row) = &row {
@@ -593,32 +629,35 @@ async fn claim_group_at(
     let mut tx = super::db::begin_write(pool).await?;
     let candidates = sqlx::query_as::<_, ProjectionRow>(
         r#"
-        SELECT operation_id, profile_id, operation_name, variables_json, attempt_count
+        WITH barrier AS (
+            SELECT profile_id, MIN(source_server_version) AS version
+            FROM suwayomi_projection_outbox
+            WHERE status = 'retry' AND attempt_count < ?
+              AND COALESCE(last_error, '') NOT IN (?, ?, ?)
+            GROUP BY profile_id
+        )
+        SELECT candidate.operation_id, candidate.profile_id, candidate.operation_name,
+               candidate.variables_json, candidate.attempt_count
         FROM suwayomi_projection_outbox AS candidate
+        LEFT JOIN barrier ON barrier.profile_id = candidate.profile_id
         WHERE candidate.profile_id = ? AND candidate.operation_id != ?
-          AND status IN ('pending', 'retry') AND next_attempt_at_ms <= ?
-          AND source_server_version >= (
+          AND candidate.status IN ('pending', 'retry') AND candidate.next_attempt_at_ms <= ?
+          AND candidate.source_server_version >= (
             SELECT source_server_version FROM suwayomi_projection_outbox WHERE operation_id = ?
           )
-          AND NOT EXISTS (
-            SELECT 1 FROM suwayomi_projection_outbox AS earlier
-            WHERE earlier.profile_id = candidate.profile_id
-              AND earlier.source_server_version < candidate.source_server_version
-              AND earlier.status = 'retry'
-              AND earlier.attempt_count < ?
-              AND COALESCE(earlier.last_error, '') NOT IN (?, ?)
-          )
-        ORDER BY source_server_version ASC
+          AND (barrier.version IS NULL OR candidate.source_server_version <= barrier.version)
+        ORDER BY candidate.source_server_version ASC
         LIMIT ?
         "#,
     )
+    .bind(ORDERED_RETRY_ATTEMPTS)
+    .bind(NON_HOLDING_RETRY_CODES[0])
+    .bind(NON_HOLDING_RETRY_CODES[1])
+    .bind(NON_HOLDING_RETRY_CODES[2])
     .bind(&first.profile_id)
     .bind(&first.operation_id)
     .bind(now)
     .bind(&first.operation_id)
-    .bind(ORDERED_RETRY_ATTEMPTS)
-    .bind(UNBOUND_WORK_CODES[0])
-    .bind(UNBOUND_WORK_CODES[1])
     .bind((MAX_GROUPED_ROWS - 1) as i64)
     .fetch_all(&mut *tx)
     .await?;
@@ -923,6 +962,47 @@ async fn requeue_recoverable_blocked(pool: &sqlx::SqlitePool, now: i64) -> anyho
     .execute(pool)
     .await
     .context("failed to requeue recoverable blocked Suwayomi projections")?;
+    Ok(result.rows_affected())
+}
+
+/// Blocks unapplied category rows whose record names a category of another Core server. Older
+/// daemons mapped such ids onto this Suwayomi's numeric ids; once this Suwayomi creates categories
+/// with those numbers, re-sending the rows would file works under the wrong category. Runs at
+/// daemon start after [requeue_recoverable_blocked], so those rows are not re-armed; idempotent.
+async fn block_foreign_server_projections(
+    pool: &sqlx::SqlitePool,
+    now: i64,
+) -> anyhow::Result<u64> {
+    let server_id = super::db::load_server_identity(pool).await?.server_id;
+    if server_id.is_empty() || server_id == "pending-server-id" {
+        return Ok(0);
+    }
+    let local_prefix = format!("suwayomi:server:{server_id}:");
+    let result = sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET status = 'blocked', lease_until_ms = NULL, last_error = ?, updated_at_ms = ?
+        WHERE COALESCE(last_error, '') != ?
+          AND entity_type IN ('comic.category', 'comic.category_assignment')
+          AND EXISTS (
+            SELECT 1 FROM comic_sync_state AS state
+            WHERE state.scope_id = 'comics:profile:' || suwayomi_projection_outbox.profile_id
+              AND state.entity_type = suwayomi_projection_outbox.entity_type
+              AND state.entity_id = suwayomi_projection_outbox.entity_id
+              AND json_valid(state.record_json)
+              AND substr(json_extract(state.record_json, '$.categoryId'), 1, 16) = 'suwayomi:server:'
+              AND substr(json_extract(state.record_json, '$.categoryId'), 1, ?) != ?
+          )
+        "#,
+    )
+    .bind(FOREIGN_SERVER_IDENTITY)
+    .bind(now)
+    .bind(FOREIGN_SERVER_IDENTITY)
+    .bind(local_prefix.len() as i64)
+    .bind(&local_prefix)
+    .execute(pool)
+    .await
+    .context("failed to block Suwayomi projections of another Core server")?;
     Ok(result.rows_affected())
 }
 
@@ -1604,14 +1684,18 @@ fn chapter_url_path(url: &str) -> &str {
 }
 
 /// Retries a failed command unless the runtime marked it non-retryable and it already failed
-/// [MAX_NON_RETRYABLE_ATTEMPTS] times. `attempt_count` already includes the current attempt.
+/// [MAX_NON_RETRYABLE_ATTEMPTS] times. `attempt_count` already includes the current attempt. Only
+/// an unreachable or busy runtime retries as [RUNTIME_UNAVAILABLE], which holds the ordered queue;
+/// a rejection retries as [COMMAND_FAILED], which does not.
 fn failed_command_outcome(error: &AppError, attempt_count: i64) -> ProjectionOutcome {
     let non_retryable =
         matches!(error, AppError::ServiceUnavailable(detail) if detail.retryable == Some(false));
-    if non_retryable && attempt_count >= MAX_NON_RETRYABLE_ATTEMPTS {
-        ProjectionOutcome::Blocked("command_failed")
-    } else {
+    if !non_retryable {
         ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE)
+    } else if attempt_count >= MAX_NON_RETRYABLE_ATTEMPTS {
+        ProjectionOutcome::Blocked(COMMAND_FAILED)
+    } else {
+        ProjectionOutcome::Retry(COMMAND_FAILED)
     }
 }
 
@@ -1887,26 +1971,27 @@ mod tests {
     fn permanent_command_failures_block_after_bounded_attempts() {
         let permanent = AppError::service_unavailable("SUWAYOMI_CATALOG_QUERY_FAILED", "x", false);
         let transient = AppError::service_unavailable("SUWAYOMI_CATALOG_UNAVAILABLE", "x", true);
+        // A rejection retries under a code that does not hold the profile's later rows.
         assert!(matches!(
             failed_command_outcome(&permanent, 1),
-            ProjectionOutcome::Retry(_)
+            ProjectionOutcome::Retry(COMMAND_FAILED)
         ));
         assert!(matches!(
             failed_command_outcome(&permanent, MAX_NON_RETRYABLE_ATTEMPTS - 1),
-            ProjectionOutcome::Retry(_)
+            ProjectionOutcome::Retry(COMMAND_FAILED)
         ));
         assert!(matches!(
             failed_command_outcome(&permanent, MAX_NON_RETRYABLE_ATTEMPTS),
-            ProjectionOutcome::Blocked("command_failed")
+            ProjectionOutcome::Blocked(COMMAND_FAILED)
         ));
         // A runtime that is down or busy keeps retrying with backoff no matter how long it takes.
         assert!(matches!(
             failed_command_outcome(&transient, 1_000),
-            ProjectionOutcome::Retry(_)
+            ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE)
         ));
         assert!(matches!(
             failed_command_outcome(&AppError::Internal("x".to_string()), 1_000),
-            ProjectionOutcome::Retry(_)
+            ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE)
         ));
     }
 
@@ -2200,20 +2285,26 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
-        // Without the index each claim read the whole profile queue once per due row (quadratic).
+        // The barrier reads only the retrying rows through an index, once per claim, instead of
+        // the whole profile queue once per due row (quadratic; 10 s per claim at 28k rows).
         let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
             r#"
             EXPLAIN QUERY PLAN
-            SELECT 1 FROM suwayomi_projection_outbox AS earlier
-            WHERE earlier.profile_id = 'main' AND earlier.source_server_version < 10
-              AND earlier.status = 'retry' AND earlier.attempt_count < 3
+            SELECT profile_id, MIN(source_server_version) AS version
+            FROM suwayomi_projection_outbox
+            WHERE status = 'retry' AND attempt_count < 3
+              AND COALESCE(last_error, '') NOT IN ('a', 'b', 'c')
+            GROUP BY profile_id
             "#,
         )
         .fetch_all(&pool)
         .await
         .unwrap();
         assert!(
-            plan.iter().any(|(_, _, _, detail)| detail.contains("idx_suwayomi_projection_order")),
+            plan.iter().any(|(_, _, _, detail)| {
+                detail.starts_with("SEARCH suwayomi_projection_outbox USING")
+                    && detail.contains("idx_suwayomi_projection_")
+            }),
             "{plan:?}"
         );
     }
@@ -2282,6 +2373,144 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_rejected_command_does_not_hold_later_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        for (id, version, status, error, next) in [
+            ("rejected", 1, "retry", Some(COMMAND_FAILED), 9_000),
+            ("next", 2, "pending", None, 0),
+            ("after", 3, "pending", None, 0),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateManga', '{"id":7,"inLibrary":true}', 'comic.library', ?, ?, ?, 1, ?, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(id)
+            .bind(version)
+            .bind(status)
+            .bind(next)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let claimed = claim_next_at(&pool, 500).await.unwrap().unwrap();
+        assert_eq!(claimed.operation_id, "next");
+        let group = claim_group_at(&pool, 500, &claimed, &json!({ "inLibrary": true })).await.unwrap();
+        assert!(group.iter().any(|row| row.operation_id == "after"), "{group:?}");
+
+        // An unreachable runtime still holds the rows after it.
+        sqlx::query(
+            r#"
+            INSERT INTO suwayomi_projection_outbox (
+              operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+              source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+              created_at_ms, updated_at_ms
+            ) VALUES ('outage', 'main', 'UpdateManga', '{"id":7}', 'comic.library', 'outage', 4,
+                      'retry', 1, 9000, 'runtime_unavailable', 1, 1),
+                     ('held', 'main', 'UpdateManga', '{"id":7}', 'comic.library', 'held', 5,
+                      'pending', 0, 0, NULL, 1, 1)
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM suwayomi_projection_outbox WHERE operation_id IN ('next', 'after')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(claim_next_at(&pool, 600).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn startup_blocks_category_rows_of_another_server_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        // Before the daemon writes its identity no row is foreign.
+        assert_eq!(block_foreign_server_projections(&pool, 1).await.unwrap(), 0);
+        sqlx::query("UPDATE server_identity SET server_id = 'desktop-a' WHERE singleton_id = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (id, entity_type, category_id, status, error) in [
+            ("foreign", "comic.category_assignment", Some("suwayomi:server:desktop-old:profile:main:category:3"), "retry", Some(COMMAND_FAILED)),
+            ("foreign-category", "comic.category", Some("suwayomi:server:desktop-old:profile:main:category:3"), "pending", None),
+            ("local", "comic.category_assignment", Some("suwayomi:server:desktop-a:profile:main:category:3"), "pending", None),
+            ("legacy", "comic.category_assignment", Some("suwayomi:profile:main:category:3"), "pending", None),
+            ("no-record", "comic.category_assignment", None, "pending", None),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateMangaCategories', '{"mangaId":7,"addTo":[3],"removeFrom":[]}',
+                          ?, ?, 1, ?, 1, 0, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(entity_type)
+            .bind(id)
+            .bind(status)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+            if let Some(category_id) = category_id {
+                sqlx::query(
+                    r#"
+                    INSERT INTO comic_sync_state (
+                      scope_id, entity_type, entity_id, record_json, record_updated_at_ms,
+                      record_updated_by_device_id, record_lamport, record_server_version
+                    ) VALUES ('comics:profile:main', ?, ?, ?, 1, 'device', 1, 1)
+                    "#,
+                )
+                .bind(entity_type)
+                .bind(id)
+                .bind(json!({ "categoryId": category_id }).to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+
+        assert_eq!(block_foreign_server_projections(&pool, 50).await.unwrap(), 2);
+        // Idempotent, and not undone by the recoverable requeue that runs before it.
+        assert_eq!(block_foreign_server_projections(&pool, 60).await.unwrap(), 0);
+        assert_eq!(requeue_recoverable_blocked(&pool, 70).await.unwrap(), 0);
+
+        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT operation_id, status, last_error FROM suwayomi_projection_outbox ORDER BY operation_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let blocked = || ("blocked".to_string(), Some(FOREIGN_SERVER_IDENTITY.to_string()));
+        let pending = || ("pending".to_string(), None);
+        let rows: Vec<(String, (String, Option<String>))> =
+            rows.into_iter().map(|(id, status, error)| (id, (status, error))).collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("foreign".to_string(), blocked()),
+                ("foreign-category".to_string(), blocked()),
+                ("legacy".to_string(), pending()),
+                ("local".to_string(), pending()),
+                ("no-record".to_string(), pending()),
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn chapter_progress_still_waiting_for_its_chapter_stops_counting_as_pending() {
         let temp = tempfile::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
@@ -2320,7 +2549,10 @@ mod tests {
         );
         assert_eq!(projection_status_counts(&pool, "other").await.unwrap().pending, 0);
         // The first run waits only on rows that can still land on their own.
-        assert_eq!(pending_projection_count_in(&pool).await.unwrap(), 3);
+        assert_eq!(
+            pending_projection_counts_in(&pool).await.unwrap(),
+            PendingProjectionCounts { total: 3, catalog: 1 }
+        );
     }
 
     #[test]

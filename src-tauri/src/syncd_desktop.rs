@@ -864,6 +864,9 @@ async fn fetch_paired_devices(local_base_url: &str) -> Result<Vec<SyncdPairedDev
 #[serde(rename_all = "camelCase")]
 pub struct SyncdSyncProgress {
     pub pending_projections: i64,
+    /// The pending projections other than chapter progress; absent from older Cores.
+    #[serde(default)]
+    pub pending_catalog_projections: Option<i64>,
     pub pending_tracker_logins: i64,
     /// Works in the library still waiting for details and chapters; absent from older Cores.
     #[serde(default)]

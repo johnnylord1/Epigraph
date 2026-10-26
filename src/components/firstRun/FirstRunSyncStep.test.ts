@@ -240,6 +240,29 @@ describe("FirstRunSyncStep", () => {
     expect(await screen.findByText("Finishing in background")).toBeTruthy();
   });
 
+  it("waits for the synced library only, leaving chapter progress to land in the background", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      sync.progress.mockResolvedValue({ pendingProjections: 28_400, pendingCatalogProjections: 9, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: 0 });
+      sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);
+      render(FirstRunSyncStep, { props: { profileId: "main" } });
+
+      await waitFor(() => expect(screen.getByText("Importing")).toBeTruthy());
+      expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+
+      sync.progress.mockResolvedValue({ pendingProjections: 28_391, pendingCatalogProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: 0 });
+      await vi.advanceTimersByTimeAsync(2000);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
+      expect(document.querySelector('[data-scope="comics"]')?.getAttribute("data-state")).toBe("background");
+
+      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingCatalogProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: 0 });
+      await vi.advanceTimersByTimeAsync(2000);
+      await waitFor(() => expect(document.querySelector('[data-scope="comics"]')?.getAttribute("data-state")).toBe("ready"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not wait on a Core that cannot report its progress", async () => {
     sync.progress.mockResolvedValue(null);
     sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);

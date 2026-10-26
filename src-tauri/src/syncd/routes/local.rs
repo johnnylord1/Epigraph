@@ -309,6 +309,9 @@ pub async fn post_local_myanimelist_login_complete(
 #[serde(rename_all = "camelCase")]
 pub struct LocalSyncProgress {
     pub pending_projections: i64,
+    /// The pending projections other than chapter progress. The first run waits for these only;
+    /// chapter progress keeps landing in the background.
+    pub pending_catalog_projections: i64,
     pub pending_tracker_logins: usize,
     /// Synced works still waiting for their details and chapter list from the source. They are in
     /// the library already, so the first run does not wait for them.
@@ -330,14 +333,15 @@ pub async fn get_local_sync_progress(
             "Local sync progress is only available from loopback.".to_string(),
         ));
     }
-    let pending_projections = suwayomi_projection::pending_projection_count(&state)
+    let pending = suwayomi_projection::pending_projection_counts(&state)
         .await
         .map_err(|error| {
             tracing::warn!(error = %error, "could not count pending Suwayomi projections");
             AppError::Internal("Sync progress is unavailable.".to_string())
         })?;
     Ok(Json(LocalSyncProgress {
-        pending_projections,
+        pending_projections: pending.total,
+        pending_catalog_projections: pending.catalog,
         pending_tracker_logins: suwayomi_tracking_mirror::pending_login_count(&state).await,
         pending_details: suwayomi_hydration::pending_count(),
         pending_uploads: super::status::pending_uploads(),

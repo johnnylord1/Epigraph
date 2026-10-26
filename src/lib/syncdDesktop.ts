@@ -265,6 +265,8 @@ export function syncdListPairedDevicesIfRunning(): Promise<SyncdPairedDeviceView
 /** Synced data this computer's Core has not applied to Suwayomi yet, as counts. */
 export interface SyncdSyncProgress {
   pendingProjections: number;
+  /** The pending projections other than chapter progress; absent from older Cores. */
+  pendingCatalogProjections?: number | null;
   pendingTrackerLogins: number;
   /** Works already in the library still fetching their details and chapter list. */
   pendingDetails: number;

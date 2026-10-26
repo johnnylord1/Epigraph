@@ -4913,13 +4913,14 @@ async fn enqueue_comic_history_projection_in_tx(
             "portableChapterRef": chapter,
         }),
         (None, None) => {
+            let local_server_id = local_server_id_in_tx(tx).await?;
             let Some(manga_id) =
-                suwayomi_numeric_id_for_profile(&record.comic_id, profile_id, ":manga:")
+                suwayomi_numeric_id_for_profile(&record.comic_id, local_server_id.as_deref(), profile_id, ":manga:")
             else {
                 return Ok(());
             };
             let Some(chapter_id) =
-                suwayomi_numeric_id_for_profile(&record.chapter_id, profile_id, ":chapter:")
+                suwayomi_numeric_id_for_profile(&record.chapter_id, local_server_id.as_deref(), profile_id, ":chapter:")
             else {
                 return Ok(());
             };
@@ -4966,8 +4967,24 @@ async fn enqueue_comic_history_projection_in_tx(
     Ok(())
 }
 
+/// This Core's server id, used to tell its own `suwayomi:server:` ids from another server's.
+/// `None` only before the daemon has written its identity over the seeded placeholder.
+async fn local_server_id_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> anyhow::Result<Option<String>> {
+    let server_id: Option<String> =
+        sqlx::query_scalar("SELECT server_id FROM server_identity WHERE singleton_id = 1")
+            .fetch_optional(&mut **tx)
+            .await?;
+    Ok(server_id.filter(|value| !value.is_empty() && value != "pending-server-id"))
+}
+
+/// The Suwayomi numeric id inside a `suwayomi:` entity id of `expected_profile_id`. An id scoped
+/// to another server (for example the desktop before a reinstall) names a row of that server's
+/// Suwayomi, so it maps to nothing here.
 fn suwayomi_numeric_id_for_profile(
     entity_id: &str,
+    local_server_id: Option<&str>,
     expected_profile_id: &str,
     marker: &str,
 ) -> Option<i64> {
@@ -4977,6 +4994,9 @@ fn suwayomi_numeric_id_for_profile(
         let value = entity_id.strip_prefix("suwayomi:server:")?;
         let profile_marker = value.find(":profile:")?;
         if profile_marker == 0 {
+            return None;
+        }
+        if local_server_id.is_some_and(|server_id| server_id != &value[..profile_marker]) {
             return None;
         }
         &value[profile_marker + ":profile:".len()..]
@@ -6837,6 +6857,7 @@ async fn enqueue_comic_state_projection_in_tx(
     let Some(profile_id) = scope_id.strip_prefix("comics:profile:") else {
         return Ok(());
     };
+    let local_server_id = local_server_id_in_tx(tx).await?;
     let projections: Vec<(&str, Value)> = match entity_type {
         "comic.entry" => {
             let Some(comic_id) = record.get("comicId").and_then(Value::as_str) else {
@@ -6853,7 +6874,7 @@ async fn enqueue_comic_state_projection_in_tx(
                 variables
             } else {
                 let Some(manga_id) =
-                    suwayomi_numeric_id_for_profile(comic_id, profile_id, ":manga:")
+                    suwayomi_numeric_id_for_profile(comic_id, local_server_id.as_deref(), profile_id, ":manga:")
                 else {
                     return Ok(());
                 };
@@ -6884,7 +6905,7 @@ async fn enqueue_comic_state_projection_in_tx(
                 return Ok(());
             };
             let Some(category_id) =
-                suwayomi_numeric_id_for_profile(category_id, profile_id, ":category:")
+                suwayomi_numeric_id_for_profile(category_id, local_server_id.as_deref(), profile_id, ":category:")
             else {
                 return Ok(());
             };
@@ -6904,7 +6925,7 @@ async fn enqueue_comic_state_projection_in_tx(
                 })
             } else {
                 let Some(manga_id) =
-                    suwayomi_numeric_id_for_profile(comic_id, profile_id, ":manga:")
+                    suwayomi_numeric_id_for_profile(comic_id, local_server_id.as_deref(), profile_id, ":manga:")
                 else {
                     return Ok(());
                 };
@@ -6936,12 +6957,12 @@ async fn enqueue_comic_state_projection_in_tx(
                         return Ok(());
                     };
                     let Some(manga_id) =
-                        suwayomi_numeric_id_for_profile(comic_id, profile_id, ":manga:")
+                        suwayomi_numeric_id_for_profile(comic_id, local_server_id.as_deref(), profile_id, ":manga:")
                     else {
                         return Ok(());
                     };
                     let Some(chapter_id) =
-                        suwayomi_numeric_id_for_profile(chapter_id, profile_id, ":chapter:")
+                        suwayomi_numeric_id_for_profile(chapter_id, local_server_id.as_deref(), profile_id, ":chapter:")
                     else {
                         return Ok(());
                     };
@@ -6959,7 +6980,7 @@ async fn enqueue_comic_state_projection_in_tx(
                 return Ok(());
             };
             let Some(category_id) =
-                suwayomi_numeric_id_for_profile(category_id, profile_id, ":category:")
+                suwayomi_numeric_id_for_profile(category_id, local_server_id.as_deref(), profile_id, ":category:")
             else {
                 return Ok(());
             };
@@ -11480,6 +11501,7 @@ mod tests {
             upsert_server_identity(&pool, &config, "fingerprint")
                 .await
                 .unwrap();
+            set_test_server_id(&pool, "desktop-a").await;
             let session = AuthenticatedSession {
                 token_id: "token-main".to_string(),
                 device_id: "device-main".to_string(),
@@ -11631,6 +11653,7 @@ mod tests {
         upsert_server_identity(&pool, &config, "fingerprint")
             .await
             .unwrap();
+        set_test_server_id(&pool, "desktop-a").await;
         let session = AuthenticatedSession {
             token_id: "token-main".to_string(),
             device_id: "device-main".to_string(),
@@ -11672,6 +11695,7 @@ mod tests {
         upsert_server_identity(&pool, &config, "fingerprint")
             .await
             .unwrap();
+        set_test_server_id(&pool, "desktop-a").await;
         let session = AuthenticatedSession {
             token_id: "token-main".to_string(),
             device_id: "device-main".to_string(),
@@ -11740,6 +11764,84 @@ mod tests {
         );
     }
 
+    /// Pins this Core's server id so tests can name its `suwayomi:server:` ids.
+    async fn set_test_server_id(pool: &sqlx::SqlitePool, server_id: &str) {
+        sqlx::query("UPDATE server_identity SET server_id = ? WHERE singleton_id = 1")
+            .bind(server_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn comic_category_ids_of_another_server_are_not_projected() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        set_test_server_id(&pool, "desktop-a").await;
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        // The desktop before a reinstall: its category 3 is not this Suwayomi's category 3.
+        let category_id = "suwayomi:server:desktop-old:profile:main:category:3";
+        let mutations = [
+            (
+                "comic.category_assignment",
+                "comic-category-assignment:foreign",
+                json!({
+                    "comicId": "suwayomi:profile:main:manga:42",
+                    "categoryId": category_id,
+                }),
+            ),
+            (
+                "comic.category",
+                category_id,
+                json!({ "categoryId": category_id, "name": "Reading", "order": 2 }),
+            ),
+        ];
+        for (entity_type, entity_id, record) in &mutations {
+            apply_comic_sync_state_mutation(
+                &pool,
+                &session,
+                "comics:profile:main",
+                entity_type,
+                entity_id,
+                record,
+                1,
+                None,
+                config.retention_window,
+            )
+            .await
+            .unwrap();
+        }
+        delete_comic_sync_state_mutation(
+            &pool,
+            &session,
+            "comics:profile:main",
+            "comic.category",
+            category_id,
+            2,
+            None,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+
+        let projection_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM suwayomi_projection_outbox")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(projection_count, 0);
+    }
+
     #[tokio::test]
     async fn newer_comic_merge_supersedes_blocked_projection() {
         let temp = tempdir().unwrap();
@@ -11748,6 +11850,7 @@ mod tests {
         upsert_server_identity(&pool, &config, "fingerprint")
             .await
             .unwrap();
+        set_test_server_id(&pool, "desktop-a").await;
         let session = AuthenticatedSession {
             token_id: "token-main".to_string(),
             device_id: "device-main".to_string(),
