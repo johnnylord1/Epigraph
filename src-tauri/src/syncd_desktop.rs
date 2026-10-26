@@ -874,6 +874,9 @@ pub struct SyncdSyncProgress {
     /// What paired devices still have to upload; `None` until they report it.
     #[serde(default)]
     pub pending_uploads: Option<i64>,
+    /// The library part of `pending_uploads`; absent from older Cores and devices.
+    #[serde(default)]
+    pub pending_library_uploads: Option<i64>,
     /// Projections the running Core has applied to Suwayomi; absent (0) from older Cores.
     #[serde(default)]
     pub applied_projections: u64,

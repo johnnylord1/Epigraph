@@ -272,6 +272,8 @@ export interface SyncdSyncProgress {
   pendingDetails: number;
   /** What paired devices still have to upload; null until each has reported a finished run. */
   pendingUploads?: number | null;
+  /** The library part of pendingUploads, without reading state; null until every device tells it apart. */
+  pendingLibraryUploads?: number | null;
   /** Projections Core applied since it started; absent from older Cores. */
   appliedProjections?: number;
 }

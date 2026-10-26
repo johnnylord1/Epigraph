@@ -87,10 +87,18 @@
      a first sync), details and chapter lists of imported works keep arriving afterwards, and synced
      tracker logins keep signing in, without holding the step. An older Core reports only the total. */
   /* A phone reports what it still has to send once a sync run sent what it could; until then
-     Core's counts can read zero only because nothing has arrived yet. */
-  const uploadsDone = $derived(!peerIsPhone || !progress || progress.pendingUploads === undefined || progress.pendingUploads === 0);
+     Core's counts can read zero only because nothing has arrived yet. A newer phone sends its
+     library first and says when only reading state is left, so the step waits for that part only;
+     an older phone or Core reports the total alone. */
+  const uploadsDone = $derived.by(() => {
+    if (!peerIsPhone || !progress) return true;
+    if (typeof progress.pendingLibraryUploads === "number") return progress.pendingLibraryUploads === 0;
+    return progress.pendingUploads === undefined || progress.pendingUploads === 0;
+  });
   const pendingCatalog = $derived(progress ? (progress.pendingCatalogProjections ?? progress.pendingProjections) : 0);
-  const finishing = $derived((progress?.pendingDetails ?? 0) > 0 || (progress?.pendingProjections ?? 0) > 0);
+  const finishing = $derived(
+    (progress?.pendingDetails ?? 0) > 0 || (progress?.pendingProjections ?? 0) > 0 || (peerIsPhone && (progress?.pendingUploads ?? 0) > 0),
+  );
   const applied = $derived(progressChecked && uploadsDone && pendingCatalog === 0);
   function comicsState(): ScopeState {
     const base = scopeState(snapshot?.comicsScopeCheckpoint);

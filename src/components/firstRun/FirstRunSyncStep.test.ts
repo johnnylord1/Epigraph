@@ -231,6 +231,26 @@ describe("FirstRunSyncStep", () => {
     }
   });
 
+  it("lets the user go on once a phone has sent its library, while reading state keeps uploading", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: null, pendingLibraryUploads: 12 });
+      sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);
+      render(FirstRunSyncStep, { props: { profileId: "main" } });
+
+      await waitFor(() => expect(screen.getByText("Galaxy S23")).toBeTruthy());
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+
+      sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: 18_000, pendingLibraryUploads: 0 });
+      await vi.advanceTimersByTimeAsync(2000);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
+      expect(document.querySelector('[data-scope="comics"]')?.getAttribute("data-state")).toBe("background");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not hold the step for details and chapters still arriving from sources", async () => {
     sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 40 });
     sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);

@@ -514,6 +514,11 @@ async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionR
     claim_next_at(&state.pool, super::db::now_ms()).await
 }
 
+/// Claims the earliest ready row, library and category changes first. Chapter progress only needs
+/// its work to exist and nothing waits on it, so a first sync's thousands of progress rows no
+/// longer keep the library and its folders waiting behind them (the desktop first run waits for
+/// those). Each kind keeps commit order: a progress retry holds later progress only, while a
+/// library retry still holds everything after it.
 async fn claim_next_at(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Option<ProjectionRow>> {
     let mut tx = super::db::begin_write(pool).await?;
     sqlx::query(
@@ -532,7 +537,9 @@ async fn claim_next_at(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Opti
     let row = sqlx::query_as::<_, ProjectionRow>(
         r#"
         WITH barrier AS (
-            SELECT profile_id, MIN(source_server_version) AS version
+            SELECT profile_id, MIN(source_server_version) AS version,
+                   MIN(CASE WHEN operation_name <> 'UpdateChaptersProgress'
+                       THEN source_server_version END) AS library_version
             FROM suwayomi_projection_outbox
             WHERE status = 'retry' AND attempt_count < ?
               AND COALESCE(last_error, '') NOT IN (?, ?, ?)
@@ -543,8 +550,12 @@ async fn claim_next_at(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Opti
         FROM suwayomi_projection_outbox AS candidate
         LEFT JOIN barrier ON barrier.profile_id = candidate.profile_id
         WHERE candidate.status IN ('pending', 'retry') AND candidate.next_attempt_at_ms <= ?
-          AND (barrier.version IS NULL OR candidate.source_server_version <= barrier.version)
-        ORDER BY candidate.source_server_version ASC
+          AND candidate.source_server_version <= COALESCE(
+            CASE WHEN candidate.operation_name = 'UpdateChaptersProgress'
+              THEN barrier.version ELSE barrier.library_version END,
+            candidate.source_server_version)
+        ORDER BY candidate.operation_name = 'UpdateChaptersProgress' ASC,
+                 candidate.source_server_version ASC
         LIMIT 1
         "#,
     )
@@ -618,8 +629,9 @@ async fn claim_group(
 }
 
 /// Claims the rows right after `first` (already claimed) that make the same change, so they can
-/// go to Suwayomi together. Only an unbroken run is taken: it stops at the first ready row that
-/// does something else, so no change is applied ahead of an earlier, different one.
+/// go to Suwayomi together. Only an unbroken run of its kind (chapter progress, or everything
+/// else; see [claim_next_at]) is taken: it stops at the first ready row of that kind that does
+/// something else, so no change is applied ahead of an earlier, different one.
 async fn claim_group_at(
     pool: &sqlx::SqlitePool,
     now: i64,
@@ -630,7 +642,9 @@ async fn claim_group_at(
     let candidates = sqlx::query_as::<_, ProjectionRow>(
         r#"
         WITH barrier AS (
-            SELECT profile_id, MIN(source_server_version) AS version
+            SELECT profile_id, MIN(source_server_version) AS version,
+                   MIN(CASE WHEN operation_name <> 'UpdateChaptersProgress'
+                       THEN source_server_version END) AS library_version
             FROM suwayomi_projection_outbox
             WHERE status = 'retry' AND attempt_count < ?
               AND COALESCE(last_error, '') NOT IN (?, ?, ?)
@@ -642,10 +656,14 @@ async fn claim_group_at(
         LEFT JOIN barrier ON barrier.profile_id = candidate.profile_id
         WHERE candidate.profile_id = ? AND candidate.operation_id != ?
           AND candidate.status IN ('pending', 'retry') AND candidate.next_attempt_at_ms <= ?
+          AND (candidate.operation_name = 'UpdateChaptersProgress') = (? = 'UpdateChaptersProgress')
           AND candidate.source_server_version >= (
             SELECT source_server_version FROM suwayomi_projection_outbox WHERE operation_id = ?
           )
-          AND (barrier.version IS NULL OR candidate.source_server_version <= barrier.version)
+          AND candidate.source_server_version <= COALESCE(
+            CASE WHEN candidate.operation_name = 'UpdateChaptersProgress'
+              THEN barrier.version ELSE barrier.library_version END,
+            candidate.source_server_version)
         ORDER BY candidate.source_server_version ASC
         LIMIT ?
         "#,
@@ -657,6 +675,7 @@ async fn claim_group_at(
     .bind(&first.profile_id)
     .bind(&first.operation_id)
     .bind(now)
+    .bind(&first.operation_name)
     .bind(&first.operation_id)
     .bind((MAX_GROUPED_ROWS - 1) as i64)
     .fetch_all(&mut *tx)
@@ -2423,6 +2442,105 @@ mod tests {
         .await
         .unwrap();
         sqlx::query("DELETE FROM suwayomi_projection_outbox WHERE operation_id IN ('next', 'after')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(claim_next_at(&pool, 600).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn library_rows_pass_earlier_chapter_progress() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let progress = json!({
+            "isRead": true,
+            "portableWorkRef": { "type": "comic", "sourceId": "10002", "mangaKey": "/series/a" },
+            "portableChapterRef": { "chapterKey": "/series/a/1" },
+        })
+        .to_string();
+        let into_one = r#"{"mangaId":1,"addTo":[1],"removeFrom":[]}"#;
+        for (id, operation, variables, version) in [
+            ("progress-1", "UpdateChaptersProgress", progress.as_str(), 1),
+            ("folder-1", "UpdateMangaCategories", into_one, 2),
+            ("progress-2", "UpdateChaptersProgress", progress.as_str(), 3),
+            ("folder-2", "UpdateMangaCategories", into_one, 4),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', ?, ?, 'comic.test', ?, ?, 'pending', 0, 0, NULL, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(operation)
+            .bind(variables)
+            .bind(id)
+            .bind(version)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The folder rows go first and group across the progress row between them.
+        let first = claim_next_at(&pool, 500).await.unwrap().unwrap();
+        assert_eq!(first.operation_id, "folder-1");
+        let change = group_change(&first.operation_name, &serde_json::from_str(&first.variables_json).unwrap())
+            .unwrap();
+        let group = claim_group_at(&pool, 500, &first, &change).await.unwrap();
+        assert_eq!(group.iter().map(|row| row.operation_id.as_str()).collect::<Vec<_>>(), vec!["folder-2"]);
+
+        // Progress then keeps its own order and groups only with progress.
+        let next = claim_next_at(&pool, 500).await.unwrap().unwrap();
+        assert_eq!(next.operation_id, "progress-1");
+        let change = group_change(&next.operation_name, &serde_json::from_str(&next.variables_json).unwrap())
+            .unwrap();
+        let group = claim_group_at(&pool, 500, &next, &change).await.unwrap();
+        assert_eq!(group.iter().map(|row| row.operation_id.as_str()).collect::<Vec<_>>(), vec!["progress-2"]);
+
+        // A progress retry holds later progress but not the library; a library retry holds both.
+        sqlx::query("DELETE FROM suwayomi_projection_outbox").execute(&pool).await.unwrap();
+        for (id, operation, variables, version, status) in [
+            ("progress-outage", "UpdateChaptersProgress", progress.as_str(), 1, "retry"),
+            ("progress-held", "UpdateChaptersProgress", progress.as_str(), 2, "pending"),
+            ("folder", "UpdateMangaCategories", into_one, 3, "pending"),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', ?, ?, 'comic.test', ?, ?, ?, 1, ?, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(operation)
+            .bind(variables)
+            .bind(id)
+            .bind(version)
+            .bind(status)
+            .bind(if status == "retry" { 9_000 } else { 0 })
+            .bind((status == "retry").then_some(RUNTIME_UNAVAILABLE))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(claim_next_at(&pool, 600).await.unwrap().unwrap().operation_id, "folder");
+        assert!(claim_next_at(&pool, 600).await.unwrap().is_none());
+        sqlx::query(
+            "UPDATE suwayomi_projection_outbox SET status = 'retry', next_attempt_at_ms = 9000, \
+             last_error = 'runtime_unavailable', operation_name = 'UpdateMangaCategories', \
+             variables_json = ? WHERE operation_id = 'progress-outage'",
+        )
+        .bind(into_one)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE suwayomi_projection_outbox SET status = 'pending', lease_until_ms = NULL WHERE operation_id = 'folder'")
             .execute(&pool)
             .await
             .unwrap();

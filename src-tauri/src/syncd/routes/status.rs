@@ -20,6 +20,10 @@ pub struct SyncStatusQuery {
     /// What the calling device still has to upload, once its sync run sent what it could.
     #[serde(default)]
     pub pending_uploads: Option<i64>,
+    /// The part of it that is library rather than reading state (progress, history, bookmarks).
+    /// Sent mid-run as soon as it reaches zero, so a first run can go on while progress uploads.
+    #[serde(default)]
+    pub pending_library_uploads: Option<i64>,
 }
 
 /// A device's last upload report. `pending` stays `None` until a device that reports uploads has
@@ -27,6 +31,8 @@ pub struct SyncStatusQuery {
 #[derive(Debug, Clone, Copy)]
 struct UploadReport {
     pending: Option<i64>,
+    /// Library rows among them; `None` from devices that do not tell them apart.
+    library_pending: Option<i64>,
     at: Instant,
 }
 
@@ -44,29 +50,48 @@ fn record_upload_report(
     device_id: &str,
     reports: bool,
     pending: Option<i64>,
+    library_pending: Option<i64>,
     now: Instant,
 ) {
     let key = (profile_id.to_string(), device_id.to_string());
-    let pending = match (reports, pending) {
-        (true, Some(pending)) => Some(pending),
-        // A mid-run status call: keep the count from the last finished run, if still fresh.
-        (true, None) => reports_by_device
-            .get(&key)
-            .filter(|report| now.duration_since(report.at) < UPLOAD_REPORT_TTL)
-            .and_then(|report| report.pending),
-        (false, _) => Some(0),
+    let previous = reports_by_device
+        .get(&key)
+        .filter(|report| now.duration_since(report.at) < UPLOAD_REPORT_TTL)
+        .copied();
+    let (pending, library_pending) = if reports {
+        // A mid-run status call keeps the counts from the last finished run, if still fresh.
+        let pending = pending.or(previous.and_then(|report| report.pending));
+        let library_pending = library_pending
+            .or(previous.and_then(|report| report.library_pending))
+            // Nothing left at all leaves no library rows either.
+            .or(pending.filter(|pending| *pending == 0));
+        (pending, library_pending)
+    } else {
+        (Some(0), Some(0))
     };
-    reports_by_device.insert(key, UploadReport { pending, at: now });
+    reports_by_device.insert(key, UploadReport { pending, library_pending, at: now });
 }
 
 fn pending_uploads_at(reports_by_device: &mut UploadReports, now: Instant) -> Option<i64> {
+    sum_fresh_reports(reports_by_device, now, |report| report.pending)
+}
+
+fn pending_library_uploads_at(reports_by_device: &mut UploadReports, now: Instant) -> Option<i64> {
+    sum_fresh_reports(reports_by_device, now, |report| report.library_pending)
+}
+
+fn sum_fresh_reports(
+    reports_by_device: &mut UploadReports,
+    now: Instant,
+    count: impl Fn(&UploadReport) -> Option<i64>,
+) -> Option<i64> {
     reports_by_device.retain(|_, report| now.duration_since(report.at) < UPLOAD_REPORT_TTL);
     if reports_by_device.is_empty() {
         return None;
     }
     reports_by_device
         .values()
-        .try_fold(0_i64, |total, report| report.pending.map(|pending| total.saturating_add(pending)))
+        .try_fold(0_i64, |total, report| count(report).map(|pending| total.saturating_add(pending)))
 }
 
 fn upload_reports() -> std::sync::MutexGuard<'static, UploadReports> {
@@ -77,6 +102,12 @@ fn upload_reports() -> std::sync::MutexGuard<'static, UploadReports> {
 /// every device that synced lately has finished a run and reported it.
 pub fn pending_uploads() -> Option<i64> {
     pending_uploads_at(&mut upload_reports(), Instant::now())
+}
+
+/// The library part of [`pending_uploads`]: `None` until every device that synced lately has told
+/// how much of its upload is library, which older devices never do.
+pub fn pending_library_uploads() -> Option<i64> {
+    pending_library_uploads_at(&mut upload_reports(), Instant::now())
 }
 
 #[derive(Debug, Serialize)]
@@ -134,12 +165,19 @@ pub async fn get_sync_status(
     {
         return Err(AppError::BadRequest("pendingUploads is out of range.".to_string()));
     }
+    if query
+        .pending_library_uploads
+        .is_some_and(|pending| !(0..=MAX_PENDING_UPLOADS).contains(&pending))
+    {
+        return Err(AppError::BadRequest("pendingLibraryUploads is out of range.".to_string()));
+    }
     record_upload_report(
         &mut upload_reports(),
         profile_id,
         &session.device_id,
         query.reports_uploads == Some(true),
         query.pending_uploads,
+        query.pending_library_uploads,
         Instant::now(),
     );
 
@@ -211,21 +249,21 @@ mod tests {
         assert_eq!(pending_uploads_at(&mut reports, now), None);
 
         // The phone's catalog sync calls mid-run with the marker only: nothing is known yet.
-        record_upload_report(&mut reports, "main", "phone", true, None, now);
+        record_upload_report(&mut reports, "main", "phone", true, None, None, now);
         assert_eq!(pending_uploads_at(&mut reports, now), None);
 
-        record_upload_report(&mut reports, "main", "phone", true, Some(37), now);
+        record_upload_report(&mut reports, "main", "phone", true, Some(37), None, now);
         assert_eq!(pending_uploads_at(&mut reports, now), Some(37));
 
         // A later mid-run call keeps the last finished run's count.
-        record_upload_report(&mut reports, "main", "phone", true, None, now);
+        record_upload_report(&mut reports, "main", "phone", true, None, None, now);
         assert_eq!(pending_uploads_at(&mut reports, now), Some(37));
 
         // A device too old to report counts as having nothing left.
-        record_upload_report(&mut reports, "main", "old-phone", false, None, now);
+        record_upload_report(&mut reports, "main", "old-phone", false, None, None, now);
         assert_eq!(pending_uploads_at(&mut reports, now), Some(37));
 
-        record_upload_report(&mut reports, "main", "phone", true, Some(0), now);
+        record_upload_report(&mut reports, "main", "phone", true, Some(0), None, now);
         assert_eq!(pending_uploads_at(&mut reports, now), Some(0));
     }
 
@@ -233,14 +271,41 @@ mod tests {
     fn stale_upload_reports_stop_counting() {
         let mut reports = UploadReports::new();
         let then = Instant::now();
-        record_upload_report(&mut reports, "main", "gone", true, Some(5), then);
+        record_upload_report(&mut reports, "main", "gone", true, Some(5), None, then);
         let later = then + UPLOAD_REPORT_TTL;
-        record_upload_report(&mut reports, "main", "phone", true, Some(0), later);
+        record_upload_report(&mut reports, "main", "phone", true, Some(0), None, later);
         assert_eq!(pending_uploads_at(&mut reports, later), Some(0));
 
         // A stale count is not carried into a new mid-run report.
-        record_upload_report(&mut reports, "main", "gone", true, Some(5), then);
-        record_upload_report(&mut reports, "main", "gone", true, None, later);
+        record_upload_report(&mut reports, "main", "gone", true, Some(5), None, then);
+        record_upload_report(&mut reports, "main", "gone", true, None, None, later);
         assert_eq!(pending_uploads_at(&mut reports, later), None);
+    }
+
+    #[test]
+    fn library_uploads_are_reported_before_the_run_ends() {
+        let mut reports = UploadReports::new();
+        let now = Instant::now();
+        record_upload_report(&mut reports, "main", "phone", true, Some(900), Some(40), now);
+        assert_eq!(pending_library_uploads_at(&mut reports, now), Some(40));
+
+        // Mid-run, the library is in while 900 progress rows still upload.
+        record_upload_report(&mut reports, "main", "phone", true, None, Some(0), now);
+        assert_eq!(pending_uploads_at(&mut reports, now), Some(900));
+        assert_eq!(pending_library_uploads_at(&mut reports, now), Some(0));
+
+        // A later call without the library count keeps it.
+        record_upload_report(&mut reports, "main", "phone", true, None, None, now);
+        assert_eq!(pending_library_uploads_at(&mut reports, now), Some(0));
+
+        // A device that does not tell library apart holds it until it has nothing left at all.
+        record_upload_report(&mut reports, "main", "tablet", true, Some(3), None, now);
+        assert_eq!(pending_library_uploads_at(&mut reports, now), None);
+        record_upload_report(&mut reports, "main", "tablet", true, Some(0), None, now);
+        assert_eq!(pending_library_uploads_at(&mut reports, now), Some(0));
+
+        // Devices too old to report count as having nothing left.
+        record_upload_report(&mut reports, "main", "old-phone", false, None, None, now);
+        assert_eq!(pending_library_uploads_at(&mut reports, now), Some(0));
     }
 }

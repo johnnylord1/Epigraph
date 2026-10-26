@@ -318,6 +318,9 @@ pub struct LocalSyncProgress {
     pub pending_details: i64,
     /// What paired devices still have to upload, or `None` until each has reported a finished run.
     pub pending_uploads: Option<i64>,
+    /// The library part of `pending_uploads`, without reading state; `None` until every device
+    /// has told it apart. The first run lets the user continue once it is zero.
+    pub pending_library_uploads: Option<i64>,
     /// Projections applied since Core started; when it moves, the UI reloads what it shows.
     pub applied_projections: u64,
 }
@@ -345,6 +348,7 @@ pub async fn get_local_sync_progress(
         pending_tracker_logins: suwayomi_tracking_mirror::pending_login_count(&state).await,
         pending_details: suwayomi_hydration::pending_count(),
         pending_uploads: super::status::pending_uploads(),
+        pending_library_uploads: super::status::pending_library_uploads(),
         applied_projections: suwayomi_projection::applied_projection_count(),
     }))
 }
