@@ -4,6 +4,7 @@
   import { afterPaint, arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
   import { resumeLibraryAniListLookup } from "../../lib/recommendations/anilistLibraryLookup";
+  import { firstRunBackgroundSync } from "../../lib/setup/firstRunBackgroundSync.svelte";
   import { railScroll } from "../../lib/railScroll";
   import { cachedLibraryTitleMatch, cachedLibraryTitleMatches } from "../../lib/recommendations/titleProviders";
   import { ANILIST_PRIORITY, requestAniList } from "../../lib/recommendations/anilistGate";
@@ -1674,7 +1675,8 @@
   function refreshSearchAniListTitleMatches(entries: Array<{ key: string; title: string }>) {
     const known = cachedLibraryTitleMatches(entries);
     searchAniListTitleMatches = new Map([...known].map(([key, profile]) => [Number(key), profile]));
-    resumeLibraryAniListLookup();
+    // A sync setup left running is still importing; the lookup starts once it has everything.
+    if (!firstRunBackgroundSync.running) resumeLibraryAniListLookup();
   }
 
   async function refreshSearchHardcoverRecords() {

@@ -333,9 +333,9 @@ describe("FirstRun", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Other ways to connect" }));
     const connect = await screen.findByRole("button", { name: "Connect test device" });
     expect(screen.getByTestId("first-run-surface").getAttribute("data-profile-id")).toBe("main");
-    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Continue" }).getAttribute("data-ready")).toBe("false");
     await fireEvent.click(connect);
-    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Continue" }).getAttribute("data-ready")).toBe("true");
   });
 
   it("keeps the selected backup while repositories are configured", async () => {

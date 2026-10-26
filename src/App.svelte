@@ -107,6 +107,7 @@
   import { playShellEntrance, pointerEffects, setAnimationPreference, SPLASH_EXIT_EVENT } from "./lib/motion/motion";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeConstants";
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPending, writeCompletedFirstRunMarker } from "./lib/firstRun";
+  import { firstRunBackgroundSync, resumeFirstRunBackgroundSync } from "./lib/setup/firstRunBackgroundSync.svelte";
 
   type DiscordRuntime = typeof import("./lib/discord");
   let discordRuntimePromise: Promise<DiscordRuntime> | null = null;
@@ -195,8 +196,11 @@
     done: "feedback.novelLookupDone",
   });
   // A restored or synced library arrives during setup; its lookups and their toasts wait until
-  // setup is done, so they do not cover setup's own buttons.
+  // setup is done, so they do not cover setup's own buttons, and until a sync setup left running
+  // has imported everything, so they read the whole library.
   let firstRunOpen = $state(readFirstRunPending(hadPersistedStoreAtStartup));
+  const libraryLookupsWait = $derived(firstRunOpen || firstRunBackgroundSync.running);
+  onMount(() => resumeFirstRunBackgroundSync());
   $effect(() => {
     const syncFirstRunOpen = () => { firstRunOpen = readFirstRunPending(hadPersistedStoreAtStartup); };
     window.addEventListener(FIRST_RUN_COMPLETED_EVENT, syncFirstRunOpen);
@@ -207,7 +211,7 @@
     };
   });
   $effect(() => {
-    if (firstRunOpen) return;
+    if (libraryLookupsWait) return;
     const works = store.libraryMangaSnapshot;
     if (works.length === 0) return;
     void import("./lib/recommendations/anilistLibraryLookup").then((lookup) => {
@@ -218,7 +222,7 @@
     // Novels are read from their saved library state, again on each page change so added novels
     // are queued; books follow the store. A tracked work is already known for certain by the entry the
     // user picked on the tracker, so it is not looked up.
-    if (firstRunOpen) return;
+    if (libraryLookupsWait) return;
     void store.navPage;
     const books = store.books.map((book) => ({ id: book.id, key: `book:${book.id}`, title: book.title, author: book.author, genres: book.genres }));
     const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };

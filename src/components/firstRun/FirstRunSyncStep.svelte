@@ -4,6 +4,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { arrive, enterElements, findByData, motionFade, motionFly, pulse, prefersReducedMotion, spring } from "../../lib/motion/firstRunMotion";
   import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadiness";
+  import { startFirstRunBackgroundSync } from "../../lib/setup/firstRunBackgroundSync.svelte";
   import {
     listenSyncdPairingStatus,
     listenSyncdReplicationState,
@@ -63,6 +64,9 @@
   type PanelComponent = Component<{ profileId?: string | null; scopeLabel: string; presentation?: "modal" | "embedded"; onReadyChange?: (ready: boolean) => void }>;
   let OtherWaysPanel = $state<PanelComponent | null>(null);
   let otherWaysReady = $state(false);
+  /* Continue never waits for the sync: while it runs, it offers to let it finish in the background. */
+  let backgroundPrompt = $state(false);
+  let continuedInBackground = $state(false);
   /* A phone or computer that paired with this computer's Core. Both sides then publish their
      libraries and Core merges them, so nothing here waits for a remote bootstrap. */
   let hostPeer = $state<{ name: string; platform: string } | null>(null);
@@ -123,7 +127,7 @@
   ]);
   const readinessKey = $derived(firstRunSyncReadinessKey(profileId, snapshot));
 
-  $effect(() => { onReadyChange(ready || otherWaysReady); });
+  $effect(() => { onReadyChange(ready || otherWaysReady || continuedInBackground); });
 
   /* Discovery runs while the user is choosing a computer. */
   $effect(() => {
@@ -285,6 +289,7 @@
   $effect(() => {
     if (ready || !libraryRead || !applied) return;
     ready = true;
+    backgroundPrompt = false;
     stage = "done";
   });
 
@@ -386,6 +391,34 @@
     pinError = null;
     stage = "code";
     void tick().then(() => focusSlot(0));
+  }
+
+  function followInBackground() {
+    if (!profileId) return;
+    startFirstRunBackgroundSync({ profileId, waitForUploads: peerIsPhone, waitForReplication: !hostPeer });
+  }
+
+  function continueSetup() {
+    if (ready || otherWaysReady) {
+      // Progress and details that are still arriving keep their own toast after the step closes.
+      if (ready && finishing) followInBackground();
+      onContinue();
+      return;
+    }
+    if (stage === "syncing" || stage === "approval") {
+      backgroundPrompt = true;
+      return;
+    }
+    // Nothing is paired yet, so there is no sync to wait for.
+    (onSkip ?? onContinue)();
+  }
+
+  function continueInBackground() {
+    followInBackground();
+    continuedInBackground = true;
+    backgroundPrompt = false;
+    onReadyChange(true);
+    onContinue();
   }
 
   function closeOtherWays() {
@@ -509,6 +542,15 @@
           <div class="fr-error" role="alert"><WarningCircle size={18} /><span>{$_("firstRun.sync.libraryError")}</span><button class="fr-link" type="button" onclick={() => (libraryRetry += 1)}>{$_("firstRun.sync.tryAgain")}</button></div>
         {/if}
       {/if}
+      {#if backgroundPrompt && (stage === "syncing" || stage === "approval")}
+        <div class="state-card background-card" role="alert" in:arrive>
+          <span class="background-copy"><strong>{$_("firstRun.sync.backgroundTitle")}</strong><span>{$_("firstRun.sync.backgroundHelp")}</span></span>
+          <span class="background-actions">
+            <button class="fr-link fr-link--quiet" type="button" onclick={() => (backgroundPrompt = false)}>{$_("firstRun.sync.backgroundWait")}</button>
+            <button class="fr-btn fr-btn--primary fr-sync-background" type="button" onclick={continueInBackground}>{$_("firstRun.sync.backgroundConfirm")}<ArrowRight class="fr-arrow-next" size={16} /></button>
+          </span>
+        </div>
+      {/if}
     </div>
     {/key}
   </div>
@@ -517,8 +559,8 @@
 <div class="fr-footer">
   <button class="fr-btn" type="button" disabled={connecting} onclick={onBack}><ArrowLeft class="fr-arrow-back" size={16} />{$_("firstRun.shell.back")}</button>
   <span class="fr-spacer"></span>
-  {#if onSkip && !(ready || otherWaysReady)}<button class="fr-btn" type="button" disabled={connecting} onclick={onSkip}>{$_("firstRun.sync.doLater")}</button>{/if}
-  <button class="fr-btn fr-btn--primary fr-sync-continue" type="button" disabled={!(ready || otherWaysReady)} onclick={onContinue}>{$_("firstRun.shell.continue")}<ArrowRight class="fr-arrow-next" size={16} /></button>
+  {#if onSkip && !(ready || otherWaysReady) && (stage === "scan" || stage === "code" || stage === "rejected")}<button class="fr-btn" type="button" disabled={connecting} onclick={onSkip}>{$_("firstRun.sync.doLater")}</button>{/if}
+  <button class="fr-btn fr-btn--primary fr-sync-continue" type="button" data-ready={ready || otherWaysReady} onclick={continueSetup}>{$_("firstRun.shell.continue")}<ArrowRight class="fr-arrow-next" size={16} /></button>
 </div>
 
 {#if otherWaysOpen}
@@ -570,6 +612,10 @@
   .verification { display: flex; gap: 8px; margin: 14px 0 8px; }
   .verification span { width: 44px; height: 54px; display: grid; place-items: center; border-radius: 12px; color: var(--accent-fg); background: var(--accent-muted); font-size: 26px; font-weight: 800; }
   .state-card { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 12px 14px; border-radius: 14px; color: var(--text-muted); background: var(--fr-surface); font-size: 12.5px; }
+  .background-card { flex-wrap: wrap; align-items: flex-start; }
+  .background-copy { flex: 1 1 260px; display: grid; gap: 4px; line-height: 1.5; }
+  .background-copy strong { color: var(--text-primary); font-size: 13px; }
+  .background-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
   .scopes { display: grid; gap: 2px; margin: 10px 0; }
   .scope-state { display: inline-flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; font-weight: 600; }
   .scope.is-done .scope-state { color: var(--color-success); }
