@@ -86,6 +86,7 @@ class EpigraphCoreSyncWorker(
                 scheduleNextWake()
             }
             if (execution.degradedRetry) {
+                if (execution.sentBackfill) DEGRADED_RETRY_STREAK.set(0)
                 // Saturates once past the cap, so the counter can never wrap negative.
                 val streak = DEGRADED_RETRY_STREAK.getAndUpdate { if (it > MAX_DEGRADED_RETRY_SHIFT) it else it + 1 }
                 if (shouldScheduleDegradedRetry(streak)) scheduleDegradedRetry(streak)
@@ -141,6 +142,7 @@ class EpigraphCoreSyncWorker(
         // read chapter, which took seconds on a large library, so it waits for the pass after the first
         // drain instead of delaying a desktop change.
         repairLibraries(includeProgress = false, checkWithCore = false)
+        var sentBackfill = false
         val outcome = try {
             val runner = get<CoreOutboxSyncRunner>()
             val first = runner.run(
@@ -150,11 +152,14 @@ class EpigraphCoreSyncWorker(
             // The first snapshot from a newly paired or rewound Core shows which local favorites and
             // reading progress it lacks; publish them in this run instead of waiting for the next wake.
             // A run that must retry still queues the progress the desktop is known to hold, for the next one.
-            val reachable = first !is CoreOutboxSyncOutcome.Retry
+            // A desktop still applying earlier changes answered, so the backfill asks it and sends now:
+            // waiting for it to settle held each batch of reading progress for up to 15 minutes.
+            val reachable = coreAnswered(first)
             // A desktop change that arrived during this pass waits for it to end; the next pass runs
             // the backfill instead, so it no longer delays that change by the length of a library scan.
             val repaired = if (deferProgress()) 0 else repairLibraries(includeProgress = true, checkWithCore = reachable)
-            if (reachable && repaired > 0) {
+            sentBackfill = reachable && repaired > 0
+            if (sentBackfill) {
                 runner.run(
                     nowEpochMillis = System.currentTimeMillis(),
                     synchronizeReplica = true,
@@ -213,7 +218,7 @@ class EpigraphCoreSyncWorker(
                     // Core answered and the outbox drain already ran; only the desktop's comic
                     // side is degraded. Finishing this unique work keeps later OUTBOX_PENDING
                     // wakes (KEEP) from waiting behind WorkManager's exponential backoff.
-                    WorkerExecution(Result.success(retryData), degradedRetry = true)
+                    WorkerExecution(Result.success(retryData), degradedRetry = true, sentBackfill = sentBackfill)
                 }
             }
             is CoreOutboxSyncOutcome.NeedsPairing -> WorkerExecution(
@@ -284,6 +289,8 @@ class EpigraphCoreSyncWorker(
         val awaitingExternalAction: Boolean = false,
         /** Comic-side retry: finish this work and follow up on [UNIQUE_DEGRADED_RETRY]. */
         val degradedRetry: Boolean = false,
+        /** This run sent backfilled rows, so more may be left: the degraded chain starts over. */
+        val sentBackfill: Boolean = false,
     )
 
     companion object {
@@ -474,6 +481,14 @@ class EpigraphCoreSyncWorker(
          * Backing off the current unique work there would hold every later OUTBOX_PENDING wake
          * behind KEEP, so those retries move to their own chain instead.
          */
+        /**
+         * Whether Core answered the run: it did unless the run had to retry, and a desktop whose
+         * Suwayomi projection is still pending answered too. Progress that waits on a chapter the
+         * desktop lacks keeps that projection pending for minutes without any failure.
+         */
+        internal fun coreAnswered(outcome: CoreOutboxSyncOutcome): Boolean =
+            outcome !is CoreOutboxSyncOutcome.Retry || outcome.reason == CoreOutboxRetryReason.OUTBOX_PENDING
+
         internal fun retryUsesWorkManagerBackoff(reason: CoreOutboxRetryReason): Boolean = when (reason) {
             CoreOutboxRetryReason.CREDENTIAL_IO,
             CoreOutboxRetryReason.CONNECTION,

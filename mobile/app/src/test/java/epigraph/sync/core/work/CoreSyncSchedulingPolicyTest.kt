@@ -65,6 +65,22 @@ class CoreSyncSchedulingPolicyTest {
     }
 
     @Test
+    fun `a desktop still applying earlier changes counts as answered for the progress backfill`() {
+        assertTrue(scheduler.coreAnswered(CoreOutboxSyncOutcome.Retry(0, CoreOutboxRetryReason.OUTBOX_PENDING)))
+        assertTrue(scheduler.coreAnswered(CoreOutboxSyncOutcome.NeedsUserAction(0, CoreUserActionReason.REMOTE_PROJECTION_BLOCKED)))
+        // A failed run gives the backfill nothing to check against.
+        listOf(
+            CoreOutboxRetryReason.CONNECTION,
+            CoreOutboxRetryReason.CAPABILITIES,
+            CoreOutboxRetryReason.CREDENTIAL_IO,
+            CoreOutboxRetryReason.REPLICA,
+            CoreOutboxRetryReason.SUWAYOMI,
+        ).forEach { reason ->
+            assertFalse(scheduler.coreAnswered(CoreOutboxSyncOutcome.Retry(0, reason)), reason.name)
+        }
+    }
+
+    @Test
     fun `failures that stop the outbox itself keep WorkManager backoff`() {
         listOf(
             CoreOutboxRetryReason.CONNECTION,

@@ -73,6 +73,8 @@ data class CoreCapabilities(
     val supportsSuwayomiExtensionInstall: Boolean = false,
     /** `/v1/events?catalogEvents=true` announces catalog revision changes as they happen. */
     val supportsCatalogRevisionEventsV1: Boolean = false,
+    /** `DELETE /v1/session` revokes the calling device on the desktop. Not used by Android yet. */
+    val supportsSessionEndV1: Boolean = false,
 )
 
 @Serializable

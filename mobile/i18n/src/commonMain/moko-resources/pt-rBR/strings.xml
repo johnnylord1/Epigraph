@@ -1224,6 +1224,8 @@
     <string name="epigraph_core_sync_status_syncing">Sincronizando… Alterações pendentes: %1$d</string>
     <string name="epigraph_core_sync_status_queued">Aguardando a rede para sincronizar. Alterações pendentes: %1$d</string>
     <string name="epigraph_core_sync_status_retrying">Nova tentativa agendada após uma falha. Alterações pendentes: %1$d</string>
+    <string name="epigraph_core_sync_status_retrying_no_pending">Nova tentativa agendada após uma falha.</string>
+    <string name="epigraph_core_sync_status_desktop_applying">O desktop ainda está aplicando as alterações recebidas. Sua biblioteca e seu progresso já estão nele.</string>
     <string name="epigraph_core_sync_status_needs_pairing">O pareamento não é mais válido. Pareie novamente para enviar %1$d alterações pendentes.</string>
     <string name="epigraph_core_sync_status_projection_blocked">O desktop não conseguiu aplicar as alterações na biblioteca. Resolva no desktop. Alterações pendentes: %1$d</string>
     <string name="epigraph_core_sync_status_authorization">O desktop precisa autorizar novamente as bibliotecas selecionadas.</string>
@@ -1296,6 +1298,7 @@
     <string name="epigraph_core_extension_trust">Confiar</string>
     <string name="epigraph_core_setup_entry_title">Repositórios e extensões</string>
     <string name="epigraph_core_connected">Conectado ao desktop</string>
+    <string name="epigraph_core_sync_paused_headline">Sincronização pausada</string>
     <string name="epigraph_core_connection_waiting">Conexão salva, aguardando o Core</string>
     <string name="epigraph_core_profile_origin">Perfil %1$s · %2$s</string>
     <string name="epigraph_core_pair_group">Parear um desktop</string>

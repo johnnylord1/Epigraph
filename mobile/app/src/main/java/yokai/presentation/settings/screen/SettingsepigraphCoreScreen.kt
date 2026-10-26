@@ -26,6 +26,7 @@ import epigraph.sync.core.pairing.PairingStage
 import epigraph.sync.core.pairing.PairingSyncSelection
 import epigraph.sync.core.policy.SyncDomain
 import epigraph.sync.core.policy.DependencyInventoryMode
+import epigraph.sync.core.work.CoreOutboxRetryReason
 import epigraph.sync.core.work.CoreSyncStatus
 import epigraph.sync.core.work.CoreSyncStatusMonitor
 import epigraph.sync.core.work.CoreUserActionReason
@@ -793,6 +794,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         }
         val headline = when {
             paired == null -> statusText(state)
+            syncPaused -> stringResource(MR.strings.epigraph_core_sync_paused_headline)
             paired.verifiedInThisProcess -> stringResource(MR.strings.epigraph_core_connected)
             else -> stringResource(MR.strings.epigraph_core_connection_waiting)
         }
@@ -919,8 +921,13 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             stringResource(MR.strings.epigraph_core_sync_status_syncing, status.counts.unsettled)
         is CoreSyncStatus.Queued ->
             stringResource(MR.strings.epigraph_core_sync_status_queued, status.counts.unsettled)
-        is CoreSyncStatus.Retrying ->
-            stringResource(MR.strings.epigraph_core_sync_status_retrying, status.counts.unsettled)
+        is CoreSyncStatus.Retrying -> when {
+            // The phone's changes reached the desktop; it is the one still catching up.
+            status.reason == CoreOutboxRetryReason.OUTBOX_PENDING.name.lowercase() ->
+                stringResource(MR.strings.epigraph_core_sync_status_desktop_applying)
+            status.counts.unsettled == 0L -> stringResource(MR.strings.epigraph_core_sync_status_retrying_no_pending)
+            else -> stringResource(MR.strings.epigraph_core_sync_status_retrying, status.counts.unsettled)
+        }
         is CoreSyncStatus.NeedsPairing ->
             stringResource(MR.strings.epigraph_core_sync_status_needs_pairing, status.counts.unsettled)
         is CoreSyncStatus.NeedsUserAction -> when (status.reason) {

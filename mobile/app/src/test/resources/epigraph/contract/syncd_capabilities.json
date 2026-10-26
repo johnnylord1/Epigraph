@@ -30,7 +30,9 @@
     "comic.category_assignment",
     "comic.chapter_state",
     "comic.history",
-    "comic.page_bookmark"
+    "comic.page_bookmark",
+    "comic.tracking",
+    "novel.tracking"
   ],
   "snapshotSchemaVersion": 3,
   "supportedScopes": [
@@ -39,17 +41,22 @@
     "comics:profile:<paired-profile>"
   ],
   "supportsAssets": true,
+  "supportsCatalogRevisionEventsV1": true,
   "supportsCausalMutationsV3": true,
+  "supportsComicDeleteProjectionWithoutRecord": true,
   "supportsConfirmedSuwayomiCommandsV1": true,
   "supportsManualIpFallback": true,
   "supportsNovelChapterAssets": true,
   "supportsNovelPluginSync": true,
   "supportsOwnerTransfer": true,
   "supportsPortableSyncV3": true,
+  "supportsSessionEndV1": true,
   "supportsSnapshot": true,
   "supportsSseReplay": true,
   "supportsSuwayomiCatalog": true,
+  "supportsSuwayomiCategoryCreate": true,
   "supportsSuwayomiContent": true,
+  "supportsSuwayomiExtensionInstall": true,
   "supportsSuwayomiExtensionInventory": true,
   "supportsSuwayomiProxy": true,
   "supportsSuwayomiWebsocketProxy": true,

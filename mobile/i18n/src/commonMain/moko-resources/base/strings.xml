@@ -2347,6 +2347,8 @@
     <string name="epigraph_core_sync_status_syncing">Syncing… Pending changes: %1$d</string>
     <string name="epigraph_core_sync_status_queued">Waiting for the network to sync. Pending changes: %1$d</string>
     <string name="epigraph_core_sync_status_retrying">A retry is scheduled after a failure. Pending changes: %1$d</string>
+    <string name="epigraph_core_sync_status_retrying_no_pending">A retry is scheduled after a failure.</string>
+    <string name="epigraph_core_sync_status_desktop_applying">The desktop is still applying the changes it received. Your library and progress are already on it.</string>
     <string name="epigraph_core_sync_status_needs_pairing">The pairing is no longer valid. Pair again to send %1$d pending changes.</string>
     <string name="epigraph_core_sync_status_projection_blocked">The desktop could not apply the changes to its library. Resolve it on the desktop. Pending changes: %1$d</string>
     <string name="epigraph_core_sync_status_authorization">The desktop must authorize the selected libraries again.</string>
@@ -2419,6 +2421,7 @@
     <string name="epigraph_core_extension_trust">Trust</string>
     <string name="epigraph_core_setup_entry_title">Repositories and extensions</string>
     <string name="epigraph_core_connected">Connected to the desktop</string>
+    <string name="epigraph_core_sync_paused_headline">Sync paused</string>
     <string name="epigraph_core_connection_waiting">Connection saved, waiting for Core</string>
     <string name="epigraph_core_profile_origin">Profile %1$s · %2$s</string>
     <string name="epigraph_core_pair_group">Pair a desktop</string>
