@@ -25,8 +25,9 @@ export function buildVirtualLibraryRows(
   return rows;
 }
 
-export function estimateLibraryVirtualRowSize(viewMode: LibraryViewMode): number {
-  if (viewMode === "list") return 156;
+// A list row is its 2:3 cover plus 16px of padding and the 2px row gap.
+export function estimateLibraryVirtualRowSize(viewMode: LibraryViewMode, listCoverWidth = 46): number {
+  if (viewMode === "list") return Math.round(listCoverWidth * 1.5) + 18;
   if (viewMode === "compact_grid") return 236;
   return 276;
 }

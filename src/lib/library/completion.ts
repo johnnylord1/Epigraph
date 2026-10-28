@@ -27,7 +27,7 @@ function normalizeStatusToken(value: string | null | undefined): string {
 
 export function isSourceCompletedStatus(status: string | null | undefined): boolean {
   const token = normalizeStatusToken(status);
-  return token === "COMPLETED" || token === "COMPLETE";
+  return token === "COMPLETED" || token === "COMPLETE" || token === "PUBLISHING_FINISHED";
 }
 
 export function isSourceUnknownStatus(status: string | null | undefined): boolean {

@@ -12,6 +12,17 @@ export const GET_LIBRARY = `
         chapters {
           totalCount
         }
+        inLibraryAt
+        chaptersLastFetchedAt
+        latestFetchedChapter {
+          fetchedAt
+        }
+        latestUploadedChapter {
+          uploadDate
+        }
+        lastReadChapter {
+          lastReadAt
+        }
         status
         genre
         sourceId

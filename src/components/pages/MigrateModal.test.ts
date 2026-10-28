@@ -4,10 +4,12 @@ import type { Manga } from "../../lib/types";
 
 const {
   gqlMock,
+  searchMock,
   ensureServerAwakeForMock,
   waitForSuwayomiGraphqlReadyMock,
 } = vi.hoisted(() => ({
   gqlMock: vi.fn(),
+  searchMock: vi.fn(async (_input: { sourceId: string }) => [] as unknown[]),
   ensureServerAwakeForMock: vi.fn(async () => true),
   waitForSuwayomiGraphqlReadyMock: vi.fn(async () => true),
 }));
@@ -32,7 +34,7 @@ vi.mock("../../lib/suwayomiReadiness", () => ({
 }));
 
 vi.mock("../../lib/manga/sourceSearch", () => ({
-  fetchSourceMangaSearchWithFallback: vi.fn(async () => []),
+  fetchSourceMangaSearchWithFallback: searchMock,
 }));
 
 vi.mock("../../lib/assets/serviceIconResolver", () => ({
@@ -97,6 +99,38 @@ describe("MigrateModal", () => {
   });
 
   afterEach(() => cleanup());
+
+  test("searches every source at once and shows each source as soon as it answers", async () => {
+    let releaseSlow!: (value: unknown[]) => void;
+    searchMock.mockReset();
+    searchMock.mockImplementation(async ({ sourceId }: { sourceId: string }) => {
+      if (sourceId === "slow-src") return new Promise<unknown[]>((resolve) => { releaseSlow = resolve; });
+      return [{ id: 77, title: "Dangerous Dungeon Escape", thumbnailUrl: "", inLibrary: false, source: { id: sourceId } }];
+    });
+    gqlMock.mockResolvedValueOnce({
+      sources: {
+        nodes: [
+          { id: "current-src", name: "current", displayName: "Current Source", lang: "en", iconUrl: "", isNsfw: false },
+          { id: "asura-src", name: "asura", displayName: "Asura Scans", lang: "en", iconUrl: "", isNsfw: false },
+          { id: "slow-src", name: "slow", displayName: "Slow Scans", lang: "en", iconUrl: "", isNsfw: false },
+        ],
+      },
+    });
+
+    render(MigrateModal, { props: { manga, currentChapters: [], onClose: vi.fn(), onMigrated: vi.fn() } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: /search all sources/i }));
+
+    const group = await screen.findByRole("region", { name: "Asura Scans" });
+    expect(group.textContent).toContain("Dangerous Dungeon Escape");
+    expect(document.querySelector('[data-migration-source-searching="slow-src"]')).toBeTruthy();
+    expect(screen.getByText("1 of 2 sources searched")).toBeTruthy();
+    expect(searchMock.mock.calls.map(([input]) => input.sourceId).sort()).toEqual(["asura-src", "slow-src"]);
+
+    releaseSlow([]);
+    await waitFor(() => expect(screen.getByText("No results in Slow Scans.")).toBeTruthy());
+    expect(document.querySelector("[data-migration-source-searching]")).toBeNull();
+  });
 
   test("shows retry on source load failure and lists installed alternatives after retry", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

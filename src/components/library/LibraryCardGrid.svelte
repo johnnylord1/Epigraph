@@ -83,6 +83,6 @@
 
   .grid-list {
     grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
+    gap: 2px;
   }
 </style>

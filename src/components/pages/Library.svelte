@@ -29,6 +29,7 @@
     COMPLETED_CATEGORY_NAME,
     getCategoryDisplayName,
     isCompletedCategory,
+    loadCategoriesWithMembers,
     normalizeCategories,
   } from "../../lib/library/categories";
   import { getBooksUpdateExcludedBookIds, sortBooksCategories } from "../../lib/library/domainCategories";
@@ -497,7 +498,10 @@
       profileId: store.runtimeResolvedLocalProfileId,
       profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
         });
-        return ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_WITH_MANGA_IDS)).categories.nodes);
+        return loadCategoriesWithMembers(
+          async () => (await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_WITH_MANGA_IDS)).categories.nodes,
+          ensureCompletedCategory,
+        );
       },
       DEFAULT_TTL_MS,
       CACHE_GROUPS.LIBRARY,

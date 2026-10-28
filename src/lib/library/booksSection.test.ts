@@ -265,4 +265,28 @@ describe("buildBooksSectionState", () => {
       }),
     );
   });
+
+  it("sorts recently added by import date, not by the last progress update", () => {
+    const state = buildBooksSectionState({
+      librarySection: "books",
+      books: [
+        book({ id: "epub-old", title: "Old Import", createdAt: 100, updatedAt: 900 }),
+        book({ id: "epub-new", title: "New Import", createdAt: 500, updatedAt: 600 }),
+      ],
+      progressByBookId: new Map<string, BookProgress | undefined>(),
+      coverSrcByBookId: new Map(),
+      categories: [],
+      categoryAssignments: {},
+      activeCategoryId: null,
+      typeFilter: "all",
+      search: "",
+      sortMode: "recentlyAdded",
+      sortDir: "desc",
+      statusFilter: "all",
+      loading: false,
+      error: null,
+    });
+
+    expect(state.filteredBooks.map((entry) => entry.title)).toEqual(["New Import", "Old Import"]);
+  });
 });

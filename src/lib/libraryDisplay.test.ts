@@ -3,6 +3,7 @@ import {
   computeEffectiveLibraryColumns,
   computeLibraryLayout,
   getLibraryDisplaySpec,
+  listCoverWidthFor,
 } from "./libraryDisplay";
 
 describe("libraryDisplay", () => {
@@ -100,5 +101,13 @@ describe("libraryDisplay", () => {
 
     expect(layout.isList).toBe(true);
     expect(layout.effectiveColumns).toBe(1);
+  });
+
+  it("turns the density setting into the list's cover size", () => {
+    const widths = ([4, 5, 6, 7, 8, 9, 10] as const).map(listCoverWidthFor);
+    expect(widths).toEqual([...widths].sort((a, b) => b - a));
+    expect(new Set(widths).size).toBe(widths.length);
+    expect(listCoverWidthFor("auto")).toBe(46);
+    expect(computeLibraryLayout({ availableWidth: 640, preferredColumns: 4, mode: "list" }).listCoverWidth).toBe(72);
   });
 });

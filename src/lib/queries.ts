@@ -36,6 +36,17 @@ export const GET_LIBRARY_SEARCH_SNAPSHOT = `
         inLibrary
         downloadCount
         unreadCount
+        inLibraryAt
+        chaptersLastFetchedAt
+        latestFetchedChapter {
+          fetchedAt
+        }
+        latestUploadedChapter {
+          uploadDate
+        }
+        lastReadChapter {
+          lastReadAt
+        }
         status
         genre
         sourceId

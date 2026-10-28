@@ -454,37 +454,35 @@
           <span class="n-library-card__vol">{visibleGridStatusLabel(vm.metaChips[0])}</span>
         {/if}
       </div>
-    {:else if viewMode === "list" && vm.subtitle}
-      <p class="subtitle">{vm.subtitle}</p>
-    {/if}
-    {#if viewMode === "list" && vm.badges.length}
-      <div class="meta-row">
-        {#each vm.badges as badge, index (badge.kind + badge.label + index)}
-          <span class={`meta-chip meta-chip-badge meta-chip-${badge.kind}`}>{localizeCardLabel(badge.label)}</span>
-        {/each}
-      </div>
-    {/if}
-    {#if viewMode === "list" && vm.metaChips.length}
-      <div class="meta-row">
-        {#each vm.metaChips as chip}
-          <span class="meta-chip">{localizeCardLabel(chip)}</span>
-        {/each}
-      </div>
-    {/if}
-    {#if viewMode === "list" && showProgress && vm.progress}
-      <div class="progress-block">
-        <span class="progress-primary">{vm.progress.primaryLabel}</span>
-        {#if vm.progress.secondaryLabel}
-          <span class="progress-secondary">{vm.progress.secondaryLabel}</span>
-        {/if}
-        {#if typeof vm.progress.percent === "number"}
-          <div class="progress-track" aria-hidden="true">
-            <div class="progress-fill" style={`width:${Math.max(0, Math.min(100, vm.progress.percent * 100))}%;`}></div>
-          </div>
-        {/if}
-      </div>
+    {:else if viewMode === "list"}
+      <!-- One quiet line of plain text, as in the first-run rows: source or author, status, then
+           unread/local marks in the accent color instead of chips. -->
+      {@const listMeta = [vm.subtitle, ...vm.metaChips.map(localizeCardLabel)].filter(Boolean)}
+      {#if listMeta.length || vm.badges.length}
+        <p class="list-meta">
+          {#each listMeta as text, index (index)}
+            <span>{text}</span>
+          {/each}
+          {#each vm.badges as badge, index (badge.kind + badge.label + index)}
+            <span class={`list-mark list-mark-${badge.kind}`}>{localizeCardLabel(badge.label)}</span>
+          {/each}
+        </p>
+      {/if}
     {/if}
   </div>
+  {#if viewMode === "list" && showProgress && vm.progress}
+    <div class="list-progress">
+      <span class="list-progress-label">
+        <strong>{vm.progress.primaryLabel}</strong>
+        {#if vm.progress.secondaryLabel}{vm.progress.secondaryLabel}{/if}
+      </span>
+      {#if typeof vm.progress.percent === "number"}
+        <div class="progress-track" aria-hidden="true">
+          <div class="progress-fill" style={`width:${Math.max(0, Math.min(100, vm.progress.percent * 100))}%;`}></div>
+        </div>
+      {/if}
+    </div>
+  {/if}
 </button>
 
 <style>
@@ -518,15 +516,17 @@
     transition-duration: 90ms;
   }
 
+  /* List rows follow the first-run rows: no frame, a soft surface on hover, a small cover,
+     one title line, one quiet meta line and a thin progress line on the right. */
   .card-list {
     display: grid;
-    grid-template-columns: calc(76px * var(--component-library-scale, 1)) minmax(0, 1fr);
-    gap: calc(16px * var(--component-library-scale, 1));
+    grid-template-columns: calc(var(--library-list-cover-width, 46px) * var(--component-library-scale, 1)) minmax(0, 1fr) auto;
+    gap: calc(14px * var(--component-library-scale, 1));
     align-items: center;
-    min-height: calc(122px * var(--component-library-scale, 1));
-    padding: calc(10px * var(--component-library-scale, 1));
-    border: 1px solid var(--border-dim);
-    background: var(--component-library-card-list-bg);
+    padding: calc(8px * var(--component-library-scale, 1)) calc(10px * var(--component-library-scale, 1));
+    border: none;
+    border-radius: var(--radius-lg);
+    background: transparent;
   }
 
   .card-compact {
@@ -557,7 +557,6 @@
 
   .card-list:hover {
     background: var(--component-library-card-list-hover-bg);
-    border-color: var(--component-library-border-strong);
   }
 
   .card:hover .title {
@@ -579,8 +578,17 @@
     border-radius: var(--radius-md);
   }
 
+  .card-list:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .card-list:focus-visible .cover-wrap,
+  .card.card-list.card-selected .cover-wrap {
+    outline: none;
+  }
+
   .card.card-list.card-selected {
-    border-color: var(--component-library-accent-border);
     background: var(--component-library-card-list-selected-bg);
   }
 
@@ -610,21 +618,14 @@
 
   .card-list .cover-wrap {
     aspect-ratio: 2 / 3;
-    align-self: stretch;
+    border-radius: var(--radius-md);
+    background: var(--component-library-surface);
+    border-color: var(--component-library-surface-raised);
   }
 
   .card-outline-off .cover-wrap {
     border-color: transparent;
     box-shadow: none;
-  }
-
-  .card-outline-off.card-list {
-    border-color: transparent;
-    background: var(--component-library-surface-raised);
-  }
-
-  .card-outline-off.card-list:hover {
-    background: var(--component-library-card-list-hover-bg);
   }
 
   .cover {
@@ -901,7 +902,7 @@
   .card-list .card-copy {
     margin-top: 0;
     justify-content: center;
-    gap: var(--sp-2);
+    gap: 3px;
   }
 
   .card-compact .card-copy {
@@ -933,6 +934,9 @@
 
   .card-list .title {
     min-height: 0;
+    color: var(--text-primary);
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
     line-clamp: 1;
     -webkit-line-clamp: 1;
   }
@@ -940,23 +944,6 @@
   .card-compact .title {
     font-size: var(--library-card-title-font-size, var(--text-xs));
     min-height: calc(var(--leading-snug) * 2em);
-  }
-
-  .subtitle {
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .subtitle.n-library-card__author {
-    font-size: var(--library-card-meta-font-size, 9px);
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--component-library-card-meta-fg);
   }
 
   .n-library-card__meta {
@@ -984,79 +971,71 @@
     flex-shrink: 0;
   }
 
-  .card-compact .subtitle,
-  .card-compact .progress-primary {
-    font-size: var(--text-2xs);
-  }
-
-  .meta-row {
+  .list-meta {
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .meta-chip {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
-    padding: 2px 6px;
-    border: 1px solid var(--border-dim);
-    border-radius: var(--radius-sm);
-    background: var(--bg-raised);
-  }
-
-  .meta-chip-badge {
-    background: var(--component-library-surface);
-  }
-
-  .meta-chip-subtype {
-    color: var(--text-primary);
-  }
-
-  .meta-chip-status,
-  .meta-chip-download {
-    color: var(--component-library-accent-fg);
-    border-color: var(--component-library-accent-border);
-    background: var(--component-library-accent-muted-bg);
-  }
-
-  .meta-chip-unread {
-    color: var(--component-library-accent-fg);
-    border-color: var(--component-library-accent-border);
-    background: var(--component-library-accent-muted-bg);
-  }
-
-  .progress-block {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .progress-primary {
+    min-width: 0;
+    overflow: hidden;
     font-family: var(--font-ui);
     font-size: var(--text-xs);
-    color: var(--text-secondary);
+    color: var(--text-muted);
+    white-space: nowrap;
   }
 
-  .progress-secondary {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
+  .list-meta > span {
+    flex-shrink: 0;
+  }
+
+  /* The source or author goes first and is the only part that gives way on narrow rows. */
+  .list-meta > span:first-child {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .list-meta > span + span::before {
+    content: "·";
+    margin: 0 var(--sp-2);
     color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
+  }
+
+  .list-mark-unread,
+  .list-mark-download {
+    color: var(--component-library-accent-fg);
+    font-weight: var(--weight-medium);
+  }
+
+  .list-progress {
+    display: grid;
+    gap: 6px;
+    width: calc(150px * var(--component-library-scale, 1));
+    justify-items: end;
+  }
+
+  .list-progress-label {
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .list-progress-label strong {
+    color: var(--text-primary);
+    font-weight: var(--weight-medium);
   }
 
   .progress-track {
     width: 100%;
-    height: 4px;
+    height: 3px;
     border-radius: var(--radius-full);
-    background: var(--bg-raised);
+    background: var(--component-library-card-list-bg);
     overflow: hidden;
-    border: 1px solid var(--border-dim);
   }
 
   .progress-fill {
     height: 100%;
+    border-radius: inherit;
     background: var(--accent);
   }
 </style>

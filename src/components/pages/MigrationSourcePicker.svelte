@@ -23,9 +23,11 @@
     emptyLabel: string;
     onPick: (id: string) => void;
     tools?: Snippet;
+    /** An optional row above the sources, such as searching all of them at once. */
+    lead?: Snippet;
   }
 
-  let { sources, loading = false, pendingId = null, disabled = false, emptyLabel, onPick, tools }: Props = $props();
+  let { sources, loading = false, pendingId = null, disabled = false, emptyLabel, onPick, tools, lead }: Props = $props();
 
   const FILTER_FROM = 8;
   let filter = $state("");
@@ -38,7 +40,7 @@
 
 {#if loading}
   <div class="mg-list" aria-busy="true">
-    {#each Array(5) as _}<div class="mg-skeleton"></div>{/each}
+    {#each Array(5) as _, i (i)}<div class="mg-skeleton"></div>{/each}
   </div>
 {:else if sources.length === 0}
   <div class="mg-empty"><span class="mg-mark"><Plugs size={18} weight="duotone" /></span><span>{emptyLabel}</span></div>
@@ -54,6 +56,7 @@
       {@render tools?.()}
     </div>
   {/if}
+  {#if lead}<div class="mg-list mg-list--lead">{@render lead()}</div>{/if}
   {#if visible.length === 0}
     <div class="mg-empty">{$_("migrate.noSourceMatches")}</div>
   {:else}

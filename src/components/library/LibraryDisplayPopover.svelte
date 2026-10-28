@@ -35,6 +35,13 @@
   const densityLabel = $derived(
     settings.preferredColumns === "auto" ? $_("library.display.auto") : String(settings.preferredColumns),
   );
+  // In the list the same setting sizes the covers, since every row holds one item.
+  const densityTitle = $derived(
+    settings.viewMode === "list" ? $_("library.display.coverSize") : $_("library.display.itemsPerRow"),
+  );
+  const densityHint = $derived(
+    settings.viewMode === "list" ? $_("library.display.coverSizeHint") : $_("library.display.itemsPerRowHint"),
+  );
   let visualViewMode = $state<LibraryViewMode>("grid");
   let visualShowProgress = $state(true);
   let visualShowOutline = $state(true);
@@ -94,14 +101,14 @@
     <section class="n-popover-panel is-open">
       <div class="n-popover-head">
         <div>
-          <p class="n-popover-title">{$_("library.display.itemsPerRow")}</p>
-          <p class="n-popover-note">{$_("library.display.itemsPerRowHint")}</p>
+          <p class="n-popover-title">{densityTitle}</p>
+          <p class="n-popover-note">{densityHint}</p>
         </div>
         <span class="n-popover-meta">{densityLabel}</span>
       </div>
       <LibraryDensityRail
         value={settings.preferredColumns}
-        disabled={settings.viewMode === "list"}
+        label={densityTitle}
         onSelect={onPreferredColumnsChange}
       />
     </section>
@@ -163,14 +170,14 @@
     <section class="n-popover-panel is-open">
       <div class="n-popover-head">
         <div>
-          <p class="n-popover-title">{$_("library.display.itemsPerRow")}</p>
-          <p class="n-popover-note">{$_("library.display.itemsPerRowHint")}</p>
+          <p class="n-popover-title">{densityTitle}</p>
+          <p class="n-popover-note">{densityHint}</p>
         </div>
         <span class="n-popover-meta">{densityLabel}</span>
       </div>
       <LibraryDensityRail
         value={settings.preferredColumns}
-        disabled={settings.viewMode === "list"}
+        label={densityTitle}
         onSelect={onPreferredColumnsChange}
       />
     </section>

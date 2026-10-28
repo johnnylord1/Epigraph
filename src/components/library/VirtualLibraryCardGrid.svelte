@@ -29,6 +29,7 @@
     getItemId?: (index: number) => string;
     viewMode?: LibraryViewMode;
     effectiveColumns?: number;
+    listCoverWidth?: number;
     scrollElement?: HTMLElement | null;
     showProgress?: boolean;
     showOutline?: boolean;
@@ -53,6 +54,7 @@
     getItemId,
     viewMode = "grid",
     effectiveColumns = 1,
+    listCoverWidth = 46,
     scrollElement = null,
     showProgress = true,
     showOutline = true,
@@ -87,15 +89,15 @@
   let viewportClientHeight = $state(0);
 
   const fallbackColumnGap = $derived(viewMode === "compact_grid" ? 18 : 24);
-  const fallbackRowGap = $derived(viewMode === "list" ? 12 : viewMode === "compact_grid" ? 32 : 40);
+  const fallbackRowGap = $derived(viewMode === "list" ? 2 : viewMode === "compact_grid" ? 32 : 40);
   const columnGap = $derived(viewMode === "list" ? 0 : columnGapPx || fallbackColumnGap);
-  const rowGap = $derived(viewMode === "list" ? 12 : rowGapPx || fallbackRowGap);
+  const rowGap = $derived(viewMode === "list" ? 2 : rowGapPx || fallbackRowGap);
   const columnWidth = $derived.by(() => {
     const usable = Math.max(0, viewportWidth - columnGap * (safeColumns - 1));
     return usable > 0 ? usable / safeColumns : 148;
   });
   const estimatedItemHeight = $derived.by(() => {
-    if (viewMode === "list") return estimateLibraryVirtualRowSize(viewMode) - 12;
+    if (viewMode === "list") return estimateLibraryVirtualRowSize(viewMode, listCoverWidth) - 2;
     const copyHeight = viewMode === "compact_grid" ? 38 : 66;
     return Math.max(
       estimateLibraryVirtualRowSize(viewMode) - fallbackRowGap,
@@ -310,7 +312,7 @@
   class:grid-compact={viewMode === "compact_grid"}
   class:grid-list={viewMode === "list"}
   bind:this={gridEl}
-  style={`height:${totalSize}px;`}
+  style={`height:${totalSize}px;--library-list-cover-width:${listCoverWidth}px;`}
 >
   <span class="gap-probe" aria-hidden="true" bind:this={gapProbe}></span>
   {#each renderedItems as item (item.vm.id)}

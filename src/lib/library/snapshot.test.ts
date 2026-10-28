@@ -113,4 +113,24 @@ describe("library snapshot", () => {
       categoryMembers: {},
     });
   });
+
+  it("keeps the library dates the sorts need", () => {
+    const dated: Manga = {
+      ...manga,
+      inLibraryAt: "1676252738",
+      chaptersLastFetchedAt: "0",
+      latestFetchedChapter: { fetchedAt: "1700000000" },
+      latestUploadedChapter: { uploadDate: "1787965269000" },
+      lastReadChapter: null,
+    };
+    const snapshot = normalizeLibrarySnapshot({ scopeKey: "k", mangas: [dated], categories: [], updatedAt: 1 });
+
+    expect(snapshot?.mangas[0]).toMatchObject({
+      inLibraryAt: "1676252738",
+      chaptersLastFetchedAt: null,
+      latestFetchedChapter: { fetchedAt: "1700000000" },
+      latestUploadedChapter: { uploadDate: "1787965269000" },
+      lastReadChapter: null,
+    });
+  });
 });

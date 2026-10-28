@@ -5,6 +5,7 @@
   type Props = {
     value: LibraryPreferredGridColumns;
     disabled?: boolean;
+    label?: string;
     onSelect?: (value: LibraryPreferredGridColumns) => void;
   };
 
@@ -13,6 +14,7 @@
   let {
     value,
     disabled = false,
+    label,
     onSelect = () => {},
   }: Props = $props();
 
@@ -38,7 +40,7 @@
       step="1"
       value={valueIndex}
       disabled={disabled}
-      aria-label={$_("library.display.itemsPerRow")}
+      aria-label={label ?? $_("library.display.itemsPerRow")}
       oninput={(event) => {
         const nextIndex = Number((event.currentTarget as HTMLInputElement).value);
         onSelect(DENSITY_OPTIONS[Math.max(0, Math.min(DENSITY_OPTIONS.length - 1, nextIndex))]);

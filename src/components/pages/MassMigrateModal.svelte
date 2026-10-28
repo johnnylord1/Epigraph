@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { ArrowLeft, BookOpen, Check, CircleNotch, DotsThreeVertical, MagnifyingGlass, X } from "phosphor-svelte";
+  import { ArrowLeft, ArrowRight, BookOpen, Check, CircleNotch, DotsThreeVertical, MagnifyingGlass, X } from "phosphor-svelte";
   import { _, translate } from "../../lib/i18n/runtime";
   import { readableErrorText } from "../../lib/i18n/networkErrorText";
   import { gql } from "../../lib/client";
@@ -82,6 +82,8 @@
   let buildingPreview = $state(false);
   let applying = $state(false);
   let previewProgress = $state<{ stage: string; done: number; total: number } | null>(null);
+  // Matches as each search ends, so the queue fills in live before the whole preview is ready.
+  let liveResults = $state(new Map<number, MassMangaMigrationPreviewItem>());
   let activeActionsMenuId: number | null = $state(null);
   let pointerStartedOnOverlay = false;
   let restoredDraft: MassMigrationDraft | null = null;
@@ -119,18 +121,24 @@
       ? currentPreview.items.filter((item) => selectedIds.has(item.currentManga.id) && canSelect(item)).length
       : 0;
   });
-  const visiblePreviewItems = $derived.by(() => {
+  // One candidate per work: while the preview builds, every work is listed at once and its match
+  // (item) stays null until that work's search ends.
+  const reviewItems = $derived.by<Array<{ manga: Manga; item: MassMangaMigrationPreviewItem | null }>>(() => {
+    if (preview) return preview.items.map((item) => ({ manga: item.currentManga, item }));
+    if (!buildingPreview) return [];
+    return sourceItems.map(({ manga }) => ({ manga, item: liveResults.get(manga.id) ?? null }));
+  });
+  const visibleReviewItems = $derived.by(() => {
     const query = searchFilter.trim().toLowerCase();
-    const items = preview?.items ?? [];
-    if (!query) return items;
-    return items.filter((item) => (
-      item.currentManga.title.toLowerCase().includes(query)
-      || item.match?.manga.title.toLowerCase().includes(query)
-      || item.reasonCode.toLowerCase().includes(query)
+    if (!query) return reviewItems;
+    return reviewItems.filter(({ manga, item }) => (
+      manga.title.toLowerCase().includes(query)
+      || item?.match?.manga.title.toLowerCase().includes(query)
+      || item?.reasonCode.toLowerCase().includes(query)
     ));
   });
   const visibleSelectableIds = $derived(
-    visiblePreviewItems.filter((item) => canSelect(item)).map((item) => item.currentManga.id),
+    buildingPreview ? [] : visibleReviewItems.flatMap(({ item }) => (item && canSelect(item) ? [item.currentManga.id] : [])),
   );
   const allVisibleSelectableSelected = $derived(
     visibleSelectableIds.length > 0 && visibleSelectableIds.every((id) => selectedIds.has(id)),
@@ -150,7 +158,7 @@
     iconSrc: resolveServiceIconUrl(source, { kind: "source" }),
   })));
   const QUEUE_FILTER_FROM = 8;
-  const showQueueFilter = $derived.by(() => (preview?.items.length ?? 0) > QUEUE_FILTER_FROM || searchFilter.length > 0);
+  const showQueueFilter = $derived.by(() => reviewItems.length > QUEUE_FILTER_FROM || searchFilter.length > 0);
   const headerSubtitle = $derived.by(() => {
     if (manualSearchItem) return manualSearchItem.currentManga.title;
     if (step === "target") return originSource?.displayName ?? "";
@@ -163,6 +171,8 @@
   const bodyView = $derived.by(() => {
     if (loading) return "loading";
     if (error && !preview && step !== "target") return "error";
+    // The queue shows up as soon as the preview starts, and stays put when it finishes.
+    if (buildingPreview) return "review";
     if (step === "origin" || step === "target") return step;
     if (preview) return manualSearchItem ? "manual" : "review";
     return "none";
@@ -177,6 +187,10 @@
     if (item.status === "matched") return "mg-pill--good";
     if (item.status === "needs_review") return "mg-pill--warn";
     return "mg-pill--bad";
+  }
+
+  function chapterCountLabel(count: number | null | undefined) {
+    return count ? translate("detail.chapterCount", { count }) : "";
   }
 
   function markBrokenImage(event: Event) {
@@ -501,6 +515,7 @@
     error = null;
     preview = null;
     selectedIds = new Set();
+    liveResults = new Map();
     const draft = restoredDraft ?? loadDraft(originSource.id, targetSource.id);
     runtimeStatuses = new Map(draft?.runtimeStatuses ?? []);
     runtimeErrors = new Map();
@@ -514,8 +529,9 @@
         sourceFrom: originSource.id,
         sourceTo: targetSource.id,
         items: hydratedItems,
-        onItemDone: (done, total) => {
+        onItemDone: (done, total, result) => {
           previewProgress = { stage: translate("massMigration.searchingMatches"), done, total };
+          liveResults = new Map(liveResults).set(result.currentManga.id, result);
         },
       });
       preview = nextPreview;
@@ -534,6 +550,7 @@
     } finally {
       buildingPreview = false;
       previewProgress = null;
+      liveResults = new Map();
     }
   }
 
@@ -898,7 +915,7 @@
       {#key bodyView}<div class="mg-step" use:enterOnMount={{ y: 10, blur: 4, duration: 560 }}>
       {#if loading}
         <div class="mg-list" aria-busy="true">
-          {#each Array(5) as _}<div class="mg-skeleton"></div>{/each}
+          {#each Array(5) as _, i (i)}<div class="mg-skeleton"></div>{/each}
         </div>
       {:else if error && !preview && step !== "target"}
         <NocturneState
@@ -916,22 +933,12 @@
           emptyLabel={$_("massMigration.noLinkedInstalledSource")}
           onPick={(id) => { const source = originSources.find((candidate) => candidate.id === id); if (source) void pickOrigin(source); }}
         />
-      {:else if step === "target"}
-        {#if buildingPreview}
-          <div class="mg-progress" aria-live="polite">
-            <div class="mg-progress-head">
-              <span>{previewProgress?.stage ?? $_("massMigration.searchMatches")}</span>
-              {#if previewProgress}<span>{previewProgress.done}/{previewProgress.total}</span>{/if}
-            </div>
-            <div class="mg-progress-bar"><i style:width="{previewProgress && previewProgress.total > 0 ? Math.round((previewProgress.done / previewProgress.total) * 100) : 0}%"></i></div>
-          </div>
-        {/if}
+      {:else if step === "target" && !buildingPreview}
         {#if error}
           <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.targetSource")} title={$_("ui_searchFailed")} body={error} />
         {/if}
         <MigrationSourcePicker
           sources={targetOptions}
-          pendingId={buildingPreview ? targetSource?.id ?? null : null}
           emptyLabel={$_("massMigration.noAlternativeSource")}
           onPick={chooseTarget}
         />
@@ -951,7 +958,7 @@
           onSearch={() => { setManualQuery(item.currentManga.id, manualSearchText); void searchManual(item); }}
           onPick={(id) => { const result = manualResults.get(item.currentManga.id)?.find((candidate) => String(candidate.id) === id); if (result) void chooseManualMatch(item, result); }}
         />
-      {:else if preview}
+      {:else if preview || buildingPreview}
         <div class="mg-toolbar">
           {#if showQueueFilter}
             <label class="mg-field">
@@ -961,73 +968,120 @@
           {:else}
             <span class="mg-spacer"></span>
           {/if}
-          <button class="mg-btn" type="button" onclick={toggleAllVisibleMatches} disabled={visibleSelectableIds.length === 0}>
-            {allVisibleSelectableSelected ? $_("massMigration.deselectAll") : $_("massMigration.selectAllMatches")}
-          </button>
+          {#if buildingPreview}
+            <span class="mg-live-status" aria-live="polite">
+              <CircleNotch size={14} weight="bold" class="anim-spin" />
+              <span>{previewProgress?.stage ?? $_("massMigration.searchMatches")}</span>
+              {#if previewProgress}<span class="mg-live-count">{previewProgress.done}/{previewProgress.total}</span>{/if}
+            </span>
+          {:else}
+            <button class="mg-btn" type="button" onclick={toggleAllVisibleMatches} disabled={visibleSelectableIds.length === 0}>
+              {allVisibleSelectableSelected ? $_("massMigration.deselectAll") : $_("massMigration.selectAllMatches")}
+            </button>
+          {/if}
         </div>
 
         {#if error}
           <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.title")} title={$_("ui_massMigrationFailed")} body={error} />
         {/if}
 
-        {#if visiblePreviewItems.length === 0}
+        {#if visibleReviewItems.length === 0}
           <div class="mg-empty">{$_("massMigration.noQueueMatches")}</div>
         {:else}
-          <div class="mg-queue">
-            {#each visiblePreviewItems as item, i (item.currentManga.id)}
-              {@const runtime = runtimeStatuses.get(item.currentManga.id)}
-              {@const match = item.match}
-              {@const selected = selectedIds.has(item.currentManga.id)}
+          <div class="mg-queue" aria-busy={buildingPreview}>
+            {#each visibleReviewItems as entry, i (entry.manga.id)}
+              {@const item = entry.item}
+              {@const runtime = runtimeStatuses.get(entry.manga.id)}
+              {@const match = item?.match ?? null}
+              {@const selected = selectedIds.has(entry.manga.id)}
               {@const done = runtime === "migrated" || runtime === "copied"}
-              <article animate:listFlip style:--mg-i={i} class="mg-queue-item" class:is-selected={selected} class:is-muted={runtime === "excluded"}>
+              <article
+                animate:listFlip
+                style:--mg-i={i}
+                class="mg-queue-item"
+                class:is-selected={selected}
+                class:is-muted={runtime === "excluded"}
+                class:is-pending={!item}
+                data-migration-candidate={entry.manga.id}
+              >
                 <button
                   class="mg-check"
                   class:is-checked={selected || done}
                   type="button"
-                  disabled={!canSelect(item)}
-                  onclick={(event) => toggleItem(item, event)}
+                  disabled={!item || buildingPreview || !canSelect(item)}
+                  onclick={(event) => { if (item) toggleItem(item, event); }}
                   aria-pressed={selected}
-                  aria-label={$_("massMigration.selectTitle", { values: { title: item.currentManga.title } })}
+                  aria-label={$_("massMigration.selectTitle", { values: { title: entry.manga.title } })}
                 >
                   {#if selected || done}<Check size={13} weight="bold" />{/if}
                 </button>
-                <span class="mg-cover">
-                  {#if match}<img src={resolveMangaCoverUrl(match.manga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />{:else}<BookOpen size={16} weight="duotone" />{/if}
+                <span class="mg-side">
+                  <span class="mg-cover">
+                    <img src={resolveMangaCoverUrl(entry.manga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />
+                  </span>
+                  <span class="mg-row-copy">
+                    <strong title={entry.manga.title}>{entry.manga.title}</strong>
+                    <small>{[originSource?.displayName, chapterCountLabel(item?.currentChapters.length || entry.manga.chapters?.totalCount)].filter(Boolean).join(" · ")}</small>
+                  </span>
                 </span>
-                <span class="mg-row-copy">
-                  <strong title={item.currentManga.title}>{item.currentManga.title}</strong>
-                  {#if match}
-                    <small title={match.manga.title}>→ {match.manga.title}</small>
-                  {:else if issueReasonLabel(item)}
-                    <small title={issueReasonLabel(item)}>{issueReasonLabel(item)}</small>
+                <span class="mg-queue-arrow" aria-hidden="true"><ArrowRight size={14} weight="bold" /></span>
+                <span class="mg-side mg-side--target">
+                  {#if !item}
+                    <span class="mg-cover mg-cover--pending"><CircleNotch size={14} weight="bold" class="anim-spin" /></span>
+                    <span class="mg-row-copy">
+                      <strong class="is-quiet">{$_("ui_searching")}</strong>
+                      <small>{targetSource?.displayName ?? ""}</small>
+                    </span>
+                  {:else if match}
+                    <span class="mg-cover">
+                      <img src={resolveMangaCoverUrl(match.manga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />
+                    </span>
+                    <span class="mg-row-copy">
+                      <strong title={match.manga.title}>{match.manga.title}</strong>
+                      <small>{[targetSource?.displayName, chapterCountLabel(match.chapters.length)].filter(Boolean).join(" · ")}</small>
+                    </span>
+                  {:else}
+                    <span class="mg-cover"><BookOpen size={16} weight="duotone" /></span>
+                    <span class="mg-row-copy">
+                      <strong class="is-quiet" title={issueReasonLabel(item)}>{issueReasonLabel(item) || statusLabel(item)}</strong>
+                      <small>{targetSource?.displayName ?? ""}</small>
+                    </span>
                   {/if}
                 </span>
-                <span class="mg-pill {statusTone(item)}">{statusLabel(item)}</span>
-                <div class="mg-menu-wrap">
-                  <button
-                    class="mg-icon-btn"
-                    type="button"
-                    onclick={() => toggleActionsMenu(item)}
-                    aria-haspopup="menu"
-                    aria-expanded={activeActionsMenuId === item.currentManga.id}
-                    aria-label={$_("massMigration.actionsForTitle", { values: { title: item.currentManga.title } })}
-                  >
-                    <DotsThreeVertical size={18} weight="bold" />
-                  </button>
-                  {#if activeActionsMenuId === item.currentManga.id}
-                    <div class="mg-menu" role="menu" use:floatMenu in:popIn out:popOut>
-                      {#if canSelect(item)}
-                        <button type="button" role="menuitem" onclick={() => applySelected("migrate", [item.currentManga.id])}>{$_("massMigration.migrateNow")}</button>
-                        <button type="button" role="menuitem" onclick={() => applySelected("copy", [item.currentManga.id])}>{$_("massMigration.copyNow")}</button>
-                      {/if}
-                      <button type="button" role="menuitem" onclick={() => retryItem(item)}>{$_("massMigration.retry")}</button>
-                      <button type="button" role="menuitem" onclick={() => openManualSearch(item)}>{$_("novelSources_actions_search")}</button>
-                      <button type="button" role="menuitem" onclick={() => excludeItem(item)}>{$_("massMigration.exclude")}</button>
-                    </div>
-                  {/if}
-                </div>
-                {#if runtimeErrors.get(item.currentManga.id)}
-                  <small class="mg-queue-note is-error">{readableErrorText(runtimeErrors.get(item.currentManga.id) ?? "")}</small>
+                {#if item}
+                  <span class="mg-pill {statusTone(item)}">{statusLabel(item)}</span>
+                {:else}
+                  <span class="mg-pill">{$_("ui_searching")}</span>
+                {/if}
+                {#if preview && item}
+                  <div class="mg-menu-wrap">
+                    <button
+                      class="mg-icon-btn"
+                      type="button"
+                      onclick={() => toggleActionsMenu(item)}
+                      aria-haspopup="menu"
+                      aria-expanded={activeActionsMenuId === item.currentManga.id}
+                      aria-label={$_("massMigration.actionsForTitle", { values: { title: item.currentManga.title } })}
+                    >
+                      <DotsThreeVertical size={18} weight="bold" />
+                    </button>
+                    {#if activeActionsMenuId === item.currentManga.id}
+                      <div class="mg-menu" role="menu" use:floatMenu in:popIn out:popOut>
+                        {#if canSelect(item)}
+                          <button type="button" role="menuitem" onclick={() => applySelected("migrate", [item.currentManga.id])}>{$_("massMigration.migrateNow")}</button>
+                          <button type="button" role="menuitem" onclick={() => applySelected("copy", [item.currentManga.id])}>{$_("massMigration.copyNow")}</button>
+                        {/if}
+                        <button type="button" role="menuitem" onclick={() => retryItem(item)}>{$_("massMigration.retry")}</button>
+                        <button type="button" role="menuitem" onclick={() => openManualSearch(item)}>{$_("novelSources_actions_search")}</button>
+                        <button type="button" role="menuitem" onclick={() => excludeItem(item)}>{$_("massMigration.exclude")}</button>
+                      </div>
+                    {/if}
+                  </div>
+                {:else}
+                  <span class="mg-menu-wrap" aria-hidden="true"></span>
+                {/if}
+                {#if runtimeErrors.get(entry.manga.id)}
+                  <small class="mg-queue-note is-error">{readableErrorText(runtimeErrors.get(entry.manga.id) ?? "")}</small>
                 {/if}
               </article>
             {/each}
@@ -1041,16 +1095,16 @@
       {#if loading || (error && !preview && step !== "target") || step === "origin"}
         <span class="mg-spacer"></span>
         <button class="mg-btn" type="button" onclick={onClose}>{$_("ui_cancel")}</button>
-      {:else if step === "target"}
-        <button class="mg-btn" type="button" onclick={() => step = "origin"} disabled={buildingPreview}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
+      {:else if step === "target" && !buildingPreview}
+        <button class="mg-btn" type="button" onclick={() => step = "origin"}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
         <span class="mg-spacer"></span>
       {:else if preview && manualSearchItem}
         <button class="mg-btn" type="button" onclick={closeManualSearch}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("massMigration.backToReview")}</button>
         <span class="mg-spacer"></span>
-      {:else if preview}
-        <button class="mg-btn" type="button" onclick={() => step = applying ? "review" : "target"}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {applying ? $_("massMigration.backToReview") : $_("ui_back")}</button>
+      {:else if preview || buildingPreview}
+        <button class="mg-btn" type="button" onclick={() => step = applying ? "review" : "target"} disabled={buildingPreview}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {applying ? $_("massMigration.backToReview") : $_("ui_back")}</button>
         <span class="mg-spacer"></span>
-        <button class="mg-btn mg-btn--primary" type="button" onclick={() => applySelected("migrate")} disabled={applying || selectedMigratableCount === 0}>
+        <button class="mg-btn mg-btn--primary" type="button" onclick={() => applySelected("migrate")} disabled={applying || buildingPreview || selectedMigratableCount === 0}>
           {#if applying}<CircleNotch size={15} weight="bold" class="anim-spin" />{/if}
           {$_("massMigration.migrateSelected", { values: { count: selectedMigratableCount } })}
         </button>

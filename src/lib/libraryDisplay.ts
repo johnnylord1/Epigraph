@@ -30,6 +30,24 @@ export interface LibraryLayoutResult extends LibraryDisplaySpec {
   preferredColumns: LibraryPreferredGridColumns;
   effectiveColumns: number;
   isList: boolean;
+  listCoverWidth: number;
+}
+
+// The list has one item per row, so the density setting sizes its covers instead: fewer items per
+// row means bigger covers. Auto keeps the list's original size.
+const LIST_COVER_WIDTHS: Record<LibraryPreferredGridColumns, number> = {
+  auto: 46,
+  4: 72,
+  5: 64,
+  6: 57,
+  7: 51,
+  8: 46,
+  9: 41,
+  10: 36,
+};
+
+export function listCoverWidthFor(preferredColumns: LibraryPreferredGridColumns): number {
+  return LIST_COVER_WIDTHS[preferredColumns] ?? LIST_COVER_WIDTHS.auto;
 }
 
 const DISPLAY_SPECS: Record<LibraryViewMode, LibraryDisplaySpec> = {
@@ -111,5 +129,6 @@ export function computeLibraryLayout(input: {
     preferredColumns: input.preferredColumns,
     effectiveColumns,
     isList: input.mode === "list",
+    listCoverWidth: listCoverWidthFor(input.preferredColumns),
   };
 }

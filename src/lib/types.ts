@@ -22,6 +22,12 @@ export interface Manga {
   chapters?: {
     totalCount?: number;
   } | null;
+  // Library dates as Suwayomi sends them; read through mangaLibraryTimes().
+  inLibraryAt?: string | null;
+  chaptersLastFetchedAt?: string | null;
+  latestFetchedChapter?: { fetchedAt?: string | null } | null;
+  latestUploadedChapter?: { uploadDate?: string | null } | null;
+  lastReadChapter?: { lastReadAt?: string | null } | null;
   description?: string | null;
   status?: string | null;
   author?: string | null;

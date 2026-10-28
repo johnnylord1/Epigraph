@@ -200,7 +200,7 @@ function sortBooks(
         }
         break;
       case "recentlyAdded":
-        cmp = left.updatedAt - right.updatedAt;
+        cmp = left.createdAt - right.createdAt;
         break;
       case "recentlyRead":
         cmp = (leftProgress?.lastReadAt ?? 0) - (rightProgress?.lastReadAt ?? 0);

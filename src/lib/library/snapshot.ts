@@ -58,6 +58,17 @@ function normalizeString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function normalizeTimeString(value: unknown): string | null {
+  const numberValue = normalizeNumber(value);
+  return numberValue !== null && numberValue > 0 ? String(numberValue) : null;
+}
+
+function normalizeChapterTime<K extends string>(value: unknown, key: K): Record<K, string> | null {
+  if (!value || typeof value !== "object") return null;
+  const time = normalizeTimeString((value as Record<string, unknown>)[key]);
+  return time ? { [key]: time } as Record<K, string> : null;
+}
+
 function normalizeManga(value: unknown): Manga | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
@@ -77,6 +88,11 @@ function normalizeManga(value: unknown): Manga | null {
     downloadCount: normalizeNumber(record.downloadCount) ?? undefined,
     unreadCount: normalizeNumber(record.unreadCount) ?? undefined,
     chapterCount: normalizeNumber(record.chapterCount) ?? undefined,
+    inLibraryAt: normalizeTimeString(record.inLibraryAt),
+    chaptersLastFetchedAt: normalizeTimeString(record.chaptersLastFetchedAt),
+    latestFetchedChapter: normalizeChapterTime(record.latestFetchedChapter, "fetchedAt"),
+    latestUploadedChapter: normalizeChapterTime(record.latestUploadedChapter, "uploadDate"),
+    lastReadChapter: normalizeChapterTime(record.lastReadChapter, "lastReadAt"),
     status: normalizeString(record.status),
     genre: Array.isArray(record.genre)
       ? record.genre.filter((entry): entry is string => typeof entry === "string")

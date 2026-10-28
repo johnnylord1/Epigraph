@@ -13,9 +13,9 @@ import type {
 import {
   buildCompletedLibraryIds,
   isMangaPublicationCompleted,
-  isSourceUnknownStatus,
 } from "./completion";
 import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "./categories";
+import { mangaLibraryTimes } from "./sortTimes";
 import { dedupeMangaById, shouldHideNsfw } from "../util";
 import type { Category, Manga, Source } from "../types";
 import type {
@@ -197,17 +197,26 @@ export function buildFilteredComics(
         return isMangaPublicationCompleted(manga, input.trackedCompletedIds);
       }
 
-      const status = manga.status?.toUpperCase().replace(/\s+/g, "_") ?? "UNKNOWN";
-      return status === input.statusFilter;
+      return normalizeComicStatus(manga.status) === input.statusFilter;
     });
   }
 
+  // Local history only knows what this device read; Suwayomi's last read chapter also covers
+  // restores and other devices, so the newer of the two wins.
   const recentlyReadMap = new Map<number, number>();
   if (input.sortMode === "recentlyRead") {
     for (const entry of input.recentReads) {
-      if (!recentlyReadMap.has(entry.mangaId)) {
-        recentlyReadMap.set(entry.mangaId, entry.readAt);
-      }
+      recentlyReadMap.set(entry.mangaId, Math.max(recentlyReadMap.get(entry.mangaId) ?? 0, entry.readAt));
+    }
+  }
+  const sortTimes = new Map<number, number>();
+  if (COMICS_DATE_SORTS.has(input.sortMode)) {
+    for (const manga of items) {
+      const times = mangaLibraryTimes(manga);
+      sortTimes.set(manga.id, input.sortMode === "recentlyAdded" ? times.addedAt
+        : input.sortMode === "latestFetched" ? times.latestFetchedAt
+        : input.sortMode === "latestUploaded" ? times.latestUploadedAt
+        : Math.max(times.lastReadAt, recentlyReadMap.get(manga.id) ?? 0));
     }
   }
 
@@ -232,15 +241,33 @@ export function buildFilteredComics(
       case "recentlyAdded":
       case "latestFetched":
       case "latestUploaded":
-        cmp = left.id - right.id;
-        break;
       case "recentlyRead":
-        cmp = (recentlyReadMap.get(left.id) ?? 0) - (recentlyReadMap.get(right.id) ?? 0);
+        cmp = (sortTimes.get(left.id) ?? 0) - (sortTimes.get(right.id) ?? 0);
         break;
     }
 
+    if (cmp === 0 && input.sortMode !== "az") {
+      // Ties (same count, or no date yet) stay in A-Z order whichever way the sort runs.
+      return left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) || left.id - right.id;
+    }
     return input.sortDir === "asc" ? cmp : -cmp;
   });
+}
+
+const COMICS_DATE_SORTS = new Set<LibrarySortMode>(["recentlyAdded", "latestFetched", "latestUploaded", "recentlyRead"]);
+
+// Folds source status spellings into the library filter ids, so the filter and the card label agree.
+// Suwayomi reports ON_HIATUS and PUBLISHING_FINISHED (Mihon's "publication finished").
+const COMIC_STATUS_ALIASES: Record<string, string> = {
+  ON_HIATUS: "HIATUS",
+  PUBLISHING_FINISHED: "COMPLETED",
+  COMPLETE: "COMPLETED",
+  CANCELED: "CANCELLED",
+};
+
+function normalizeComicStatus(status: string | null | undefined): string {
+  const token = (status ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "UNKNOWN";
+  return COMIC_STATUS_ALIASES[token] ?? token;
 }
 
 function buildComicsCollections(
@@ -298,11 +325,9 @@ function buildComicsEmptyMessage(libraryFilter: LibraryFilter, profileLabel?: st
 }
 
 function formatSourceStatusLabel(status: string | null | undefined): string | null {
-  const normalized = status?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
-  if (!normalized || isSourceUnknownStatus(normalized)) return null;
-  const token = normalized.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  if (token === "COMPLETED" || token === "COMPLETE") return "Completed";
-  if (token === "CANCELLED" || token === "CANCELED") return "Cancelled";
+  const token = normalizeComicStatus(status);
+  if (token === "COMPLETED") return "Completed";
+  if (token === "CANCELLED") return "Cancelled";
   if (token === "HIATUS") return "Hiatus";
   if (token === "ONGOING") return "Ongoing";
   return null;

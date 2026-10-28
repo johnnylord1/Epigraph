@@ -582,7 +582,7 @@
   function scrollToMangaIndex(mangaIndex: number) {
     if (!contentEl || mangaIndex < 0) return;
     const rowIndex = Math.floor(mangaIndex / Math.max(1, layout.effectiveColumns));
-    const targetTop = rowIndex * estimateLibraryVirtualRowSize(viewMode);
+    const targetTop = rowIndex * estimateLibraryVirtualRowSize(viewMode, layout.listCoverWidth);
     if (typeof contentEl.scrollTo === "function") {
       contentEl.scrollTo({ top: targetTop });
     } else {
@@ -1067,6 +1067,7 @@
       getItemId={getComicsCardIdAt}
       {viewMode}
       effectiveColumns={layout.effectiveColumns}
+      listCoverWidth={layout.listCoverWidth}
       scrollElement={contentEl}
       {showProgress}
       {showOutline}

@@ -218,6 +218,38 @@
   background: var(--component-migration-surface);
 }
 .mg-mark img { width: 100%; height: 100%; object-fit: cover; }
+.mg-mark--small { width: 22px; height: 22px; border-radius: var(--component-migration-check-radius); }
+
+/* Search across every source: one quiet heading per source that answered, then the ones still
+   searching as plain lines. */
+.mg-list--lead { padding-bottom: 6px; border-bottom: 1px solid var(--component-migration-divider); }
+.mg-row--lead .mg-mark { color: var(--component-migration-accent-fg); }
+.mg-group { display: grid; gap: 4px; }
+.mg-group-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  padding: 0 8px;
+  color: var(--component-migration-muted-fg);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.mg-group-head > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mg-group-pending {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: var(--component-migration-muted-fg);
+  font-size: var(--text-xs);
+}
+.mg-group-pending-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mg-group-pending-state { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+
 .mg-cover {
   width: 40px;
   aspect-ratio: 2 / 3;
@@ -338,11 +370,6 @@
   background-size: 300% 100%;
   animation: mg-shimmer 1.3s linear infinite;
 }
-.mg-progress { display: grid; gap: 8px; padding: 4px 0; }
-.mg-progress-head { display: flex; justify-content: space-between; gap: 12px; color: var(--component-migration-body-fg); font-size: var(--text-sm); font-weight: 650; }
-.mg-progress-head span:last-child { color: var(--component-migration-muted-fg); font-variant-numeric: tabular-nums; }
-.mg-progress-bar { height: 4px; overflow: hidden; border-radius: var(--component-migration-pill-radius); background: var(--component-migration-surface-strong); }
-.mg-progress-bar i { display: block; height: 100%; border-radius: inherit; background: var(--component-migration-accent-fg); transition: width var(--component-migration-transition-normal); }
 
 /* Footer: back on the left, the one filled action on the right. */
 .mg-footer {
@@ -383,13 +410,13 @@
 .mg-btn:hover:not(:disabled) .mg-arrow-back { transform: translateX(-3px); }
 .mg-btn:hover:not(:disabled) .mg-arrow-next { transform: translateX(3px); }
 
-/* Mass migration queue: one compact line per work, its match under the title. */
+/* Mass migration queue: one candidate card per work, origin on the left and its match on the right. */
 .mg-queue { display: grid; align-content: start; gap: 2px; }
 .mg-queue-item {
   position: relative;
   min-width: 0;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   padding: 8px;
@@ -399,7 +426,14 @@
 .mg-queue-item:hover { background: var(--component-migration-surface); }
 .mg-queue-item.is-muted { opacity: var(--component-migration-item-muted-opacity); }
 .mg-queue-item .mg-cover { width: 34px; }
-.mg-queue-note { grid-column: 3 / -1; color: var(--component-migration-muted-fg); font-size: var(--text-xs); }
+.mg-queue-item.is-pending .mg-side--target { color: var(--component-migration-muted-fg); }
+.mg-side { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.mg-queue-arrow { display: grid; place-items: center; color: var(--component-migration-muted-fg); }
+.mg-cover--pending { display: grid; place-items: center; color: var(--component-migration-muted-fg); background: var(--component-migration-surface); }
+.mg-row-copy strong.is-quiet { color: var(--component-migration-muted-fg); font-weight: 600; }
+.mg-live-status { display: inline-flex; align-items: center; gap: 8px; color: var(--component-migration-body-fg); font-size: var(--text-sm); font-weight: 650; white-space: nowrap; }
+.mg-live-count { color: var(--component-migration-muted-fg); font-variant-numeric: tabular-nums; }
+.mg-queue-note { grid-column: 2 / -1; color: var(--component-migration-muted-fg); font-size: var(--text-xs); }
 .mg-queue-note.is-error { color: var(--component-migration-bad-fg); }
 .mg-check {
   width: 22px;
@@ -494,9 +528,10 @@
   animation: mg-item-in var(--component-migration-animation-scale) backwards;
   animation-delay: calc(min(var(--mg-i, 0), 12) * 28ms);
 }
+.mg-group,
+.mg-list > .mg-group-pending { animation: mg-item-in var(--component-migration-animation-scale) backwards; }
 .mg-list > .mg-skeleton { animation: mg-shimmer 1.3s linear infinite, mg-fade var(--component-migration-animation-scale) backwards; }
 .mg-empty,
-.mg-progress,
 .mg-compare > *,
 .mg-summary,
 .mg-footer > .mg-btn { animation: mg-item-in var(--component-migration-animation-scale) backwards; }
@@ -517,8 +552,10 @@
   .mg-compare { grid-template-columns: minmax(0, 1fr); }
   .mg-compare-arrow { justify-self: center; transform: rotate(90deg); }
   .mg-field--select { width: 120px; }
-  .mg-queue-item { grid-template-columns: auto auto minmax(0, 1fr) auto; }
-  .mg-queue-item > .mg-pill { display: none; }
+  .mg-queue-item { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .mg-queue-item > .mg-pill,
+  .mg-queue-arrow { display: none; }
+  .mg-side--target { grid-column: 2; grid-row: 2; }
 }
 
 /* Reduced motion follows the app setting, then the system (motion.ts). */
@@ -528,8 +565,9 @@ html[data-epigraph-reduced-motion="true"] .mg-skeleton,
 html[data-epigraph-reduced-motion="true"] .mg-list > .mg-skeleton,
 html[data-epigraph-reduced-motion="true"] .mg-list > .mg-row,
 html[data-epigraph-reduced-motion="true"] .mg-queue > .mg-queue-item,
+html[data-epigraph-reduced-motion="true"] .mg-group,
+html[data-epigraph-reduced-motion="true"] .mg-list > .mg-group-pending,
 html[data-epigraph-reduced-motion="true"] .mg-empty,
-html[data-epigraph-reduced-motion="true"] .mg-progress,
 html[data-epigraph-reduced-motion="true"] .mg-compare > *,
 html[data-epigraph-reduced-motion="true"] .mg-summary,
 html[data-epigraph-reduced-motion="true"] .mg-footer > .mg-btn,

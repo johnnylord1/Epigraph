@@ -100,4 +100,32 @@ describe("LibraryToolbar", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Import books" }));
     expect(onImport).toHaveBeenCalledTimes(1);
   });
+
+  test("keeps the density slider working in list mode, where it sizes the covers", async () => {
+    const onPreferredColumnsChange = vi.fn();
+    render(LibraryToolbar, {
+      props: {
+        displaySettings: { viewMode: "list", preferredColumns: "auto", showProgress: true, showOutline: true },
+        toolbar: {
+          searchValue: "",
+          searchPlaceholder: "Search comics",
+          sortMode: "az",
+          sortDir: "asc",
+          sortOptions: [],
+          filterValue: "ALL",
+          filterOptions: [],
+        },
+        sortDefaultMode: "az",
+        sortDefaultDir: "asc",
+        filterDefaultValue: "ALL",
+        onPreferredColumnsChange,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Display" }));
+    const slider = screen.getByRole("slider", { name: "Cover size" }) as HTMLInputElement;
+    expect(slider.disabled).toBe(false);
+    await fireEvent.input(slider, { target: { value: "1" } });
+    expect(onPreferredColumnsChange).toHaveBeenCalledWith(4);
+  });
 });

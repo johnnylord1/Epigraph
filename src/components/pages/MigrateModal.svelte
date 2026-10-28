@@ -1,7 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
-  import { X, CircleNotch, ArrowRight, ArrowLeft } from "phosphor-svelte";
+  import { X, CircleNotch, ArrowRight, ArrowLeft, Globe } from "phosphor-svelte";
   import { onMount, untrack } from "svelte";
   import { gql } from "../../lib/client";
   import { resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
@@ -21,9 +21,11 @@
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
   import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
   import { bestTitleScore } from "../../lib/migration/titleMatcher";
+  import { searchSourcesLive, type ScoredMangaResult } from "../../lib/migration/globalSearch";
   import NocturneState from "../shared/NocturneState.svelte";
   import MigrationSourcePicker from "./MigrationSourcePicker.svelte";
   import MigrationResultList from "./MigrationResultList.svelte";
+  import MigrationGlobalResults from "./MigrationGlobalResults.svelte";
   import MigrationConfirm from "./MigrationConfirm.svelte";
   import { enterOnMount, glideHeight } from "../../lib/motion/motion";
   import "./migrationModal.css";
@@ -37,6 +39,14 @@
   let { manga, currentChapters, onClose, onMigrated }: Props = $props();
 
   type Step = "source" | "search" | "confirm";
+  // "all" searches every listed source at once; each source's results arrive on their own.
+  type SearchScope = "source" | "all";
+
+  interface SourceGroup {
+    source: Source;
+    status: "searching" | "done" | "failed";
+    results: ScoredMangaResult[];
+  }
 
   interface Match {
     manga: Manga;
@@ -52,6 +62,9 @@
   let loadingSources        = $state(true);
   let sourceLoadError: string | null = $state(null);
   let selectedSource = $state<Source | null>(null);
+  let searchScope: SearchScope = $state("source");
+  let sourceGroups: SourceGroup[] = $state([]);
+  let globalSearchController: AbortController | null = null;
 
   // Lang filter: "en" first, then alphabetical
   let selectedLang: string       = $state("all");
@@ -112,8 +125,25 @@
   const chapterDiff = $derived(chapterDifference(selectedMatch, totalCount));
   const currentSourceName = $derived(manga.source?.displayName ?? $_("libraryUpdate.unknownSource"));
   const selectedSourceName = $derived(selectedSource?.displayName ?? $_("libraryUpdate.unknownSource"));
-  const resultOptions = $derived(results.map(({ manga: m, similarity }, idx) => {
-    const best = idx === 0 && similarity > 0.5;
+  const resultOptions = $derived(results.map(({ manga: m, similarity }, idx) => resultOption(m, similarity, idx === 0 && similarity > 0.5)));
+  // Across every source, only the single closest title is marked as the best match.
+  const bestGlobalId = $derived.by(() => {
+    let best: ScoredMangaResult | null = null;
+    for (const group of sourceGroups) {
+      const top = group.results[0];
+      if (top && top.similarity > 0.5 && (!best || top.similarity > best.similarity)) best = top;
+    }
+    return best ? best.manga.id : null;
+  });
+  const groupOptions = $derived(sourceGroups.map((group) => ({
+    id: group.source.id,
+    name: group.source.displayName,
+    iconSrc: resolveServiceIconUrl(group.source, { kind: "source" }),
+    status: group.status,
+    results: group.results.map(({ manga: m, similarity }) => resultOption(m, similarity, m.id === bestGlobalId)),
+  })));
+
+  function resultOption(m: Manga, similarity: number, best: boolean) {
     const match = $_("migrate.matchPercent", { percent: percent(similarity) });
     return {
       id: String(m.id),
@@ -122,7 +152,7 @@
       hint: best ? `${$_("ui_bestMatch")} · ${match}` : match,
       best,
     };
-  }));
+  }
   const confirmWarning = $derived.by(() => {
     if (!selectedMatch) return null;
     if (selectedMatch.chaptersError) {
@@ -184,7 +214,10 @@
     untrack(() => { void loadSources(); });
 
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      globalSearchController?.abort();
+    };
   });
 
   function onKey(e: KeyboardEvent) { if (e.key === "Escape" && !migrating) onClose(); }
@@ -219,9 +252,40 @@
     }
   }
 
+  async function searchAllSources(q: string) {
+    if (!q.trim()) return;
+    globalSearchController?.abort();
+    const controller = new AbortController();
+    globalSearchController = controller;
+    const targets = visibleSources;
+    error = null;
+    sourceGroups = targets.map((source) => ({ source, status: "searching", results: [] }));
+    await searchSourcesLive({
+      sourceIds: targets.map((source) => source.id),
+      query: q,
+      title: manga.title,
+      signal: controller.signal,
+      onSourceDone: (sourceId, outcome) => {
+        sourceGroups = sourceGroups.map((group) => group.source.id === sourceId
+          ? { ...group, status: outcome.error ? "failed" : "done", results: outcome.results }
+          : group);
+      },
+    });
+  }
+
+  function pickAllSources() {
+    selectedSource = null;
+    searchScope = "all";
+    error = null;
+    step = "search";
+    void searchAllSources(query);
+  }
+
   function pickSource(id: string) {
     const src = sources.find((s) => s.id === id);
     if (!src) return;
+    globalSearchController?.abort();
+    searchScope = "source";
     selectedSource = src;
     error = null;
     step = "search";
@@ -229,14 +293,24 @@
   }
 
   function backToSources() {
+    globalSearchController?.abort();
     step = "source";
     results = [];
+    sourceGroups = [];
     error = null;
   }
 
   function pickResult(id: string) {
     const picked = results.find((r) => String(r.manga.id) === id);
     if (picked) void selectMatch(picked.manga, picked.similarity);
+  }
+
+  function pickGlobalResult(sourceId: string, id: string) {
+    const group = sourceGroups.find((candidate) => candidate.source.id === sourceId);
+    const picked = group?.results.find((r) => String(r.manga.id) === id);
+    if (!group || !picked) return;
+    selectedSource = group.source;
+    void selectMatch(picked.manga, picked.similarity);
   }
 
   async function selectMatch(m: Manga, similarity: number) {
@@ -337,7 +411,7 @@
       </span>
       <div class="mg-heading">
         <h2 class="mg-title" title={manga.title}>{manga.title}</h2>
-        <p class="mg-subtitle">{step === "source" ? $_("migrate.fromSource", { source: currentSourceName, count: totalCount }) : selectedSourceName}</p>
+        <p class="mg-subtitle">{step === "source" ? $_("migrate.fromSource", { source: currentSourceName, count: totalCount }) : step === "search" && searchScope === "all" ? $_("ui_allSources") : selectedSourceName}</p>
       </div>
       <button bind:this={closeButtonEl} class="mg-close" type="button" onclick={onClose} disabled={migrating} aria-label={$_("ui_closeMigrationModal")}><X size={16} weight="bold" /></button>
     </header>
@@ -362,18 +436,38 @@
             emptyLabel={$_("ui_noOtherSourcesInstalled")}
             onPick={pickSource}
           >
+            {#snippet lead()}
+              <button class="mg-row mg-row--lead" type="button" data-migration-all-sources onclick={pickAllSources} disabled={!query.trim()}>
+                <span class="mg-mark"><Globe size={17} weight="duotone" /></span>
+                <span class="mg-row-copy">
+                  <strong>{$_("migrate.searchAllSources")}</strong>
+                  <small>{$_("migrate.searchAllSourcesHint")}</small>
+                </span>
+                <span class="mg-row-end"><ArrowRight size={16} weight="bold" /></span>
+              </button>
+            {/snippet}
             {#snippet tools()}
               {#if hasMultipleLangs}
                 <label class="mg-field mg-field--select">
                   <select bind:value={selectedLang} aria-label={$_("migrate.allLanguages")}>
                     <option value="all">{languageLabel("all")}</option>
-                    {#each availableLangs as lang}<option value={lang}>{languageLabel(lang)}</option>{/each}
+                    {#each availableLangs as lang (lang)}<option value={lang}>{languageLabel(lang)}</option>{/each}
                   </select>
                 </label>
               {/if}
             {/snippet}
           </MigrationSourcePicker>
         {/if}
+
+      {:else if step === "search" && searchScope === "all"}
+        <MigrationGlobalResults
+          bind:query
+          groups={groupOptions}
+          pendingId={loadingMatchId === null ? null : String(loadingMatchId)}
+          {error}
+          onSearch={() => void searchAllSources(query)}
+          onPick={pickGlobalResult}
+        />
 
       {:else if step === "search"}
         <MigrationResultList

@@ -773,6 +773,7 @@
       getItemId={getCardIdAt}
       {viewMode}
       effectiveColumns={layout.effectiveColumns}
+      listCoverWidth={layout.listCoverWidth}
       scrollElement={contentEl}
       {showProgress}
       {showOutline}
