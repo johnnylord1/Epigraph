@@ -925,8 +925,13 @@ mod tests {
             .stderr(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        // Starting a second copy of the test binary can take long on a loaded machine; a holder that
+        // exited is reported at once instead of waiting out the deadline.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         while !super::spawn_lease_is_held(&path) {
+            if let Some(status) = holder.try_wait().unwrap() {
+                panic!("holder exited before taking the lease: {status}");
+            }
             assert!(std::time::Instant::now() < deadline, "holder never took the lease");
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
