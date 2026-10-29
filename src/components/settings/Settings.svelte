@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { createProductionRestoreWorkflow } from "../../lib/backup/productionRestoreWorkflow";
-  import RestoreNovelDependencies from "./RestoreNovelDependencies.svelte";
-  import RestoreMangaDependencies from "./RestoreMangaDependencies.svelte";
+  import { createProductionRestoreWorkflow, type MangaRestoreData } from "../../lib/backup/productionRestoreWorkflow";
+  import type { BackupWorkflowFile } from "../../lib/backup/backupWorkflow";
+  import FirstRunDependencies from "../firstRun/FirstRunDependencies.svelte";
   import { novelRestoreRuntimeState } from "../../lib/backup/novelsRestoreProvisioning";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { enterOnChange, leaveView, systemPrefersReducedMotion } from "../../lib/motion/motion";
@@ -72,9 +72,7 @@
   } from "../../lib/backup/backupRollout";
   import type { EpigraphNovelRuntimeState } from "../../lib/backup/novelsBackup";
   import { buildBackupDependencyPreview, type BackupDependencyPreview } from "../../lib/backup/dependencyPreview";
-  import { extensionStoreKey, getManagedSourceRuntime } from "../../lib/manga/runtime";
-  import { createProductionMangaDependencySession } from "../../lib/backup/mangaRestoreDependencies";
-  import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
+  import { getManagedSourceRuntime } from "../../lib/manga/runtime";
   import { normalizeCategories } from "../../lib/library/categories";
   import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, UPDATE_CATEGORY_UPDATE_RULE, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_LIBRARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES } from "../../lib/queries";
   import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR, CREATE_BACKUP, RESTORE_BACKUP, GET_RESTORE_STATUS } from "../../lib/queries";
@@ -1212,14 +1210,9 @@
   let backupAnalysis: ReconciliationAnalysis | null = $state(null);
   let backupRestoreId: string | null = $state(null);
   let backupRestoreStatus: BackupRestoreProgress | null = $state(null);
-  let backupSuggestedExtensions = $state<MissingSourceExtensionSuggestion[]>([]);
   let backupAvailableExtensions = $state<AvailableExtensionEntry[]>([]);
   let backupInventory = $state<SourceInventoryEntry[]>([]);
-  let backupExtensionLookupError: OperationFailure | null = $state(null);
-  let backupExtensionLookupLoading = $state(false);
-  let backupInstalling = $state(new Set<string>());
   let backupReviewSelections = $state<Record<string, NativeSourceRestoreChoice>>({});
-  let backupMissingTrackers = $state<{ name: string }[]>([]);
   let backupSelectedFilePath: string | null = $state(null);
   let backupImportKind = $state<BackupImportKind | null>(null);
   let backupUnifiedIncludeManga = $state(true);
@@ -1244,8 +1237,11 @@
   let backupLastLegacyAnalysisPath: string | null = $state(null);
   let backupDependencyPreview = $state<BackupDependencyPreview | null>(null);
   let backupDependenciesConfirmed = $state(false);
-  let backupDependenciesWorking = $state(false);
-  let mangaDependencyPanel = $state<{ review(): Promise<void> }>();
+  // The file as First Run reads it: one inspection feeds the counts, the dependency list and the restore.
+  let backupInspectedEntry = $state<BackupWorkflowFile | null>(null);
+  let backupDependencies = $state<ReturnType<typeof FirstRunDependencies>>();
+  // What that list shows once checked against what is installed; null while it checks.
+  let backupDependencyCounts = $state<{ repositories: number; extensions: number } | null>(null);
 
   const backupReadiness = $derived.by<RestoreReadinessSummary | null>(() =>
     backupAnalysis
@@ -1317,7 +1313,6 @@
     return preview?.requiresConfirmation === true && !backupDependenciesConfirmed;
   });
   function computeBackupRestoreDisabled(ignoreConfirmations: boolean): boolean {
-    if (backupDependenciesWorking) return true;
     if (backupResolvedExecutionBlockedReason) return true;
     if (!ignoreConfirmations && backupCurrentProfileGateRequired && !backupRestoreCurrentProfileConfirmed) return true;
     if (!ignoreConfirmations && backupRestoreTargetMode === "current-profile" && backupDependencyConfirmationRequired) return true;
@@ -1433,12 +1428,11 @@
     backupAnalysis = null;
     backupInventory = [];
     backupReviewSelections = {};
-    backupMissingTrackers = [];
     backupRestoreId = null;
     backupRestoreStatus = null;
-    backupSuggestedExtensions = [];
     backupAvailableExtensions = [];
-    backupExtensionLookupError = null;
+    backupInspectedEntry = null;
+    backupDependencyCounts = null;
   }
 
   function resetUnifiedBackupState() {
@@ -1669,10 +1663,9 @@
     await loadUnifiedBackupPlanBytes(bytes);
   }
 
-  async function loadUnifiedBackupPlanBytes(bytes: ArrayBuffer) {
+  async function loadUnifiedBackupPlanBytes(bytes: ArrayBuffer, inspectedPlan?: EpigraphRestorePlan | null) {
     const storageRuntime = await getStorageRuntime();
-    const runtime = await loadEpigraphRestoreRuntime();
-    const plan = await storageRuntime.buildEpigraphRestorePlan(bytes, runtime);
+    const plan = inspectedPlan ?? await storageRuntime.buildEpigraphRestorePlan(bytes, await loadEpigraphRestoreRuntime());
     backupUnifiedPlan = plan;
     backupUnifiedSelection = defaultExecutionSelection(plan);
     const repositories: Array<{ url: string; name?: string | null }> = [];
@@ -1781,6 +1774,7 @@
     if (backupImportKind === "epigraph") {
       await loadUnifiedBackupPlan(path);
       backupSelectedFile = await fileFromPath(path);
+      await inspectBackupEntry(backupSelectedFile);
       return;
     }
 
@@ -1800,6 +1794,7 @@
           plugins: snapshot.plugins ?? [],
         });
         backupSelectedFile = await fileFromPath(path);
+        await inspectBackupEntry(backupSelectedFile);
       } finally {
         backupValidating = false;
       }
@@ -1879,33 +1874,6 @@
     });
   });
 
-  async function loadMissingSourceSuggestions(missingSources: { id: string; name: string }[]) {
-    backupSuggestedExtensions = [];
-    backupExtensionLookupError = null;
-    if (missingSources.length === 0) return;
-
-    backupExtensionLookupLoading = true;
-    try {
-      const storageRuntime = await getStorageRuntime();
-      const inventory = await storageRuntime.loadSourceInventory();
-      backupAvailableExtensions = inventory.availableExtensions;
-      const result = await findMissingSourceExtensionSuggestions(
-        missingSources,
-        inventory.repoUrls,
-        inventory.availableExtensions,
-        store.settings.preferredExtensionLang ?? "en",
-      );
-      backupSuggestedExtensions = result.suggestions;
-      if (result.failedRepos.length > 0) {
-        backupExtensionLookupError = operationFailure(result.failedRepos, "outcomes.repositoryChecks", { count: result.failedRepos.length });
-      }
-    } catch (error) {
-      backupExtensionLookupError = operationFailure(error, "settings_inline_couldNotInspectExtensionMatches");
-    } finally {
-      backupExtensionLookupLoading = false;
-    }
-  }
-
   async function exportBackup() {
     backupExporting = true;
     backupError = null;
@@ -1954,7 +1922,7 @@
     const bytes = await file.arrayBuffer();
     if (backupImportKind === "epigraph") {
       if (isZipContainer(bytes)) {
-        await loadUnifiedBackupPlanBytes(bytes);
+        await loadUnifiedBackupPlanBytes(bytes, (await inspectBackupEntry(file)).plan);
         return;
       }
       backupImportKind = "manga";
@@ -1974,6 +1942,7 @@
           repositories: snapshot.repositories ?? [],
           plugins: snapshot.plugins ?? [],
         });
+        await inspectBackupEntry(file);
       } finally {
         backupValidating = false;
       }
@@ -1985,55 +1954,33 @@
     }
   }
 
+  async function inspectBackupEntry(file: File): Promise<BackupWorkflowFile> {
+    const [entry] = await createProductionRestoreWorkflow({ mangaChoices: backupReviewSelections }).inspectFiles([file]);
+    if (entry?.status !== "ready") throw entry?.cause ?? Error(entry?.error ?? "RESTORE_INPUT_INVALID");
+    backupDependencyCounts = null;
+    backupInspectedEntry = entry;
+    return entry;
+  }
+
   async function analyzeSelectedBackupFile(file: File) {
     backupValidating = true;
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const storageRuntime = await getStorageRuntime();
-      const [inventory, trackersData, overlay] = await Promise.all([
-        storageRuntime.loadSourceInventory(),
-        gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS),
-        storageRuntime.readOverlayFile(),
-      ]);
-      const parsed = await storageRuntime.parseMihonBackup(bytes, inventory.inventory);
-      const { analysis } = await storageRuntime.analyzeBackupReconciliation(
-        bytes,
-        inventory.inventory,
-        trackersData.trackers.nodes ?? [],
-        overlay,
-      );
+      const entry = await inspectBackupEntry(file);
+      const { parsed, analysis, inventory, availableExtensions } = entry.restoreData as MangaRestoreData;
       backupParsed = parsed;
       backupDependencyPreview = buildBackupDependencyPreview({
-        titleCount: parsed.backupManga.length,
-        chapterCount: parsed.backupManga.reduce((sum, manga) => sum + (manga.chapterCount ?? 0), 0),
+        titleCount: entry.workCount,
+        chapterCount: entry.chapterCount,
         mangaStores: parsed.extensionStores,
       });
-      backupInventory = inventory.inventory;
-      backupAnalysis = {
-        ...analysis,
-        warnings: [...inventory.warnings, ...analysis.warnings],
-      };
-      backupAvailableExtensions = inventory.availableExtensions;
-      backupMissingTrackers = parsed.trackerIds
-        .filter((trackerId) => !(trackersData.trackers.nodes ?? []).some((tracker) => tracker.id === trackerId))
-        .map((trackerId) => ({ name: `Tracker #${trackerId}` }));
-      await loadMissingSourceSuggestions(
-        [...analysis.needsReview, ...analysis.unresolved].map((cluster) => ({
-          id: cluster.orphanSourceId,
-          name: cluster.sourceName,
-        })),
-      );
+      backupInventory = inventory;
+      backupAnalysis = analysis;
+      backupAvailableExtensions = availableExtensions;
     } catch (e: any) {
       backupError = operationFailure(e, "firstRun.backup.restoreError");
     } finally {
       backupValidating = false;
     }
-  }
-
-  async function refreshBackupReadiness() {
-    if (!backupSelectedFile) return;
-    backupError = null;
-    await analyzeSelectedBackupFile(backupSelectedFile);
   }
 
   const backupNeedsConfirmPage = $derived(
@@ -2050,6 +1997,11 @@
 
   const backupSourcesStatus = $derived.by(() => {
     if (backupValidating) return translate("settings_inline_inspecting");
+    // Novels have no Manga readiness: the row agrees with the list it opens, which knows what is installed.
+    if (!backupReadiness && backupInspectedEntry && !backupInspectedEntry.libraryKinds.includes("manga")) {
+      if (!backupDependencyCounts) return translate("settings_inline_inspecting");
+      if (backupDependencyCounts.repositories + backupDependencyCounts.extensions === 0) return translate("settings_backup_sourcesReady");
+    }
     if (!backupReadiness) return translate("settings_backup_sourcesReview");
     if (backupReadiness.requiresInstallCount > 0) return translate("settings_backup_sourcesNeedInstall", { count: backupReadiness.requiresInstallCount });
     if (backupReadiness.unresolvedCount > 0) return translate("settings_backup_sourcesUnmatched", { count: backupReadiness.unresolvedCount });
@@ -2072,11 +2024,6 @@
     await executeSelectedRestore();
   }
 
-  async function reviewMangaDependencies() {
-    // Compatibility action opens the shared origin review; it cannot install.
-    await mangaDependencyPanel?.review();
-  }
-
   async function relaunchRestoreIntoOtherProfile() {
     if (!backupImportKind || !backupSelectedFilePath) {
       throw new Error("Select a backup file before continuing to the other local profile.");
@@ -2095,35 +2042,6 @@
       },
     });
     await invoke("relaunch_with_args", { args });
-  }
-
-  // The "approve dependencies" consent adds the backup's own Mihon repositories before restoring,
-  // through the same target-checked session the per-repository buttons use.
-  async function addApprovedMangaRepositories(file: File): Promise<string[]> {
-    const session = await createProductionMangaDependencySession(file, backupImportKind === "epigraph" ? "epigraph" : "native");
-    const plan = await session.inspect();
-    const present = new Set(plan.repositories.map((repository) => extensionStoreKey(repository.indexUrl)));
-    const unavailable: string[] = [];
-    for (const url of plan.requiredRepositories) {
-      if (present.has(extensionStoreKey(url))) continue;
-      try {
-        await session.addRepository(url);
-      } catch (error) {
-        if (error instanceof Error && error.message === "RESTORE_TARGET_CHANGED") throw error;
-        unavailable.push(url);
-      }
-    }
-    return unavailable;
-  }
-
-  async function waitForInstalledRestoreSources(file: File, maxAttempts = 7) {
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      await analyzeSelectedBackupFile(file);
-      if (!backupReadiness || backupReadiness.requiresInstallCount === 0) return;
-      if (attempt < maxAttempts - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
-      }
-    }
   }
 
   async function refreshHomeRestoreSnapshots() {
@@ -2410,15 +2328,13 @@
     const file = backupSelectedFilePath
       ? new File([await runtime.readFileAsArrayBuffer(backupSelectedFilePath)], backupPathLabel(backupSelectedFilePath) ?? "backup.epigraphbk")
       : backupSelectedFile!;
-    const unavailableRepositories = backupDependenciesConfirmed && (backupImportKind === "manga" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "manga"))
-      ? await addApprovedMangaRepositories(file)
-      : [];
+    // As in First Run: install what the backup needs, then restore the file as it was inspected.
+    await backupDependencies?.installAll();
     const candidate = createProductionRestoreWorkflow({
       selection: backupImportKind === "epigraph" ? backupUnifiedSelection : undefined,
       mangaChoices: backupReviewSelections,
     });
-    const entries = await candidate.inspectFiles([file]);
-    if (entries.some(entry => entry.status !== "ready")) throw Error(entries[0]?.error ?? "RESTORE_INPUT_INVALID");
+    const entries = [backupInspectedEntry ?? await inspectBackupEntry(file)];
     const key = JSON.stringify([entries.map(entry => entry.key), currentRuntimeProfileId, store.runtimeServerUrl, backupUnifiedSelection, backupReviewSelections]);
     const workflow = restoreWorkflows.get(key) ?? candidate;
     restoreWorkflows.set(key, workflow);
@@ -2441,12 +2357,8 @@
           : status === "unknown" ? translate("settings_backup_resultUnresolved")
           : status === "cancelled" ? translate("settings_backup_resultCancelled") : translate("settings_backup_resultFailed"),
       }));
-      if (unavailableRepositories.length > 0) {
-        backupRestoreResults = [...backupRestoreResults, {
-          kind: "repositories", status: "warning", outcome: "unavailable", warnings: unavailableRepositories,
-          summary: translate("settings_backup_repositoriesUnavailable", { count: unavailableRepositories.length }),
-        }];
-      }
+      // Kept only to resume what did not finish. Restoring the file again applies it again, as Mihon does.
+      if (Object.values(workflow.snapshot().units).every(status => status === "succeeded")) restoreWorkflows.delete(key);
     }
     } catch (error) {
       backupError = operationFailure(error, "firstRun.backup.restoreError");
@@ -6719,40 +6631,20 @@
           {:else if backupViewMode === "restore"}
             <div class="backup-restore">
               <input bind:this={backupFileInput} type="file" accept=".epigraphbk,.aethonbk,.tachibk,.proto.gz,.proto,.zip,*/*" style="display:none" onchange={onBackupFileSelected} />
-              {#if backupRestorePage === "sources"}
-                <div class="backup-page">
-                    {#if backupSelectedFile && (backupImportKind === "manga" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "manga"))}
-                      {#key backupSelectedFile}
-                        <RestoreMangaDependencies bind:this={mangaDependencyPanel} file={backupSelectedFile}
-                          format={backupImportKind === "epigraph" ? "epigraph" : "native"} choices={backupReviewSelections}
-                          disabled={backupRestoring || backupValidating || backupDependenciesWorking || backupRestoreTargetMode !== "current-profile"}
-                          onBusy={busy => backupDependenciesWorking = busy}
-                          onChoices={choices => backupReviewSelections = choices}
-                          onChanged={async () => {
-                            if (backupImportKind === "manga") await refreshBackupReadiness();
-                            else if (backupSelectedFile) {
-                              const selection = { ...backupUnifiedSelection };
-                              await loadUnifiedBackupPlanBytes(await backupSelectedFile.arrayBuffer());
-                              backupUnifiedSelection = selection;
-                            }
-                          }} />
-                      {/key}
-                    {/if}
-                    {#if backupSelectedFile && (backupImportKind === "novels-lnreader" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "novels"))}
-                      {#key backupSelectedFile}
-                        <RestoreNovelDependencies file={backupSelectedFile} format={backupImportKind === "novels-lnreader" ? "lnreader" : "epigraph"}
-                          disabled={backupRestoring || backupValidating || backupRestoreTargetMode !== "current-profile"}
-                          onBusy={busy => backupDependenciesWorking = busy}
-                          onChanged={async () => {
-                            if (backupImportKind === "epigraph" && backupSelectedFile) {
-                              const selection = { ...backupUnifiedSelection };
-                              await loadUnifiedBackupPlanBytes(await backupSelectedFile.arrayBuffer());
-                              backupUnifiedSelection = selection;
-                            }
-                          }} />
-                      {/key}
-                    {/if}
+              {#if backupInspectedEntry && backupRestoreTargetMode === "current-profile" && backupInspectedEntry.libraryKinds.some(kind => kind === "manga" || kind === "novels")}
+                <!-- First Run's list, kept mounted so "Restore" installs exactly what it shows. -->
+                <div class="backup-page backup-dependencies" class:is-hidden={backupRestorePage !== "sources"}>
+                  {#key backupInspectedEntry}
+                    <FirstRunDependencies bind:this={backupDependencies} entries={[backupInspectedEntry]}
+                      choices={{ [backupInspectedEntry.key]: backupReviewSelections }}
+                      disabled={backupRestoring || backupValidating}
+                      onChoices={(_key, choices) => backupReviewSelections = choices}
+                      onCounts={(counts) => backupDependencyCounts = counts} />
+                  {/key}
                 </div>
+              {/if}
+              {#if backupRestorePage === "sources"}
+                <!-- The dependency list above is this page. -->
               {:else if backupRestorePage === "confirm"}
                 <div class="backup-page backup-confirm">
                   <p>{$_("settings_backup_confirmTarget", { target: backupCurrentTargetSummary })}</p>
@@ -6918,7 +6810,7 @@
               </button>
             {:else if backupRestorePage === "sources"}
               <span class="mg-spacer"></span>
-              <button class="mg-btn mg-btn--primary" type="button" disabled={backupDependenciesWorking} onclick={() => (backupRestorePage = "main")}>
+              <button class="mg-btn mg-btn--primary" type="button" onclick={() => (backupRestorePage = "main")}>
                 {$_("settings_backup_done")}
               </button>
             {:else if backupRestoreResults && !backupRestoring && !backupError}
@@ -7241,6 +7133,8 @@
   .backup-error span { color: var(--text-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
   @keyframes backupProgress { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
   .backup-page { display: grid; gap: 14px; }
+  .backup-dependencies { --fr-surface: color-mix(in srgb, var(--text-primary) 4%, transparent); --fr-surface-strong: color-mix(in srgb, var(--text-primary) 7%, transparent); }
+  .backup-dependencies.is-hidden { display: none; }
   .backup-heading { display: flex; align-items: center; gap: 8px; }
   .backup-pick { display: grid; justify-items: center; gap: 6px; width: 100%; padding: 36px 16px; border: 1px dashed var(--border-base); border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
   .backup-pick:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text-primary); }
