@@ -422,14 +422,17 @@ impl OperationLease {
     }
 }
 
-/// An attributed server FAILURE is terminal too; it does not grant replay authority.
+/// An attributed server FAILURE is terminal too; it does not grant replay authority. So is a
+/// restore the same server reported running and later no longer knew (LOST): Suwayomi keeps
+/// restore status in memory, so a restart ends the restore without a result.
 pub fn confirmed_external_terminal(payload: &Value) -> bool {
     let Some(units) = payload["units"].as_array() else { return false; };
     if units.len() != 1 || !matches!(payload["phase"].as_str(), Some("completed" | "nonretryable_failure")) { return false; }
     let unit = &units[0];
     let expected = match (unit["status"].as_str(), unit["resultCode"].as_str()) {
         (Some("succeeded"), Some("BACKEND_RESTORE_SUCCESS")) => "SUCCESS",
-        (Some("failed"), Some("BACKEND_RESTORE_FAILURE")) => "FAILURE", _ => return false,
+        (Some("failed"), Some("BACKEND_RESTORE_FAILURE")) => "FAILURE",
+        (Some("failed"), Some("BACKEND_RESTORE_LOST")) => "LOST", _ => return false,
     };
     let Some(attempt) = unit["attempts"].as_array().and_then(|a| a.last()) else { return false; };
     let intent = &unit["submissionIntent"]; let reference = &unit["externalOperationReference"];
@@ -437,12 +440,14 @@ pub fn confirmed_external_terminal(payload: &Value) -> bool {
         && attempt["completedAt"] == unit["completedAt"] && attempt["resultCode"] == unit["resultCode"]
         && attempt["errorCode"] == unit["errorCode"]
         && (if expected == "SUCCESS" { payload["phase"] == "completed" && unit["errorCode"].is_null() }
-            else { payload["phase"] == "nonretryable_failure" && unit["errorCode"] == "BACKEND_RESTORE_FAILURE" })
+            else { payload["phase"] == "nonretryable_failure" && unit["errorCode"] == unit["resultCode"] })
         && intent["operationId"] == payload["operationId"] && intent["unitId"] == unit["unitId"]
         && intent["inputDigest"] == unit["inputDigest"] && intent["target"] == payload["target"]
         && intent["attemptId"] == attempt["attemptId"] && intent["clientMutationId"] == attempt["attemptId"]
         && reference["clientMutationId"] == attempt["attemptId"] && reference["backendGeneration"] == payload["target"]["backendGeneration"]
-        && reference["lastStatus"] == expected && !reference["lastObservedAt"].is_null()
+        && !reference["restoreId"].is_null() && !reference["lastObservedAt"].is_null()
+        && (if expected == "LOST" { matches!(reference["lastStatus"].as_str(), Some("IDLE" | "RESTORING_CATEGORIES" | "RESTORING_MANGA" | "RESTORING_META" | "RESTORING_SETTINGS")) }
+            else { reference["lastStatus"] == expected })
 }
 
 /// Historical settlement acquires no execution capability and never creates a marker.
@@ -594,6 +599,33 @@ mod tests {
         let lease = begin_operation(dir.path(), "test-scope", &path, &journal.sha256, false).unwrap();
         lease.finish(&path, &journal.sha256).unwrap();
         assert_eq!(read_journal(&path).unwrap().unwrap().contents, journal.contents);
+        assert!(refuse_unresolved(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn a_lost_restore_finishes_only_after_the_server_reported_it_running() {
+        let lost = |last_status: Value, observed: Value| {
+            let mut payload = external_fixture();
+            payload["phase"] = json!("nonretryable_failure"); payload["outcome"] = json!("FAIL");
+            let unit = &mut payload["units"][0];
+            unit["status"] = json!("failed"); unit["resultCode"] = json!("BACKEND_RESTORE_LOST"); unit["errorCode"] = json!("BACKEND_RESTORE_LOST");
+            unit["completedAt"] = json!("2026-09-06T00:00:01.000Z");
+            unit["attempts"][0]["completedAt"] = unit["completedAt"].clone();
+            unit["attempts"][0]["resultCode"] = unit["resultCode"].clone();
+            unit["attempts"][0]["errorCode"] = unit["errorCode"].clone();
+            unit["externalOperationReference"]["lastStatus"] = last_status;
+            unit["externalOperationReference"]["lastObservedAt"] = observed;
+            payload
+        };
+        let at = json!("2026-09-06T00:00:00.500Z");
+        assert!(confirmed_external_terminal(&lost(json!("RESTORING_MANGA"), at.clone())));
+        assert!(!confirmed_external_terminal(&lost(json!("RESTORING_MANGA"), Value::Null)));
+        assert!(!confirmed_external_terminal(&lost(Value::Null, at.clone())));
+        assert!(!confirmed_external_terminal(&lost(json!("SUCCESS"), at.clone())));
+        let dir = tempfile::tempdir().unwrap(); let path = dir.path().join("journal.json");
+        let journal = compare_and_swap_journal(&path, &encode_payload(lost(json!("RESTORING_MANGA"), at)), None).unwrap();
+        let lease = begin_operation(dir.path(), "test-scope", &path, &journal.sha256, false).unwrap();
+        lease.finish(&path, &journal.sha256).unwrap();
         assert!(refuse_unresolved(dir.path()).is_ok());
     }
 
