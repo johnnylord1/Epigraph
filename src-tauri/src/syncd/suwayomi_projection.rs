@@ -224,6 +224,7 @@ pub fn spawn_projection_task(
                         }
                     }
                 }
+                _ = PROJECTION_WAKE.notified() => ticker.reset_immediately(),
                 _ = wait_for_shutdown_request(&mut shutdown) => break,
             }
         }
@@ -408,6 +409,14 @@ static APPLIED_PROJECTIONS: AtomicU64 = AtomicU64::new(0);
 
 pub fn applied_projection_count() -> u64 {
     APPLIED_PROJECTIONS.load(Ordering::Relaxed)
+}
+
+/// Committed mutations wake the projection loop, so a device's changes reach Suwayomi without
+/// waiting out the 2 s tick. Wakes that arrive while a pass runs collapse into one more pass.
+static PROJECTION_WAKE: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+pub fn wake_projection() {
+    PROJECTION_WAKE.notify_one();
 }
 
 /// Applies up to `MAX_BATCH` ready projections (each with the rows grouped behind it) and returns
@@ -2094,6 +2103,22 @@ mod tests {
         );
         assert_eq!(chapter_url_path("/manga/slug/chapter-50"), "/manga/slug/chapter-50");
         assert_eq!(chapter_url_path("https://host.example"), "");
+    }
+
+    #[tokio::test]
+    async fn committed_mutations_make_the_next_pass_due_at_once() {
+        let mut ticker = tokio::time::interval(Duration::from_secs(2));
+        ticker.tick().await;
+        // A burst of commits leaves one pending wake for the loop, not one per commit.
+        wake_projection();
+        wake_projection();
+        tokio::time::timeout(Duration::from_millis(500), PROJECTION_WAKE.notified())
+            .await
+            .expect("a committed mutation wakes the projection loop");
+        ticker.reset_immediately();
+        tokio::time::timeout(Duration::from_millis(500), ticker.tick())
+            .await
+            .expect("the woken loop drains without waiting out the tick");
     }
 
     #[tokio::test]

@@ -318,6 +318,9 @@ pub struct CapabilitiesResponse {
     /// `/v1/events?catalogEvents=true` sends `catalog_revision` (no id) when the revisions in
     /// `/v1/sync/status` change, so devices refresh their catalog without waiting for a poll.
     pub supports_catalog_revision_events_v1: bool,
+    /// `/v1/snapshot?pageSize=` returns the scope in pages ordered by entity type and id, each with
+    /// a `nextCursor` until the last, so bounded clients never need the whole scope in one response.
+    pub supports_paged_snapshot_v1: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,

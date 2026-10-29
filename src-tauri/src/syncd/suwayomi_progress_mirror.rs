@@ -175,27 +175,50 @@ impl MirrorHints {
 struct MirrorRequests {
     wake: Notify,
     pending: std::sync::Mutex<MirrorHints>,
+    /// The same chapter edits, for the fast path that mirrors them without waiting for a tick.
+    edit_wake: Notify,
+    pending_edits: std::sync::Mutex<MirrorHints>,
+    /// Library titles per profile as of the last library read; the fast path writes only these.
+    libraries: std::sync::Mutex<HashMap<String, HashSet<i64>>>,
+}
+
+impl MirrorRequests {
+    fn new() -> Self {
+        Self {
+            wake: Notify::new(),
+            pending: std::sync::Mutex::new(MirrorHints::default()),
+            edit_wake: Notify::new(),
+            pending_edits: std::sync::Mutex::new(MirrorHints::default()),
+            libraries: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn request(&self, manga_ids: &[i64], chapter_ids: &[i64], requested_at_ms: i64) {
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .record(manga_ids, chapter_ids, requested_at_ms);
+        self.wake.notify_one();
+        if chapter_ids.iter().any(|id| *id > 0) {
+            self.pending_edits
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .record(&[], chapter_ids, requested_at_ms);
+            self.edit_wake.notify_one();
+        }
+    }
 }
 
 fn mirror_requests() -> &'static MirrorRequests {
     static REQUESTS: OnceLock<MirrorRequests> = OnceLock::new();
-    REQUESTS.get_or_init(|| MirrorRequests {
-        wake: Notify::new(),
-        pending: std::sync::Mutex::new(MirrorHints::default()),
-    })
+    REQUESTS.get_or_init(MirrorRequests::new)
 }
 
 /// Asks the mirror to run now instead of on its next periodic tick. The desktop calls this after
 /// it changes chapter read, bookmark or page state in Suwayomi; the ids narrow the work to the
 /// edited titles and mark the edited chapters as desktop-originated at the current time.
 pub fn request_immediate_mirror(manga_ids: &[i64], chapter_ids: &[i64]) {
-    let requests = mirror_requests();
-    requests
-        .pending
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .record(manga_ids, chapter_ids, db::now_ms());
-    requests.wake.notify_one();
+    mirror_requests().request(manga_ids, chapter_ids, db::now_ms());
 }
 
 fn catalog_refresh_requests() -> &'static Notify {
@@ -282,6 +305,7 @@ pub fn spawn_progress_mirror_task(
     state: SharedAppState,
     mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
 ) {
+    spawn_desktop_edit_mirror_task(state.clone(), shutdown.clone());
     tokio::spawn(async move {
         tracing::info!("Suwayomi progress mirror started");
         // Do not contend with pairing/bootstrap writes during Core startup. The mirror is a
@@ -329,6 +353,90 @@ pub fn spawn_progress_mirror_task(
     });
 }
 
+/// Mirrors desktop chapter edits as soon as they are requested. A tick reads the whole library
+/// first and may already be running, so devices would otherwise wait for it; this reads only the
+/// edited chapters. The tick still scans those titles, and both writers re-check the stored row
+/// under `mutation_gate`, so a chapter written here is not written again.
+fn spawn_desktop_edit_mirror_task(
+    state: SharedAppState,
+    mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
+) {
+    tokio::spawn(async move {
+        let requests = mirror_requests();
+        loop {
+            tokio::select! {
+                _ = requests.edit_wake.notified() => {}
+                _ = wait_for_shutdown_request(&mut shutdown) => break,
+            }
+            let edits = std::mem::take(
+                &mut *requests
+                    .pending_edits
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            );
+            // Until a tick has read a profile's library, its edits wait for that tick.
+            let libraries = requests
+                .libraries
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            for (profile_id, library_ids) in libraries {
+                match mirror_desktop_edits(&state, &profile_id, &library_ids, &edits).await {
+                    Ok(mirrored) => tracing::debug!(
+                        profile = %profile_id,
+                        mirrored,
+                        "Suwayomi desktop edits mirrored"
+                    ),
+                    Err(error) => tracing::warn!(
+                        profile = %profile_id,
+                        error = %error,
+                        "failed to mirror Suwayomi desktop edits; the next tick retries them"
+                    ),
+                }
+            }
+        }
+    });
+}
+
+async fn mirror_desktop_edits(
+    state: &SharedAppState,
+    profile_id: &str,
+    library_ids: &HashSet<i64>,
+    edits: &MirrorHints,
+) -> anyhow::Result<usize> {
+    if edits.chapter_edits.is_empty() {
+        return Ok(0);
+    }
+    let session = mirror_session(profile_id);
+    let scope_id = format!("comics:profile:{profile_id}");
+    let server_identity = db::load_server_identity(&state.pool).await?;
+    let chapter_ids = edits.chapter_edits.keys().copied().collect::<Vec<_>>();
+    let chapters = fetch_chapters(
+        state,
+        &session,
+        HINTED_CHAPTERS_QUERY,
+        json!({ "ids": chapter_ids }),
+        "hinted chapters",
+    )
+    .await?
+    .into_iter()
+    .filter(|chapter| library_ids.contains(&chapter.manga_id))
+    .collect::<Vec<_>>();
+    // No baselines: the edit request time is the evidence for every chapter here.
+    write_chapter_states(
+        state,
+        &session,
+        &scope_id,
+        &server_identity.server_id,
+        profile_id,
+        &chapters,
+        &HashMap::new(),
+        &edits.chapter_edits,
+        db::now_ms(),
+    )
+    .await
+}
+
 async fn mirror_all_profiles(
     state: &SharedAppState,
     memory: &mut MirrorMemory,
@@ -346,6 +454,11 @@ async fn mirror_all_profiles(
         .collect::<HashSet<_>>();
     memory
         .profiles
+        .retain(|profile, _| live_profiles.contains(profile));
+    mirror_requests()
+        .libraries
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .retain(|profile, _| live_profiles.contains(profile));
     for instance in instances {
         let profile_memory = memory
@@ -382,6 +495,14 @@ async fn mirror_profile(
     // waiting for the progress read below; this keeps them from expiring.
     request_catalog_refresh();
     let library = fetch_library_with_progress(state, &session).await?;
+    mirror_requests()
+        .libraries
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(
+            profile_id.to_string(),
+            library.iter().map(|(manga_id, _)| *manga_id).collect(),
+        );
     // Bookmarks keep their original eligibility (titles with read progress); chapter states below
     // cover the whole library.
     let manga_refs = library
@@ -853,122 +974,18 @@ async fn mirror_chapter_states(
             .into_iter()
             .filter(|chapter| chunk_ids.contains(&chapter.manga_id))
             .collect::<Vec<_>>();
-        let portable = load_portable_refs_batch(state, profile_id, &chapters).await?;
-        let identities = chapters
-            .iter()
-            .map(|chapter| {
-                chapter_state_identity(
-                    server_id,
-                    profile_id,
-                    chapter.manga_id,
-                    chapter.chapter_id,
-                    portable.get(&chapter.chapter_id).cloned(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let stored = load_stored_chapter_states(
+        mirrored += write_chapter_states(
             state,
+            session,
             scope_id,
-            identities
-                .iter()
-                .map(|identity| identity.entity_id.as_str()),
+            server_id,
+            profile_id,
+            &chapters,
+            &memory.baselines,
+            &hints.chapter_edits,
+            observed_at_ms,
         )
         .await?;
-        // Records under the server-local ids of portable chapters; see
-        // `planned_chapter_state_writes`.
-        let legacy_ids = chapters
-            .iter()
-            .zip(&identities)
-            .filter(|(_, identity)| identity.portable_chapter_ref.is_some())
-            .map(|(chapter, _)| {
-                (
-                    chapter.chapter_id,
-                    chapter_state_identity(
-                        server_id,
-                        profile_id,
-                        chapter.manga_id,
-                        chapter.chapter_id,
-                        None,
-                    )
-                    .entity_id,
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        let legacy =
-            load_stored_chapter_states(state, scope_id, legacy_ids.values().map(String::as_str))
-                .await?;
-
-        let mut writes = Vec::new();
-        for (chapter, identity) in chapters.iter().zip(&identities) {
-            let planned = planned_chapter_state_writes(
-                chapter,
-                memory.baselines.get(&chapter.manga_id),
-                hints.chapter_edits.get(&chapter.chapter_id).copied(),
-                stored.get(&identity.entity_id),
-                legacy_ids
-                    .get(&chapter.chapter_id)
-                    .and_then(|entity_id| legacy.get(entity_id)),
-                observed_at_ms,
-            );
-            if let Some(updated_at_ms) = planned.identity {
-                writes.push((
-                    identity.entity_id.clone(),
-                    chapter_state_record(identity, server_id, profile_id, chapter, updated_at_ms),
-                    updated_at_ms,
-                ));
-            }
-            if let Some(updated_at_ms) = planned.legacy {
-                let legacy_identity = chapter_state_identity(
-                    server_id,
-                    profile_id,
-                    chapter.manga_id,
-                    chapter.chapter_id,
-                    None,
-                );
-                writes.push((
-                    legacy_identity.entity_id.clone(),
-                    chapter_state_record(
-                        &legacy_identity,
-                        server_id,
-                        profile_id,
-                        chapter,
-                        updated_at_ms,
-                    ),
-                    updated_at_ms,
-                ));
-            }
-        }
-        for batch in writes.chunks(WRITE_BATCH_SIZE) {
-            let _writer_guard = state.mutation_gate.lock().await;
-            for (entity_id, record, updated_at_ms) in batch {
-                // Re-check against the current row under the gate: a phone mutation may have
-                // landed since the stored states were loaded.
-                let record_json = serde_json::to_string(record)?;
-                if !needs_chapter_state_write(state, scope_id, entity_id, &record_json).await? {
-                    continue;
-                }
-                let event_clock = EventClock {
-                    physical_ms: *updated_at_ms,
-                    logical: 0,
-                    device_generation_id: MIRROR_DEVICE_ID.to_string(),
-                };
-                let outcome = db::apply_mirrored_comic_sync_state_mutation(
-                    &state.pool,
-                    session,
-                    scope_id,
-                    "comic.chapter_state",
-                    entity_id,
-                    record,
-                    *updated_at_ms,
-                    Some(&event_clock),
-                    state.config.retention_window,
-                )
-                .await?;
-                if publish_applied_change(state, &outcome) {
-                    mirrored += 1;
-                }
-            }
-        }
 
         let mut baselines = chunk
             .iter()
@@ -996,6 +1013,140 @@ async fn mirror_chapter_states(
             memory
                 .fingerprints
                 .insert(*manga_id, node.fingerprint.clone());
+        }
+    }
+    Ok(mirrored)
+}
+
+/// Writes the `comic.chapter_state` records that observed `chapters` need; see
+/// [`planned_chapter_state_writes`]. Returns how many writes were applied.
+#[allow(clippy::too_many_arguments)]
+async fn write_chapter_states(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    server_id: &str,
+    profile_id: &str,
+    chapters: &[ChapterNode],
+    baselines: &HashMap<i64, MangaBaseline>,
+    chapter_edits: &HashMap<i64, i64>,
+    observed_at_ms: i64,
+) -> anyhow::Result<usize> {
+    let mut mirrored = 0usize;
+    let portable = load_portable_refs_batch(state, profile_id, chapters).await?;
+    let identities = chapters
+        .iter()
+        .map(|chapter| {
+            chapter_state_identity(
+                server_id,
+                profile_id,
+                chapter.manga_id,
+                chapter.chapter_id,
+                portable.get(&chapter.chapter_id).cloned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let stored = load_stored_chapter_states(
+        state,
+        scope_id,
+        identities
+            .iter()
+            .map(|identity| identity.entity_id.as_str()),
+    )
+    .await?;
+    // Records under the server-local ids of portable chapters; see
+    // `planned_chapter_state_writes`.
+    let legacy_ids = chapters
+        .iter()
+        .zip(&identities)
+        .filter(|(_, identity)| identity.portable_chapter_ref.is_some())
+        .map(|(chapter, _)| {
+            (
+                chapter.chapter_id,
+                chapter_state_identity(
+                    server_id,
+                    profile_id,
+                    chapter.manga_id,
+                    chapter.chapter_id,
+                    None,
+                )
+                .entity_id,
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let legacy =
+        load_stored_chapter_states(state, scope_id, legacy_ids.values().map(String::as_str))
+            .await?;
+
+    let mut writes = Vec::new();
+    for (chapter, identity) in chapters.iter().zip(&identities) {
+        let planned = planned_chapter_state_writes(
+            chapter,
+            baselines.get(&chapter.manga_id),
+            chapter_edits.get(&chapter.chapter_id).copied(),
+            stored.get(&identity.entity_id),
+            legacy_ids
+                .get(&chapter.chapter_id)
+                .and_then(|entity_id| legacy.get(entity_id)),
+            observed_at_ms,
+        );
+        if let Some(updated_at_ms) = planned.identity {
+            writes.push((
+                identity.entity_id.clone(),
+                chapter_state_record(identity, server_id, profile_id, chapter, updated_at_ms),
+                updated_at_ms,
+            ));
+        }
+        if let Some(updated_at_ms) = planned.legacy {
+            let legacy_identity = chapter_state_identity(
+                server_id,
+                profile_id,
+                chapter.manga_id,
+                chapter.chapter_id,
+                None,
+            );
+            writes.push((
+                legacy_identity.entity_id.clone(),
+                chapter_state_record(
+                    &legacy_identity,
+                    server_id,
+                    profile_id,
+                    chapter,
+                    updated_at_ms,
+                ),
+                updated_at_ms,
+            ));
+        }
+    }
+    for batch in writes.chunks(WRITE_BATCH_SIZE) {
+        let _writer_guard = state.mutation_gate.lock().await;
+        for (entity_id, record, updated_at_ms) in batch {
+            // Re-check against the current row under the gate: a phone mutation may have
+            // landed since the stored states were loaded.
+            let record_json = serde_json::to_string(record)?;
+            if !needs_chapter_state_write(state, scope_id, entity_id, &record_json).await? {
+                continue;
+            }
+            let event_clock = EventClock {
+                physical_ms: *updated_at_ms,
+                logical: 0,
+                device_generation_id: MIRROR_DEVICE_ID.to_string(),
+            };
+            let outcome = db::apply_mirrored_comic_sync_state_mutation(
+                &state.pool,
+                session,
+                scope_id,
+                "comic.chapter_state",
+                entity_id,
+                record,
+                *updated_at_ms,
+                Some(&event_clock),
+                state.config.retention_window,
+            )
+            .await?;
+            if publish_applied_change(state, &outcome) {
+                mirrored += 1;
+            }
         }
     }
     Ok(mirrored)
@@ -2342,5 +2493,22 @@ mod tests {
         assert_eq!(hints.chapter_edits.get(&509), Some(&1_000));
         assert!(!hints.is_empty());
         assert!(MirrorHints::default().is_empty());
+    }
+
+    #[test]
+    fn queues_only_chapter_edits_for_the_fast_path() {
+        let requests = MirrorRequests::new();
+        let take =
+            |queue: &std::sync::Mutex<MirrorHints>| std::mem::take(&mut *queue.lock().unwrap());
+        requests.request(&[7], &[], 1_000);
+        assert!(take(&requests.pending_edits).is_empty());
+        requests.request(&[7], &[901, 0], 2_000);
+        let edits = take(&requests.pending_edits);
+        assert!(edits.manga_ids.is_empty());
+        assert_eq!(edits.chapter_edits, HashMap::from([(901, 2_000)]));
+        // The tick still receives every request.
+        let hints = take(&requests.pending);
+        assert_eq!(hints.manga_ids, BTreeSet::from([7]));
+        assert_eq!(hints.chapter_edits, HashMap::from([(901, 2_000)]));
     }
 }

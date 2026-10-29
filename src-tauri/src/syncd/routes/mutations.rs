@@ -2035,6 +2035,13 @@ pub async fn post_mutations(
         }
     }
 
+    if results
+        .iter()
+        .any(|result| result.status == MutationResultStatus::Applied)
+    {
+        crate::syncd::suwayomi_projection::wake_projection();
+    }
+
     Ok(Json(MutationsResponse {
         request_id: request.request_id,
         current_server_version,

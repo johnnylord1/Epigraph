@@ -970,6 +970,7 @@ mod tests {
         assert_eq!(payload["supportsConfirmedSuwayomiCommandsV1"], true);
         assert_eq!(payload["supportsSyncStatusV1"], true);
         assert_eq!(payload["supportsSessionEndV1"], true);
+        assert_eq!(payload["supportsPagedSnapshotV1"], true);
         assert_eq!(payload["supportsComicDeleteProjectionWithoutRecord"], true);
         assert_eq!(payload["supportsSuwayomiCategoryCreate"], true);
         assert_eq!(payload["supportsSuwayomiExtensionInstall"], true);
@@ -1804,6 +1805,128 @@ mod tests {
             payload["tombstones"][0]["serverVersion"],
             payload["snapshotVersion"]
         );
+    }
+
+    #[tokio::test]
+    async fn paged_snapshot_returns_the_whole_scope_in_ordered_pages() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["books:global"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state);
+        let (seed_status, _) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(complete_book_mutations()),
+        )
+        .await;
+        assert_eq!(seed_status, StatusCode::OK);
+        let (delete_status, _) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(serde_json::json!({
+                "requestId": "delete-book",
+                "mutations": [{
+                    "entityType": "book.entry",
+                    "clientMutationId": "delete-book-1",
+                    "scopeId": "books:global",
+                    "entityId": "book-1",
+                    "op": "delete",
+                    "lamport": 10
+                }]
+            })),
+        )
+        .await;
+        assert_eq!(delete_status, StatusCode::OK);
+
+        let (status, whole) = request_json(
+            &app,
+            Method::GET,
+            "/v1/snapshot?scopeId=books%3Aglobal",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(whole.get("nextCursor").is_none());
+        let key = |entity: &serde_json::Value| {
+            (
+                entity["entityType"].as_str().unwrap().to_string(),
+                entity["entityId"].as_str().unwrap().to_string(),
+            )
+        };
+        let mut expected = whole["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(key)
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert!(expected.len() > 2, "{whole}");
+
+        let mut fetched = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut pages = 0;
+        loop {
+            let uri = match &cursor {
+                Some(cursor) => format!("/v1/snapshot?scopeId=books%3Aglobal&pageSize=2&cursor={cursor}"),
+                None => "/v1/snapshot?scopeId=books%3Aglobal&pageSize=2".to_string(),
+            };
+            let (status, page) = request_json(&app, Method::GET, &uri, Some("secret-token"), None).await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            pages += 1;
+            let entities = page["entities"].as_array().unwrap();
+            assert_eq!(page["entityCount"], entities.len());
+            assert!(entities.len() <= 2);
+            assert_eq!(page["snapshotVersion"], whole["snapshotVersion"]);
+            fetched.extend(entities.iter().map(key));
+            match page.get("nextCursor").and_then(|next| next.as_str()) {
+                Some(next) => {
+                    assert_eq!(page["complete"], false);
+                    assert_eq!(page["tombstones"], serde_json::json!([]));
+                    cursor = Some(next.to_string());
+                }
+                None => {
+                    assert_eq!(page["complete"], true);
+                    assert_eq!(page["tombstones"], whole["tombstones"]);
+                    break;
+                }
+            }
+        }
+        assert_eq!(pages, expected.len().div_ceil(2));
+        assert_eq!(fetched, expected);
+
+        let (status, _) = request_json(
+            &app,
+            Method::GET,
+            "/v1/snapshot?scopeId=books%3Aglobal&pageSize=2&cursor=not-a-cursor",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = request_json(
+            &app,
+            Method::GET,
+            &format!(
+                "/v1/snapshot?scopeId=books%3Aglobal&cursor={}",
+                cursor.unwrap_or_default()
+            ),
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
