@@ -238,6 +238,9 @@ CREATE TABLE aethon_chapter_binding (
 
 CREATE INDEX aethon_chapter_binding_work_index ON aethon_chapter_binding(work_entity_id, ordinal);
 
+-- Chapter edits, reader progress and chapter deletes look bindings up by local chapter alone.
+CREATE INDEX aethon_chapter_binding_local_chapter_index ON aethon_chapter_binding(local_chapter_id);
+
 CREATE TABLE aethon_reader_progress (
     entity_id TEXT NOT NULL PRIMARY KEY,
     chapter_entity_id TEXT,
