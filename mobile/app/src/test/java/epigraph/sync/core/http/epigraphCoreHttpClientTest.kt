@@ -92,6 +92,23 @@ class EpigraphCoreHttpClientTest {
     }
 
     @Test
+    fun `paged snapshot sends page size and cursor only when asked`() = runTest {
+        val fake = FakeCoreInterceptor { request -> response(request, 200, SNAPSHOT_JSON) }
+        val client = coreClient(fake)
+
+        client.snapshot("token", "comics:profile:main")
+        client.snapshot("token", "comics:profile:main", pageSize = 4000)
+        client.snapshot("token", "comics:profile:main", pageSize = 4000, cursor = "WyJhIiwiYiJd")
+
+        assertFalse(fake.requests[0].url.queryParameterNames.contains("pageSize"))
+        assertFalse(fake.requests[0].url.queryParameterNames.contains("cursor"))
+        assertEquals("4000", fake.requests[1].url.queryParameter("pageSize"))
+        assertFalse(fake.requests[1].url.queryParameterNames.contains("cursor"))
+        assertEquals("4000", fake.requests[2].url.queryParameter("pageSize"))
+        assertEquals("WyJhIiwiYiJd", fake.requests[2].url.queryParameter("cursor"))
+    }
+
+    @Test
     fun `mutation request is flat JSON and HTTP 200 rejections stay successful responses`() = runTest {
         val fake = FakeCoreInterceptor { request ->
             assertEquals("POST", request.method)

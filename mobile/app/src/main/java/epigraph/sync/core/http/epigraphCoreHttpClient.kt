@@ -144,14 +144,23 @@ class EpigraphCoreHttpClient internal constructor(
             }
         }
 
+    /** Without [pageSize] the whole scope comes back; with it, one page after [cursor]. */
     suspend fun snapshot(
         accessToken: String,
         scopeId: String,
+        pageSize: Int? = null,
+        cursor: String? = null,
     ): CoreHttpResult<CoreSnapshot> {
         require(scopeId.isNotBlank()) { "scopeId must not be blank" }
+        require(pageSize == null || pageSize > 0) { "pageSize must be positive" }
+        require(cursor == null || pageSize != null) { "a snapshot cursor needs a page size" }
         val url = endpoint("v1/snapshot")
             .newBuilder()
             .addQueryParameter("scopeId", scopeId)
+            .apply {
+                pageSize?.let { addQueryParameter("pageSize", it.toString()) }
+                cursor?.let { addQueryParameter("cursor", it) }
+            }
             .build()
         return execute(
             protectedRequestBuilder(url, accessToken)

@@ -178,6 +178,63 @@ class CoreReplicaApplierTest {
     }
 
     @Test
+    fun `snapshot pages are applied as one replacement checkpointed at the first page`() = runTest {
+        val store = FakeReplicaStore().apply {
+            confirmed[key("books:global", "old")] = record("books:global", "old", 1)
+        }
+        val pages = listOf(
+            page(8, listOf(entity("a", 5), entity("b", 6)), cursor = "c1"),
+            page(9, listOf(entity("c", 9), entity("gone", 4)), cursor = "c2"),
+            page(9, emptyList(), tombstones = listOf(tombstone("gone", 9), tombstone("x", 2))),
+        )
+
+        val result = CoreReplicaApplier(store).applySnapshotPages(pages, capabilities())
+
+        assertEquals(setOf("a", "b", "c"), store.confirmed.keys.map { it.entityId }.toSet())
+        assertEquals(setOf("gone", "x"), store.tombstones.keys.map { it.entityId }.toSet())
+        assertEquals(listOf("replace:books:global", "checkpoint:8", "commit"), store.operations)
+        assertEquals(8, result.checkpoint.lastGlobalEventId)
+        assertEquals(1, store.transactionCount)
+    }
+
+    @Test
+    fun `entity newer than its tombstone across pages survives`() = runTest {
+        val store = FakeReplicaStore()
+        val pages = listOf(
+            page(10, listOf(entity("a", 10)), cursor = "c1"),
+            page(10, emptyList(), tombstones = listOf(tombstone("a", 7))),
+        )
+
+        CoreReplicaApplier(store).applySnapshotPages(pages, capabilities())
+
+        assertEquals(setOf("a"), store.confirmed.keys.map { it.entityId }.toSet())
+        assertEquals(emptyMap<CoreReplicaKey, CoreConfirmedTombstone>(), store.tombstones)
+    }
+
+    @Test
+    fun `broken page chains are rejected before transaction`() {
+        val chains = listOf(
+            // Last page still continues.
+            listOf(page(8, listOf(entity("a", 1)), cursor = "c1")),
+            // A middle page claims to be the end.
+            listOf(page(8, listOf(entity("a", 1))), page(8, listOf(entity("b", 1)))),
+            // The same entity on two pages.
+            listOf(page(8, listOf(entity("a", 1)), cursor = "c1"), page(8, listOf(entity("a", 1)))),
+            // Pages from another scope.
+            listOf(page(8, listOf(entity("a", 1)), cursor = "c1"), page(8, listOf(entity("b", 1)), scope = "novels:profile:main")),
+            // Snapshot version going back.
+            listOf(page(9, listOf(entity("a", 1)), cursor = "c1"), page(8, listOf(entity("b", 1)))),
+        )
+        chains.forEach { pages ->
+            val store = FakeReplicaStore()
+            assertThrows(CoreReplicaProtocolException::class.java) {
+                runTest { CoreReplicaApplier(store).applySnapshotPages(pages, capabilities()) }
+            }
+            assertEquals(0, store.transactionCount)
+        }
+    }
+
+    @Test
     fun `merge change upserts one entity without deleting absent records`() = runTest {
         val store = FakeReplicaStore().apply {
             confirmed[key("books:global", "untouched")] = record("books:global", "untouched", 2)
@@ -354,6 +411,32 @@ class CoreReplicaApplierTest {
             CoreSnapshotTombstone("book.entry", "deleted", 7, 3, 1000, "removed"),
         ),
     )
+
+    private fun page(
+        snapshotVersion: Long,
+        entities: List<CoreSnapshotEntity>,
+        tombstones: List<CoreSnapshotTombstone> = emptyList(),
+        cursor: String? = null,
+        scope: String = "books:global",
+    ) = CoreSnapshot(
+        schemaVersion = EpigraphCoreWireProtocol.SNAPSHOT_SCHEMA_VERSION,
+        snapshotId = "snapshot-$scope-$snapshotVersion",
+        complete = cursor == null,
+        entityCount = entities.size,
+        tombstoneCount = tombstones.size,
+        scopeId = scope,
+        snapshotVersion = snapshotVersion,
+        minReplayableServerVersion = 1,
+        entities = entities,
+        tombstones = tombstones,
+        nextCursor = cursor,
+    )
+
+    private fun entity(id: String, version: Long) =
+        CoreSnapshotEntity("book.entry", id, version, version, JsonPrimitive(id))
+
+    private fun tombstone(id: String, version: Long) =
+        CoreSnapshotTombstone("book.entry", id, version, version, 1000, "removed")
 
     private fun change(
         version: Long,

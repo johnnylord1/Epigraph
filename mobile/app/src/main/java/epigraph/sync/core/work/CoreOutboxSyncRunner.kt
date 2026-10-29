@@ -31,6 +31,7 @@ import epigraph.sync.core.policy.SyncPolicyResolver
 import epigraph.sync.core.replica.CoreReplicaApplier
 import epigraph.sync.core.replica.CoreReplicaCheckpointReader
 import epigraph.sync.core.replica.CoreReplicaCheckpointResetter
+import epigraph.sync.core.replica.fetchAndApplySnapshot
 import epigraph.sync.core.replay.CoreReplayCoverage
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.suwayomi.SuwayomiMutationDrainReport
@@ -389,12 +390,10 @@ class SnapshotCoreReplicaSync(
                         historyResetter != null
                     ) {
                         historyResetter.reset()
-                        when (val snapshot = http.snapshot(accessToken, scopeId)) {
-                            is CoreHttpResult.Success -> applier.applySnapshot(
-                                snapshot.value,
-                                capabilities,
-                                credentials.serverId,
-                            )
+                        when (
+                            val snapshot = applier.fetchAndApplySnapshot(http, accessToken, scopeId, capabilities, credentials.serverId)
+                        ) {
+                            is CoreHttpResult.Success -> Unit
                             is CoreHttpResult.Failure -> return@withAccessTokenString snapshot.toReplicaOutcome()
                         }
                         continue
@@ -434,21 +433,17 @@ class SnapshotCoreReplicaSync(
                                     )
                                 }
                             }
-                            when (val snapshot = http.snapshot(accessToken, scopeId)) {
-                                is CoreHttpResult.Success -> applier.applySnapshot(
-                                    snapshot.value,
-                                    capabilities,
-                                    credentials.serverId,
-                                )
+                            when (
+                                val snapshot = applier.fetchAndApplySnapshot(http, accessToken, scopeId, capabilities, credentials.serverId)
+                            ) {
+                                is CoreHttpResult.Success -> Unit
                                 is CoreHttpResult.Failure -> return@withAccessTokenString snapshot.toReplicaOutcome()
                             }
                         }
-                        null -> when (val snapshot = http.snapshot(accessToken, scopeId)) {
-                            is CoreHttpResult.Success -> applier.applySnapshot(
-                                snapshot.value,
-                                capabilities,
-                                credentials.serverId,
-                            )
+                        null -> when (
+                            val snapshot = applier.fetchAndApplySnapshot(http, accessToken, scopeId, capabilities, credentials.serverId)
+                        ) {
+                            is CoreHttpResult.Success -> Unit
                             is CoreHttpResult.Failure -> return@withAccessTokenString snapshot.toReplicaOutcome()
                         }
                     }
