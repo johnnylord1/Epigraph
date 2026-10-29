@@ -30,24 +30,32 @@ export interface LibraryLayoutResult extends LibraryDisplaySpec {
   preferredColumns: LibraryPreferredGridColumns;
   effectiveColumns: number;
   isList: boolean;
-  listCoverWidth: number;
+  /** Height of one list row when the density fixes how many fit on screen; null keeps the natural size. */
+  listRowHeight: number | null;
 }
 
-// The list has one item per row, so the density setting sizes its covers instead: fewer items per
-// row means bigger covers. Auto keeps the list's original size.
-const LIST_COVER_WIDTHS: Record<LibraryPreferredGridColumns, number> = {
-  auto: 46,
-  4: 72,
-  5: 64,
-  6: 57,
-  7: 51,
-  8: 46,
-  9: 41,
-  10: 36,
-};
+export const LIBRARY_LIST_ROW_GAP = 2;
+// Below this a row cannot hold its title and meta line, so fewer rows fit instead.
+const MIN_LIST_ROW_HEIGHT = 44;
 
-export function listCoverWidthFor(preferredColumns: LibraryPreferredGridColumns): number {
-  return LIST_COVER_WIDTHS[preferredColumns] ?? LIST_COVER_WIDTHS.auto;
+/** The scroll container's height without its padding, so the first and last list rows are not cut off. */
+export function measureListViewportHeight(element: HTMLElement): number {
+  const style = getComputedStyle(element);
+  return element.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0);
+}
+
+/**
+ * The grid divides the width by the density; the list has one item per row, so it divides the
+ * visible height instead: 4 means four rows fill the screen. Auto keeps the list's natural size.
+ */
+export function computeListRowHeight(
+  availableHeight: number,
+  preferredColumns: LibraryPreferredGridColumns,
+): number | null {
+  if (preferredColumns === "auto" || availableHeight <= 0) return null;
+  const rows = clampColumns(preferredColumns);
+  const height = Math.floor((availableHeight + LIBRARY_LIST_ROW_GAP) / rows) - LIBRARY_LIST_ROW_GAP;
+  return Math.max(MIN_LIST_ROW_HEIGHT, height);
 }
 
 const DISPLAY_SPECS: Record<LibraryViewMode, LibraryDisplaySpec> = {
@@ -111,6 +119,7 @@ export function computeEffectiveLibraryColumns(input: ComputeEffectiveLibraryCol
 
 export function computeLibraryLayout(input: {
   availableWidth: number;
+  availableHeight?: number;
   preferredColumns: LibraryPreferredGridColumns;
   mode: LibraryViewMode;
 }): LibraryLayoutResult {
@@ -129,6 +138,8 @@ export function computeLibraryLayout(input: {
     preferredColumns: input.preferredColumns,
     effectiveColumns,
     isList: input.mode === "list",
-    listCoverWidth: listCoverWidthFor(input.preferredColumns),
+    listRowHeight: input.mode === "list"
+      ? computeListRowHeight(input.availableHeight ?? 0, input.preferredColumns)
+      : null,
   };
 }

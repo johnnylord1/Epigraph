@@ -26,7 +26,7 @@
     hasLibraryCoverFailed,
     markLibraryCoverFailed,
   } from "../../lib/library/coverFailure";
-  import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
+  import { computeLibraryLayout, measureListViewportHeight, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { ComicsSectionVM } from "../../lib/library/contracts";
   import { getCategoryDisplayName } from "../../lib/library/categories";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
@@ -107,6 +107,7 @@
 
   let contentEl: HTMLDivElement | null = $state(null);
   let contentWidth = $state(0);
+  let contentHeight = $state(0);
   let ctx: { x: number; y: number; manga: Manga } | null = $state(null);
   let emptyCtx: { x: number; y: number } | null = $state(null);
   let selectMode = $state(false);
@@ -156,6 +157,7 @@
   const layout = $derived(
     computeLibraryLayout({
       availableWidth: contentWidth,
+      availableHeight: contentHeight,
       preferredColumns,
       mode: viewMode,
     }),
@@ -165,6 +167,8 @@
     if (!contentEl) return;
     const nextWidth = contentEl.clientWidth;
     if (nextWidth > 0 && nextWidth !== contentWidth) contentWidth = nextWidth;
+    const nextHeight = measureListViewportHeight(contentEl);
+    if (nextHeight > 0 && nextHeight !== contentHeight) contentHeight = nextHeight;
   }
   // Card view models are built lazily by the grid; drop cached ones for titles no longer listed.
   $effect(() => {
@@ -582,7 +586,7 @@
   function scrollToMangaIndex(mangaIndex: number) {
     if (!contentEl || mangaIndex < 0) return;
     const rowIndex = Math.floor(mangaIndex / Math.max(1, layout.effectiveColumns));
-    const targetTop = rowIndex * estimateLibraryVirtualRowSize(viewMode, layout.listCoverWidth);
+    const targetTop = rowIndex * estimateLibraryVirtualRowSize(viewMode, layout.listRowHeight);
     if (typeof contentEl.scrollTo === "function") {
       contentEl.scrollTo({ top: targetTop });
     } else {
@@ -1067,7 +1071,7 @@
       getItemId={getComicsCardIdAt}
       {viewMode}
       effectiveColumns={layout.effectiveColumns}
-      listCoverWidth={layout.listCoverWidth}
+      listRowHeight={layout.listRowHeight}
       scrollElement={contentEl}
       {showProgress}
       {showOutline}

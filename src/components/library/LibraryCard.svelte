@@ -520,7 +520,7 @@
      one title line, one quiet meta line and a thin progress line on the right. */
   .card-list {
     display: grid;
-    grid-template-columns: calc(var(--library-list-cover-width, 46px) * var(--component-library-scale, 1)) minmax(0, 1fr) auto;
+    grid-template-columns: var(--library-list-cover-size, calc(46px * var(--component-library-scale, 1))) minmax(0, 1fr) auto;
     gap: calc(14px * var(--component-library-scale, 1));
     align-items: center;
     padding: calc(8px * var(--component-library-scale, 1)) calc(10px * var(--component-library-scale, 1));

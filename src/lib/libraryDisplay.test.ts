@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   computeEffectiveLibraryColumns,
   computeLibraryLayout,
   getLibraryDisplaySpec,
-  listCoverWidthFor,
+  computeListRowHeight,
+  LIBRARY_LIST_ROW_GAP,
+  measureListViewportHeight,
 } from "./libraryDisplay";
 
 describe("libraryDisplay", () => {
@@ -103,11 +105,26 @@ describe("libraryDisplay", () => {
     expect(layout.effectiveColumns).toBe(1);
   });
 
-  it("turns the density setting into the list's cover size", () => {
-    const widths = ([4, 5, 6, 7, 8, 9, 10] as const).map(listCoverWidthFor);
-    expect(widths).toEqual([...widths].sort((a, b) => b - a));
-    expect(new Set(widths).size).toBe(widths.length);
-    expect(listCoverWidthFor("auto")).toBe(46);
-    expect(computeLibraryLayout({ availableWidth: 640, preferredColumns: 4, mode: "list" }).listCoverWidth).toBe(72);
+  it("fits the chosen number of list rows in the visible height", () => {
+    for (const rows of [4, 7, 10] as const) {
+      const height = computeListRowHeight(560, rows);
+      expect(height).not.toBeNull();
+      expect(rows * (height! + LIBRARY_LIST_ROW_GAP)).toBeLessThanOrEqual(560 + LIBRARY_LIST_ROW_GAP);
+      expect((rows + 1) * (height! + LIBRARY_LIST_ROW_GAP)).toBeGreaterThan(560 + LIBRARY_LIST_ROW_GAP);
+    }
+    expect(computeListRowHeight(560, "auto")).toBeNull();
+    expect(computeListRowHeight(0, 4)).toBeNull();
+    expect(computeListRowHeight(200, 10)).toBe(44);
+    expect(computeLibraryLayout({ availableWidth: 640, availableHeight: 560, preferredColumns: 4, mode: "list" }).listRowHeight).toBe(138);
+    expect(computeLibraryLayout({ availableWidth: 640, availableHeight: 560, preferredColumns: 4, mode: "grid" }).listRowHeight).toBeNull();
+  });
+
+  it("measures the list height without the scroll container padding", () => {
+    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "20px", paddingBottom: "24px" }));
+    try {
+      expect(measureListViewportHeight({ clientHeight: 583 } as HTMLElement)).toBe(539);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -101,7 +101,7 @@ describe("LibraryToolbar", () => {
     expect(onImport).toHaveBeenCalledTimes(1);
   });
 
-  test("keeps the density slider working in list mode, where it sizes the covers", async () => {
+  test("keeps the density slider working in list mode, where it counts rows per screen", async () => {
     const onPreferredColumnsChange = vi.fn();
     render(LibraryToolbar, {
       props: {
@@ -123,7 +123,7 @@ describe("LibraryToolbar", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Display" }));
-    const slider = screen.getByRole("slider", { name: "Cover size" }) as HTMLInputElement;
+    const slider = screen.getByRole("slider", { name: "Items per screen" }) as HTMLInputElement;
     expect(slider.disabled).toBe(false);
     await fireEvent.input(slider, { target: { value: "1" } });
     expect(onPreferredColumnsChange).toHaveBeenCalledWith(4);

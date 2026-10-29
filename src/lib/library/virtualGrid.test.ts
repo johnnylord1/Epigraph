@@ -54,6 +54,6 @@ describe("library virtual grid helpers", () => {
   test("keeps deterministic row estimates per view mode", () => {
     expect(estimateLibraryVirtualRowSize("list")).toBeGreaterThan(0);
     expect(estimateLibraryVirtualRowSize("compact_grid")).toBeLessThan(estimateLibraryVirtualRowSize("grid"));
-    expect(estimateLibraryVirtualRowSize("list", 72)).toBeGreaterThan(estimateLibraryVirtualRowSize("list", 36));
+    expect(estimateLibraryVirtualRowSize("list", 138)).toBe(140);
   });
 });

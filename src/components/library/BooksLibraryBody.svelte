@@ -24,7 +24,7 @@
     sortBooksCategories,
     toggleBookCategoryAssignment,
   } from "../../lib/library/domainCategories";
-  import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
+  import { computeLibraryLayout, measureListViewportHeight, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { BooksSectionVM, LibraryCardVM } from "../../lib/library/contracts";
   import {
     buildNovelShelfCard,
@@ -89,6 +89,7 @@
   let prewarmStartIndex = $state(0);
   let prewarmEndIndex = $state(0);
   let contentWidth = $state(0);
+  let contentHeight = $state(0);
   let ctx: { x: number; y: number; book: BookEntry } | null = $state(null);
   let scrollReady = false;
   let viewStateReady = false;
@@ -146,6 +147,7 @@
   const layout = $derived(
     computeLibraryLayout({
       availableWidth: contentWidth,
+      availableHeight: contentHeight,
       preferredColumns,
       mode: viewMode,
     }),
@@ -155,6 +157,8 @@
     if (!contentEl) return;
     const nextWidth = contentEl.clientWidth;
     if (nextWidth > 0 && nextWidth !== contentWidth) contentWidth = nextWidth;
+    const nextHeight = measureListViewportHeight(contentEl);
+    if (nextHeight > 0 && nextHeight !== contentHeight) contentHeight = nextHeight;
   }
 
   function bookCoverKey(book: Pick<BookEntry, "id" | "coverPath" | "updatedAt">): string {
@@ -626,6 +630,7 @@
   $effect(() => {
     if (!active || !contentEl) return;
     contentWidth = contentEl.clientWidth;
+    contentHeight = measureListViewportHeight(contentEl);
   });
 
   $effect(() => {
@@ -773,7 +778,7 @@
       getItemId={getCardIdAt}
       {viewMode}
       effectiveColumns={layout.effectiveColumns}
-      listCoverWidth={layout.listCoverWidth}
+      listRowHeight={layout.listRowHeight}
       scrollElement={contentEl}
       {showProgress}
       {showOutline}

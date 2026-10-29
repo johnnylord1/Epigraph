@@ -25,9 +25,10 @@ export function buildVirtualLibraryRows(
   return rows;
 }
 
-// A list row is its 2:3 cover plus 16px of padding and the 2px row gap.
-export function estimateLibraryVirtualRowSize(viewMode: LibraryViewMode, listCoverWidth = 46): number {
-  if (viewMode === "list") return Math.round(listCoverWidth * 1.5) + 18;
+// A natural list row is its 46px 2:3 cover plus 16px of padding; the density can fix the row height.
+// Both include the 2px row gap.
+export function estimateLibraryVirtualRowSize(viewMode: LibraryViewMode, listRowHeight: number | null = null): number {
+  if (viewMode === "list") return (listRowHeight ?? 85) + 2;
   if (viewMode === "compact_grid") return 236;
   return 276;
 }

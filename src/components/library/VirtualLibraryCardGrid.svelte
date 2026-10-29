@@ -29,7 +29,7 @@
     getItemId?: (index: number) => string;
     viewMode?: LibraryViewMode;
     effectiveColumns?: number;
-    listCoverWidth?: number;
+    listRowHeight?: number | null;
     scrollElement?: HTMLElement | null;
     showProgress?: boolean;
     showOutline?: boolean;
@@ -54,7 +54,7 @@
     getItemId,
     viewMode = "grid",
     effectiveColumns = 1,
-    listCoverWidth = 46,
+    listRowHeight = null,
     scrollElement = null,
     showProgress = true,
     showOutline = true,
@@ -97,13 +97,20 @@
     return usable > 0 ? usable / safeColumns : 148;
   });
   const estimatedItemHeight = $derived.by(() => {
-    if (viewMode === "list") return estimateLibraryVirtualRowSize(viewMode, listCoverWidth) - 2;
+    if (viewMode === "list") return estimateLibraryVirtualRowSize(viewMode, listRowHeight) - 2;
     const copyHeight = viewMode === "compact_grid" ? 38 : 66;
     return Math.max(
       estimateLibraryVirtualRowSize(viewMode) - fallbackRowGap,
       Math.ceil(columnWidth * 1.5 + copyHeight),
     );
   });
+  // A fixed list row height becomes the cover width: the row is the 2:3 cover plus 8px of padding
+  // above and below, both at the library scale.
+  const listCoverStyle = $derived(
+    viewMode === "list" && listRowHeight
+      ? `--library-list-cover-size:max(20px, calc((${listRowHeight}px - 16px * var(--component-library-scale, 1)) / 1.5));`
+      : "",
+  );
   const rowSize = $derived(Math.max(1, (measuredItemHeight || estimatedItemHeight) + rowGap));
   const totalSize = $derived(Math.max(0, virtualRowCount * rowSize - rowGap));
   const overscanRows = $derived(viewMode === "list" ? 5 : 4);
@@ -312,7 +319,7 @@
   class:grid-compact={viewMode === "compact_grid"}
   class:grid-list={viewMode === "list"}
   bind:this={gridEl}
-  style={`height:${totalSize}px;--library-list-cover-width:${listCoverWidth}px;`}
+  style={`height:${totalSize}px;${listCoverStyle}`}
 >
   <span class="gap-probe" aria-hidden="true" bind:this={gapProbe}></span>
   {#each renderedItems as item (item.vm.id)}

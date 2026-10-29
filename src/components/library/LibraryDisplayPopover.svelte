@@ -35,12 +35,12 @@
   const densityLabel = $derived(
     settings.preferredColumns === "auto" ? $_("library.display.auto") : String(settings.preferredColumns),
   );
-  // In the list the same setting sizes the covers, since every row holds one item.
+  // In the list every row holds one item, so the same setting counts rows per screen.
   const densityTitle = $derived(
-    settings.viewMode === "list" ? $_("library.display.coverSize") : $_("library.display.itemsPerRow"),
+    settings.viewMode === "list" ? $_("library.display.itemsPerScreen") : $_("library.display.itemsPerRow"),
   );
   const densityHint = $derived(
-    settings.viewMode === "list" ? $_("library.display.coverSizeHint") : $_("library.display.itemsPerRowHint"),
+    settings.viewMode === "list" ? $_("library.display.itemsPerScreenHint") : $_("library.display.itemsPerRowHint"),
   );
   let visualViewMode = $state<LibraryViewMode>("grid");
   let visualShowProgress = $state(true);
