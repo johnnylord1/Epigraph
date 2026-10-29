@@ -7,7 +7,9 @@ const {
   searchMock,
   ensureServerAwakeForMock,
   waitForSuwayomiGraphqlReadyMock,
+  applyMigrationMock,
 } = vi.hoisted(() => ({
+  applyMigrationMock: vi.fn(),
   gqlMock: vi.fn(),
   searchMock: vi.fn(async (_input: { sourceId: string }) => [] as unknown[]),
   ensureServerAwakeForMock: vi.fn(async () => true),
@@ -33,6 +35,14 @@ vi.mock("../../lib/suwayomiReadiness", () => ({
   waitForSuwayomiGraphqlReady: waitForSuwayomiGraphqlReadyMock,
 }));
 
+vi.mock("../../lib/manga/runtime", () => ({
+  fetchSourceMangaChapters: vi.fn(async () => ({ fetchChapters: { chapters: [] } })),
+}));
+
+vi.mock("../../lib/discord", () => ({
+  setMigrationPresence: vi.fn(),
+}));
+
 vi.mock("../../lib/manga/sourceSearch", () => ({
   fetchSourceMangaSearchWithFallback: searchMock,
 }));
@@ -47,7 +57,7 @@ vi.mock("../../lib/manga/coverResolver", () => ({
 }));
 
 vi.mock("../../lib/migration/manga", () => ({
-  applyMangaMigrationWithJournal: vi.fn(),
+  applyMangaMigrationWithJournal: applyMigrationMock,
   applyMassMangaMigrationWithJournal: vi.fn(),
   previewMassMangaMigration: vi.fn(),
   undoMangaMigration: vi.fn(),
@@ -132,23 +142,19 @@ describe("MigrateModal", () => {
     expect(document.querySelector("[data-migration-source-searching]")).toBeNull();
   });
 
-  test("shows one best match per source and keeps the other titles in its menu", async () => {
-    const titles = [
-      "Dangerous Dungeon Escape",
-      "Dungeon Escape Side Story",
-      "Escape Plan",
-      "Dangerous Dungeon",
-      "Dungeon Odyssey",
-      "Escape Artist",
-      "Dungeon Reset",
-      "Dangerous Love",
-    ];
+  test("shows one best match per source with Mihon's actions in its menu", async () => {
+    const titles = ["Dangerous Dungeon Escape", "Dungeon Escape Side Story", "Escape Plan", "Dangerous Love"];
     searchMock.mockReset();
     searchMock.mockImplementation(async ({ sourceId }: { sourceId: string }) => titles.map((title, index) => ({
-      id: 100 + index, title, thumbnailUrl: "", inLibrary: false, source: { id: sourceId },
+      id: (sourceId === "asura-src" ? 100 : 200) + index, title, thumbnailUrl: "", inLibrary: false, source: { id: sourceId },
     })));
     gqlMock.mockResolvedValueOnce({
-      sources: { nodes: [{ id: "asura-src", name: "asura", displayName: "Asura Scans", lang: "en", iconUrl: "", isNsfw: false }] },
+      sources: {
+        nodes: [
+          { id: "asura-src", name: "asura", displayName: "Asura Scans", lang: "en", iconUrl: "", isNsfw: false },
+          { id: "flame-src", name: "flame", displayName: "Flame Scans", lang: "en", iconUrl: "", isNsfw: false },
+        ],
+      },
     });
 
     render(MigrateModal, { props: { manga, currentChapters: [], onClose: vi.fn(), onMigrated: vi.fn() } });
@@ -158,20 +164,58 @@ describe("MigrateModal", () => {
     const rows = group.querySelectorAll("[data-migration-result]");
     expect(rows).toHaveLength(1);
     expect(rows[0].textContent).toContain("Dangerous Dungeon Escape");
-    expect(group.textContent).toContain("8 results");
+    expect(group.textContent).toContain("4 results");
 
-    await fireEvent.click(screen.getByRole("button", { name: "More matches from Asura Scans" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Options for Asura Scans" }));
     const menu = await screen.findByRole("menu");
-    expect(menu.querySelectorAll("[data-migration-alternative]")).toHaveLength(5);
-    expect(menu.textContent).not.toContain("Dangerous Dungeon Escape");
+    expect([...menu.querySelectorAll("[role=menuitem]")].map((item) => item.textContent?.trim()))
+      .toEqual(["Search manually", "Don't migrate", "Migrate now", "Copy now"]);
 
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Show all 8 results" }));
-    await waitFor(() => expect(document.querySelectorAll("[data-migration-result]")).toHaveLength(8));
-    expect(searchMock).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Search manually" }));
+    await waitFor(() => expect(document.querySelectorAll("[data-migration-result]")).toHaveLength(4));
+    expect(searchMock).toHaveBeenCalledTimes(2);
 
     await fireEvent.click(screen.getByRole("button", { name: /back/i }));
-    expect(await screen.findByRole("region", { name: "Asura Scans" })).toBeTruthy();
-    expect(searchMock).toHaveBeenCalledTimes(1);
+    await screen.findByRole("region", { name: "Asura Scans" });
+    expect(searchMock).toHaveBeenCalledTimes(2);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Options for Flame Scans" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Don't migrate" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Flame Scans" })).toBeNull());
+    expect(screen.getByRole("region", { name: "Asura Scans" })).toBeTruthy();
+  });
+
+  test.each([
+    ["Migrate now", "migrate"],
+    ["Copy now", "copy"],
+  ])("%s applies the source's best match without the confirmation step", async (label, mode) => {
+    searchMock.mockReset();
+    searchMock.mockImplementation(async ({ sourceId }: { sourceId: string }) => [
+      { id: 301, title: "Dangerous Dungeon Escape", thumbnailUrl: "", inLibrary: false, source: { id: sourceId, displayName: "Asura Scans" } },
+      { id: 302, title: "Escape Plan", thumbnailUrl: "", inLibrary: false, source: { id: sourceId, displayName: "Asura Scans" } },
+    ]);
+    gqlMock.mockResolvedValueOnce({
+      sources: { nodes: [{ id: "asura-src", name: "asura", displayName: "Asura Scans", lang: "en", iconUrl: "", isNsfw: false }] },
+    });
+    const newManga = { ...manga, id: 301 };
+    applyMigrationMock.mockReset();
+    applyMigrationMock.mockResolvedValue({ journalEntryId: "journal-1", newManga });
+    const onMigrated = vi.fn();
+
+    render(MigrateModal, { props: { manga, currentChapters: [], onClose: vi.fn(), onMigrated } });
+    await fireEvent.click(await screen.findByRole("button", { name: /search all sources/i }));
+    await screen.findByRole("region", { name: "Asura Scans" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Options for Asura Scans" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: label }));
+
+    await waitFor(() => expect(onMigrated).toHaveBeenCalledWith(newManga));
+    expect(applyMigrationMock).toHaveBeenCalledTimes(1);
+    expect(applyMigrationMock.mock.calls[0][0]).toMatchObject({
+      targetSourceId: "asura-src",
+      mode,
+      match: { manga: { id: 301 } },
+    });
   });
 
   test("shows retry on source load failure and lists installed alternatives after retry", async () => {

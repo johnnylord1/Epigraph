@@ -41,6 +41,8 @@
   type Step = "source" | "search" | "confirm";
   // "all" searches every listed source at once; each source's results arrive on their own.
   type SearchScope = "source" | "all";
+  // "copy" adds the new title and keeps the current one in the library.
+  type MigrationMode = "migrate" | "copy";
 
   interface SourceGroup {
     source: Source;
@@ -296,7 +298,7 @@
     searchSource(src, query);
   }
 
-  // Opens one source's full list from the search across every source, reusing what it already
+  // Searches one source by hand from the search across every source, starting from what it already
   // found; the other sources keep answering in the background.
   function showSourceResults(sourceId: string) {
     const group = sourceGroups.find((candidate) => candidate.source.id === sourceId);
@@ -306,6 +308,11 @@
     error = null;
     fromAllSources = true;
     searchScope = "source";
+  }
+
+  // "Don't migrate" drops the source from this search; a search that is still running leaves it out.
+  function dismissSource(sourceId: string) {
+    sourceGroups = sourceGroups.filter((group) => group.source.id !== sourceId);
   }
 
   function backFromSearch() {
@@ -342,24 +349,28 @@
     void selectMatch(picked.manga, picked.similarity);
   }
 
+  async function loadMatch(m: Manga, similarity: number): Promise<Match> {
+    // The search already found the title. A source that cannot list its chapters right now
+    // (WebView, captcha) does not block the choice; the migration tries again before applying.
+    let chapters: Chapter[] = [];
+    let chaptersError: string | null = null;
+    try {
+      const d = await fetchSourceMangaChapters({ mangaId: m.id, sourceId: m.source?.id });
+      chapters = d.fetchChapters.chapters ?? [];
+    } catch (chapterError) {
+      chaptersError = chapterError instanceof Error ? chapterError.message : String(chapterError);
+    }
+    const matchReadCount = chapters.filter((c) => {
+      const old = currentChapters.find((o) => Math.abs(o.chapterNumber - c.chapterNumber) < 0.01);
+      return old?.isRead;
+    }).length;
+    return { manga: m, chapters, readCount: matchReadCount, similarity, chaptersError };
+  }
+
   async function selectMatch(m: Manga, similarity: number) {
     loadingMatchId = m.id; error = null;
     try {
-      // The search already found the title. A source that cannot list its chapters right now
-      // (WebView, captcha) does not block the choice; the migration tries again before applying.
-      let chapters: Chapter[] = [];
-      let chaptersError: string | null = null;
-      try {
-        const d = await fetchSourceMangaChapters({ mangaId: m.id, sourceId: m.source?.id });
-        chapters = d.fetchChapters.chapters ?? [];
-      } catch (chapterError) {
-        chaptersError = chapterError instanceof Error ? chapterError.message : String(chapterError);
-      }
-      const matchReadCount = chapters.filter((c) => {
-        const old = currentChapters.find((o) => Math.abs(o.chapterNumber - c.chapterNumber) < 0.01);
-        return old?.isRead;
-      }).length;
-      selectedMatch = { manga: m, chapters, readCount: matchReadCount, similarity, chaptersError };
+      selectedMatch = await loadMatch(m, similarity);
       step = "confirm";
     } catch (e: any) {
       error = e.message;
@@ -368,7 +379,24 @@
     }
   }
 
-  async function migrate() {
+  // "Migrate now" and "Copy now" apply a source's closest title without the confirmation step.
+  async function applyBestNow(sourceId: string, mode: MigrationMode) {
+    const group = sourceGroups.find((candidate) => candidate.source.id === sourceId);
+    const best = group?.results[0];
+    if (!group || !best) return;
+    selectedSource = group.source;
+    loadingMatchId = best.manga.id; error = null;
+    try {
+      selectedMatch = await loadMatch(best.manga, best.similarity);
+      await migrate(mode);
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      loadingMatchId = null;
+    }
+  }
+
+  async function migrate(mode: MigrationMode = "migrate") {
     if (!selectedMatch) return;
     migrating = true; error = null;
     void setMigrationPresence(true, store.settings, "library");
@@ -381,14 +409,18 @@
         currentChapters,
         targetSourceId: selectedSource?.id ?? selectedMatch.manga.source?.id ?? "unknown",
         match: selectedMatch,
+        mode,
         profileId: store.runtimeResolvedLocalProfileId,
         identityBridge,
       });
 
+      const target = selectedMatch.manga.source?.displayName ?? selectedSource?.displayName ?? translate("ui_theNewSource");
       addToast({
         kind: "success",
-        title: translate("ui_sourceMigrated"),
-        body: translate("migrate.movedTo", { title: manga.title, source: selectedMatch.manga.source?.displayName ?? selectedSource?.displayName ?? translate("ui_theNewSource") }),
+        title: translate(mode === "copy" ? "migrate.copyDone" : "ui_sourceMigrated"),
+        body: mode === "copy"
+          ? translate("migrate.copiedTo", { title: manga.title, source: target })
+          : translate("migrate.movedTo", { title: manga.title, source: target }),
         duration: 7000,
         action: {
           label: translate("ui_undo"),
@@ -396,7 +428,7 @@
             void undoMangaMigration(result.journalEntryId, identityBridge).then(() => {
               addToast({
                 kind: "info",
-                title: translate("ui_migrationUndone"),
+                title: translate(mode === "copy" ? "migrate.copyUndone" : "ui_migrationUndone"),
                 body: manga.title,
               });
               onMigrated({ ...manga, inLibrary: true });
@@ -496,7 +528,9 @@
           {error}
           onSearch={() => void searchAllSources(query)}
           onPick={pickGlobalResult}
-          onShowAll={showSourceResults}
+          onSearchManually={showSourceResults}
+          onDismiss={dismissSource}
+          onApplyNow={(sourceId, mode) => void applyBestNow(sourceId, mode)}
         />
 
       {:else if step === "search"}
@@ -534,7 +568,7 @@
       {:else}
         <button class="mg-btn" type="button" onclick={() => step = "search"} disabled={migrating}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
         <span class="mg-spacer"></span>
-        <button class="mg-btn mg-btn--primary" type="button" onclick={migrate} disabled={migrating || !selectedMatch}>
+        <button class="mg-btn mg-btn--primary" type="button" onclick={() => migrate()} disabled={migrating || !selectedMatch}>
           {#if migrating}
             <CircleNotch size={15} weight="bold" class="anim-spin" /> {$_("ui_migrating")}
           {:else}

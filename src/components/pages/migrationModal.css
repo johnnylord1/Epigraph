@@ -238,13 +238,6 @@
 .mg-source-match:hover { background: var(--component-migration-surface); }
 .mg-source-match .mg-row:hover:not(:disabled) { background: transparent; }
 .mg-source-match .mg-side .mg-row-copy strong { font-size: var(--text-sm); }
-/* Sources with a single title keep an empty slot as wide as the menu button, so every row lines up. */
-.mg-source-match > .mg-menu-wrap { width: 30px; }
-.mg-menu--matches { max-width: min(360px, calc(100vw - 32px)); }
-.mg-menu--matches button { display: grid; gap: 2px; }
-.mg-menu-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mg-menu--matches small { color: var(--component-migration-muted-fg); font-size: var(--text-xs); font-weight: 500; }
-.mg-menu--matches .mg-menu-more { margin-top: 3px; border-top: 1px solid var(--component-migration-divider); }
 .mg-group-pending {
   min-width: 0;
   display: flex;

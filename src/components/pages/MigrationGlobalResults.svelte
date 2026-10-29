@@ -19,9 +19,9 @@
   import { floatMenu } from "./migrationMenu";
 
   // The search step across every source: each source gets one line the moment it answers, the
-  // source on the left and its closest title on the right, like the mass migration queue. The other
-  // titles wait in the line's menu, while the sources still searching wait below. Sources with
-  // nothing to offer fold into one line.
+  // source on the left and its closest title on the right, like the mass migration queue. The line's
+  // menu searches that source by hand, drops it, or applies its closest title right away, while the
+  // sources still searching wait below. Sources with nothing to offer fold into one line.
   interface Props {
     query: string;
     groups: MigrationSourceGroup[];
@@ -30,13 +30,13 @@
     placeholder?: string;
     onSearch: () => void;
     onPick: (groupId: string, resultId: string) => void;
-    onShowAll: (groupId: string) => void;
+    onSearchManually: (groupId: string) => void;
+    onDismiss: (groupId: string) => void;
+    onApplyNow: (groupId: string, mode: "migrate" | "copy") => void;
   }
 
-  let { query = $bindable(), groups, pendingId = null, error = null, placeholder, onSearch, onPick, onShowAll }: Props = $props();
+  let { query = $bindable(), groups, pendingId = null, error = null, placeholder, onSearch, onPick, onSearchManually, onDismiss, onApplyNow }: Props = $props();
 
-  // The menu lists this many other titles; a source with more offers its full list instead.
-  const MENU_ALTERNATIVES = 5;
   let openMenuId: string | null = $state(null);
 
   const withResults = $derived(groups.filter((group) => group.status === "done" && group.results.length > 0));
@@ -58,14 +58,9 @@
     openMenuId = null;
   }
 
-  function pickFromMenu(groupId: string, resultId: string) {
+  function runFromMenu(action: () => void) {
     openMenuId = null;
-    onPick(groupId, resultId);
-  }
-
-  function showAllFromMenu(groupId: string) {
-    openMenuId = null;
-    onShowAll(groupId);
+    action();
   }
 
   function closeMenuOnEscape(event: KeyboardEvent) {
@@ -95,7 +90,6 @@
 <div class="mg-list">
   {#each withResults as group, i (group.id)}
     {@const best = group.results[0]}
-    {@const alternatives = group.results.slice(1, 1 + MENU_ALTERNATIVES)}
     {@const pending = pendingId !== null && group.results.some((result) => result.id === pendingId)}
     <section style:--mg-i={i} class="mg-group mg-source-match" aria-label={group.name} data-migration-source-group={group.id}>
       <span class="mg-side">
@@ -127,37 +121,28 @@
           {#if pending}<CircleNotch size={16} weight="bold" class="anim-spin" />{:else}<ArrowRight size={16} weight="bold" />{/if}
         </span>
       </button>
-      {#if group.results.length > 1}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="mg-menu-wrap" onkeydown={closeMenuOnEscape}>
-          <button
-            class="mg-icon-btn"
-            type="button"
-            disabled={pendingId !== null}
-            onclick={() => { openMenuId = openMenuId === group.id ? null : group.id; }}
-            aria-haspopup="menu"
-            aria-expanded={openMenuId === group.id}
-            aria-label={$_("migrate.moreMatchesFor", { source: group.name })}
-          >
-            <DotsThreeVertical size={18} weight="bold" />
-          </button>
-          {#if openMenuId === group.id}
-            <div class="mg-menu mg-menu--matches" role="menu" use:floatMenu={closeMenu} in:popIn out:popOut>
-              {#each alternatives as result (result.id)}
-                <button type="button" role="menuitem" data-migration-alternative={result.id} onclick={() => pickFromMenu(group.id, result.id)}>
-                  <span class="mg-menu-title" title={result.title}>{result.title}</span>
-                  {#if result.hint}<small>{result.hint}</small>{/if}
-                </button>
-              {/each}
-              {#if group.results.length > 1 + MENU_ALTERNATIVES}
-                <button type="button" role="menuitem" class="mg-menu-more" onclick={() => showAllFromMenu(group.id)}>{$_("migrate.showAllResults", { count: group.results.length })}</button>
-              {/if}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <span class="mg-menu-wrap" aria-hidden="true"></span>
-      {/if}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="mg-menu-wrap" onkeydown={closeMenuOnEscape}>
+        <button
+          class="mg-icon-btn"
+          type="button"
+          disabled={pendingId !== null}
+          onclick={() => { openMenuId = openMenuId === group.id ? null : group.id; }}
+          aria-haspopup="menu"
+          aria-expanded={openMenuId === group.id}
+          aria-label={$_("migrate.actionsFor", { source: group.name })}
+        >
+          <DotsThreeVertical size={18} weight="bold" />
+        </button>
+        {#if openMenuId === group.id}
+          <div class="mg-menu" role="menu" use:floatMenu={closeMenu} in:popIn out:popOut>
+            <button type="button" role="menuitem" onclick={() => runFromMenu(() => onSearchManually(group.id))}>{$_("migrate.searchManually")}</button>
+            <button type="button" role="menuitem" onclick={() => runFromMenu(() => onDismiss(group.id))}>{$_("migrate.dontMigrate")}</button>
+            <button type="button" role="menuitem" onclick={() => runFromMenu(() => onApplyNow(group.id, "migrate"))}>{$_("massMigration.migrateNow")}</button>
+            <button type="button" role="menuitem" onclick={() => runFromMenu(() => onApplyNow(group.id, "copy"))}>{$_("massMigration.copyNow")}</button>
+          </div>
+        {/if}
+      </div>
     </section>
   {/each}
 </div>

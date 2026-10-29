@@ -1029,13 +1029,13 @@
                     </button>
                     {#if activeActionsMenuId === item.currentManga.id}
                       <div class="mg-menu" role="menu" use:floatMenu={() => { activeActionsMenuId = null; }} in:popIn out:popOut>
+                        <button type="button" role="menuitem" onclick={() => openManualSearch(item)}>{$_("migrate.searchManually")}</button>
+                        <button type="button" role="menuitem" onclick={() => excludeItem(item)}>{$_("migrate.dontMigrate")}</button>
                         {#if canSelect(item)}
                           <button type="button" role="menuitem" onclick={() => applySelected("migrate", [item.currentManga.id])}>{$_("massMigration.migrateNow")}</button>
                           <button type="button" role="menuitem" onclick={() => applySelected("copy", [item.currentManga.id])}>{$_("massMigration.copyNow")}</button>
                         {/if}
                         <button type="button" role="menuitem" onclick={() => retryItem(item)}>{$_("massMigration.retry")}</button>
-                        <button type="button" role="menuitem" onclick={() => openManualSearch(item)}>{$_("novelSources_actions_search")}</button>
-                        <button type="button" role="menuitem" onclick={() => excludeItem(item)}>{$_("massMigration.exclude")}</button>
                       </div>
                     {/if}
                   </div>
