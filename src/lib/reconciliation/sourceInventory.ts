@@ -2,7 +2,7 @@ import { gql } from "../client";
 import { fetchRepoEntries, type RepoExtensionEntry } from "../extensionSourceMap";
 import { getManagedSourceRuntime } from "../manga/runtime";
 import { loadNovelRepositoryState, type NovelRepositoryScopeInput } from "../novels/repositoryState";
-import { FETCH_EXTENSIONS, GET_SOURCES_WITH_EXTENSIONS } from "../queries";
+import { FETCH_EXTENSIONS, GET_EXTENSIONS, GET_SOURCES_WITH_EXTENSIONS } from "../queries";
 import type { Extension, Source } from "../types";
 import type {
   AvailableExtensionEntry,
@@ -40,6 +40,18 @@ function buildRepoSourceLookup(entry: RepoExtensionEntry): RepoExtensionLookup[]
   }));
 }
 
+// Suwayomi refreshes every store one after another inside this mutation, so one slow store can
+// outlast the request timeout. Mihon keeps the list it has when a repo fails; so does this.
+async function loadAvailableExtensions(): Promise<{ extensions: Extension[]; refreshFailed: boolean }> {
+  try {
+    const data = await gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS);
+    return { extensions: data.fetchExtensions.extensions ?? [], refreshFailed: false };
+  } catch (error) {
+    const stored = await gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS).catch(() => { throw error; });
+    return { extensions: stored.extensions.nodes ?? [], refreshFailed: true };
+  }
+}
+
 export async function loadSourceInventory(): Promise<{
   inventory: SourceInventoryEntry[];
   availableExtensions: AvailableExtensionEntry[];
@@ -50,7 +62,7 @@ export async function loadSourceInventory(): Promise<{
   const [sourcesData, stores, extensionsData] = await Promise.all([
     gql<{ sources: { nodes: Source[] } }>(GET_SOURCES_WITH_EXTENSIONS),
     runtime.listStores(),
-    gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS),
+    loadAvailableExtensions(),
   ]);
 
   const repoUrls = stores.map((store) => store.indexUrl);
@@ -60,6 +72,9 @@ export async function loadSourceInventory(): Promise<{
     message: `Extension repo could not be checked: ${repo}`,
     details: repo,
   }));
+  if (extensionsData.refreshFailed) {
+    warnings.push({ kind: "repo_lookup_failed", message: "Extension list could not be refreshed; using the last known list." });
+  }
 
   const installed = (sourcesData.sources.nodes ?? []).map<SourceInventoryEntry>((source) => ({
     sourceId: String(source.id),
@@ -73,7 +88,7 @@ export async function loadSourceInventory(): Promise<{
   }));
 
   const availableByPkg = new Map(
-    (extensionsData.fetchExtensions.extensions ?? []).map((extension) => [extension.pkgName, extension] as const),
+    extensionsData.extensions.map((extension) => [extension.pkgName, extension] as const),
   );
 
   const availableExtensions: AvailableExtensionEntry[] = [];
@@ -82,7 +97,7 @@ export async function loadSourceInventory(): Promise<{
     if (!repoEntriesByPkg.has(entry.pkg)) repoEntriesByPkg.set(entry.pkg, entry);
   }
 
-  for (const extension of extensionsData.fetchExtensions.extensions ?? []) {
+  for (const extension of extensionsData.extensions) {
     const repoEntry = repoEntriesByPkg.get(extension.pkgName);
     availableExtensions.push({
       ...extension,

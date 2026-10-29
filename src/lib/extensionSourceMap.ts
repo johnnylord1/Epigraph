@@ -104,26 +104,37 @@ function parseRepoCatalog(parsed: unknown): RepoExtensionEntry[] {
   });
 }
 
-export async function fetchRepoEntries(urls: string[]): Promise<{ entries: RepoExtensionEntry[]; failedRepos: string[] }> {
+/** Mihon's OkHttp client gives up on a stalled connection or read after 30 seconds. */
+const REPO_REQUEST_TIMEOUT_MS = 30_000;
+
+export async function fetchRepoEntries(urls: string[], timeoutMs = REPO_REQUEST_TIMEOUT_MS): Promise<{ entries: RepoExtensionEntry[]; failedRepos: string[] }> {
   const entries: RepoExtensionEntry[] = [];
   const failedRepos: string[] = [];
 
-  for (const url of urls) {
-    let loaded: RepoExtensionEntry[] | null = null;
+  // Every repo at once, as Mihon does, so the slowest repo sets the wait instead of their sum.
+  const loadedByRepo = await Promise.all(urls.map(async (url) => {
     for (const catalogUrl of repoCatalogCandidates(url)) {
+      // A stalled repository must not hold the others' result forever.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetch(catalogUrl);
+        const response = await fetch(catalogUrl, { signal: controller.signal });
         const text = await response.text();
         if (!response.ok) throw new Error(text.slice(0, 120));
-        loaded = parseRepoCatalog(JSON.parse(text));
-        break;
+        return parseRepoCatalog(JSON.parse(text));
       } catch {
         // try the next catalog file
+      } finally {
+        clearTimeout(timer);
       }
     }
+    return null;
+  }));
+  urls.forEach((url, index) => {
+    const loaded = loadedByRepo[index];
     if (loaded) entries.push(...loaded);
     else failedRepos.push(url);
-  }
+  });
 
   return { entries, failedRepos };
 }
