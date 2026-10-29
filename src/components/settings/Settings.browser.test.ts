@@ -78,6 +78,7 @@ const { invokeMock, tauriFetchMock, gqlMock, loadSettingsStorageRuntimeMock } = 
     analyzeBackupReconciliation: vi.fn(async () => ({ analysis: { needsReview: [], unresolved: [], warnings: [] } })),
     overlayEntryFromAnalysis: vi.fn(() => ({})),
     buildReconciledBackupFile: vi.fn(() => new File([], "reconciled.tachibk")),
+    buildMangaRestoreParityInput: vi.fn(() => []),
     readFileAsArrayBuffer: vi.fn(async () => new ArrayBuffer(0)),
     loadNovelRepositoryState: vi.fn(async () => ({ repositories: [], installedPlugins: [], catalogEntries: [] })),
     saveNovelRepositoryState: vi.fn(async (state) => state),

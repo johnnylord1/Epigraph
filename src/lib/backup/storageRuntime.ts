@@ -39,6 +39,7 @@ export type SettingsStorageRuntime = {
   analyzeBackupReconciliation: typeof import("../reconciliation/analyze").analyzeBackupReconciliation;
   overlayEntryFromAnalysis: typeof import("../reconciliation/analyze").overlayEntryFromAnalysis;
   buildReconciledBackupFile: typeof import("../reconciliation/restore").buildReconciledBackupFile;
+  buildMangaRestoreParityInput: typeof import("../reconciliation/restore").buildMangaRestoreParityInput;
   readFileAsArrayBuffer: typeof import("../books/storage").readFileAsArrayBuffer;
   loadBookLibraryState: typeof import("../books/libraryState").loadBookLibraryState;
   loadNovelRepositoryState: typeof import("../novels/repositoryState").loadNovelRepositoryState;
@@ -127,6 +128,7 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       analyzeBackupReconciliation: analyze.analyzeBackupReconciliation,
       overlayEntryFromAnalysis: analyze.overlayEntryFromAnalysis,
       buildReconciledBackupFile: restore.buildReconciledBackupFile,
+      buildMangaRestoreParityInput: restore.buildMangaRestoreParityInput,
       readFileAsArrayBuffer: booksStorage.readFileAsArrayBuffer,
       loadBookLibraryState: booksLibraryState.loadBookLibraryState,
       loadNovelRepositoryState: novelRepositoryState.loadNovelRepositoryState,

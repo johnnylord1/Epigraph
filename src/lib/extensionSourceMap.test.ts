@@ -33,7 +33,7 @@ describe("extension repository catalogs", () => {
     ]);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://raw.githubusercontent.com/owner/extensions/repo/index.json",
+      "https://raw.githubusercontent.com/owner/extensions/repo/index.json", expect.anything(),
     );
     expect(result.failedRepos).toEqual([]);
     expect(result.entries).toEqual([{
@@ -45,13 +45,30 @@ describe("extension repository catalogs", () => {
       icon: "https://cdn.example.test/example.png",
     }]);
   });
+  test("checks every repository at once and keeps their order", async () => {
+    const pending: Array<() => void> = [];
+    const fetchMock = vi.fn((url: string) => new Promise<Response>(resolve => pending.push(() => resolve(
+      url.includes("/b/") ? new Response("Not Found", { status: 404 })
+        : new Response(JSON.stringify([{ pkg: url.includes("/a/") ? "a" : "c", name: "P", apk: "p.apk", lang: "en", sources: [] }]), { status: 200 }),
+    ))));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = fetchRepoEntries(["https://repo.test/a/index.json", "https://repo.test/b/index.json", "https://repo.test/c/index.json"]);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    pending.splice(0).reverse().forEach(resolve => resolve());
+    await vi.waitFor(() => expect(pending.length).toBeGreaterThan(0));
+    pending.splice(0).forEach(resolve => resolve());
+
+    expect((await result).entries.map(entry => entry.pkg)).toEqual(["a", "c"]);
+    expect((await result).failedRepos).toEqual(["https://repo.test/b/index.json"]);
+  });
   test("resolves a github.com store URL to the raw catalog", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify([{ pkg: "p", name: "P", apk: "p.apk", lang: "en", sources: [{ id: "1", name: "S", lang: "en" }] }]), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await fetchRepoEntries(["https://github.com/keiyoushi/extensions/raw/repo/index.pb"]);
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.json");
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.json", expect.anything());
     expect(result.failedRepos).toEqual([]);
   });
   test("falls back to index.min.json for a repo.json store URL", async () => {
@@ -63,10 +80,22 @@ describe("extension repository catalogs", () => {
 
     const result = await fetchRepoEntries(["https://raw.githubusercontent.com/a/b/repo/repo.json"]);
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://raw.githubusercontent.com/a/b/repo/index.json");
-    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://raw.githubusercontent.com/a/b/repo/index.min.json");
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://raw.githubusercontent.com/a/b/repo/index.json", expect.anything());
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://raw.githubusercontent.com/a/b/repo/index.min.json", expect.anything());
     expect(result.entries).toHaveLength(1);
     expect(result.entries[0].pkg).toBe("p");
+    expect(result.failedRepos).toEqual([]);
+  });
+  test("gives up on a stalled catalog and tries the next one", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => url.endsWith("/index.json")
+      ? new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))))
+      : Promise.resolve(new Response(JSON.stringify([{ pkg: "p", name: "P", apk: "p.apk", lang: "en", sources: [] }]), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchRepoEntries(["https://raw.githubusercontent.com/a/b/repo/repo.json"], 10);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.entries.map(entry => entry.pkg)).toEqual(["p"]);
     expect(result.failedRepos).toEqual([]);
   });
   test("reports a store whose catalogs are all missing", async () => {

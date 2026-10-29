@@ -3719,6 +3719,27 @@ pub(crate) fn set_runtime_status(
     }
 }
 
+/// Every start marks the profile `Starting` on entry. A start that reuses a live, verified server
+/// must publish it `Ready` as a fresh spawn does, or restore keeps refusing the target.
+pub(crate) fn reused_server_runtime_status(
+    profile_id: &str,
+    server_url: &str,
+    java_pid: u32,
+) -> suwayomi_runtime::RuntimeStatus {
+    suwayomi_runtime::RuntimeStatus {
+        state: suwayomi_runtime::RuntimeLifecycleState::Ready,
+        profile_id: Some(profile_id.to_string()),
+        server_url: Some(server_url.to_string()),
+        pid: Some(java_pid),
+        message: None,
+    }
+}
+
+fn mark_reused_server_ready(app: &tauri::AppHandle, target: &LocalServerTarget, java_pid: u32) {
+    let status = reused_server_runtime_status(&target.profile_key, &target.server_url, java_pid);
+    set_runtime_status(app, status.state, status.profile_id, status.server_url, status.pid, None);
+}
+
 #[tauri::command]
 fn get_local_runtime_status(
     state: tauri::State<'_, RuntimeSupervisorState>,
@@ -6032,16 +6053,17 @@ fn spawn_server_unlocked(
         let mut stale_tracked_server: Option<RunningServer> = None;
         if let Some(running) = guard.as_mut() {
             if running.owner_path == owner_path {
-                let reusable = read_server_owner(&running.owner_path)
-                    .map(|owner| {
-                        validate_server_owner(&target, &owner) == OwnerReuseDecision::Reusable
+                let reusable_pid = read_server_owner(&running.owner_path)
+                    .filter(|owner| {
+                        validate_server_owner(&target, owner) == OwnerReuseDecision::Reusable
                     })
-                    .unwrap_or(false);
-                if reusable {
+                    .map(|owner| owner.java_pid);
+                if let Some(java_pid) = reusable_pid {
                     do_log(
                         &mut log,
                         "[spawn_server] tracked server valid, reusing existing server",
                     );
+                    mark_reused_server_ready(&app, &target, java_pid);
                     return Ok(());
                 }
 
@@ -6123,6 +6145,7 @@ fn spawn_server_unlocked(
                         &mut log,
                         "[spawn_server] owner valid, reusing existing server",
                     );
+                    mark_reused_server_ready(&app, &target, owner.java_pid);
                     return Ok(());
                 }
                 OwnerReuseDecision::Stale if confirm_exited_server_owner(&owner_path) => {
@@ -6217,6 +6240,7 @@ fn spawn_server_unlocked(
                     java_pid
                 ),
             );
+            mark_reused_server_ready(&app, &target, java_pid);
             return Ok(());
         }
 

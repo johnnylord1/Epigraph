@@ -135,6 +135,13 @@ export function createNovelLibraryId(sourceId: string, novelPath: string): strin
   return `novel:${sourceId}:${encodeURIComponent(novelPath)}`;
 }
 
+/** The title a backup gets when its source name is missing: the last path segment, title-cased. */
+export function novelTitleFromPath(path: string): string | null {
+  const slug = path.split(/[?#]/, 1)[0]?.split("/").filter(Boolean).pop() ?? "";
+  const words = slug.replace(/[-_]+/g, " ").trim();
+  return words ? words.replace(/(^|\s)(\p{L})/gu, (_match, space: string, letter: string) => space + letter.toUpperCase()) : null;
+}
+
 export function createNovelChapterId(novelId: string, chapterPath: string): string {
   return `chapter:${novelId}:${encodeURIComponent(chapterPath)}`;
 }

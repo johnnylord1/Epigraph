@@ -489,6 +489,15 @@ mod tests {
     }
 
     #[test]
+    fn a_reused_desktop_server_is_a_restore_target() {
+        let status = crate::reused_server_runtime_status("test", "http://127.0.0.1:4667", 123);
+        require_desktop_target("test", "http://127.0.0.1:4667/", &status).unwrap();
+        assert_eq!(status.pid, Some(123));
+        let starting = RuntimeStatus { state: RuntimeLifecycleState::Starting, ..status };
+        assert_eq!(require_desktop_target("test", "http://127.0.0.1:4667", &starting).unwrap_err(), "RESTORE_DESKTOP_TARGET_UNVERIFIED");
+    }
+
+    #[test]
     fn core_owned_main_runtime_is_a_restore_target_only_with_its_live_identity() {
         let identity = crate::suwayomi_runtime::RuntimeProcessIdentity {
             pid: 321, process_creation_time: Some(1_700_000_000), executable_path: Some("fixture-javaw.exe".into()),

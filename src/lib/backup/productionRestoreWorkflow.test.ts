@@ -12,6 +12,13 @@ const f = vi.hoisted(() => ({
   blockMangaChoice: false,
   store: { runtimeResolvedLocalProfileId: "production-test", runtimeServerUrl: "http://localhost:4567", settings: { defaultLocalProfileId: "current", booksCategories: [], booksCategoryAssignments: {} }, async prepareBooksForRestore() {}, async persistRestoredBooks() {} },
   payloads: ["books", "novels", "app"],
+  parityTitles: [] as { sourceId: string; url: string; hasCategories: boolean }[],
+  parityCategoryIds: [0, 3], failCategoryAdd: false,
+  wakes: [] as string[], holds: 0, holdsDuringSend: [] as number[],
+}));
+vi.mock("../serverLifecycle", () => ({
+  ensureServerAwakeFor: async (reason: string) => { f.wakes.push(reason); return true; },
+  holdServerAwake: () => { f.holds += 1; let held = true; return () => { if (held) f.holds -= 1; held = false; }; },
 }));
 vi.mock("../../store/state.svelte", () => ({
   store: f.store, DEFAULT_READING_STATS: {}, bumpContentSetupVersion() {}, setLibraryMangaSnapshot() {},
@@ -19,14 +26,25 @@ vi.mock("../../store/state.svelte", () => ({
   replaceAppReadingState() { throw Error("Uncommitted App publication"); }, persistRestoredAppReadingState() { f.calls.push("app"); },
   updateSettings(patch: object) { Object.assign(f.store.settings, patch); },
 }));
-vi.mock("../client", () => ({ gql: async () => {
-  if (f.backendOffline) throw Error("offline"); return { trackers: { nodes: [] }, mangas: { nodes: [] } };
+vi.mock("../client", () => ({ gql: async (query: string, variables?: { mangaId?: number; addTo?: number[] }) => {
+  if (f.backendOffline) throw Error("offline");
+  if (query.includes("EpigraphRestoreParityTitles")) {
+    f.calls.push("categories-read");
+    return { mangas: { pageInfo: { hasNextPage: false }, nodes: [{ id: 7, sourceId: "1", url: "/kept", categories: { nodes: f.parityCategoryIds.map(id => ({ id })) } }] } };
+  }
+  if (query.includes("EpigraphRestoreParityCategories")) {
+    f.calls.push(`categories-add:${variables?.mangaId}:${variables?.addTo}`);
+    if (f.failCategoryAdd) throw Error("offline");
+    return {};
+  }
+  return { trackers: { nodes: [] }, mangas: { nodes: [] } };
 } }));
 vi.mock("../reconciliation/readiness", () => ({ buildRestoreReadiness: (_analysis: unknown, choices: Record<string, unknown>) => {
   f.readinessChoices.push(structuredClone(choices)); return { blocksRestore: f.blockMangaChoice && Object.keys(choices).length > 0 };
 } }));
 vi.mock("./mangaRestoreAdapter", () => ({ restoreProductionManga: async (_file: File, mode: { observationOnly?: boolean }) => {
   f.calls.push(mode.observationOnly ? "manga-observe" : "manga-send");
+  f.holdsDuringSend.push(f.holds);
   return f.mangaUnknown ? { status: "unknown", code: "SUBMISSION_UNCERTAIN" } : { status: "succeeded" };
 } }));
 vi.mock("../novels/libraryState", () => ({ loadNovelLibraryStateForRestore: async () => ({ entries: [] }) }));
@@ -42,6 +60,7 @@ vi.mock("../../components/settings/settingsStorageRuntime", () => ({ loadSetting
   buildReconciledBackupFile: (_parsed: unknown, _analysis: unknown, choices: Record<string, unknown>) => {
     f.mangaChoices.push(structuredClone(choices)); return new File(["reconciled"], "reconciled.tachibk");
   },
+  buildMangaRestoreParityInput: () => f.parityTitles,
   overlayEntryFromAnalysis: () => ({}), upsertOverlayEntry: async () => {},
   readOverlayFile: async () => ({}), loadNovelRepositoryState: async () => ({ repositories: [], installedPlugins: [], catalogEntries: [] }),
   buildEpigraphRestorePlan: async () => ({ containerIssues: [], payloads: f.payloads.map(kind => ({ kind, present: true, status: "restorable", selectedByDefault: kind !== "novels" || f.novelReady, canExecuteRestore: true, canRestoreNow: kind !== "novels" || f.novelReady, metadata: {} })) }),
@@ -53,7 +72,7 @@ import { createProductionRestoreWorkflow } from "./productionRestoreWorkflow";
 import { createProductionFirstRunBackupWorkflow } from "./firstRunBackupWorkflow";
 const backup = (content = "one", name = "backup.epigraphbk") => new File([new Uint8Array([0x50, 0x4b]), content], name, { lastModified: 1 });
 
-beforeEach(() => { f.calls = []; f.failNovel = false; f.backendOffline = false; f.novelReady = true; f.parseApp = null; f.mangaInspectFailures = 0; f.store.runtimeResolvedLocalProfileId = "production-test"; f.payloads = ["books", "novels", "app"]; f.store.settings.defaultLocalProfileId = "current"; });
+beforeEach(() => { f.calls = []; f.failNovel = false; f.backendOffline = false; f.novelReady = true; f.parseApp = null; f.mangaInspectFailures = 0; f.store.runtimeResolvedLocalProfileId = "production-test"; f.payloads = ["books", "novels", "app"]; f.parityTitles = []; f.parityCategoryIds = [0, 3]; f.failCategoryAdd = false; f.store.runtimeServerUrl = "http://localhost:4567"; f.store.settings.defaultLocalProfileId = "current"; f.wakes = []; f.holds = 0; f.holdsDuringSend = []; });
 describe("active production restore contract", () => {
   it.each(["native", "epigraph"])("refuses an unavailable explicit Manga mapping during %s readiness", async format => {
     f.blockMangaChoice = true; f.payloads = ["manga"];
@@ -65,6 +84,31 @@ describe("active production restore contract", () => {
       expect(workflow.snapshot().units).toEqual({});
       expect(f.calls).toEqual([]);
     } finally { f.blockMangaChoice = false; }
+  });
+  it("keeps library categories that the backup does not bring, as Mihon does", async () => {
+    f.parityTitles = [{ sourceId: "1", url: "/kept", hasCategories: false }];
+    const workflow = createProductionRestoreWorkflow();
+    const files = await workflow.inspectFiles([new File(["source"], "source.tachibk")]);
+    await workflow.restoreFiles(files);
+    expect(f.calls).toEqual(["categories-read", "manga-send", "categories-add:7:3"]);
+  });
+  it("adds kept categories back on the next restore even when the server came back on another port", async () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => { saved.set(key, value); }, removeItem: (key: string) => { saved.delete(key); } });
+    try {
+      f.parityTitles = [{ sourceId: "1", url: "/kept", hasCategories: false }];
+      f.failCategoryAdd = true;
+      let workflow = createProductionRestoreWorkflow();
+      await workflow.restoreFiles(await workflow.inspectFiles([new File(["source"], "source.tachibk")]));
+      expect(workflow.warnings()).toEqual({ [Object.keys(workflow.warnings())[0]]: ["MANGA_RESTORE_CATEGORIES_NOT_KEPT"] });
+
+      // The app restarted: the server listens on a new port and the restore had already cleared the title.
+      f.store.runtimeServerUrl = "http://localhost:4610"; f.parityCategoryIds = []; f.failCategoryAdd = false; f.calls = [];
+      workflow = createProductionRestoreWorkflow();
+      await workflow.restoreFiles(await workflow.inspectFiles([new File(["source"], "source.tachibk")]));
+      expect(f.calls).toEqual(["categories-read", "manga-send", "categories-add:7:3"]);
+      expect(saved.size).toBe(0);
+    } finally { vi.unstubAllGlobals(); }
   });
   it("scopes reviewed Manga choices to the backup content in a multi-file First Run", async () => {
     f.mangaChoices = []; f.readinessChoices = [];
@@ -170,6 +214,19 @@ describe("active production restore contract", () => {
     expect(settings.snapshot().units).toEqual(firstRun.snapshot().units);
     const changed = await settings.inspectFiles([backup("two")], a);
     expect(changed).toHaveLength(2);
+  });
+  it("wakes a server put in standby before reading Manga and keeps it awake until the restore ends", async () => {
+    const workflow = createProductionRestoreWorkflow();
+    const files = await workflow.inspectFiles([new File(["source"], "source.tachibk")]);
+    expect(f.wakes).toEqual(["backup-restore"]);
+    await workflow.restoreFiles(files);
+    expect(f.holdsDuringSend).toEqual([1]);
+    expect(f.holds).toBe(0);
+    f.failNovel = true; f.payloads = ["novels"];
+    const failing = createProductionRestoreWorkflow({ selection: { app: false, manga: false, books: false, novels: true } });
+    await failing.restoreFiles(await failing.inspectFiles([backup("failing")])).catch(() => {});
+    expect(f.calls).toContain("novels");
+    expect(f.holds).toBe(0);
   });
   it("local-only inspection and execution do not require an available Manga server", async () => {
     f.backendOffline = true; f.payloads = ["app"];
