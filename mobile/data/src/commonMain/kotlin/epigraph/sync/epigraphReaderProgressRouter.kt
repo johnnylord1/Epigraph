@@ -191,7 +191,7 @@ class EpigraphReaderProgressRouter(
                 portableChapter = portableChapter,
             )
             aethon_syncQueries.upsertLocalReaderProgress(
-                entityId = entityId.value,
+                entityId = resolved.localEntityId,
                 chapterEntityId = persistedChapterEntityId,
                 locatorJson = locatorJson.encodeToString<ReaderLocator>(locator),
                 chapterOrdinal = chapterOrderKey,
@@ -348,7 +348,7 @@ class EpigraphReaderProgressRouter(
                 portableChapter = portableChapter,
             )
             aethon_syncQueries.upsertLocalReaderProgress(
-                entityId = entityId.value,
+                entityId = resolved.localEntityId,
                 chapterEntityId = persistedChapterEntityId,
                 locatorJson = locatorJson.encodeToString<ReaderLocator>(locator),
                 chapterOrdinal = resolved.chapterOrderKey,
@@ -671,10 +671,16 @@ class EpigraphReaderProgressRouter(
         } else {
             requireNotNull(binding).chapter_entity_id
         }
+        val localEntityId = if (portableReady) {
+            requireNotNull(portableWorkBinding).portableId
+        } else {
+            requireNotNull(identity).entity_id
+        }
         return ResolvedChapter(
             entityId = EpigraphEntityId(
-                if (portableReady) requireNotNull(portableWorkBinding).portableId else requireNotNull(identity).entity_id,
+                if (portableReady || novel) localEntityId else coreServedMangaEntityId(localMangaId, localEntityId, chapterEntityId),
             ),
+            localEntityId = localEntityId,
             chapterEntityId = chapterEntityId,
             portableReady = portableReady,
             portableWork = portableWork,
@@ -692,6 +698,19 @@ class EpigraphReaderProgressRouter(
                 chapterEntityId
             },
         )
+    }
+
+    /**
+     * A Core-served manga whose extension is not installed here keeps the portable `comic:` identity
+     * the Core replica gave it, but has no bound portable work to send the refs the Core requires with
+     * that id. Its chapters are scoped Suwayomi ids, so publish the matching scoped manga id instead,
+     * as for manga first seen through Suwayomi.
+     */
+    private fun Database.coreServedMangaEntityId(localMangaId: Long, entityId: String, chapterEntityId: String): String {
+        if (suwayomiMangaIdForEntity(entityId) != null) return entityId
+        val url = mangasQueries.findById(localMangaId).executeAsOneOrNull()?.url ?: return entityId
+        val scoped = suwayomiMangaEntityIdForCoreUrl(url) ?: return entityId
+        return scoped.takeIf { chapterEntityId.startsWith(it.substringBeforeLast(":manga:") + ":chapter:") } ?: entityId
     }
 
     /** A bound V3 work decides the content type; otherwise the legacy identity does. Null stays local. */
@@ -824,6 +843,8 @@ class EpigraphReaderProgressRouter(
 
     private class ResolvedChapter(
         val entityId: EpigraphEntityId,
+        /** Identity the local reader-progress row is keyed by; [entityId] is the published one. */
+        val localEntityId: String,
         val chapterEntityId: String,
         val portableReady: Boolean,
         val portableWork: PortableWorkRef?,
