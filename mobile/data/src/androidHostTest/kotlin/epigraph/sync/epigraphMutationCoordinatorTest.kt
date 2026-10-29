@@ -1,5 +1,6 @@
 package epigraph.sync
 
+import epigraph.contract.ChapterStatePatch
 import epigraph.contract.EpigraphEntityId
 import epigraph.contract.EpigraphSyncProtocol
 import epigraph.contract.ClientMutationId
@@ -12,6 +13,7 @@ import epigraph.contract.SyncScopeId
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -335,6 +337,64 @@ class EpigraphMutationCoordinatorTest {
     }
 
     @Test
+    fun `parked progress naming a Core-served manga by its portable id moves to the scoped id once`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        val server = "01a10680-deda-7932-97d6-ac4f17079418"
+        val portableId = "comic:184ffbd5daa2ecad3cd0319d57564e2d6adeea14c0161dbc50f4492c1b07bf42"
+        val scopedId = "suwayomi:server:$server:profile:main:manga:21"
+        val chapterId = "suwayomi:server:$server:profile:main:chapter:2045"
+        database.aethon_syncQueries.upsertIdentity(portableId, "MANGA", insertManga("aethon-core://suwayomi/$server/main/manga/21").toString(), 1, 1)
+        database.aethon_syncQueries.upsertIdentity("comic:unknown", "MANGA", insertManga("/comic/1").toString(), 1, 1)
+        suspend fun park(id: String, entityType: String, command: SyncCommand, error: String) {
+            coordinator.mutateLocal(
+                SyncCommandEnvelope(
+                    protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
+                    deviceId = deviceId,
+                    clientMutationId = ClientMutationId(id),
+                    scopeId = SyncScopeId("comics:profile:main"),
+                    entityType = SyncEntityType(entityType),
+                    command = command,
+                ),
+                100,
+            ) { Unit }
+            coordinator.claimReady(100, leaseDurationMillis = 1_000, limit = 10)
+            coordinator.markFailed(deviceId, ClientMutationId(id), error, Long.MAX_VALUE)
+        }
+        fun history(comicId: String, chapter: String = chapterId) = SyncCommand.SetProgress(
+            entityId = EpigraphEntityId(comicId),
+            locator = ReaderLocator.Manga(EpigraphEntityId(comicId), chapter, pageIndex = 3, pageCount = 15, progression = 0.25),
+        )
+        fun chapterState(comicId: String) = SyncCommand.SetChapterState(
+            entityId = EpigraphEntityId("comic.chapter_state::$comicId::$chapterId"),
+            state = ChapterStatePatch(chapterId = chapterId, lastPageRead = 3, lastReadAtEpochMillis = 100),
+        )
+        park("history", "comic.history", history(portableId), "blocked:INVALID_COMIC_ID")
+        park("state", "comic.chapter_state", chapterState(portableId), "blocked:INVALID_SUWAYOMI_ENTITY_ID")
+        park("not-core-served", "comic.history", history("comic:unknown"), "blocked:INVALID_COMIC_ID")
+        park("other-scope", "comic.history", history(portableId, "suwayomi:server:other:profile:main:chapter:2045"), "blocked:INVALID_COMIC_ID")
+        park("other-reason", "comic.history", history(portableId), "blocked:INVALID_PAGE_COUNT")
+        var ids = 0
+
+        assertEquals(2, coordinator.retryCoreServedComicIds(200) { ClientMutationId("rekeyed-${ids++}") })
+
+        val rows = coordinator.claimReady(200, leaseDurationMillis = 1_000, limit = 10).associateBy { it.entity_type }
+        assertEquals(setOf("comic.history", "comic.chapter_state"), rows.keys)
+        assertEquals(scopedId, rows.getValue("comic.history").entity_id)
+        assertEquals("comic.chapter_state::$scopedId::$chapterId", rows.getValue("comic.chapter_state").entity_id)
+        rows.values.forEach { row ->
+            assertFalse(row.payload_json.contains(portableId), row.payload_json)
+            assertTrue(row.payload_json.contains("\"clientMutationId\":\"${row.client_mutation_id}\""), row.payload_json)
+            assertEquals(100, row.created_at)
+        }
+        assertEquals(3, coordinator.blockedCount())
+
+        // Refused again under the scoped id, the row stays parked for the user instead of looping.
+        coordinator.markFailed(deviceId, ClientMutationId(rows.getValue("comic.history").client_mutation_id), "blocked:INVALID_COMIC_ID", Long.MAX_VALUE)
+        assertEquals(0, coordinator.retryCoreServedComicIds(300) { ClientMutationId("rekeyed-${ids++}") })
+        assertEquals(4, coordinator.blockedCount())
+    }
+
+    @Test
     fun `local progress remains writable after a newer remote revision`() = runTest {
         database.aethon_syncQueries.upsertIdentity(
             entityId = "manga:progress",
@@ -402,6 +462,34 @@ class EpigraphMutationCoordinatorTest {
                 ),
             ),
         )
+
+    private fun insertManga(url: String): Long {
+        database.mangasQueries.insert(
+            source = 1,
+            url = url,
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Example",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = null,
+            initialized = false,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = null,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        return database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+    }
 
     private fun envelope(deviceId: DeviceId, mutationId: ClientMutationId) = SyncCommandEnvelope(
         protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,

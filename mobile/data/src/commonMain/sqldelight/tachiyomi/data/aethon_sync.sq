@@ -1305,6 +1305,12 @@ SET client_mutation_id = :newClientMutationId,
     lease_until = NULL
 WHERE sequence = :sequence AND status = 'ERROR' AND last_error LIKE 'blocked:%';
 
+-- Moves a parked row to the entity its repaired command now names; it runs before retryBlockedMutation.
+rekeyBlockedMutation:
+UPDATE aethon_sync_outbox
+SET entity_id = :entityId
+WHERE sequence = :sequence AND status = 'ERROR' AND last_error LIKE 'blocked:%';
+
 discardBlockedMutation:
 DELETE FROM aethon_sync_outbox
 WHERE sequence = :sequence AND status = 'ERROR' AND last_error LIKE 'blocked:%';

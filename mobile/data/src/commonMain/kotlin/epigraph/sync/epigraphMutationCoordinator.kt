@@ -13,6 +13,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import tachiyomi.data.Aethon_sync_outbox
+import tachiyomi.data.SelectBlockedMutations
 import yokai.data.Database
 import yokai.data.DatabaseHandler
 
@@ -286,23 +287,59 @@ class EpigraphMutationCoordinator(
     }
 
     /**
+     * Sends again the reading rows the Core refused because they named a Core-served manga by its
+     * portable `comic:` identity, which the reader router published before it used the manga's scoped
+     * Suwayomi id. Each row moves to that id under a new client mutation ID. Its event clock still
+     * comes from the row's creation time, so the Core drops it when a newer change already won. A row
+     * refused again names the scoped id and stays parked instead of looping.
+     */
+    suspend fun retryCoreServedComicIds(nowEpochMillis: Long, newClientMutationId: () -> ClientMutationId): Int {
+        require(nowEpochMillis >= 0) { "retry timestamp must be epoch milliseconds" }
+        return databaseHandler.await(inTransaction = true) {
+            val scopedByComic = HashMap<String, String?>()
+            aethon_syncQueries.selectBlockedMutations().executeAsList().count { row ->
+                val comicId = row.portableComicId() ?: return@count false
+                val scoped = scopedByComic.getOrPut(comicId) { coreServedScopedComicId(comicId) } ?: return@count false
+                var repaired = false
+                retryParked(row.sequence, newClientMutationId(), nowEpochMillis, rekey = true) { command ->
+                    command.withScopedComicId(comicId, scoped)?.also { repaired = true }
+                }
+                repaired
+            }
+        }
+    }
+
+    /** The scoped Suwayomi id of the Core-served manga that holds [comicId] here, or null. */
+    private fun Database.coreServedScopedComicId(comicId: String): String? {
+        val identity = aethon_syncQueries.selectIdentityByEntityId(comicId).executeAsOneOrNull()
+            ?.takeIf { it.content_type == "MANGA" }
+            ?: return null
+        val mangaId = identity.local_reference.toLongOrNull() ?: return null
+        val url = mangasQueries.findById(mangaId).executeAsOneOrNull()?.url ?: return null
+        return suwayomiMangaEntityIdForCoreUrl(url)
+    }
+
+    /**
      * The Core keys a receipt by the ID inside the stored envelope, and the drainer refuses a row
      * whose column and envelope IDs differ, so both carry the new ID. [repair] returns null to leave
-     * the row parked.
+     * the row parked. [rekey] also moves the row to the entity the repaired command names.
      */
     private fun Database.retryParked(
         sequence: Long,
         newClientMutationId: ClientMutationId,
         nowEpochMillis: Long,
+        rekey: Boolean = false,
         repair: (SyncCommand) -> SyncCommand?,
     ) {
         val payloadJson = aethon_syncQueries.selectBlockedMutationPayload(sequence).executeAsOneOrNull() ?: return
         val envelope = runCatching { json.decodeFromString<SyncCommandEnvelope>(payloadJson) }.getOrNull()
         val retried = if (envelope == null) {
             // An unreadable envelope is refused again by the drainer; the row keeps what it had.
+            if (rekey) return
             payloadJson
         } else {
             val command = repair(envelope.command) ?: return
+            if (rekey) aethon_syncQueries.rekeyBlockedMutation(entityId = command.entityId.value, sequence = sequence)
             json.encodeToString(envelope.copy(clientMutationId = newClientMutationId, command = command))
         }
         aethon_syncQueries.retryBlockedMutation(
@@ -456,6 +493,35 @@ private fun SyncCommand.withPageCountCoveringPageIndex(): SyncCommand? = when (t
     is SyncCommand.SetProgress -> locator.withPageCountCoveringPageIndex()?.let { copy(locator = it) }
     is SyncCommand.SetBookmark -> locator.withPageCountCoveringPageIndex()?.let { copy(locator = it) }
     else -> null
+}
+
+private const val INVALID_COMIC_ID = "INVALID_COMIC_ID"
+private const val INVALID_SUWAYOMI_ENTITY_ID = "INVALID_SUWAYOMI_ENTITY_ID"
+private const val PORTABLE_COMIC_PREFIX = "comic:"
+private const val COMIC_CHAPTER_STATE_PREFIX = "comic.chapter_state::"
+
+/** The portable comic id a row refused for naming a Core-served manga that way, or null. */
+private fun SelectBlockedMutations.portableComicId(): String? = when {
+    entity_type == "comic.history" && last_error == BLOCKED_PREFIX + INVALID_COMIC_ID -> entity_id
+    entity_type == "comic.chapter_state" && last_error == BLOCKED_PREFIX + INVALID_SUWAYOMI_ENTITY_ID ->
+        entity_id.removePrefix(COMIC_CHAPTER_STATE_PREFIX).substringBefore("::")
+            .takeIf { entity_id.startsWith(COMIC_CHAPTER_STATE_PREFIX) }
+    else -> null
+}?.takeIf { it.startsWith(PORTABLE_COMIC_PREFIX) }
+
+/** Null unless the command names [from] and its chapter belongs to the scope of [to]. */
+private fun SyncCommand.withScopedComicId(from: String, to: String): SyncCommand? {
+    val chapterPrefix = to.substringBeforeLast(":manga:") + ":chapter:"
+    return when (this) {
+        is SyncCommand.SetProgress -> (locator as? ReaderLocator.Manga)
+            ?.takeIf { entityId.value == from && it.entityId.value == from && it.chapterId.startsWith(chapterPrefix) }
+            ?.let { copy(entityId = EpigraphEntityId(to), locator = it.copy(entityId = EpigraphEntityId(to))) }
+        is SyncCommand.SetChapterState -> takeIf {
+            entityId.value == "$COMIC_CHAPTER_STATE_PREFIX$from::${state.chapterId}" &&
+                state.chapterId.startsWith(chapterPrefix)
+        }?.copy(entityId = EpigraphEntityId("$COMIC_CHAPTER_STATE_PREFIX$to::${state.chapterId}"))
+        else -> null
+    }
 }
 
 private fun ReaderLocator.withPageCountCoveringPageIndex(): ReaderLocator? {
