@@ -11,7 +11,7 @@ import type {
   RestoredEpigraphNovelsSnapshot,
 } from "./novelsBackup";
 import type { PersistedNovelLibraryState } from "../novels/domain";
-import { createNovelChapterId, createNovelLibraryId } from "../novels/domain";
+import { createNovelChapterId, createNovelLibraryId, novelTitleFromPath } from "../novels/domain";
 import type { PersistedNovelRepositoryState } from "../novels/repositoryState";
 import type { BooksCategory } from "../../store/state.svelte";
 import { createBooksCategory } from "../library/domainCategories";
@@ -107,6 +107,11 @@ export function applyRestoredNovelsSnapshotToLibraryState(input: {
   return mergeRestoredNovelsSnapshot(input).state;
 }
 
+// A title derived from the path only stands in for a missing name; a real name from the backup replaces it.
+function keptNovelTitle(existing: { title: string; path: string }, incoming: string) {
+  return existing.title && (existing.title !== novelTitleFromPath(existing.path) || !incoming) ? existing.title : incoming || existing.title;
+}
+
 export interface NovelMergeWarning { novelId: string; field: string; code: string }
 export interface NovelMergeResult {
   state: PersistedNovelLibraryState;
@@ -194,11 +199,10 @@ export function mergeRestoredNovelsSnapshot(input: {
       if (!current && candidate.chapters.some(c => c.id === chapterId)) { invalidChapter = true; break; }
       chapterIds.set(chapter.id, chapterId);
       if (current) {
-        if (chapter.unread !== current.unread) warn(incoming.id, `unread:${chapter.path}`);
-        // Source updatedAt is not evidence for a manual read/unread decision.
+        // As in Mihon, a chapter read on either side stays read; timestamps are not compared.
         const index = candidate.chapters.findIndex(c => c.id === current.id);
         candidate.chapters[index] = { ...current, title: current.title || chapter.title,
-          releaseTime: current.releaseTime ?? chapter.releaseTime };
+          releaseTime: current.releaseTime ?? chapter.releaseTime, unread: current.unread && chapter.unread };
       } else {
         candidate.chapters.push({ ...chapter, id: chapterId, novelId: id, updatedAt: chapter.updatedAt ?? null });
       }
@@ -225,7 +229,9 @@ export function mergeRestoredNovelsSnapshot(input: {
       if (!next || !Number.isFinite(next.progressPercent) || next.progressPercent < 0 || next.progressPercent > 1) continue;
       const previous = candidate.progress.find(p => p.novelId === id);
       if (previous && !(timestamp(previous.updatedAt) && timestamp(next.updatedAt) && next.updatedAt > previous.updatedAt)) {
-        if (previous.locator !== next.locator || previous.chapterId !== next.chapterId) warn(incoming.id, "progress");
+        // An older backup gives way to newer reading without a warning, as in Mihon; only unordered progress conflicts.
+        const older = timestamp(previous.updatedAt) && timestamp(next.updatedAt) && next.updatedAt < previous.updatedAt;
+        if (!older && (previous.locator !== next.locator || previous.chapterId !== next.chapterId)) warn(incoming.id, "progress");
         continue;
       }
       // Percentage is derived against the destination catalog, not compared as a clock.
@@ -252,7 +258,7 @@ export function mergeRestoredNovelsSnapshot(input: {
       else if (timestamp(next.readAt) && timestamp(candidate.history[index].readAt) && next.readAt > candidate.history[index].readAt) candidate.history[index] = next;
     }
     const entry = existing ? { ...existing,
-      title: existing.title || incoming.title, author: existing.author ?? incoming.author ?? null,
+      title: keptNovelTitle(existing, incoming.title), author: existing.author ?? incoming.author ?? null,
       description: existing.description ?? incoming.description ?? null, coverUrl: existing.coverUrl ?? incoming.coverUrl ?? null,
       status: existing.status ?? incoming.status ?? null, tags: existing.tags.length ? existing.tags : [...(incoming.tags ?? [])],
     } : { id, path: incoming.path, source: incoming.source!, title: incoming.title,

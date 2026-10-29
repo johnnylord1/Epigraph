@@ -29,11 +29,24 @@ function mergeFixture() {
 describe("identity-aware Novel merge", () => {
   it("reports preserved user-state conflicts and isolates malformed chapter groups", () => {
     const f = mergeFixture();
-    expect(mergeRestoredNovelsSnapshot({ currentState: f.current, restored: f.restored }).warnings).toContainEqual({ novelId: "backup-9", field: "unread:/one", code: "CURRENT_STATE_PRESERVED" });
+    // An older backup is not a conflict: the newer progress stays without a warning.
+    expect(mergeRestoredNovelsSnapshot({ currentState: f.current, restored: f.restored }).warnings).toEqual([]);
+    f.restored.progress[0].updatedAt = 0;
+    expect(mergeRestoredNovelsSnapshot({ currentState: f.current, restored: f.restored }).warnings).toContainEqual({ novelId: "backup-9", field: "progress", code: "CURRENT_STATE_PRESERVED" });
     f.restored.chapters.push({ ...f.restored.chapters[0], id: "duplicate" });
     const next = mergeRestoredNovelsSnapshot({ currentState: f.current, restored: f.restored });
     expect(next.state).toEqual(f.current);
     expect(next.novelIdMap.size).toBe(0);
+  });
+  it("replaces a title made from the path with the backup's real name, and keeps a real one", () => {
+    const f = mergeFixture();
+    f.current.entries[0] = { ...f.current.entries[0], path: "/novel/the-lone-hero", title: "The Lone Hero" };
+    f.restored.entries[0] = { ...f.restored.entries[0], path: "/novel/the-lone-hero", title: "The Lone Hero: Volume One" };
+    const titleOf = () => mergeRestoredNovelsSnapshot({ currentState: f.current, restored: f.restored }).state.entries.find(e => e.id === "destination")?.title;
+    expect(titleOf()).toBe("The Lone Hero: Volume One");
+
+    f.current.entries[0] = { ...f.current.entries[0], title: "Lone Hero" };
+    expect(titleOf()).toBe("Lone Hero");
   });
   it("maps categories by destination identity and unions memberships without toggling", () => {
     const input = {
@@ -61,6 +74,13 @@ describe("identity-aware Novel merge", () => {
     const f = mergeFixture(), next = f.run();
     expect(next.chapters[0].unread).toBe(false);
     expect(next.progress).toEqual(f.current.progress);
+  });
+  it("marks a chapter read when the backup read it, even after the source listed it as unread", () => {
+    const f = mergeFixture();
+    f.restored.chapters.push({ ...f.current.chapters[1], id: "backup-c10", novelId: "backup-9", unread: false, updatedAt: 1 });
+    const next = mergeRestoredNovelsSnapshot({ currentState: f.current, restored: f.restored });
+    expect(next.state.chapters.map(c => [c.id, c.unread])).toEqual([["destination-c1", false], ["destination-c2", false]]);
+    expect(next.warnings.some(w => w.field.startsWith("unread:"))).toBe(false);
   });
   it("accepts newer attributable progress and remaps encoded locators", () => {
     const f = mergeFixture();
