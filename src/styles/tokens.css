@@ -2491,12 +2491,17 @@
   --component-migration-primary-bg: var(--color-accent);
   --component-migration-secondary-fg: var(--text-secondary);
   --component-migration-disabled-opacity: 0.45;
-  --component-migrate-modal-width: min(600px, calc(100vw - 48px));
+  --component-migrate-modal-width: min(720px, calc(100vw - 48px));
   --component-novel-migrate-modal-z-index: 1;
-  --component-migrate-modal-height: min(640px, calc(100vh - 64px));
-  --component-migration-mass-width: min(880px, calc(100vw - 48px));
+  --component-migrate-modal-height: min(820px, calc(100vh - 64px));
+  --component-migration-mass-width: min(1080px, calc(100vw - 48px));
   --component-migration-compact-width: min(460px, calc(100vw - 48px));
-  --component-migration-mass-height: min(720px, calc(100vh - 64px));
+  --component-migration-mass-height: min(860px, calc(100vh - 64px));
+  /* Result and queue covers follow the dialog's height cap so four to five rows fill the body:
+     the cap minus the header, toolbar and footer (280px), split into 4.5 rows, minus each row's
+     padding, then turned from a 2:3 cover height into its width. */
+  --component-migration-row-cover-width: clamp(44px, calc(((var(--component-migrate-modal-height) - 280px) / 4.5 - 18px) * 2 / 3), 96px);
+  --component-migration-queue-cover-width: clamp(40px, calc(((var(--component-migration-mass-height) - 280px) / 4.5 - 18px) * 2 / 3), 96px);
   --component-migration-surface: color-mix(in srgb, var(--text-primary) 4%, transparent);
   --component-migration-surface-strong: color-mix(in srgb, var(--text-primary) 7%, transparent);
   --component-migration-field-focus-bg: color-mix(in srgb, var(--component-migration-accent-fg) 7%, var(--component-migration-surface));

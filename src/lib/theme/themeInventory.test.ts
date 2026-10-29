@@ -24,7 +24,7 @@ const EXPECTED_FAMILY_COUNTS = {
   manga: 191,
   menu: 14,
   migrate: 2,
-  migration: 58,
+  migration: 60,
   modal: 4,
   nav: 15,
   "nocturne-state": 126,
@@ -213,9 +213,9 @@ describe("exhaustive component theme inventory", () => {
   const scoped = inventory.entries;
 
   test("classifies every definition without inferring dead tokens", () => {
-    expect(inventory.entries).toHaveLength(2612);
-    expect(scoped).toHaveLength(2612);
-    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2578);
+    expect(inventory.entries).toHaveLength(2614);
+    expect(scoped).toHaveLength(2614);
+    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2580);
     expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(34);
     expect(inventory.entries.every(({ status }) => ["Active", "Legacy"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
@@ -229,7 +229,7 @@ describe("exhaustive component theme inventory", () => {
     );
     expect(families).toEqual(EXPECTED_FAMILY_COUNTS);
     expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2351);
-    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(261);
+    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(263);
     expect(scoped.filter(({ layers }) => layers.join("+") === "nocturne")).toHaveLength(0);
   });
 
@@ -240,7 +240,7 @@ describe("exhaustive component theme inventory", () => {
     const unconsumed = legacy.filter(({ consumption }) => consumption === "none");
     const dynamic = scoped.filter(({ consumption }) => consumption === "dynamic");
 
-    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2561);
+    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2563);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
     expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(16);
     expect(legacyOnly).toHaveLength(0);
