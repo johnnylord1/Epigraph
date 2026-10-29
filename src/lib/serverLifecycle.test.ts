@@ -199,6 +199,21 @@ describe("server lifecycle notifications", () => {
     expect(isReady).toHaveBeenCalledTimes(4);
   });
 
+  it("does not put the server in standby while a restore holds it awake", async () => {
+    const invoke = vi.fn(async (command: string) => command === "probe_server_health" ? true : undefined);
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    vi.doMock("./manga/runtime/managed", () => ({ resetManagedSourceRuntime: () => {} }));
+    const { holdServerAwake, maybeStandbyLocalServer } = await import("./serverLifecycle");
+    const input = { serverUrl: "http://127.0.0.1:4567", binary: "", updateIntensity: "balanced" as const, profileId: "main", profileLabel: "MAIN" };
+
+    const release = holdServerAwake();
+    expect(await maybeStandbyLocalServer(input)).toBe(false);
+    expect(invoke).not.toHaveBeenCalledWith("kill_server", expect.anything());
+    release();
+    expect(await maybeStandbyLocalServer(input)).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("kill_server", { serverUrl: "http://127.0.0.1:4567" });
+  });
+
   it("stops probing when cancelled or after giving up", async () => {
     const dispatchEvent = vi.fn();
     vi.stubGlobal("window", { dispatchEvent });

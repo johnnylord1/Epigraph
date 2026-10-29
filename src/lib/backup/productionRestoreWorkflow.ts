@@ -21,10 +21,13 @@ import {
 import type { Tracker } from "../types";
 import { preflightEpigraphRestorePayloads } from "./epigraphRestorePreflight";
 import { selectedExecutablePayloadKinds } from "./backupRollout";
+import { captureMangaRestoreParity, localMangaParityLedger } from "./mangaRestoreParity";
+import { restoreDigest } from "./restoreOperation";
 import { createBackupWorkflow, type BackupInspection, type BackupWorkflowFile } from "./backupWorkflow";
 import { loadSettingsStorageRuntime } from "../../components/settings/settingsStorageRuntime";
+import { ensureServerAwakeFor, holdServerAwake } from "../serverLifecycle";
 
-type MangaRestoreData = {
+export type MangaRestoreData = {
   parsed: ParsedBackup;
   analysis: ReconciliationAnalysis;
   inventory: SourceInventoryEntry[];
@@ -49,7 +52,17 @@ async function loadNovelRuntimeState() {
   return novelRestoreRuntimeState(state);
 }
 
+// An idle app puts its local Suwayomi in standby; reading or restoring the manga library needs it running.
+function wakeRestoreServer() {
+  return ensureServerAwakeFor("backup-restore", {
+    serverUrl: store.runtimeServerUrl, binary: store.settings.serverBinary,
+    updateIntensity: store.settings.libraryUpdateIntensity, profileId: store.runtimeResolvedLocalProfileId,
+    profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
+  });
+}
+
 async function inspectManga(file: File): Promise<BackupInspection> {
+  await wakeRestoreServer();
   const runtime = await loadSettingsStorageRuntime();
   const bytes = new Uint8Array(await file.arrayBuffer());
   const [inventory, trackers, overlay] = await Promise.all([
@@ -157,26 +170,32 @@ async function refreshMangaLibrary(assertTarget = () => {}) {
 }
 
 async function restoreManga(file: File, data: MangaRestoreData, choices: Record<string, NativeSourceRestoreChoice>, observationOnly = false, assertTarget = () => {}) {
-  const { runtime, reconciled, restoreProductionManga } = await (async () => {
+  const { runtime, reconciled, restoreProductionManga, applyParity } = await (async () => {
     const runtime = await loadSettingsStorageRuntime();
     assertTarget();
     const readiness = buildRestoreReadiness(data.analysis, choices, data.inventory, data.availableExtensions);
     if (readiness.blocksRestore) throw new Error("RESTORE_WAITING_FOR_DEPENDENCIES");
     const reconciled = runtime.buildReconciledBackupFile(data.parsed, data.analysis, choices, file.name);
     const { restoreProductionManga } = await import("./mangaRestoreAdapter");
+    // Read before submitting: Suwayomi clears categories that Mihon keeps.
+    // Keyed by profile, not URL: restores only reach the profile's own server, whose port can change between launches.
+    const ledger = localMangaParityLedger(JSON.stringify([store.runtimeResolvedLocalProfileId]), await restoreDigest(await reconciled.arrayBuffer()));
+    const applyParity = await captureMangaRestoreParity(runtime.buildMangaRestoreParityInput(data.parsed, data.analysis, choices), gql, ledger);
     assertTarget();
-    return { runtime, reconciled, restoreProductionManga };
+    return { runtime, reconciled, restoreProductionManga, applyParity };
   })().catch(error => { throw mangaPreparationError(error, observationOnly); });
   const result = await restoreProductionManga(reconciled, { observationOnly, assertTarget });
-  if (result.status !== "succeeded") throw Object.assign(new Error(result.code), { provenNotAccepted: result.provenNotAccepted, externalTerminal: result.code === "BACKEND_RESTORE_FAILURE" });
+  if (result.status !== "succeeded") throw Object.assign(new Error(result.code), { provenNotAccepted: result.provenNotAccepted, externalTerminal: ["BACKEND_RESTORE_FAILURE", "BACKEND_RESTORE_LOST"].includes(result.code) });
+  const warnings = await Promise.resolve().then(() => { assertTarget(); return applyParity(); })
+    .catch(() => ["MANGA_RESTORE_CATEGORIES_NOT_KEPT"]);
   try {
     assertTarget();
     await runtime.upsertOverlayEntry(runtime.overlayEntryFromAnalysis(data.analysis));
     assertTarget();
     await refreshMangaLibrary(assertTarget);
-    return [];
+    return warnings;
   } catch {
-    return ["MANGA_RESTORED_LOCAL_REFRESH_FAILED"];
+    return [...warnings, "MANGA_RESTORED_LOCAL_REFRESH_FAILED"];
   }
 }
 
@@ -250,9 +269,15 @@ export function createProductionRestoreWorkflow(options: ProductionRestoreOption
   const workflow = createBackupWorkflow({
     target: () => JSON.stringify([store.runtimeResolvedLocalProfileId, store.runtimeServerUrl]),
     admit: async () => {
-      const token = await invoke<string>("restore_session_admit", { profileId: store.runtimeResolvedLocalProfileId });
-      if (typeof token !== "string" || !token) throw Error("RESTORE_SESSION_UNAVAILABLE");
-      return async () => { await invoke("restore_session_release", { token }); };
+      const keepAwake = holdServerAwake();
+      try {
+        const token = await invoke<string>("restore_session_admit", { profileId: store.runtimeResolvedLocalProfileId });
+        if (typeof token !== "string" || !token) throw Error("RESTORE_SESSION_UNAVAILABLE");
+        return async () => { try { await invoke("restore_session_release", { token }); } finally { keepAwake(); } };
+      } catch (error) {
+        keepAwake();
+        throw error;
+      }
     },
     ready: async files => {
       for (const entry of files) {
