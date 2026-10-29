@@ -132,6 +132,48 @@ describe("MigrateModal", () => {
     expect(document.querySelector("[data-migration-source-searching]")).toBeNull();
   });
 
+  test("shows one best match per source and keeps the other titles in its menu", async () => {
+    const titles = [
+      "Dangerous Dungeon Escape",
+      "Dungeon Escape Side Story",
+      "Escape Plan",
+      "Dangerous Dungeon",
+      "Dungeon Odyssey",
+      "Escape Artist",
+      "Dungeon Reset",
+      "Dangerous Love",
+    ];
+    searchMock.mockReset();
+    searchMock.mockImplementation(async ({ sourceId }: { sourceId: string }) => titles.map((title, index) => ({
+      id: 100 + index, title, thumbnailUrl: "", inLibrary: false, source: { id: sourceId },
+    })));
+    gqlMock.mockResolvedValueOnce({
+      sources: { nodes: [{ id: "asura-src", name: "asura", displayName: "Asura Scans", lang: "en", iconUrl: "", isNsfw: false }] },
+    });
+
+    render(MigrateModal, { props: { manga, currentChapters: [], onClose: vi.fn(), onMigrated: vi.fn() } });
+    await fireEvent.click(await screen.findByRole("button", { name: /search all sources/i }));
+
+    const group = await screen.findByRole("region", { name: "Asura Scans" });
+    const rows = group.querySelectorAll("[data-migration-result]");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("Dangerous Dungeon Escape");
+    expect(group.textContent).toContain("8 results");
+
+    await fireEvent.click(screen.getByRole("button", { name: "More matches from Asura Scans" }));
+    const menu = await screen.findByRole("menu");
+    expect(menu.querySelectorAll("[data-migration-alternative]")).toHaveLength(5);
+    expect(menu.textContent).not.toContain("Dangerous Dungeon Escape");
+
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Show all 8 results" }));
+    await waitFor(() => expect(document.querySelectorAll("[data-migration-result]")).toHaveLength(8));
+    expect(searchMock).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: /back/i }));
+    expect(await screen.findByRole("region", { name: "Asura Scans" })).toBeTruthy();
+    expect(searchMock).toHaveBeenCalledTimes(1);
+  });
+
   test("shows retry on source load failure and lists installed alternatives after retry", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {

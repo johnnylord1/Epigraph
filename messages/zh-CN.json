@@ -3550,6 +3550,8 @@
   "migrate_sourcesSearched": "已搜索 {done}/{total} 个来源",
   "migrate_noResultsIn": "{sources} 中没有结果。",
   "migrate_couldNotSearch": "暂时无法搜索 {sources}。",
+  "migrate_moreMatchesFor": "{source} 的更多匹配",
+  "migrate_showAllResults": "查看全部 {count} 个结果",
   "novelMigrate_itemCarry": "匹配 {chapters} 章 · 已读 {read} · 书签 {bookmarks}",
   "bookToNovel_action": "转为小说",
   "bookToNovel_actionTitle": "在小说源中查找这本书并在那里继续阅读",

@@ -64,6 +64,8 @@
   let selectedSource = $state<Source | null>(null);
   let searchScope: SearchScope = $state("source");
   let sourceGroups: SourceGroup[] = $state([]);
+  // A source's full list opened from the search across every source; Back returns to that search.
+  let fromAllSources = $state(false);
   let globalSearchController: AbortController | null = null;
 
   // Lang filter: "en" first, then alphabetical
@@ -276,6 +278,7 @@
   function pickAllSources() {
     selectedSource = null;
     searchScope = "all";
+    fromAllSources = false;
     error = null;
     step = "search";
     void searchAllSources(query);
@@ -286,14 +289,40 @@
     if (!src) return;
     globalSearchController?.abort();
     searchScope = "source";
+    fromAllSources = false;
     selectedSource = src;
     error = null;
     step = "search";
     searchSource(src, query);
   }
 
+  // Opens one source's full list from the search across every source, reusing what it already
+  // found; the other sources keep answering in the background.
+  function showSourceResults(sourceId: string) {
+    const group = sourceGroups.find((candidate) => candidate.source.id === sourceId);
+    if (!group) return;
+    selectedSource = group.source;
+    results = group.results;
+    error = null;
+    fromAllSources = true;
+    searchScope = "source";
+  }
+
+  function backFromSearch() {
+    if (searchScope === "source" && fromAllSources) {
+      fromAllSources = false;
+      selectedSource = null;
+      results = [];
+      error = null;
+      searchScope = "all";
+      return;
+    }
+    backToSources();
+  }
+
   function backToSources() {
     globalSearchController?.abort();
+    fromAllSources = false;
     step = "source";
     results = [];
     sourceGroups = [];
@@ -467,6 +496,7 @@
           {error}
           onSearch={() => void searchAllSources(query)}
           onPick={pickGlobalResult}
+          onShowAll={showSourceResults}
         />
 
       {:else if step === "search"}
@@ -499,7 +529,7 @@
         <span class="mg-spacer"></span>
         <button class="mg-btn" type="button" onclick={onClose}>{$_("ui_cancel")}</button>
       {:else if step === "search"}
-        <button class="mg-btn" type="button" onclick={backToSources} disabled={loadingMatchId !== null}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
+        <button class="mg-btn" type="button" onclick={backFromSearch} disabled={loadingMatchId !== null}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
         <span class="mg-spacer"></span>
       {:else}
         <button class="mg-btn" type="button" onclick={() => step = "search"} disabled={migrating}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>

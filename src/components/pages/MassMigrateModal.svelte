@@ -669,44 +669,6 @@
     activeActionsMenuId = activeActionsMenuId === item.currentManga.id ? null : item.currentManga.id;
   }
 
-  // The row menu floats over the dialog instead of taking room in the queue, so opening it never
-  // grows or scrolls the dialog. It opens under its button, or above it when the dialog ends first,
-  // and closes on a press outside it, or when the queue scrolls or the window resizes rather than
-  // drifting from its button.
-  function floatMenu(menu: HTMLElement) {
-    const trigger = menu.parentElement?.querySelector<HTMLElement>(".mg-icon-btn");
-    const body = menu.closest<HTMLElement>(".mg-body");
-    if (!trigger) return;
-    const anchor = trigger.getBoundingClientRect();
-    const bounds = menu.closest<HTMLElement>(".mg-modal")?.getBoundingClientRect();
-    const floor = Math.min(bounds?.bottom ?? window.innerHeight, window.innerHeight) - 8;
-    menu.style.left = "0px";
-    menu.style.top = "0px";
-    // Where (0, 0) lands, so the placement stays right even under a transformed ancestor.
-    const origin = menu.getBoundingClientRect();
-    const below = anchor.bottom + 6;
-    const above = anchor.top - 6 - origin.height;
-    const opensUp = below + origin.height > floor && above >= 8;
-    menu.dataset.side = opensUp ? "top" : "bottom";
-    menu.style.left = `${Math.max(8, anchor.right - origin.width) - origin.left}px`;
-    menu.style.top = `${(opensUp ? above : below) - origin.top}px`;
-    const close = () => { activeActionsMenuId = null; };
-    const closeOutside = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && !menu.contains(target) && !trigger.contains(target)) close();
-    };
-    body?.addEventListener("scroll", close, { passive: true });
-    window.addEventListener("resize", close);
-    document.addEventListener("pointerdown", closeOutside, true);
-    return {
-      destroy() {
-        body?.removeEventListener("scroll", close);
-        window.removeEventListener("resize", close);
-        document.removeEventListener("pointerdown", closeOutside, true);
-      },
-    };
-  }
-
   function openManualSearch(item: MassMangaMigrationPreviewItem) {
     activeActionsMenuId = null;
     manualSearchItemId = item.currentManga.id;
@@ -1066,7 +1028,7 @@
                       <DotsThreeVertical size={18} weight="bold" />
                     </button>
                     {#if activeActionsMenuId === item.currentManga.id}
-                      <div class="mg-menu" role="menu" use:floatMenu in:popIn out:popOut>
+                      <div class="mg-menu" role="menu" use:floatMenu={() => { activeActionsMenuId = null; }} in:popIn out:popOut>
                         {#if canSelect(item)}
                           <button type="button" role="menuitem" onclick={() => applySelected("migrate", [item.currentManga.id])}>{$_("massMigration.migrateNow")}</button>
                           <button type="button" role="menuitem" onclick={() => applySelected("copy", [item.currentManga.id])}>{$_("massMigration.copyNow")}</button>

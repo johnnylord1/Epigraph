@@ -3550,6 +3550,8 @@
   "migrate_sourcesSearched": "{done} de {total} fuentes consultadas",
   "migrate_noResultsIn": "Sin resultados en {sources}.",
   "migrate_couldNotSearch": "No se pudo buscar en {sources} ahora.",
+  "migrate_moreMatchesFor": "Más coincidencias en {source}",
+  "migrate_showAllResults": "Ver los {count} resultados",
   "novelMigrate_itemCarry": "{chapters} capítulos coincidentes · {read} leídos · {bookmarks} marcadores",
   "bookToNovel_action": "A novela",
   "bookToNovel_actionTitle": "Buscar este libro en una fuente de novelas y seguir leyendo allí",
