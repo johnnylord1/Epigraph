@@ -613,6 +613,9 @@ open class LibraryController(
     override val mainRecycler: RecyclerView
         get() = binding.libraryGridRecycler.recycler
     private var staggeredBundle: Parcelable? = null
+
+    // Books and Comics share one RecyclerView; swapping adapters drops the Comics scroll position.
+    private var comicsScrollState: Parcelable? = null
     private var staggeredObserver: ViewTreeObserver.OnGlobalLayoutListener? = null
     var isPoppingIn = false
     var tempItems: List<LibraryItem>? = null
@@ -3323,29 +3326,23 @@ open class LibraryController(
         binding.categoryHopperFrame.isVisible = false
         binding.jumperCategoryText.isVisible = false
         // Before the first snapshot lands the collection is unknown, not empty.
-        if (hasBooksContent || unifiedBooksView?.hasLoadedCollection != true) {
+        // A search shows the global-search header instead, as Comics does; the empty view would
+        // cover that header and swallow its taps.
+        if (hasBooksContent || unifiedBooksView?.hasLoadedCollection != true || query.isNotBlank()) {
             binding.emptyView.hide()
             return
         }
 
-        val hasQuery = query.isNotBlank()
         val filtered = hasActiveFilters
         binding.emptyView.show(
             Icons.Filled.HeartBroken,
-            when {
-                hasQuery -> MR.strings.no_results_found
-                filtered -> MR.strings.no_matches_for_filters
-                else -> MR.strings.library_books_empty
-            },
-            when {
-                // The empty view covers the global-search header, so offer the same jump here.
-                hasQuery -> listOf(
-                    EmptyView.Action(MR.strings.label_global_search) { globalSearch(query) },
-                )
-                !filtered -> listOf(
+            if (filtered) MR.strings.no_matches_for_filters else MR.strings.library_books_empty,
+            if (!filtered) {
+                listOf(
                     EmptyView.Action(MR.strings.library_import_book) { launchBooksImport() },
                 )
-                else -> emptyList()
+            } else {
+                emptyList()
             },
         )
         binding.emptyView.alpha = 1f
@@ -3379,10 +3376,16 @@ open class LibraryController(
             binding.recyclerCover.isVisible = false
             binding.recyclerCover.isClickable = false
             binding.recyclerCover.isFocusable = false
+            if (binding.libraryGridRecycler.recycler.adapter === adapter) {
+                comicsScrollState = binding.libraryGridRecycler.recycler.manager.onSaveInstanceState()
+            }
             binding.libraryGridRecycler.recycler.adapter = unifiedBooksView?.libraryAdapter
         } else {
             binding.recyclerCover.isVisible = true
             binding.libraryGridRecycler.recycler.adapter = adapter
+            // Applied on the next layout, so Comics reopens on the category it was showing.
+            comicsScrollState?.let { binding.libraryGridRecycler.recycler.manager.onRestoreInstanceState(it) }
+            comicsScrollState = null
         }
         syncFastScrollerAdapter()
         setRecyclerLayout()
@@ -3420,6 +3423,9 @@ open class LibraryController(
         } else {
             // Scrolling Books moved the active header onto its groups; Comics resumes its own.
             activeCategory = lastUsedCategory
+            // The header title still holds the Books group name; the mini bar below copies it
+            // into the search subtitle, so set the Comics category first.
+            setActiveCategory()
             // The search bar may have changed while Books was showing; filter Comics by it too.
             search(query)
             reconcileDisplaySurface()
