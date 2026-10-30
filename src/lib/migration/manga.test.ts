@@ -30,6 +30,7 @@ import {
   updateMassMangaMigrationPreviewItem,
   undoMangaMigration,
 } from "./manga";
+import { translate } from "../i18n/runtime";
 import type { Chapter, Manga } from "../types";
 import {
   migrationIdentityRevision,
@@ -698,7 +699,7 @@ describe("manga migration services", () => {
 
     expect(applied.migratedCount).toBe(0);
     expect(applied.failedItems).toHaveLength(1);
-    expect(applied.failedItems[0]?.message).toContain("Alpha Hero was kept in its current source");
+    expect(applied.failedItems[0]?.message).toBe(translate("migrate.keptInCurrentSource", { title: "Alpha Hero" }));
     expect(applied.failedItems[0]?.message).not.toContain("captcha");
     expect(mangaById.get(10)?.inLibrary).toBe(true);
     expect(mangaById.get(20)?.inLibrary).toBe(false);
