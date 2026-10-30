@@ -835,10 +835,8 @@ open class LibraryController(
 
     private fun setActiveCategory() {
         if (booksMode) {
-            binding.headerTitle.text = booksCategoryName()
-            // Books has one synthetic category, just like a single-category Comics library.
-            // Keep its name in the section header, not inside the shared search field.
-            searchToolbar()?.subtitle = null
+            binding.headerTitle.text = booksHeaderName()
+            setSubtitle()
             return
         }
         val currentCategory = presenter.categories.indexOfFirst {
@@ -1102,8 +1100,8 @@ open class LibraryController(
     fun showMiniBar() {
         if (booksMode) {
             binding.headerCard.isVisible = showCategoryInTitle
-            binding.headerTitle.text = booksCategoryName()
-            searchToolbar()?.subtitle = null
+            binding.headerTitle.text = booksHeaderName()
+            setSubtitle()
             return
         }
         binding.headerCard.isVisible = showCategoryInTitle
@@ -1111,11 +1109,14 @@ open class LibraryController(
     }
 
     private fun setSubtitle() {
-        if (booksMode) {
-            searchToolbar()?.subtitle = null
-            return
+        // Books groups play the part of Comics categories; a single group is not named, as with
+        // a single-category Comics library.
+        val multipleCategories = if (booksMode) {
+            (currentLibraryAdapter?.getHeaderPositions()?.size ?: 0) > 1
+        } else {
+            !singleCategory && presenter.showAllCategories
         }
-        if (isBindingInitialized && !singleCategory && presenter.showAllCategories &&
+        if (isBindingInitialized && multipleCategories && presenter.showAllCategories &&
             !binding.headerTitle.text.isNullOrBlank() && !binding.recyclerCover.isClickable &&
             isControllerVisible
         ) {
@@ -2233,7 +2234,7 @@ open class LibraryController(
         updateHopperAlpha()
         if (booksMode) {
             binding.headerCard.isVisible = showCategoryInTitle
-            binding.headerTitle.text = booksCategoryName()
+            binding.headerTitle.text = booksHeaderName()
             updateBooksEmptyState()
         }
         val isSingleCategory = !presenter.showAllCategories && !presenter.forceShowAllCategories
@@ -2374,7 +2375,8 @@ open class LibraryController(
             val headerPosition = activeAdapter.indexOf(0)
             if (headerPosition >= 0) {
                 binding.libraryGridRecycler.recycler.scrollToPositionWithOffset(headerPosition, 0)
-                binding.headerTitle.text = booksCategoryName()
+                binding.headerTitle.text = (activeAdapter.getItem(headerPosition) as? LibraryHeaderItem)
+                    ?.category?.name ?: booksCategoryName()
                 setSubtitle()
             }
             return
@@ -3307,6 +3309,15 @@ open class LibraryController(
         }
     }
 
+    /**
+     * The Books group at the top of the list. Right after the adapter swap nothing is laid out
+     * yet, and the list opens at its first group.
+     */
+    private fun booksHeaderName(): String =
+        (getHeader() ?: currentLibraryAdapter?.currentItems?.firstOrNull { it is LibraryHeaderItem } as? LibraryHeaderItem)
+            ?.category?.name?.takeIf { it.isNotBlank() }
+            ?: booksCategoryName()
+
     private fun booksCategoryName(): String = unifiedBooksView?.category?.name
         ?: view?.context?.getString(MR.strings.default_value)
         ?: "Default"
@@ -3353,9 +3364,9 @@ open class LibraryController(
         if (!isBindingInitialized) return
         binding.emptyView.post {
             if (!booksMode || !isBindingInitialized) return@post
-            // BaseController can refresh the local toolbar after the dataset switch. Books is a
-            // single-category surface, so reassert the same one-line pill contract as Comics.
-            searchToolbar()?.subtitle = null
+            // BaseController can refresh the local toolbar after the dataset switch, and the groups
+            // may have changed; name the group now at the top, as Comics does.
+            setActiveCategory()
             updateBooksEmptyState()
         }
     }
@@ -3364,7 +3375,6 @@ open class LibraryController(
         if (booksMode == enabled && !force) return
         booksMode = enabled
         args.putBoolean(ARG_BOOKS_MODE, enabled)
-        searchToolbar()?.allowSubtitle = !enabled
 
         // Books is a dataset switch, not a second layout. Keep the same RecyclerView and all of
         // the Comics chrome alive; only the adapter and the type-filter scope change.
@@ -3414,8 +3424,7 @@ open class LibraryController(
             unifiedBooksView?.refresh()
             // The search bar keeps its text across the switch; apply it to Books as well.
             search(query)
-            binding.headerTitle.text = booksCategoryName()
-            searchToolbar()?.subtitle = null
+            setActiveCategory()
             updateBooksEmptyState()
             scheduleBooksEmptyStateUpdate()
             refreshDisplayChrome()
