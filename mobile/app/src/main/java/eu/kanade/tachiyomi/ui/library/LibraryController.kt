@@ -436,6 +436,9 @@ open class LibraryController(
      */
     private var query = ""
 
+    /** The query last applied to the Comics adapters; Books searches leave them untouched. */
+    private var comicsQuery = ""
+
     /** Read-only accessor for the per-tab page adapters to seed their filter on bind. */
     val currentQuery: String get() = query
 
@@ -521,6 +524,7 @@ open class LibraryController(
 
     private var observeLater: Boolean = false
     var searchItem = SearchGlobalItem()
+    private val booksSearchItem = SearchGlobalItem()
 
     var snack: Snackbar? = null
     var displaySheet: TabbedLibraryDisplaySheet? = null
@@ -2460,10 +2464,26 @@ open class LibraryController(
         if (booksMode) {
             this.query = q
             unifiedBooksView?.setQuery(q)
+            // Books has its own adapter, so it needs its own "Search globally" header.
+            unifiedBooksView?.libraryAdapter?.let { booksAdapter ->
+                if (q.isNotBlank()) {
+                    booksSearchItem.string = q
+                    if (booksAdapter.scrollableHeaders.isEmpty()) {
+                        booksAdapter.addScrollableHeader(booksSearchItem)
+                    } else {
+                        // An unchanged filter result skips updateDataSet, so rebind the label here.
+                        val position = booksAdapter.getGlobalPositionOf(booksSearchItem)
+                        if (position >= 0) booksAdapter.notifyItemChanged(position)
+                    }
+                } else if (booksAdapter.scrollableHeaders.isNotEmpty()) {
+                    booksAdapter.removeAllScrollableHeaders()
+                }
+            }
             return true
         }
         val singleMode = isInSingleCategoryMode
-        val previous = this.query
+        val previous = comicsQuery
+        comicsQuery = q
         this.query = q
 
         // forceShowAllCategories transitions only fire on the blank ↔ non-blank edge. Only rebuild
@@ -3317,12 +3337,15 @@ open class LibraryController(
                 filtered -> MR.strings.no_matches_for_filters
                 else -> MR.strings.library_books_empty
             },
-            if (!hasQuery && !filtered) {
-                listOf(
+            when {
+                // The empty view covers the global-search header, so offer the same jump here.
+                hasQuery -> listOf(
+                    EmptyView.Action(MR.strings.label_global_search) { globalSearch(query) },
+                )
+                !filtered -> listOf(
                     EmptyView.Action(MR.strings.library_import_book) { launchBooksImport() },
                 )
-            } else {
-                emptyList()
+                else -> emptyList()
             },
         )
         binding.emptyView.alpha = 1f
@@ -3386,6 +3409,8 @@ open class LibraryController(
             unifiedBooksView?.setTypeFilter(booksTypeFilter)
             binding.filterBottomSheet.filterBottomSheet.restoreBooksTypeFilter(booksTypeFilter)
             unifiedBooksView?.refresh()
+            // The search bar keeps its text across the switch; apply it to Books as well.
+            search(query)
             binding.headerTitle.text = booksCategoryName()
             searchToolbar()?.subtitle = null
             updateBooksEmptyState()
@@ -3395,6 +3420,8 @@ open class LibraryController(
         } else {
             // Scrolling Books moved the active header onto its groups; Comics resumes its own.
             activeCategory = lastUsedCategory
+            // The search bar may have changed while Books was showing; filter Comics by it too.
+            search(query)
             reconcileDisplaySurface()
             refreshDisplayChrome()
             presenter.updateLibrary()
