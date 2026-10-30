@@ -1,6 +1,7 @@
 package epigraph.sync
 
 import epigraph.contract.SyncScopeId
+import java.net.URLDecoder
 
 /**
  * Resolves the profile scope embedded in a catalog-backed comic identity.
@@ -62,6 +63,28 @@ internal fun isOtherSuwayomiServer(entityId: String, currentServerId: String?): 
     return entityId.substring(SERVER_PREFIX.length, profileMarker) != currentServerId
 }
 
+/**
+ * Scoped Suwayomi manga id of a Core-served manga row, read from its
+ * `aethon-core://suwayomi/<server>/<profile>/manga/<id>` url (or the legacy form without a server).
+ * Null for any other url.
+ */
+internal fun suwayomiMangaEntityIdForCoreUrl(url: String): String? {
+    if (!url.startsWith(CORE_URL_PREFIX) || url.any { it == '?' || it == '#' }) return null
+    val segments = url.removePrefix(CORE_URL_PREFIX).split('/')
+    if (segments.size !in 3..4 || segments[segments.size - 2] != "manga") return null
+    val mangaId = segments.last().toLongOrNull()?.takeIf { it > 0 } ?: return null
+    val scope = segments.dropLast(2).map { segment ->
+        runCatching { URLDecoder.decode(segment, Charsets.UTF_8.name()) }.getOrNull()
+            ?.takeIf { it.isCanonicalIdentitySegment() && ':' !in it }
+            ?: return null
+    }
+    return if (scope.size == 2) {
+        "$SERVER_PREFIX${scope[0]}$PROFILE_MARKER${scope[1]}:manga:$mangaId"
+    } else {
+        "$LEGACY_PROFILE_PREFIX${scope[0]}:manga:$mangaId"
+    }
+}
+
 private fun suwayomiNumericIdForEntity(entityId: String, marker: String): Long? {
     val markerIndex = entityId.lastIndexOf(marker)
     if (markerIndex < 0) return null
@@ -74,4 +97,5 @@ private fun String.isCanonicalIdentitySegment(): Boolean =
 private const val LEGACY_PROFILE_PREFIX = "suwayomi:profile:"
 private const val SERVER_PREFIX = "suwayomi:server:"
 private const val PROFILE_MARKER = ":profile:"
+private const val CORE_URL_PREFIX = "aethon-core://suwayomi/"
 private val REMOTE_MARKERS = listOf(":manga:", ":chapter:", ":category:")

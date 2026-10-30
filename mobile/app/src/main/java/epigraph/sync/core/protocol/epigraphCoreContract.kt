@@ -75,6 +75,11 @@ data class CoreCapabilities(
     val supportsCatalogRevisionEventsV1: Boolean = false,
     /** `DELETE /v1/session` revokes the calling device on the desktop. Not used by Android yet. */
     val supportsSessionEndV1: Boolean = false,
+    /**
+     * `/v1/snapshot?pageSize=` sends the scope in pages with a `nextCursor`, so a large library
+     * never has to fit one bounded response.
+     */
+    val supportsPagedSnapshotV1: Boolean = false,
 )
 
 @Serializable
@@ -102,6 +107,8 @@ data class CoreSnapshot(
     val minReplayableServerVersion: Long,
     val entities: List<CoreSnapshotEntity>,
     val tombstones: List<CoreSnapshotTombstone>,
+    /** Set on every page of a paged snapshot but the last, the only one marked complete. */
+    val nextCursor: String? = null,
 )
 
 @Serializable

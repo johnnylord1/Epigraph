@@ -16,7 +16,7 @@ register("outcomes.runtimeUnavailable", ["RUNTIME_UNAVAILABLE", "missing-runtime
 register("outcomes.network", ["NETWORK_FAILURE", "SOURCE_OFFLINE", "RATE_LIMITED"]);
 register("outcomes.authentication", ["AUTHENTICATION_REQUIRED", "ANTIBOT_CHALLENGE"]);
 register("outcomes.readerBusy", ["RESTORE_BOOK_READER_ACTIVE", "RESTORE_READER_ACTIVE", "RESTORE_REFUSED_READER_NOT_FLUSHED", "READER_PREPARATION_TIMEOUT", "READER_PREPARATION_FAILED"]);
-register("outcomes.failed", ["BACKEND_RESTORE_FAILURE", "RESTORE_PREPARATION_FAILED", "RESTORE_FAILED", "failed"]);
+register("outcomes.failed", ["BACKEND_RESTORE_FAILURE", "BACKEND_RESTORE_LOST", "RESTORE_PREPARATION_FAILED", "RESTORE_FAILED", "failed"]);
 register("restoreDeps.conflict", ["plugin-origin-conflict", "plugin-ambiguous", "RESTORE_EXTENSION_ORIGIN_CHANGED"]);
 register("restoreDeps.missing", ["plugin-not-found"]);
 register("outcomes.approval", ["approval-required", "RESTORE_REPOSITORY_NOT_REQUESTED"]);
@@ -26,7 +26,7 @@ register("outcomes.preservedSources", ["inference_timeout", "cluster_inference_f
 register("outcomes.metadataOnly", ["NOVEL_METADATA_ONLY", "metadata-only-novel", "metadata-only-limitation", "portable-metadata-only"]);
 register("outcomes.readingStateAbsent", ["APP_BACKUP_HAS_NO_READING_STATE"]);
 register("outcomes.refreshFailed", ["MANGA_RESTORED_LOCAL_REFRESH_FAILED"]);
-register("outcomes.categories", ["invalid-category", "unresolved-category-novel", "RESTORE_NOVEL_CATEGORIES_UNRESOLVED"]);
+register("outcomes.categories", ["invalid-category", "unresolved-category-novel", "RESTORE_NOVEL_CATEGORIES_UNRESOLVED", "MANGA_RESTORE_CATEGORIES_NOT_KEPT"]);
 register("outcomes.skipped", ["optional-payload-omitted", "payload-not-selected", "skipped"]);
 register("outcomes.statePreserved", ["CURRENT_STATE_PRESERVED"]);
 register("outcomes.novelSkipped", ["NOVEL_IDENTITY_AMBIGUOUS", "DESTINATION_ID_COLLISION", "CHAPTER_IDENTITY_AMBIGUOUS"]);
@@ -42,7 +42,7 @@ register("outcomes.corruptState", ["JOURNAL_INVALID", "RESTORE_HISTORY_AMBIGUOUS
 register("outcomes.invalidBackup", ["RESTORE_NO_VALID_INPUT"]);
 register("outcomes.conflict", ["RESTORE_NOT_ADMITTED", "RESTORE_PLAN_CHANGED"]);
 register("outcomes.unsupported", ["RESTORE_FLAGS_UNSUPPORTED", "RESTORE_HISTORY_UNSUPPORTED"]);
-register("outcomes.runtimeUnavailable", ["RESTORE_CONTEXT_UNAVAILABLE", "RESTORE_PROFILE_UNAVAILABLE"]);
+register("outcomes.runtimeUnavailable", ["RESTORE_CONTEXT_UNAVAILABLE", "RESTORE_PROFILE_UNAVAILABLE", "RESTORE_DESKTOP_TARGET_UNVERIFIED"]);
 register("outcomes.targetChanged", ["RESTORE_CONNECTION_CHANGED"]);
 register("outcomes.failed", ["RESTORE_DOMAIN_FAILED"]);
 register("outcomes.syncDecisionTimeout", ["SYNC_DECISION_TIMEOUT"]);

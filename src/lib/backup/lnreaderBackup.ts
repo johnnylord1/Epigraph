@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { createNovelLibraryId } from "../novels/domain";
+import { createNovelLibraryId, novelTitleFromPath } from "../novels/domain";
 import {
   classifyEpigraphNovelsSnapshot,
   normalizeEpigraphNovelsSnapshot,
@@ -46,12 +46,6 @@ function safeJsonParse<T>(text: string, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-function titleFromNovelPath(path: string): string | null {
-  const slug = path.split(/[?#]/, 1)[0]?.split("/").filter(Boolean).pop() ?? "";
-  const words = slug.replace(/[-_]+/g, " ").trim();
-  return words ? words.replace(/(^|\s)(\p{L})/gu, (_match, space: string, letter: string) => space + letter.toUpperCase()) : null;
 }
 
 function stableNovelId(pluginId: string, path: string, fallback: number): string {
@@ -377,7 +371,7 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
     }
     const plugin = pluginMetadata.get(pluginId) ?? null;
     const novelId = stableNovelId(pluginId, novelPath, index + 1);
-    const title = normalizeText(raw.name) ?? normalizeText(raw.title) ?? titleFromNovelPath(novelPath) ?? `Novel ${index + 1}`;
+    const title = normalizeText(raw.name) ?? normalizeText(raw.title) ?? novelTitleFromPath(novelPath) ?? `Novel ${index + 1}`;
     const coverUrl = await coverDataUrlFromBackup({ downloadZip, novelFilesZip, root: zip }, normalizeText(raw.cover), raw.id);
     const tags = typeof raw.genres === "string"
       ? raw.genres.split(",").map((tag: string) => tag.trim()).filter(Boolean)

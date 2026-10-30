@@ -582,13 +582,14 @@ export async function parseMihonBackup(
   };
 }
 
-export function createReconciledBackupPayload(
+/** The titles exactly as the reconciled backup sends them to Suwayomi. */
+export function reconciledMangaMessages(
   parsedBackup: ParsedBackup,
   sourceMapping: Record<string, { sourceId: string; name: string; lang?: string | null }>,
   excludedSourceIds: string[] = [],
-): Uint8Array {
+): any[] {
   const excluded = new Set(excludedSourceIds);
-  const patchedMangaMessages = mergeDuplicateMangaMessages(
+  return mergeDuplicateMangaMessages(
     parsedBackup.mangaMessages
       .filter((message: any) => !excluded.has(int64ToString(message.source)))
       .map((message: any) => {
@@ -600,11 +601,16 @@ export function createReconciledBackupPayload(
         source: encodeInt64(replacement.sourceId),
       };
       }),
-  ).map((message: any) =>
-    // Titles removed from the library keep their history, but their old category
-    // links are stale; Mihon/J2K ignore them and so must the restored server.
-    message.favorite === false && message.categories?.length ? { ...message, categories: [] } : message,
   );
+}
+
+export function createReconciledBackupPayload(
+  parsedBackup: ParsedBackup,
+  sourceMapping: Record<string, { sourceId: string; name: string; lang?: string | null }>,
+  excludedSourceIds: string[] = [],
+): Uint8Array {
+  const excluded = new Set(excludedSourceIds);
+  const patchedMangaMessages = reconciledMangaMessages(parsedBackup, sourceMapping, excludedSourceIds);
 
   const patchedSourceMessages = parsedBackup.sourceMessages
     .filter((message: any) => !excluded.has(int64ToString(message.sourceId)))

@@ -224,7 +224,7 @@ describe("backup parser", () => {
     expect(parsed.mangaMessages).toHaveLength(2);
   });
 
-  it("ignores sources and categories that only belong to titles outside the library", async () => {
+  it("ignores sources that only belong to titles outside the library but keeps their categories, as Mihon does", async () => {
     const payload = BackupType.encode({
       backupManga: [
         { source: "123", url: "/library", title: "Library title", categories: [1] },
@@ -243,7 +243,8 @@ describe("backup parser", () => {
     expect(buildOrphanSourceClusters(parsed).map((cluster) => cluster.orphanSourceId)).toEqual(["123"]);
     expect(rebuilt.backupManga.map((entry: { title: string; categories?: string[] }) => [entry.title, entry.categories ?? []])).toEqual([
       ["Library title", ["1"]],
-      ["Removed title", []],
+      // Mihon applies them too; Suwayomi lists a category's titles only from the library.
+      ["Removed title", ["1"]],
     ]);
   });
 

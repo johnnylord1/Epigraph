@@ -25,6 +25,8 @@ export interface BackupWorkflowFile extends BackupInspection {
   kind: BackupImportKind | null;
   status: "inspecting" | "ready" | "invalid";
   error: string | null;
+  /** The inspection failure itself, so a network or runtime error is not shown as a bad file. */
+  cause?: unknown;
   restoreProgress: number;
 }
 
@@ -117,6 +119,7 @@ export function createBackupWorkflow(dependencies: BackupWorkflowDependencies) {
           ...emptyInspection(),
           status: "invalid",
           error: error instanceof Error ? error.message : "This backup could not be inspected.",
+          cause: error,
         });
       }
     }

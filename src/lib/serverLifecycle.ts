@@ -24,7 +24,8 @@ export type ServerWakeReason =
   | "browse"
   | "downloads"
   | "reader"
-  | "series-detail";
+  | "series-detail"
+  | "backup-restore";
 
 export interface ServerLifecycleInput {
   serverUrl: string | null | undefined;
@@ -180,7 +181,17 @@ export async function prepareManagedServerStartup(input: ServerLifecycleInput) {
   return true;
 }
 
+// A restore can outlast the idle timeout with nobody touching the app; while one holds the server, standby waits.
+const standbyHolds = new Set<symbol>();
+
+export function holdServerAwake() {
+  const hold = Symbol("standby-hold");
+  standbyHolds.add(hold);
+  return () => { standbyHolds.delete(hold); };
+}
+
 export async function maybeStandbyLocalServer(input: ServerLifecycleInput) {
+  if (standbyHolds.size) return false;
   const serverUrl = input.serverUrl ?? null;
   if (!serverUrl || !isLoopbackServerUrl(serverUrl)) return false;
   if (!(await probeServerHealth(serverUrl))) return false;

@@ -144,6 +144,7 @@ const {
     analyzeBackupReconciliation: vi.fn(async (): Promise<{ analysis: { exactMatches?: unknown[]; autoReconciled?: unknown[]; needsReview: unknown[]; unresolved: unknown[]; warnings: unknown[] } }> => ({ analysis: { needsReview: [], unresolved: [], warnings: [] } })),
     overlayEntryFromAnalysis: vi.fn(() => ({})),
     buildReconciledBackupFile: vi.fn(() => new File([], "reconciled.tachibk")),
+    buildMangaRestoreParityInput: vi.fn(() => []),
     readFileAsArrayBuffer: vi.fn(async () => new ArrayBuffer(0)),
     loadNovelRepositoryState: vi.fn(async () => ({ repositories: [], installedPlugins: [], catalogEntries: [] })),
     saveNovelRepositoryState: vi.fn(async (state) => state),
@@ -262,6 +263,11 @@ vi.mock("../../lib/client", () => ({
 
 vi.mock("./settingsStorageRuntime", () => ({
   SETTINGS_EPIGRAPH_BACKUP_EXTENSION: ".epigraphbk",
+  loadSettingsStorageRuntime: loadSettingsStorageRuntimeMock,
+}));
+// The dependency list First Run shares loads the same runtime without going through Settings.
+vi.mock("../../lib/backup/storageRuntime", async original => ({
+  ...await original<typeof import("../../lib/backup/storageRuntime")>(),
   loadSettingsStorageRuntime: loadSettingsStorageRuntimeMock,
 }));
 
@@ -732,7 +738,8 @@ describe("Settings", () => {
       expect(fileRow?.textContent).toContain("6936 chapters");
     });
     await fireEvent.click(await screen.findByRole("button", { name: /Sources and extensions/ }));
-    expect(screen.getByRole("region", { name: "Review Novel dependencies" })).toBeTruthy();
+    // The same dependency list First Run shows for this file.
+    expect(await screen.findByRole("region", { name: translate("firstRun.backup.installsTitle") })).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Done" }));
 
     const mainButton = screen.getByRole("button", { name: "LNReader novels restore" });
@@ -759,7 +766,65 @@ describe("Settings", () => {
     // About ten role queries over the whole Settings page take 3-4 s alone and more under full-suite load.
   }, 30_000);
 
-  test("offers the shared Manga dependency review after selecting a native backup", async () => {
+  async function renderLnReaderSourcesRow(installed: boolean) {
+    const storageRuntime = await loadSettingsStorageRuntimeMock();
+    const repositoryUrl = "https://repo.example/plugins.min.json";
+    // The inspection lists the backup's plugins whether or not they are installed already.
+    storageRuntime.parseLnReaderNovelsBackup.mockResolvedValue({
+      entries: [{ id: "novel-0" }], chapters: [{ id: "chapter-0" }],
+      repositories: [{ url: repositoryUrl, name: "Repository" }], plugins: [{ id: "plugin-0", name: "Plugin 0" }],
+    });
+    storageRuntime.restoreLnReaderNovelsBackup.mockResolvedValue({
+      entries: [], repositories: [{ url: repositoryUrl }], plugins: [{ id: "plugin-0", repositoryUrl }],
+    } as never);
+    storageRuntime.loadNovelRepositoryState.mockResolvedValue(installed ? {
+      repositories: [{ id: "repo-0", normalizedUrl: repositoryUrl, trustState: "trusted", enabled: true }],
+      installedPlugins: [{ pluginId: "plugin-0", repositoryId: "repo-0", enabled: true }],
+      catalogEntries: [],
+    } as never : { repositories: [], installedPlugins: [], catalogEntries: [] });
+    loadSettingsStorageRuntimeMock.mockResolvedValue(storageRuntime);
+    store.runtimeSettingsTab = "storage";
+    store.runtimeResolvedLocalProfileId = "test";
+    const { container } = renderSettings();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Restore backup" }));
+    const backup = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], "lnreader_backup.zip", { type: "application/zip" });
+    await fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [backup] } });
+    return screen.findByRole("button", { name: /Sources and extensions/ });
+  }
+
+  test("says an LNReader backup whose plugins are all installed is ready instead of asking for a review", async () => {
+    const row = await renderLnReaderSourcesRow(true);
+    await waitFor(() => expect(row.textContent).toContain(translate("settings_backup_sourcesReady")));
+    expect(row.textContent).not.toContain(translate("settings_backup_sourcesReview"));
+  }, 30_000);
+
+  test("applies the same backup again when it is restored a second time", async () => {
+    let row = await renderLnReaderSourcesRow(true);
+    restoreProductionNovelsMock.mockResolvedValue({ summary: {} });
+    for (const run of [1, 2]) {
+      if (run === 2) {
+        await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+        await fireEvent.click(screen.getByRole("button", { name: "Restore backup" }));
+        const backup = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], "lnreader_backup.zip", { type: "application/zip" });
+        await fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [backup] } });
+        row = await screen.findByRole("button", { name: /Sources and extensions/ });
+      }
+      await waitFor(() => expect(row.textContent).toContain(translate("settings_backup_sourcesReady")));
+      await fireEvent.click(screen.getByRole("button", { name: "LNReader novels restore" }));
+      await waitFor(() => expect(screen.getByText("Repositories from the backup will also be added.")).toBeTruthy());
+      await fireEvent.click(screen.getByRole("button", { name: "LNReader novels restore" }));
+      await waitFor(() => expect(restoreProductionNovelsMock).toHaveBeenCalledTimes(run));
+      await waitFor(() => expect(document.querySelector("[data-backup-results]")).toBeTruthy());    }
+  }, 30_000);
+
+  test("asks for a review when an LNReader backup still has plugins to install", async () => {
+    const row = await renderLnReaderSourcesRow(false);
+    await waitFor(() => expect(row.textContent).toContain(translate("settings_backup_sourcesReview")));
+    expect(row.textContent).not.toContain(translate("settings_backup_sourcesReady"));
+  }, 30_000);
+
+  test("offers First Run's dependency list after selecting a native backup", async () => {
     const runtime = await loadSettingsStorageRuntimeMock();
     runtime.parseMihonBackup.mockResolvedValue({ trackerIds: [], backupSources: [], backupManga: [], extensionStores: [] });
     runtime.analyzeBackupReconciliation.mockResolvedValue({ analysis: { exactMatches: [], autoReconciled: [], needsReview: [], unresolved: [], warnings: [] } });
@@ -770,7 +835,7 @@ describe("Settings", () => {
     const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
     await fireEvent.change(input, { target: { files: [new File(["fixture"], "backup.tachibk")] } });
     await fireEvent.click(await screen.findByRole("button", { name: /Sources and extensions/ }));
-    expect(await screen.findByRole("region", { name: "Review Manga dependencies" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: translate("firstRun.backup.installsTitle") })).toBeTruthy();
     expect(gqlMock.mock.calls.some(([query]) => /updateExtension/i.test(String(query)))).toBe(false);
   });
 

@@ -499,6 +499,49 @@ pub async fn load_scope_snapshot(
     pool: &sqlx::SqlitePool,
     scope_id: &str,
 ) -> anyhow::Result<SnapshotResponse> {
+    let (runtime, entities, tombstones) = load_scope_snapshot_parts(pool, scope_id).await?;
+    snapshot_response(scope_id, &runtime, entities, tombstones, true)
+}
+
+/// Where the next snapshot page starts: the entity type and id of the last entity already sent.
+pub type SnapshotPageCursor = (String, String);
+
+/// One page of [`load_scope_snapshot`] for clients that bound each response. Entities are ordered
+/// by type and id and taken after `after`; tombstones ride on the last page, the only one marked
+/// complete. Each page reads the scope as it is now, so a client resumes the change feed from the
+/// first page's version to pick up whatever changed while it was fetching the rest.
+pub async fn load_scope_snapshot_page(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    after: Option<&SnapshotPageCursor>,
+    page_size: usize,
+) -> anyhow::Result<(SnapshotResponse, Option<SnapshotPageCursor>)> {
+    let (runtime, mut entities, tombstones) = load_scope_snapshot_parts(pool, scope_id).await?;
+    entities.sort_by(|left, right| {
+        (left.entity_type.as_str(), left.entity_id.as_str())
+            .cmp(&(right.entity_type.as_str(), right.entity_id.as_str()))
+    });
+    let start = after.map_or(0, |(entity_type, entity_id)| {
+        entities.partition_point(|entity| {
+            (entity.entity_type.as_str(), entity.entity_id.as_str())
+                <= (entity_type.as_str(), entity_id.as_str())
+        })
+    });
+    let end = start.saturating_add(page_size.max(1)).min(entities.len());
+    let complete = end == entities.len();
+    let next = (!complete).then(|| {
+        let last = &entities[end - 1];
+        (last.entity_type.clone(), last.entity_id.clone())
+    });
+    let page = entities.drain(start..end).collect();
+    let tombstones = if complete { tombstones } else { Vec::new() };
+    Ok((snapshot_response(scope_id, &runtime, page, tombstones, complete)?, next))
+}
+
+async fn load_scope_snapshot_parts(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+) -> anyhow::Result<(ServerRuntimeRow, Vec<SnapshotEntity>, Vec<SnapshotTombstone>)> {
     let mut tx = pool.begin().await?;
     let runtime = sqlx::query_as::<_, ServerRuntimeRow>(
         r#"
@@ -984,6 +1027,16 @@ pub async fn load_scope_snapshot(
     .await?;
 
     tx.commit().await?;
+    Ok((runtime, entities, tombstones))
+}
+
+fn snapshot_response(
+    scope_id: &str,
+    runtime: &ServerRuntimeRow,
+    entities: Vec<SnapshotEntity>,
+    tombstones: Vec<SnapshotTombstone>,
+    complete: bool,
+) -> anyhow::Result<SnapshotResponse> {
     let entity_count = entities.len();
     let tombstone_count = tombstones.len();
     let snapshot_identity = serde_json::to_vec(&(
@@ -996,7 +1049,7 @@ pub async fn load_scope_snapshot(
     Ok(SnapshotResponse {
         schema_version: SNAPSHOT_SCHEMA_VERSION,
         snapshot_id: Some(format!("{:x}", Sha256::digest(snapshot_identity))),
-        complete: Some(true),
+        complete: Some(complete),
         entity_count: Some(entity_count),
         tombstone_count: Some(tombstone_count),
         scope_id: scope_id.to_string(),

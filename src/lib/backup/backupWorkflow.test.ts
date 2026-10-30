@@ -108,6 +108,7 @@ describe("backup workflow", () => {
     ]);
 
     expect(files[0]).toMatchObject({ name: "broken.zip", status: "invalid", error: "Unsupported archive" });
+    expect(files[0].cause).toBeInstanceOf(Error);
     expect(files[1]).toMatchObject({ name: "epigraph.epigraphbk", status: "ready", error: null });
   });
 

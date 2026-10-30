@@ -10,6 +10,7 @@ import epigraph.sync.core.protocol.CoreCapabilities
 import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
 import epigraph.sync.core.replica.CoreReplicaApplier
 import epigraph.sync.core.replica.CoreReplicaCheckpointReader
+import epigraph.sync.core.replica.fetchAndApplySnapshot
 import epigraph.sync.core.replay.CoreReplayCoverage
 import epigraph.sync.core.replay.CoreReplaySession
 import epigraph.sync.core.session.CoreEndpointResolver
@@ -290,18 +291,19 @@ class CoreLiveEventSupervisor(
         scopeId: String,
         http: epigraph.sync.core.http.EpigraphCoreHttpClient,
     ): CoreReplaySession = credentials.withAccessTokenString { token ->
-        when (val response = http.snapshot(token, scopeId)) {
-            is CoreHttpResult.Success -> {
-                val applied = applier.applySnapshot(
-                    snapshot = response.value,
-                    capabilities = capabilities,
-                    originServerId = credentials.serverId,
-                )
-                CoreReplaySession.afterSnapshot(
-                    applied.checkpoint.lastGlobalEventId,
-                    applied.checkpoint.coverage,
-                )
-            }
+        when (
+            val response = applier.fetchAndApplySnapshot(
+                http = http,
+                accessToken = token,
+                scopeId = scopeId,
+                capabilities = capabilities,
+                originServerId = credentials.serverId,
+            )
+        ) {
+            is CoreHttpResult.Success -> CoreReplaySession.afterSnapshot(
+                response.value.checkpoint.lastGlobalEventId,
+                response.value.checkpoint.coverage,
+            )
             is CoreHttpResult.Failure -> {
                 if (response.statusCode.isAuthorizationFailure()) {
                     throw CoreLiveEventNeedsUserAction(response.statusCode)

@@ -200,7 +200,7 @@
           <span class="fr-row-copy">
             <strong>{file.name}</strong>
             <small>{#if file.status === "inspecting"}<span class="inspecting" aria-label={$_("firstRun.backup.inspecting")}></span>{:else}{kindLabel(file)}{/if}</small>
-            {#if file.error}<small class="file-error" role="alert">{operationError(file.error, "outcomes.invalidBackup", $_)}</small>{/if}
+            {#if file.error}<small class="file-error" role="alert">{operationError(file.cause ?? file.error, "outcomes.invalidBackup", $_)}</small>{/if}
           </span>
           {#if file.status === "ready"}<span class="tag" in:arrive>{$_("firstRun.backup.titleCount", { count: file.workCount })}</span>{/if}
           <button class="fr-link fr-link--quiet fr-link--danger" type="button" aria-label={$_("firstRun.backup.remove", { name: file.name })} onclick={() => removeFile(file.key)}><Trash size={16} /></button>

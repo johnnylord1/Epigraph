@@ -8,6 +8,7 @@ import epigraph.sync.core.protocol.CoreChangeEnvelope
 import epigraph.sync.core.protocol.CoreChangesResponse
 import epigraph.sync.core.protocol.CoreCompatibility
 import epigraph.sync.core.protocol.CoreSnapshot
+import epigraph.sync.core.protocol.CoreSnapshotEntity
 import epigraph.sync.core.replay.CoreReplayCheckpoint
 import epigraph.sync.core.replay.CoreReplayCoverage
 import epigraph.sync.core.replay.CoreSseEvent
@@ -20,11 +21,53 @@ class CoreReplicaApplier(
         snapshot: CoreSnapshot,
         capabilities: CoreCapabilities,
         originServerId: String? = null,
+    ): CoreReplicaApplyResult.SnapshotApplied = applySnapshotPages(listOf(snapshot), capabilities, originServerId)
+
+    /**
+     * Applies the pages of one paged snapshot (`supportsPagedSnapshotV1`) as a single replacement.
+     * Each page reads the scope as it was when served, so the checkpoint is the first page's
+     * version: the change feed then replays whatever moved while the later pages were fetched.
+     */
+    suspend fun applySnapshotPages(
+        pages: List<CoreSnapshot>,
+        capabilities: CoreCapabilities,
+        originServerId: String? = null,
     ): CoreReplicaApplyResult.SnapshotApplied {
         validateCompatibility(capabilities)
-        validateSnapshot(snapshot, capabilities)
+        require(pages.isNotEmpty()) { "a snapshot has at least one page" }
+        val snapshot = pages.first()
+        pages.forEachIndexed { index, page ->
+            validateSnapshot(page, capabilities, lastPage = index == pages.lastIndex)
+            if (page.scopeId != snapshot.scopeId || page.schemaVersion != snapshot.schemaVersion) {
+                throw CoreReplicaProtocolException("Snapshot pages belong to different snapshots")
+            }
+            if (page.snapshotVersion < snapshot.snapshotVersion) {
+                throw CoreReplicaProtocolException("Snapshot pages went back in version")
+            }
+        }
 
-        val records = snapshot.entities.map { entity ->
+        val entities = LinkedHashMap<Pair<String, String>, CoreSnapshotEntity>()
+        pages.forEach { page ->
+            page.entities.forEach { entity ->
+                if (entities.put(entity.entityType to entity.entityId, entity) != null) {
+                    throw CoreReplicaProtocolException("Duplicate snapshot entity identity")
+                }
+            }
+        }
+        // Only the last page carries tombstones. An entity sent earlier and deleted before that
+        // page, or deleted and sent again, keeps whichever of the two is newer.
+        val deletions = pages.flatMap { it.tombstones }.filter { tombstone ->
+            val key = tombstone.entityType to tombstone.entityId
+            val entity = entities[key] ?: return@filter true
+            if (tombstone.serverVersion > entity.serverVersion) {
+                entities.remove(key)
+                true
+            } else {
+                false
+            }
+        }
+
+        val records = entities.values.map { entity ->
             CoreConfirmedRecord(
                 key = CoreReplicaKey(snapshot.scopeId, entity.entityType, entity.entityId),
                 serverVersion = entity.serverVersion,
@@ -33,7 +76,7 @@ class CoreReplicaApplier(
                 originServerId = originServerId,
             )
         }
-        val tombstones = snapshot.tombstones.map { tombstone ->
+        val tombstones = deletions.map { tombstone ->
             CoreConfirmedTombstone(
                 key = CoreReplicaKey(snapshot.scopeId, tombstone.entityType, tombstone.entityId),
                 serverVersion = tombstone.serverVersion,
@@ -176,7 +219,11 @@ class CoreReplicaApplier(
         )
     }
 
-    private fun validateSnapshot(snapshot: CoreSnapshot, capabilities: CoreCapabilities) {
+    private fun validateSnapshot(
+        snapshot: CoreSnapshot,
+        capabilities: CoreCapabilities,
+        lastPage: Boolean = true,
+    ) {
         if (snapshot.schemaVersion !in
             EpigraphCoreWireProtocol.MIN_SNAPSHOT_SCHEMA_VERSION..EpigraphCoreWireProtocol.SNAPSHOT_SCHEMA_VERSION
         ) {
@@ -198,8 +245,12 @@ class CoreReplicaApplier(
             throw CoreReplicaProtocolException("Invalid snapshot replay window")
         }
         if (snapshot.schemaVersion >= 3) {
-            if (snapshot.complete != true) {
-                throw CoreReplicaProtocolException("Core snapshot is not declared complete")
+            if (lastPage) {
+                if (snapshot.complete != true || snapshot.nextCursor != null) {
+                    throw CoreReplicaProtocolException("Core snapshot is not declared complete")
+                }
+            } else if (snapshot.complete != false || snapshot.nextCursor.isNullOrBlank()) {
+                throw CoreReplicaProtocolException("Core snapshot page does not continue")
             }
             if (snapshot.snapshotId.isNullOrBlank() || snapshot.snapshotId.length > 128) {
                 throw CoreReplicaProtocolException("Core snapshot identity is invalid")

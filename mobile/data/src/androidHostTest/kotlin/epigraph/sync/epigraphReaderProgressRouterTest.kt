@@ -163,6 +163,76 @@ class EpigraphReaderProgressRouterTest {
     }
 
     @Test
+    fun `core served manga with a portable identity publishes its scoped Suwayomi id`() = runTest {
+        val server = "01a10680-deda-7932-97d6-ac4f17079418"
+        val mangaId = insertManga(url = "aethon-core://suwayomi/$server/side%20profile/manga/21")
+        val chapterId = insertChapter(mangaId)
+        val portableId = "comic:184ffbd5daa2ecad3cd0319d57564e2d6adeea14c0161dbc50f4492c1b07bf42"
+        val chapterEntityId = "suwayomi:server:$server:profile:side profile:chapter:2045"
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = portableId,
+            contentType = "MANGA",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.upsertChapterBinding(
+            chapterEntityId = chapterEntityId,
+            workEntityId = portableId,
+            localChapterId = chapterId,
+            normalizedUrl = "aethon-core://suwayomi/$server/side%20profile/chapter/2045",
+            ordinal = 3.2,
+            updatedAt = 1,
+        )
+        val router = EpigraphReaderProgressRouter(
+            coordinator = coordinator,
+            deviceId = DeviceId("phone"),
+            scopeId = SyncScopeId("novels:profile:main"),
+            comicScopeId = SyncScopeId("comics:profile:main"),
+            mutationIds = ClientMutationIdFactory {
+                ClientMutationId("core-${System.nanoTime()}")
+            },
+        )
+
+        val result = router.setComicProgress(
+            localMangaId = mangaId,
+            localChapterId = chapterId,
+            pageIndex = 13,
+            pageCount = 14,
+            progression = 1.0,
+            read = true,
+            lastPageRead = 13,
+            pagesLeft = 0,
+        )
+
+        assertTrue(result.emitted)
+        val scopedId = "suwayomi:server:$server:profile:side profile:manga:21"
+        val queued = queuedMutations()
+        assertEquals(2, queued.size)
+        queued.forEach { row ->
+            assertEquals("comics:profile:side profile", row.scope_id)
+            assertTrue(row.payload_json.contains(scopedId), row.payload_json)
+            assertTrue(!row.payload_json.contains(portableId), row.payload_json)
+        }
+        assertEquals(scopedId, queued.single { it.entity_type == "comic.history" }.entity_id)
+        // The local row stays on the identity the replica owns.
+        val progress = database.aethon_syncQueries.selectReaderProgress(portableId).executeAsOne()
+        assertEquals(chapterEntityId, progress.chapter_entity_id)
+    }
+
+    @Test
+    fun `core manga urls map to scoped ids only when well formed`() {
+        assertEquals(
+            "suwayomi:profile:main:manga:7",
+            suwayomiMangaEntityIdForCoreUrl("aethon-core://suwayomi/main/manga/7"),
+        )
+        assertEquals(null, suwayomiMangaEntityIdForCoreUrl("aethon-core://suwayomi/s/main/chapter/7"))
+        assertEquals(null, suwayomiMangaEntityIdForCoreUrl("aethon-core://suwayomi/s/main/manga/7?x=1"))
+        assertEquals(null, suwayomiMangaEntityIdForCoreUrl("aethon-core://suwayomi/s/a%3Ab/manga/7"))
+        assertEquals(null, suwayomiMangaEntityIdForCoreUrl("/comic/1"))
+    }
+
+    @Test
     fun `novel progress preserves plugin and provider owned chapter keys`() = runTest {
         val mangaId = insertManga()
         val chapterId = insertChapter(mangaId)
@@ -604,10 +674,10 @@ class EpigraphReaderProgressRouterTest {
     private fun commandOf(row: tachiyomi.data.Aethon_sync_outbox) =
         Json.parseToJsonElement(row.payload_json).jsonObject["command"]!!.jsonObject
 
-    private fun insertManga(): Long {
+    private fun insertManga(url: String = "/comic/1"): Long {
         database.mangasQueries.insert(
             source = 1,
-            url = "/comic/1",
+            url = url,
             artist = null,
             author = null,
             description = null,

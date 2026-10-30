@@ -1,0 +1,6 @@
+-- Chapter state edits, reader progress and the chapters' ON DELETE CASCADE looked the legacy chapter
+-- binding up by local_chapter_id, which only had an index behind work_entity_id, so every chapter scanned
+-- every binding. Marking a series of 85 chapters as read spent about 1.5-2.5 s here on a real library.
+-- Index only: no data changes, and an older build simply ignores it.
+CREATE INDEX IF NOT EXISTS aethon_chapter_binding_local_chapter_index
+ON aethon_chapter_binding(local_chapter_id);
