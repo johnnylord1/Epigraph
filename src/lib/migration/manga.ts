@@ -1,4 +1,5 @@
 import { gql } from "../client";
+import { translate } from "../i18n/runtime";
 import {
   GET_CATEGORIES,
   GET_CHAPTERS,
@@ -474,9 +475,8 @@ async function ensureMatchChapters(
   const loaded = await loadMangaMatchChapters(match.manga, undefined, APPLY_CHAPTERS_TIMEOUT_MS);
   if (loaded.chapters.length === 0 && hasReadingState(currentChapters)) {
     const reason = loaded.chaptersError ?? "the new source returned no chapters";
-    throw new Error(
-      `${currentManga.title} was kept in its current source: its chapters could not be loaded from the new source (${reason}), so the read progress could not be carried over.`,
-    );
+    console.warn(`[migration] kept ${currentManga.title} in its current source: ${reason}`);
+    throw new Error(translate("migrate.keptInCurrentSource", { title: currentManga.title }), { cause: reason });
   }
   return { ...match, ...loaded };
 }

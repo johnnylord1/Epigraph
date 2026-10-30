@@ -160,7 +160,7 @@
   const confirmWarning = $derived.by(() => {
     if (!selectedMatch) return null;
     if (selectedMatch.chaptersError) {
-      return $_("migrate.chaptersUnavailable", { source: selectedSourceName, reason: selectedMatch.chaptersError });
+      return $_("migrate.chaptersUnavailable", { source: selectedSourceName });
     }
     if (chapterDiff < -5) return `${$_("ui_newSourceHas")} ${Math.abs(chapterDiff)} ${$_("ui_fewerChaptersSomeContentMayBeMissing")}`;
     if (selectedMatch.similarity < 0.5) return `${$_("ui_lowConfidenceMatch")}. ${$_("feedback.reviewMigration")}`;
