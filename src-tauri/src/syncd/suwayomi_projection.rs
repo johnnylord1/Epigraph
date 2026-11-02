@@ -93,6 +93,9 @@ const NON_HOLDING_RETRY_CODES: [&str; 3] =
 /// A row whose record names a category of another Core server (the desktop before a reinstall).
 /// Its numeric id means nothing to this Suwayomi, so it stays blocked.
 const FOREIGN_SERVER_IDENTITY: &str = "foreign_server_identity";
+/// How a phone names a chapter it only knows through a Core listing, in place of the source's
+/// chapter key: `aethon-core://suwayomi/<server>/<profile>/chapter/<id>`.
+const CORE_LISTED_CHAPTER_PREFIX: &str = "aethon-core://suwayomi/";
 const PORTABLE_CHAPTER_PAGE_SIZE: i64 = 250;
 const MAX_PORTABLE_CHAPTER_PAGES: usize = 80;
 const CATEGORY_ASSIGNMENT_PAGE_SIZE: i64 = 100;
@@ -1146,6 +1149,16 @@ async fn resolve_portable_projection_identity(
         ));
     }
 
+    // A Core-listed address binds nothing: the chapter already has its source key binding, and a
+    // chapter with two bindings has none for the progress mirror.
+    if chapter_key.starts_with(CORE_LISTED_CHAPTER_PREFIX) {
+        let chapter_id =
+            resolve_core_listed_chapter(state, &row.profile_id, manga_id, chapter_key, lookup)
+                .await?;
+        target_chapter(object, manga_id, chapter_id);
+        return Ok(variables);
+    }
+
     let portable_chapter_id = canonical_portable_chapter_id(&chapter);
     let cached_chapter_id =
         db::load_portable_chapter_binding(&state.pool, &row.profile_id, &portable_chapter_id)
@@ -1184,6 +1197,12 @@ async fn resolve_portable_projection_identity(
     .await
     .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?;
 
+    target_chapter(object, manga_id, chapter_id);
+    Ok(variables)
+}
+
+/// Replaces a row's portable references with the Suwayomi ids they resolved to.
+fn target_chapter(object: &mut serde_json::Map<String, Value>, manga_id: i64, chapter_id: i64) {
     object.remove("portableWorkRef");
     object.remove("portableChapterRef");
     object.insert("mangaId".to_string(), Value::from(manga_id));
@@ -1191,7 +1210,6 @@ async fn resolve_portable_projection_identity(
         "ids".to_string(),
         Value::Array(vec![Value::from(chapter_id)]),
     );
-    Ok(variables)
 }
 
 /// Binds a comic a device added that this desktop never listed. Suwayomi only knows works it has
@@ -1353,9 +1371,11 @@ fn collect_portable_works(rows: &[(String, String, String, String)]) -> Vec<Unse
                 }
             }
             "UpdateChaptersProgress" => {
+                // A Core-listed address is no source key, so it must not become a stand-in chapter.
                 if let Some(key) = variables
                     .pointer("/portableChapterRef/chapterKey")
                     .and_then(Value::as_str)
+                    .filter(|key| !key.starts_with(CORE_LISTED_CHAPTER_PREFIX))
                 {
                     entry.chapters.insert(key.to_string(), variables.clone());
                 }
@@ -1608,10 +1628,76 @@ async fn resolve_chapter_id(
     chapter_key: &str,
     lookup: &mut ChapterLookup,
 ) -> Result<i64, ProjectionOutcome> {
+    find_chapter_id(state, profile_id, manga_id, lookup, |nodes| {
+        chapter_key_matches(Some(nodes), manga_id, chapter_key)
+    })
+    .await
+}
+
+/// The chapter a Core-listed address names. The address carries this Suwayomi's own chapter id, but
+/// only for this Core and profile, and the id still has to be a chapter of the row's work. Another
+/// Core's numbers mean nothing here, so such a row waits instead of touching a chapter; blocking it
+/// would hide the catalog revisions from every device.
+async fn resolve_core_listed_chapter(
+    state: &SharedAppState,
+    profile_id: &str,
+    manga_id: i64,
+    chapter_key: &str,
+    lookup: &mut ChapterLookup,
+) -> Result<i64, ProjectionOutcome> {
+    let server_id = db::load_server_identity(&state.pool)
+        .await
+        .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?
+        .server_id;
+    let chapter_id = own_core_listed_chapter(chapter_key, &server_id, profile_id)
+        .ok_or(ProjectionOutcome::Retry(WAITING_CHAPTER_CODE))?;
+    find_chapter_id(state, profile_id, manga_id, lookup, |nodes| {
+        (listed_chapter_match(nodes, manga_id, chapter_id), Vec::new())
+    })
+    .await
+}
+
+/// The chapter id in a Core-listed address, when it names this Core and profile.
+fn own_core_listed_chapter(chapter_key: &str, server_id: &str, profile_id: &str) -> Option<i64> {
+    let address = chapter_key.strip_prefix(CORE_LISTED_CHAPTER_PREFIX)?;
+    let segments: Vec<&str> = address.split('/').collect();
+    let [server, profile, "chapter", chapter_id] = segments.as_slice() else {
+        return None;
+    };
+    if server.is_empty() || *server != server_id || *profile != profile_id {
+        return None;
+    }
+    chapter_id
+        .parse::<i64>()
+        .ok()
+        .filter(|id| *id > 0 && *id <= i32::MAX as i64)
+}
+
+/// `chapter_id`, when a lookup page lists it as a chapter of `manga_id`.
+fn listed_chapter_match(nodes: &Value, manga_id: i64, chapter_id: i64) -> Option<i64> {
+    nodes
+        .as_array()?
+        .iter()
+        .any(|node| {
+            node.get("id").and_then(Value::as_i64) == Some(chapter_id)
+                && node.get("mangaId").and_then(Value::as_i64) == Some(manga_id)
+        })
+        .then_some(chapter_id)
+}
+
+/// Walks a work's chapter pages until `matches` finds the chapter. `matches` answers for the pages
+/// read so far with the exact chapter and the chapters that match only by path.
+async fn find_chapter_id(
+    state: &SharedAppState,
+    profile_id: &str,
+    manga_id: i64,
+    lookup: &mut ChapterLookup,
+    matches: impl Fn(&Value) -> (Option<i64>, Vec<i64>),
+) -> Result<i64, ProjectionOutcome> {
     let session = projection_session(profile_id);
     let pages = lookup.works.entry(manga_id).or_default();
     loop {
-        let (exact, same_path) = chapter_key_matches(Some(&pages.nodes), manga_id, chapter_key);
+        let (exact, same_path) = matches(&pages.nodes);
         if let Some(id) = exact {
             return Ok(id);
         }
@@ -2054,6 +2140,34 @@ mod tests {
         // resolves the chapter key again before the row can block.
         assert!(!trusts_cached_chapter_id(1));
         assert!(!trusts_cached_chapter_id(MAX_CONFIRMATION_ATTEMPTS));
+    }
+
+    #[test]
+    fn a_core_listed_address_names_a_chapter_only_on_its_own_core_and_profile() {
+        let own = |key: &str| own_core_listed_chapter(key, "server-a", "main");
+        assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/16063"), Some(16063));
+        // Another Core's chapter numbers mean nothing here.
+        assert_eq!(own("aethon-core://suwayomi/server-b/main/chapter/16063"), None);
+        assert_eq!(own("aethon-core://suwayomi/server-a/other/chapter/16063"), None);
+        // The form without a server cannot be told from any other Core's.
+        assert_eq!(own("aethon-core://suwayomi/main/chapter/16063"), None);
+        assert_eq!(own("aethon-core://suwayomi/server-a/main/manga/16063"), None);
+        assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/0"), None);
+        assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/x"), None);
+        assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/16063/extra"), None);
+        assert_eq!(own("https://host.example/chapter/16063"), None);
+    }
+
+    #[test]
+    fn a_core_listed_chapter_has_to_belong_to_the_work_of_the_row() {
+        let nodes = json!([
+            { "id": 16063, "mangaId": 125, "url": "/manga/a/chapter-1" },
+            { "id": 16064, "mangaId": 126, "url": "/manga/b/chapter-1" },
+        ]);
+        assert_eq!(listed_chapter_match(&nodes, 125, 16063), Some(16063));
+        assert_eq!(listed_chapter_match(&nodes, 125, 16064), None);
+        assert_eq!(listed_chapter_match(&nodes, 125, 1), None);
+        assert_eq!(listed_chapter_match(&json!(null), 125, 16063), None);
     }
 
     #[test]
@@ -2932,6 +3046,18 @@ mod tests {
         );
         // Without a title hint the key stands in until the source fills the details.
         assert_eq!(import_work_variables(&works[1]).unwrap()["title"], json!("/manga/b"));
+    }
+
+    #[test]
+    fn a_core_listed_address_never_becomes_a_chapter_of_an_imported_work() {
+        let work = json!({ "type": "comic", "sourceId": "1", "mangaKey": "/manga/a" });
+        let rows = vec![outbox_row("listed", "UpdateChaptersProgress", json!({
+            "isRead": true, "lastPageRead": null, "isBookmarked": null, "portableWorkRef": work,
+            "portableChapterRef": { "type": "comic", "work": work,
+                "chapterKey": "aethon-core://suwayomi/server-a/main/chapter/7" } }))];
+        let works = collect_portable_works(&rows);
+        assert_eq!(works[0].operation_ids, ["listed"]);
+        assert!(works[0].chapters.is_empty());
     }
 
     #[test]
