@@ -21,7 +21,8 @@ class DiscoverPoolStore(private val dir: File) {
         val file = file(mode)
         if (!file.isFile) return null
         return runCatching {
-            val text = GZIPInputStream(file.inputStream()).bufferedReader().use { it.readText() }
+            // The file stream is closed even when the header is not gzip, so the file can be dropped.
+            val text = file.inputStream().use { GZIPInputStream(it).bufferedReader().readText() }
             json.decodeFromString(Saved.serializer(), text)
                 .takeIf { it.version in OLDEST_VERSION..VERSION && it.pool.mode == mode }
                 ?.pool
