@@ -512,7 +512,7 @@ mod tests {
     use http_body_util::BodyExt;
     use serde_json::Value;
     use sha2::{Digest, Sha256};
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
     use tower::ServiceExt;
 
     fn token_hash(raw: &str) -> String {

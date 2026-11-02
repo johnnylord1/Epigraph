@@ -1759,6 +1759,11 @@ async fn resolve_core_listed_chapter(
     .await
 }
 
+/// The Core-listed address of one of this Core's chapters, as a phone names it.
+pub(super) fn core_listed_chapter_key(server_id: &str, profile_id: &str, chapter_id: i64) -> String {
+    format!("{CORE_LISTED_CHAPTER_PREFIX}{server_id}/{profile_id}/chapter/{chapter_id}")
+}
+
 /// The chapter id in a Core-listed address, when it names this Core and profile.
 fn own_core_listed_chapter(chapter_key: &str, server_id: &str, profile_id: &str) -> Option<i64> {
     let address = chapter_key.strip_prefix(CORE_LISTED_CHAPTER_PREFIX)?;
@@ -2258,6 +2263,8 @@ mod tests {
         assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/x"), None);
         assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/16063/extra"), None);
         assert_eq!(own("https://host.example/chapter/16063"), None);
+        // The address the progress mirror builds is the one this Core reads back.
+        assert_eq!(own(&core_listed_chapter_key("server-a", "main", 16063)), Some(16063));
     }
 
     #[test]
@@ -2339,7 +2346,7 @@ mod tests {
 
     #[tokio::test]
     async fn startup_requeues_only_recoverable_blocked_rows() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         for (id, status, error) in [
@@ -2393,7 +2400,7 @@ mod tests {
 
     #[tokio::test]
     async fn binding_a_work_requeues_only_its_progress_that_gave_up() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         let work = |key: &str| json!({ "type": "comic", "sourceId": "10002", "mangaKey": key });
@@ -2457,7 +2464,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_manifest_snapshot_binds_its_works_in_one_pass_and_requeues_only_theirs() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         for (id, key) in [("a", "/series/a"), ("b", "/series/b"), ("c", "/series/c")] {
@@ -2542,7 +2549,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_ordered_claim_check_uses_the_order_index() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         // The barrier reads only the retrying rows through an index, once per claim, instead of
@@ -2583,7 +2590,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_work_waiting_to_be_found_does_not_hold_later_rows() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         for (id, version, status, error, next) in [
@@ -2634,7 +2641,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_rejected_command_does_not_hold_later_rows() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         for (id, version, status, error, next) in [
@@ -2691,7 +2698,7 @@ mod tests {
 
     #[tokio::test]
     async fn library_rows_pass_earlier_chapter_progress() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         let progress = json!({
@@ -2790,7 +2797,7 @@ mod tests {
 
     #[tokio::test]
     async fn startup_blocks_category_rows_of_another_server_only() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         // Before the daemon writes its identity no row is foreign.
@@ -2871,7 +2878,7 @@ mod tests {
 
     #[tokio::test]
     async fn chapter_progress_still_waiting_for_its_chapter_stops_counting_as_pending() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         for (id, operation, status, attempts, error) in [
@@ -2965,7 +2972,7 @@ mod tests {
 
     #[tokio::test]
     async fn chapter_progress_groups_the_unbroken_run_of_one_work() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         let progress = |manga_key: &str, chapter_key: &str, read: bool| {
@@ -3054,7 +3061,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_group_takes_only_the_unbroken_run_of_the_same_change() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         let into_one = r#"{"mangaId":1,"addTo":[1],"removeFrom":[]}"#;
@@ -3215,7 +3222,7 @@ mod tests {
 
     #[tokio::test]
     async fn startup_rearms_only_rows_waiting_on_the_runtime() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         for (id, status, error, next) in [
@@ -3263,7 +3270,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_returned_runtime_rearms_only_its_own_profile() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         for (id, profile, error, next) in [

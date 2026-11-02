@@ -526,7 +526,7 @@ mod dpapi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
 
     fn values(token: &str) -> CredentialValues {
         CredentialValues {

@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn process_lock_rejects_a_second_owner() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let first = RuntimeProcessLock::acquire(temp.path()).unwrap();
         let error = RuntimeProcessLock::acquire(temp.path()).unwrap_err();
         assert!(error
@@ -248,7 +248,7 @@ mod tests {
         drop(first);
         RuntimeProcessLock::acquire(temp.path()).unwrap();
     }
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
 
     fn manifest(pid: u32, server_id: &str) -> SyncdRuntimeManifest {
         SyncdRuntimeManifest::new(

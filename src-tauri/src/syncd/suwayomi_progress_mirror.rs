@@ -14,7 +14,9 @@ use super::models::{
     PortableWorkBindingRow, PortableWorkRefV3, SharedAppState,
 };
 use super::routes::suwayomi_catalog;
-use super::{catalog_revision, db, suwayomi_category_mirror, suwayomi_process};
+use super::{
+    catalog_revision, db, suwayomi_category_mirror, suwayomi_process, suwayomi_projection,
+};
 
 /// How often the desktop's Suwayomi reading progress is re-imported into the syncd
 /// replica so the snapshot/replay serve it to paired mobile devices.
@@ -1077,6 +1079,24 @@ async fn write_chapter_states(
     let legacy =
         load_stored_chapter_states(state, scope_id, legacy_ids.values().map(String::as_str))
             .await?;
+    // Records under the Core-listed address of bound chapters; see
+    // `core_listed_chapter_identity`.
+    let core_listed = chapters
+        .iter()
+        .zip(&identities)
+        .filter_map(|(chapter, identity)| {
+            let listed = core_listed_chapter_identity(server_id, profile_id, chapter, identity)?;
+            Some((chapter.chapter_id, listed))
+        })
+        .collect::<HashMap<_, _>>();
+    let core_listed_rows = load_stored_chapter_states(
+        state,
+        scope_id,
+        core_listed
+            .values()
+            .map(|identity| identity.entity_id.as_str()),
+    )
+    .await?;
 
     let mut writes = Vec::new();
     for (chapter, identity) in chapters.iter().zip(&identities) {
@@ -1116,6 +1136,26 @@ async fn write_chapter_states(
                 ),
                 updated_at_ms,
             ));
+        }
+        // Like a device-written legacy record, it follows Suwayomi only on evidence newer than
+        // the record, so a phone mark Suwayomi has not caught up with yet is kept.
+        if let Some(listed) = core_listed.get(&chapter.chapter_id) {
+            let planned = core_listed_rows.get(&listed.entity_id).and_then(|row| {
+                planned_chapter_state_updated_at(
+                    chapter,
+                    baselines.get(&chapter.manga_id),
+                    chapter_edits.get(&chapter.chapter_id).copied(),
+                    Some(row),
+                    observed_at_ms,
+                )
+            });
+            if let Some(updated_at_ms) = planned {
+                writes.push((
+                    listed.entity_id.clone(),
+                    chapter_state_record(listed, server_id, profile_id, chapter, updated_at_ms),
+                    updated_at_ms,
+                ));
+            }
         }
     }
     for batch in writes.chunks(WRITE_BATCH_SIZE) {
@@ -1335,6 +1375,32 @@ fn chapter_state_identity(
         portable_work_ref,
         portable_chapter_ref,
     }
+}
+
+/// The identity a phone gives a bound chapter it only knows through a Core listing: the chapter
+/// under its Core-listed address in the same work. The phone keeps reading and writing the chapter
+/// there, so a desktop edit that only returns Suwayomi to the state the mirror already stored
+/// under `identity` would never reach that phone if this record did not follow Suwayomi too.
+fn core_listed_chapter_identity(
+    server_id: &str,
+    profile_id: &str,
+    chapter: &ChapterNode,
+    identity: &ChapterStateIdentity,
+) -> Option<ChapterStateIdentity> {
+    let work = identity.portable_work_ref.clone()?;
+    let listed = PortableChapterRefV3::comic(
+        work.clone(),
+        suwayomi_projection::core_listed_chapter_key(server_id, profile_id, chapter.chapter_id),
+    );
+    listed.validate().ok()?;
+    let listed = chapter_state_identity(
+        server_id,
+        profile_id,
+        chapter.manga_id,
+        chapter.chapter_id,
+        Some((work, listed)),
+    );
+    (listed.entity_id != identity.entity_id).then_some(listed)
 }
 
 fn chapter_state_record(
@@ -2323,6 +2389,53 @@ mod tests {
         );
         assert_eq!(planned.legacy, None);
         assert_eq!(planned.identity, Some(3_000));
+    }
+
+    #[test]
+    fn a_phone_record_under_the_core_listed_address_follows_a_later_desktop_edit() {
+        // The phone knew the chapter only through a Core listing and marked it read under that
+        // address. The mirror's own record still says unread, so un-reading the chapter on the
+        // desktop changed nothing the mirror compared against, and the phone kept it read.
+        let (work, binding) = bound_comic_rows();
+        let refs = portable_refs_from_work(&work, 3, &binding.provider_key).unwrap();
+        let identity = chapter_state_identity("server", "main", 3, 508, Some(refs));
+        let observed = chapter(508, false, 0);
+        let listed = core_listed_chapter_identity("server", "main", &observed, &identity).unwrap();
+        assert_eq!(listed.comic_id, identity.comic_id);
+        assert_ne!(listed.entity_id, identity.entity_id);
+        assert_eq!(
+            listed.portable_chapter_ref,
+            Some(PortableChapterRefV3::comic(
+                identity.portable_work_ref.clone().unwrap(),
+                "aethon-core://suwayomi/server/main/chapter/508",
+            ))
+        );
+        // A chapter without a portable identity has no Core-listed record.
+        let local = chapter_state_identity("server", "main", 3, 508, None);
+        assert!(core_listed_chapter_identity("server", "main", &observed, &local).is_none());
+
+        let mirror_row = stored_row(
+            MIRROR_DEVICE_ID,
+            1_000,
+            json!({ "read": false, "bookmarked": false, "updatedAtMs": 1_000 }),
+        );
+        assert_eq!(
+            planned_chapter_state_updated_at(&observed, None, Some(3_000), Some(&mirror_row), 5_000),
+            None
+        );
+        let phone_listed = stored_row(
+            "phone-1",
+            2_000,
+            json!({ "read": true, "bookmarked": false, "updatedAtMs": 2_000 }),
+        );
+        let record =
+            planned_record(&observed, None, Some(3_000), Some(&phone_listed), 5_000).unwrap();
+        assert_eq!(record["read"], json!(false));
+        assert_eq!(record["updatedAtMs"], json!(3_000));
+        // A desktop edit older than the phone mark leaves it alone.
+        assert!(planned_record(&observed, None, Some(1_500), Some(&phone_listed), 5_000).is_none());
+        // So does a stale snapshot without any evidence.
+        assert!(planned_record(&observed, None, None, Some(&phone_listed), 5_000).is_none());
     }
 
     #[test]

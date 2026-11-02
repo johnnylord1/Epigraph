@@ -459,7 +459,7 @@ pub(crate) fn runtime_fingerprint(data: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
 
     #[test]
     fn inventory_contains_only_installed_extensions_and_dedupes_sources() {

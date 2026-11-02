@@ -768,7 +768,7 @@ mod tests {
 
     #[tokio::test]
     async fn lan_core_waits_for_an_address_and_notes_why() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::syncd::test_dir::tempdir().unwrap();
         let mut attempts = 0;
         let ip = wait_for_lan_ip(
             dir.path(),
@@ -793,7 +793,7 @@ mod tests {
 
     #[tokio::test]
     async fn lan_core_with_an_address_writes_no_startup_notes() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::syncd::test_dir::tempdir().unwrap();
         let ip = wait_for_lan_ip(
             dir.path(),
             || Ok("10.0.0.5".parse().unwrap()),
@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn startup_notes_start_over_once_the_file_is_too_large() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::syncd::test_dir::tempdir().unwrap();
         let path = dir.path().join(STARTUP_LOG_FILE_NAME);
         std::fs::write(&path, vec![b'x'; STARTUP_LOG_MAX_BYTES as usize + 1]).unwrap();
         record_startup_note(dir.path(), "fresh");
@@ -858,7 +858,7 @@ mod tests {
     }
 
     async fn test_state() -> (tempfile::TempDir, SharedAppState) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let mut config = SyncdConfig::for_test(temp.path().to_path_buf());
         config.ownership_mode = super::super::config::SyncdOwnershipMode::EphemeralOwned;
         let pool = connect(&config).await.unwrap();

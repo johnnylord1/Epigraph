@@ -93,7 +93,7 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
     use serde_json::{json, Value};
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
     use tokio::sync::broadcast;
     use tower::ServiceExt;
 

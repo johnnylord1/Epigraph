@@ -527,7 +527,7 @@ mod tests {
 
     #[tokio::test]
     async fn replaced_chapters_have_their_stored_progress_projected_again() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         let work = PortableWorkRefV3::Comic {

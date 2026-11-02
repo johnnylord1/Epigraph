@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn seeds_missing_stores_and_preserves_existing_order() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let conf = temp.path().join("server.conf");
         std::fs::write(&conf, SAMPLE).unwrap();
         let effective = ensure_extension_stores(
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn is_idempotent_and_ignores_trailing_slashes() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let conf = temp.path().join("server.conf");
         std::fs::write(&conf, SAMPLE).unwrap();
         ensure_extension_stores(
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn creates_the_list_block_when_the_key_is_absent() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let conf = temp.path().join("server.conf");
         std::fs::write(&conf, "server.ip = \"127.0.0.1\"\n").unwrap();
         let store = "https://store.example/index.pb";

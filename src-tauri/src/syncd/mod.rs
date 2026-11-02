@@ -22,6 +22,8 @@ pub mod suwayomi_progress_mirror;
 pub mod suwayomi_projection;
 pub mod suwayomi_tracker_prefs;
 pub mod suwayomi_tracking_mirror;
+#[cfg(test)]
+mod test_dir;
 pub mod tls;
 pub mod tracker_credentials;
 pub mod tracking;

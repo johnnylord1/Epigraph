@@ -339,7 +339,8 @@ mod tests {
     use http_body_util::BodyExt;
     use serde_json::{json, Value};
     use std::sync::Arc;
-    use tempfile::{tempdir, TempDir};
+    use crate::syncd::test_dir::tempdir;
+    use tempfile::TempDir;
     use tokio::sync::{broadcast, Mutex, RwLock};
     use tower::ServiceExt;
 

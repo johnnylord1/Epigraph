@@ -896,7 +896,7 @@ mod tests {
     use crate::syncd::db::{connect, upsert_server_identity};
     use crate::syncd::models::AppState;
     use mdns_sd::{ServiceDaemon, ServiceEvent};
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
     use tokio::sync::{broadcast, Mutex, RwLock};
 
     fn server_identity_row() -> ServerIdentityRow {

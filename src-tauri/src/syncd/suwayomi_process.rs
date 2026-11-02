@@ -1132,7 +1132,7 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn b1_retained_core_handle_confirms_natural_exit_and_rejects_changed_owner() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let mut child = Command::new("powershell.exe")
             .args(["-NoProfile", "-Command", "Start-Sleep -Milliseconds 750"])
             .creation_flags(CREATE_NO_WINDOW).spawn().unwrap();
@@ -1156,7 +1156,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn owner_left_by_a_jvm_ended_without_graceful_stop_is_reconciled_only_after_exit() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let mut child = Command::new("powershell.exe")
             .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 60"])
             .creation_flags(CREATE_NO_WINDOW).spawn().unwrap();
@@ -1210,7 +1210,7 @@ mod tests {
 
     #[test]
     fn owned_roots_stay_inside_the_isolated_data_folder() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let base = temp.path().join("RoamingAppData");
         std::fs::create_dir_all(base.join("epigraph-profile-reading")).unwrap();
         std::fs::create_dir_all(base.join("unrelated")).unwrap();
@@ -1259,7 +1259,7 @@ mod tests {
 
     #[test]
     fn headless_runtime_resolution_uses_bundle_beside_core() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let core = temp.path().join("epigraph-syncd.exe");
         let bundle = temp.path().join("binaries").join("suwayomi-bundle");
         let java = bundled_java_path(&bundle);
@@ -1293,7 +1293,7 @@ mod tests {
 
     #[test]
     fn unconfigured_profile_is_not_created_by_headless_supervisor() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let root = temp.path().join("never-managed");
         assert!(!managed_profile_is_configured(&root));
         assert!(!root.exists());
@@ -1301,7 +1301,7 @@ mod tests {
 
     #[test]
     fn configured_profile_requires_managed_evidence() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let root = temp.path().join("managed");
         std::fs::create_dir_all(&root).unwrap();
         assert!(!managed_profile_is_configured(&root));
@@ -1323,7 +1323,7 @@ mod tests {
 
     #[test]
     fn headless_configuration_disables_native_kcef_runtime() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let root = temp.path();
         std::fs::write(
             root.join("server.conf"),
@@ -1358,7 +1358,7 @@ mod tests {
 
     #[test]
     fn spawn_lock_is_exclusive_and_released_by_owner() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let root = temp.path().join("managed");
         std::fs::create_dir_all(&root).unwrap();
         let first = acquire_spawn_lock(&root).unwrap();
@@ -1369,7 +1369,7 @@ mod tests {
 
     #[test]
     fn spawn_lock_file_left_by_a_crashed_start_does_not_block() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
         let root = temp.path().join("managed");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("server.spawn.lock"), "pid=invalid\ntimestamp=0\n").unwrap();

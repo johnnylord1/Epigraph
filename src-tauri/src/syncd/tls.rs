@@ -302,7 +302,7 @@ fn fingerprint_from_pem(cert_pem: &[u8]) -> anyhow::Result<String> {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
 
     use super::*;
     use crate::syncd::config::{SyncdAdvertisedEndpoint, SyncdConfig};

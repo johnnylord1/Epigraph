@@ -301,7 +301,7 @@ mod tests {
     };
     use crate::syncd::models::AppState;
     use std::sync::Arc;
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
     use tokio::sync::{broadcast, Mutex, RwLock};
 
     async fn build_state() -> SharedAppState {

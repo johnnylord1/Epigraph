@@ -586,7 +586,7 @@ mod tests {
 
     use axum::http::{HeaderValue, Method, Request};
     use http_body_util::BodyExt;
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
     use tokio::sync::{broadcast, Mutex, RwLock};
     use tower::ServiceExt;
 

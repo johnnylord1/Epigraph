@@ -4091,7 +4091,7 @@ mod tests {
     use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
     use sqlx::{Connection, SqliteConnection};
     use std::sync::Arc;
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
     use tokio::sync::{broadcast, Mutex, RwLock};
     use tower::ServiceExt;
 

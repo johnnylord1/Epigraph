@@ -379,7 +379,7 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use serde_json::Value;
     use std::sync::Arc;
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
     use tokio::sync::{broadcast, Mutex, RwLock};
     use tower::ServiceExt;
 

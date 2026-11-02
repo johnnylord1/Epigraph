@@ -9764,7 +9764,7 @@ pub fn now_ms() -> i64 {
 mod tests {
     use std::collections::BTreeSet;
 
-    use tempfile::tempdir;
+    use crate::syncd::test_dir::tempdir;
 
     #[tokio::test]
     async fn book_progress_id_migration_collapses_legacy_aliases_and_keeps_newest_record() {
