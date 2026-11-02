@@ -125,6 +125,14 @@ const PORTABLE_CHAPTER_LOOKUP_QUERY: &str = r#"
   }
 "#;
 
+const CHAPTER_PAGE_COUNTS_QUERY: &str = r#"
+  query EpigraphProjectionChapterPageCounts($ids: [Int!]!, $first: Int!) {
+    chapters(filter: { id: { in: $ids } }, first: $first) {
+      nodes { id pageCount }
+    }
+  }
+"#;
+
 const CATEGORY_ASSIGNMENT_LOOKUP_QUERY: &str = r#"
   query EpigraphResolveCategoryAssignment($first: Int!, $offset: Int!) {
     categories(first: $first, offset: $offset) {
@@ -375,6 +383,9 @@ pub struct ProjectionStatusCounts {
     pub in_flight: i64,
     /// Rows other than chapter progress still to project, which hold the catalog revisions back.
     pub catalog_pending: i64,
+    /// Blocked rows that hold the catalog revisions back. A work this desktop could not find is
+    /// not part of its library, so the revisions describe that library correctly without it.
+    pub catalog_blocked: i64,
 }
 
 pub async fn projection_status_counts(
@@ -389,15 +400,18 @@ pub async fn projection_status_counts(
             COALESCE(SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), 0) AS blocked,
             COALESCE(SUM(CASE WHEN status = 'in_flight' THEN 1 ELSE 0 END), 0) AS in_flight,
             COALESCE(SUM(CASE WHEN status IN ('pending', 'retry', 'in_flight') AND NOT waiting
-                AND operation_name <> 'UpdateChaptersProgress' THEN 1 ELSE 0 END), 0) AS catalog_pending
+                AND operation_name <> 'UpdateChaptersProgress' THEN 1 ELSE 0 END), 0) AS catalog_pending,
+            COALESCE(SUM(CASE WHEN status = 'blocked' AND last_error IS NOT ? THEN 1 ELSE 0 END), 0)
+                AS catalog_blocked
         FROM (
-            SELECT status, operation_name,
+            SELECT status, operation_name, last_error,
                 (status = 'retry' AND last_error IS ? AND attempt_count >= ?) AS waiting
             FROM suwayomi_projection_outbox
             WHERE profile_id = ?
         )
         "#,
     )
+    .bind(PORTABLE_WORK_NOT_FOUND)
     .bind(WAITING_CHAPTER_CODE)
     .bind(MAX_CONFIRMATION_ATTEMPTS)
     .bind(profile_id)
@@ -824,8 +838,15 @@ async fn apply_chapter_members(
     outcomes: &mut Vec<(ProjectionRow, ProjectionOutcome)>,
     alone: &mut Vec<ProjectionRow>,
 ) {
+    let paged: Vec<i64> = members
+        .iter()
+        .filter(|(_, _, variables)| sets_page(variables))
+        .map(|(_, chapter_id, _)| *chapter_id)
+        .collect();
+    let unknown = chapters_without_page_count(state, &members[0].0.profile_id, &paged).await;
     let mut by_patch: Vec<(Value, Vec<(ProjectionRow, i64, Value)>)> = Vec::new();
-    for member in members {
+    for mut member in members {
+        leave_out_unknown_page(&mut member.2, &unknown);
         let patch = chapter_progress_patch(&member.2);
         match by_patch.iter_mut().find(|(existing, _)| *existing == patch) {
             Some((_, rows)) => rows.push(member),
@@ -833,6 +854,10 @@ async fn apply_chapter_members(
         }
     }
     for (mut variables, members) in by_patch {
+        if !writes_progress(&variables) {
+            outcomes.extend(members.into_iter().map(|(row, ..)| (row, ProjectionOutcome::Applied)));
+            continue;
+        }
         let profile_id = members[0].0.profile_id.clone();
         variables["ids"] = members.iter().map(|(_, chapter_id, _)| *chapter_id).collect();
         match suwayomi_commands::execute_internal_command(
@@ -870,6 +895,70 @@ fn chapter_progress_patch(variables: &Value) -> Value {
         "isBookmarked": field("isBookmarked"),
         "lastPageRead": field("lastPageRead"),
     })
+}
+
+fn sets_page(variables: &Value) -> bool {
+    variables.get("lastPageRead").is_some_and(|page| !page.is_null())
+}
+
+/// Whether a progress patch still changes anything once its unknown page is left out.
+fn writes_progress(patch: &Value) -> bool {
+    ["isRead", "isBookmarked", "lastPageRead"]
+        .iter()
+        .any(|field| patch.get(*field).is_some_and(|value| !value.is_null()))
+}
+
+/// Chapters among `ids` whose page count Suwayomi does not know yet: one never opened here, or one
+/// a restore recreated. `updateChapters` clamps `lastPageRead` below that count, so a page written
+/// to one of them is stored as page 0 over the page it had. A failed lookup reports none; the
+/// command that follows meets the same failure and retries.
+async fn chapters_without_page_count(
+    state: &SharedAppState,
+    profile_id: &str,
+    ids: &[i64],
+) -> BTreeSet<i64> {
+    if ids.is_empty() {
+        return BTreeSet::new();
+    }
+    suwayomi_catalog::execute_graphql_document(
+        state,
+        &projection_session(profile_id),
+        CHAPTER_PAGE_COUNTS_QUERY,
+        json!({ "ids": ids, "first": ids.len() }),
+        false,
+    )
+    .await
+    .map(|data| unknown_page_counts(&data))
+    .unwrap_or_default()
+}
+
+fn unknown_page_counts(data: &Value) -> BTreeSet<i64> {
+    data.pointer("/chapters/nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|chapter| {
+            chapter
+                .get("pageCount")
+                .and_then(Value::as_i64)
+                .map_or(true, |count| count <= 0)
+        })
+        .filter_map(|chapter| chapter.get("id").and_then(Value::as_i64))
+        .collect()
+}
+
+/// Leaves the page out of a resolved progress row whose chapter has no page count here, so the
+/// chapter keeps the page it has; read and bookmark state still apply.
+fn leave_out_unknown_page(variables: &mut Value, unknown: &BTreeSet<i64>) {
+    let names_unknown = variables
+        .get("ids")
+        .and_then(Value::as_array)
+        .is_some_and(|ids| ids.iter().filter_map(Value::as_i64).any(|id| unknown.contains(&id)));
+    if names_unknown {
+        if let Some(object) = variables.as_object_mut() {
+            object.remove("lastPageRead");
+        }
+    }
 }
 
 /// Works the bulk mutation answered for, in the state it asked for.
@@ -936,7 +1025,20 @@ async fn apply_projection_with(
         };
         let mut object = object.clone();
         object.remove("mangaId");
-        Value::Object(object)
+        let mut command_variables = Value::Object(object);
+        if sets_page(&command_variables) {
+            let ids: Vec<i64> = command_variables
+                .get("ids")
+                .and_then(Value::as_array)
+                .map(|ids| ids.iter().filter_map(Value::as_i64).collect())
+                .unwrap_or_default();
+            let unknown = chapters_without_page_count(state, &row.profile_id, &ids).await;
+            leave_out_unknown_page(&mut command_variables, &unknown);
+            if !writes_progress(&command_variables) {
+                return ProjectionOutcome::Applied;
+            }
+        }
+        command_variables
     } else {
         variables.clone()
     };
@@ -2779,6 +2881,7 @@ mod tests {
             ("fresh", "UpdateManga", "pending", 0, None),
             ("library", "UpdateManga", "retry", 9, Some(WAITING_CHAPTER_CODE)),
             ("gave_up", "UpdateManga", "blocked", 5, Some(PORTABLE_WORK_NOT_FOUND)),
+            ("rejected", "UpdateManga", "blocked", 1, Some("command_rejected")),
         ] {
             sqlx::query(
                 r#"
@@ -2802,7 +2905,13 @@ mod tests {
         let counts = projection_status_counts(&pool, "main").await.unwrap();
         assert_eq!(
             counts,
-            ProjectionStatusCounts { pending: 3, blocked: 1, in_flight: 0, catalog_pending: 1 }
+            ProjectionStatusCounts {
+                pending: 3,
+                blocked: 2,
+                in_flight: 0,
+                catalog_pending: 1,
+                catalog_blocked: 1,
+            }
         );
         assert_eq!(projection_status_counts(&pool, "other").await.unwrap().pending, 0);
         // The first run waits only on rows that can still land on their own.
@@ -2912,6 +3021,35 @@ mod tests {
             chapter_progress_patch(&json!({ "ids": [10], "isRead": true, "lastPageRead": 3 })),
             chapter_progress_patch(&resolved)
         );
+    }
+
+    #[test]
+    fn a_page_is_left_out_only_on_chapters_without_a_page_count() {
+        let data = json!({ "chapters": { "nodes": [
+            { "id": 203, "pageCount": -1 },
+            { "id": 204, "pageCount": 0 },
+            { "id": 205, "pageCount": 24 },
+            { "id": 206 },
+        ] } });
+        let unknown = unknown_page_counts(&data);
+        assert_eq!(unknown, BTreeSet::from([203, 204, 206]));
+        assert!(unknown_page_counts(&json!({})).is_empty());
+
+        let mut known = json!({ "ids": [205], "isRead": false, "lastPageRead": 19 });
+        leave_out_unknown_page(&mut known, &unknown);
+        assert_eq!(known["lastPageRead"], 19);
+
+        let mut read = json!({ "ids": [203], "isRead": true, "lastPageRead": 19 });
+        leave_out_unknown_page(&mut read, &unknown);
+        assert_eq!(read, json!({ "ids": [203], "isRead": true }));
+        assert!(writes_progress(&chapter_progress_patch(&read)));
+
+        // A row that only moved the page has nothing left to write there.
+        let mut page_only = json!({ "ids": [203], "lastPageRead": 19 });
+        assert!(sets_page(&page_only));
+        leave_out_unknown_page(&mut page_only, &unknown);
+        assert!(!sets_page(&page_only));
+        assert!(!writes_progress(&chapter_progress_patch(&page_only)));
     }
 
     #[tokio::test]

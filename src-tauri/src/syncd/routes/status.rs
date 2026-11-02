@@ -184,13 +184,20 @@ pub async fn get_sync_status(
     let runtime = db::load_server_runtime(&state.pool)
         .await
         .map_err(|_| AppError::Internal("Failed to load sync status.".to_string()))?;
-    let suwayomi_projection::ProjectionStatusCounts { pending, blocked, in_flight, catalog_pending } =
+    let suwayomi_projection::ProjectionStatusCounts {
+        pending,
+        blocked,
+        in_flight,
+        catalog_pending,
+        catalog_blocked,
+    } =
         suwayomi_projection::projection_status_counts(&state.pool, profile_id)
             .await
             .map_err(|_| AppError::Internal("Failed to load Suwayomi projection status.".to_string()))?;
 
     let ready = pending == 0 && blocked == 0 && in_flight == 0;
-    let revisions = announced_revisions(catalog_revision::current(profile_id), blocked, catalog_pending);
+    let revisions =
+        announced_revisions(catalog_revision::current(profile_id), catalog_blocked, catalog_pending);
     let (comic_library_revision, comic_extensions_revision, comic_manifest_revision) = match revisions {
         Some(revisions) => (Some(revisions.library), Some(revisions.extensions), Some(revisions.manifest)),
         None => (None, None, None),
@@ -213,13 +220,15 @@ pub async fn get_sync_status(
 
 /// Revisions are announced while no library change waits to be projected or is blocked. Pending
 /// chapter progress does not hide them: it is not part of a revision, and a device reads the status
-/// right after pushing its own progress.
+/// right after pushing its own progress. Neither does a work this desktop could not find: it is not
+/// in the library the revisions describe, and hiding them would stop every device from following
+/// this desktop's library until that work appears.
 fn announced_revisions(
     revisions: Option<catalog_revision::ComicRevisions>,
-    blocked: i64,
+    catalog_blocked: i64,
     catalog_pending: i64,
 ) -> Option<catalog_revision::ComicRevisions> {
-    revisions.filter(|_| blocked == 0 && catalog_pending == 0)
+    revisions.filter(|_| catalog_blocked == 0 && catalog_pending == 0)
 }
 
 #[cfg(test)]
