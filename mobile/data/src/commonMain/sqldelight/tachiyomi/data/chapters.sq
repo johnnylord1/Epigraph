@@ -108,6 +108,15 @@ delete:
 DELETE FROM chapters
 WHERE _id = :chapterId;
 
+-- Folds a chapter's reading state into the one that stands for it. Nothing here goes backwards.
+foldProgressInto:
+UPDATE chapters
+SET
+    read = max(read, (SELECT C.read FROM chapters AS C WHERE C._id = :fromChapterId)),
+    bookmark = max(bookmark, (SELECT C.bookmark FROM chapters AS C WHERE C._id = :fromChapterId)),
+    last_page_read = max(last_page_read, (SELECT C.last_page_read FROM chapters AS C WHERE C._id = :fromChapterId))
+WHERE _id = :chapterId;
+
 deleteBulk:
 DELETE FROM chapters
 WHERE _id IN :chapterIds;

@@ -717,6 +717,35 @@ class EpigraphLibraryMutationRouterTest {
     }
 
     @Test
+    fun `an entry can name a work its row is not bound to`() = runTest {
+        val mangaId = insertManga(favorite = true)
+        bindMangaIdentity(mangaId, "suwayomi:server:old:profile:main:manga:9")
+        val work = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey("/comic/9"))
+
+        val result = router(sequentialMutationIds()).setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = emptySet(),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+                republish = true,
+                unboundWorkRef = work,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        assertEquals(1, result.emittedCommandCount)
+        val command = coordinator.claimReady(100, 1_000, 10)
+            .single()
+            .let { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        command as SyncCommand.SetLibraryMembership
+        assertEquals(PortableIdentityV3.workId(work), command.entityId.value)
+        assertEquals(work, command.portableWorkRef)
+        assertEquals("Example", command.titleHint)
+        assertEquals(null, SqlDelightPortableBindingStore(database).workByLocalReference(mangaId.toString()))
+    }
+
+    @Test
     fun `comic category of a previous desktop install stays local`() = runTest {
         val mangaId = insertManga(favorite = false)
         val stale = insertCategory("Old", sort = 0)

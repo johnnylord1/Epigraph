@@ -50,6 +50,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
+import epigraph.sync.core.protocol.SuwayomiCoreContentReference
 import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import eu.kanade.tachiyomi.ui.base.presenter.BaseCoroutinePresenter
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
@@ -311,8 +312,20 @@ class MangaDetailsPresenter(
                 manga.thumbnail_url?.let(SuwayomiCoreThumbnailReference::parse) != null
             val fetchMangaNeeded = (!manga.initialized || desktopDetails) && coreSessionAvailable
             // A synced novel holds only the chapters read on the desktop; list the rest from the plugin.
-            val fetchChaptersNeeded = getChaptersNow().let {
-                if (source is NovelSource) it.needSourceFetch() else it.isEmpty()
+            // A title back on its own extension can still hold Core chapters that source can't open,
+            // and a title a new Core took over can still hold chapters only the previous one served.
+            val fetchChaptersNeeded = getChaptersNow().let { chapters ->
+                val coreServerId = SuwayomiCoreContentReference.parseManga(manga.url)?.serverId
+                when {
+                    source is NovelSource -> chapters.needSourceFetch()
+                    source is EpigraphCoreSource -> chapters.isEmpty() || coreServerId != null &&
+                        chapters.any { chapter ->
+                            val chapterServerId = SuwayomiCoreContentReference.parseChapter(chapter.url)?.serverId
+                            chapterServerId != null && chapterServerId != coreServerId
+                        }
+                    else -> chapters.isEmpty() ||
+                        chapters.any { SuwayomiCoreContentReference.parseChapter(it.url) != null }
+                }
             } && coreSessionAvailable
             val tasks = listOf(
                 async { if (fetchMangaNeeded) fetchMangaFromSource() },

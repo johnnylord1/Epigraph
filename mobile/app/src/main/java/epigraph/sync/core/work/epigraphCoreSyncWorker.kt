@@ -4,6 +4,7 @@ import epigraph.sync.core.events.CoreBackgroundSyncReason
 import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.novels.LocalNovelLibraryOutboxRepair
 import epigraph.sync.core.suwayomi.CoreHeldChapterProgressFilter
+import epigraph.sync.core.suwayomi.DisplacedComicRowRepair
 import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
 import epigraph.sync.EpigraphReaderProgressRouter
 import android.content.Context
@@ -109,6 +110,12 @@ class EpigraphCoreSyncWorker(
      * [checkWithCore] lets it ask the desktop which chapters it already holds.
      */
     private suspend fun repairLibraries(includeProgress: Boolean, checkWithCore: Boolean): Int {
+        // First, so the outbox and replica passes never meet a title that is in the library twice.
+        val displaced = runCatching { get<DisplacedComicRowRepair>().repair() }
+            .onFailure { failure ->
+                Log.w(LOG_TAG, "displaced comic row repair failed", failure)
+            }
+            .getOrDefault(0)
         val novels = runCatching { get<LocalNovelLibraryOutboxRepair>().repair() }
             .onFailure { failure ->
                 Log.w(LOG_TAG, "local novel library repair failed", failure)
@@ -119,7 +126,7 @@ class EpigraphCoreSyncWorker(
                 Log.w(LOG_TAG, "local comic library repair failed", failure)
             }
             .getOrDefault(0)
-        if (!includeProgress) return novels + comics
+        if (!includeProgress) return displaced + novels + comics
         // After the comic repair, so favorites it just bound already carry their reading progress.
         val progress = runCatching {
             val held = get<CoreHeldChapterProgressFilter>()
@@ -131,7 +138,7 @@ class EpigraphCoreSyncWorker(
                 Log.w(LOG_TAG, "local comic progress backfill failed", failure)
             }
             .getOrDefault(0)
-        return novels + comics + progress
+        return displaced + novels + comics + progress
     }
 
     /** [deferProgress] says, after the drain, that a newer wake will run another pass of this worker. */

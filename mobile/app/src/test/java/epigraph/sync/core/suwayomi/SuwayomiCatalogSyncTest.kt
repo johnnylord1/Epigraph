@@ -156,6 +156,102 @@ class SuwayomiCatalogSyncTest {
     }
 
     @Test
+    fun `a number repeated by a new core never rebinds a row of another work`() = runTest {
+        val staleUrl = "aethon-core://suwayomi/desktop-zero/$PROFILE/manga/7"
+        val staleId = insertStaleBridge(staleUrl, boundUrl = "/manga/999")
+
+        val outcome = catalogSync().synchronize(session, capabilities(), 1000)
+
+        assertEquals(epigraph.sync.core.work.CoreReplicaSyncOutcome.APPLIED, outcome)
+        val stale = database.mangasQueries.findById(staleId).executeAsOne()
+        assertEquals(staleUrl, stale.url)
+        assertEquals("Another work", stale.title)
+        assertEquals(2, database.mangasQueries.findAll().executeAsList().size)
+    }
+
+    @Test
+    fun `a stale row bound to the same work is rebound`() = runTest {
+        val staleId = insertStaleBridge(
+            url = "aethon-core://suwayomi/desktop-zero/$PROFILE/manga/7",
+            boundUrl = "https://source.test/manga/7",
+        )
+
+        catalogSync().synchronize(session, capabilities(), 1000)
+
+        assertEquals(1, database.mangasQueries.findAll().executeAsList().size)
+        val reference = SuwayomiCoreContentReference.parseManga(
+            database.mangasQueries.findById(staleId).executeAsOne().url,
+        )!!
+        assertEquals(SERVER, reference.serverId)
+        assertEquals(7L, reference.mangaId)
+    }
+
+    private fun catalogSync() = SuwayomiCatalogSync(
+        pages = FixturePages(includeSecondManga = false, includeCategoryAssignment = false),
+        database = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+        projection = EpigraphCoreDomainProjection(),
+        covers = CoreCatalogCoverSink { },
+        pageSize = 1,
+    )
+
+    private fun insertStaleBridge(url: String, boundUrl: String): Long {
+        val staleEntityId = "suwayomi:server:desktop-zero:profile:$PROFILE:manga:7"
+        database.mangasQueries.insert(
+            source = EpigraphCoreSource.ID,
+            url = url,
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Another work",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = 0,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = 0,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val mangaId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = staleEntityId,
+            contentType = "MANGA",
+            localReference = mangaId.toString(),
+            createdAt = 0,
+            updatedAt = 0,
+        )
+        database.aethon_syncQueries.upsertCoreRemoteIdentity(
+            entityId = staleEntityId,
+            serverId = "desktop-zero",
+            profileId = PROFILE,
+            remoteType = "SUWAYOMI_MANGA",
+            remoteId = "7",
+            bindingStatus = "BOUND",
+            updatedAt = 0,
+        )
+        database.aethon_syncQueries.insertBinding(
+            "stale-binding",
+            staleEntityId,
+            "SUWAYOMI",
+            "aethon-core:desktop-zero",
+            "pkg",
+            "42",
+            boundUrl,
+            true,
+            0,
+        )
+        return mangaId
+    }
+
+    @Test
     fun `unproven stale rows are left untouched`() = runTest {
         val staleServer = "desktop-zero"
         val staleEntityId = "suwayomi:server:$staleServer:profile:$PROFILE:manga:7"

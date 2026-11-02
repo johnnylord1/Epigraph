@@ -17,6 +17,7 @@ import epigraph.sync.portable.PortableWorkBindingRecord
 import epigraph.sync.portable.SqlDelightPortableBindingStore
 import epigraph.sync.TrackerSyncKeys
 import epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID
+import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
 import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
@@ -270,7 +271,7 @@ class EpigraphCoreDomainProjection(
         if (database.hasBlockingLocalMutation(tombstone.key, tombstone.serverVersion)) return
         val previous = previousRecord?.record as? JsonObject
         when (tombstone.key.entityType) {
-            "comic.entry" -> demoteEntry(database, tombstone.key.entityId)
+            "comic.entry" -> demoteComicEntry(database, tombstone.key.entityId)
             "comic.category" -> removeComicCategoryBinding(database, tombstone.key.entityId)
             "comic.category_assignment" -> previous?.let { projectComicAssignment(database, it, false) }
             "comic.chapter_state" -> {
@@ -319,7 +320,7 @@ class EpigraphCoreDomainProjection(
     private fun removeStale(database: Database, stale: CoreReplicaKey, previous: JsonObject?) {
         if (database.hasPendingLocalMutation(stale)) return
         when (stale.entityType) {
-            "comic.entry" -> demoteEntry(database, stale.entityId)
+            "comic.entry" -> demoteComicEntry(database, stale.entityId)
             "comic.category_assignment" -> previous?.let { projectComicAssignment(database, it, false) }
             "comic.chapter_state" -> {
                 database.aethon_syncQueries.deleteChapterBindingByEntityId(
@@ -488,6 +489,24 @@ class EpigraphCoreDomainProjection(
                 localReference = manga._id.toString(),
             ).executeAsOneOrNull()
         }
+        // A portable entry names a work, not a local row. A row another identity owns stays with
+        // it: the catalog finds its rows through that identity and the source bindings tied to it,
+        // so taking the row here would make the next catalog sync add a second row for the work.
+        if (
+            carriesPortableRef &&
+            previousLocalId == null &&
+            portableLocal != null &&
+            portableOwner != null &&
+            portableOwner.entity_id != entityId
+        ) {
+            database.aethon_syncQueries.upsertEntityAlias(
+                aliasEntityId = entityId,
+                canonicalEntityId = portableOwner.entity_id,
+                receivedAt = now(record),
+            )
+            projectComicMembership(database, record, portableLocal._id)
+            return
+        }
         // Suwayomi's numeric manga id can change after a profile restore. An exact portable
         // source/key binding proves that the current catalog row and the previous server identity
         // represent the same work. Transfer identity ownership before projection so the existing
@@ -530,6 +549,7 @@ class EpigraphCoreDomainProjection(
         // surface zero chapters.
         val providerKey = record.string("providerKey")?.takeIf(String::isNotBlank)
         val originalUrl = providerKey
+            ?: portableRef?.mangaKey?.value
             ?: record.string("url")
             ?: record.string("path")
             ?: record.string("identityKey")
@@ -558,14 +578,26 @@ class EpigraphCoreDomainProjection(
                 manga.source == localSourceId &&
                 manga.source != EpigraphCoreSource.ID
         }
+        // A portable entry only says the work is in the library. It names no source of its own,
+        // so the row keeps the one it has; a source made up here would hide it from the catalog.
+        val keptLocal = existingLocal?.takeIf { coreReference == null && localSourceId == null }
         val localId = ensureManga(
             database = database,
             entityId = entityId,
             contentType = "MANGA",
             source = effectivePortableLocal?.source
                 ?: preservedLocalBinding?.source
-                ?: if (coreReference != null) EpigraphCoreSource.ID else stableSourceId(record, comicId),
-            url = effectivePortableLocal?.url ?: preservedLocalBinding?.url ?: url,
+                ?: keptLocal?.source
+                ?: if (coreReference != null) {
+                    EpigraphCoreSource.ID
+                } else {
+                    portableRef?.sourceId?.toLong() ?: stableSourceId(record, comicId)
+                },
+            // A bridge row takes the current reference: the bridge refuses one from a previous Core.
+            url = effectivePortableLocal?.takeUnless { it.source == EpigraphCoreSource.ID }?.url
+                ?: preservedLocalBinding?.url
+                ?: keptLocal?.url
+                ?: url,
             title = title,
             author = record.string("author"),
             description = record.string("description"),
@@ -701,6 +733,10 @@ class EpigraphCoreDomainProjection(
             preserveOriginalSourceBinding(database, entityId, record, originalUrl, coreReference)
         }
 
+        projectComicMembership(database, record, localId)
+    }
+
+    private fun projectComicMembership(database: Database, record: JsonObject, localId: Long) {
         // Core snapshots normally contain only library entries. Keeping this field optional lets
         // older Core versions send metadata-only records without accidentally removing a local
         // favorite when the field is absent.
@@ -737,7 +773,7 @@ class EpigraphCoreDomainProjection(
         val comicId = record.string("comicId") ?: record.string("mangaId") ?: return
         val categoryId = record.string("categoryId") ?: return
         val mangaId = portableComicLocalMangaId(database, comicId, record)
-            ?: localMangaId(database, comicId)
+            ?: comicLocalMangaId(database, comicId)
             ?: return
         val category = database.aethon_syncQueries
             .selectCategoryIdentityByEntityId(categoryId)
@@ -843,7 +879,7 @@ class EpigraphCoreDomainProjection(
                 comicId = portableWorkId,
                 chapterEntityId = portableChapterId,
                 localChapterId = chapterBinding.localReference?.toLongOrNull()
-                    ?: coreBackedLocalChapterId(database, obj),
+                    ?: coreBackedLocalChapterId(database, obj, workBinding),
                 record = obj,
                 serverRevision = record.serverVersion,
                 updatedAt = obj.long("updatedAtMs") ?: now(obj),
@@ -917,23 +953,56 @@ class EpigraphCoreDomainProjection(
      * A portable chapter this device has not bound can still be on the device as a Core-backed
      * chapter, when the title is read through the Core catalog instead of an installed extension.
      * Core chapter-state records also name the chapter by its server-local ids, which is how the
-     * Core-backed chapter was materialized.
+     * Core-backed chapter was materialized. A chapter listed from the title screen has no chapter
+     * binding, so the row is also searched for its exact Core address.
      */
-    private fun coreBackedLocalChapterId(database: Database, record: JsonObject): Long? {
+    private fun coreBackedLocalChapterId(
+        database: Database,
+        record: JsonObject,
+        work: PortableWorkBindingRecord,
+    ): Long? {
         val serverId = record.string("coreServerId") ?: return null
         val profileId = record.string("coreProfileId") ?: return null
         val chapterId = record.long("suwayomiChapterId")?.takeIf { it > 0L } ?: return null
-        val binding = database.aethon_syncQueries
+        val url = SuwayomiCoreContentReference.forChapter(serverId, profileId, chapterId)
+        database.aethon_syncQueries
             .selectChapterBindingByEntityId("suwayomi:server:$serverId:profile:$profileId:chapter:$chapterId")
             .executeAsOneOrNull()
+            ?.let { binding -> database.chaptersQueries.getChaptersById(binding.local_chapter_id).executeAsOneOrNull() }
+            ?.takeIf { it.url == url }
+            ?.let { return it._id }
+        val mangaId = work.localReference?.toLongOrNull()
+            ?: record.long("suwayomiMangaId")?.let {
+                localMangaId(database, "suwayomi:server:$serverId:profile:$profileId:manga:$it")
+            }
             ?: return null
-        val chapter = database.chaptersQueries
-            .getChaptersById(binding.local_chapter_id)
+        return database.chaptersQueries
+            .getChaptersByUrlAndMangaId(url, mangaId, 0)
+            .executeAsList()
+            .firstOrNull()
+            ?._id
+    }
+
+    /**
+     * A history record names only the portable chapter. The server-local ids of a Core-backed
+     * chapter are in the chapter state the Core holds for that same chapter.
+     */
+    private fun coreBackedLocalChapterId(
+        database: Database,
+        scopeId: String,
+        work: PortableWorkBindingRecord,
+        portableChapterId: String,
+    ): Long? {
+        val state = database.aethon_syncQueries
+            .selectCoreReplicaRecord(
+                scopeId,
+                EpigraphCoreEntityType.COMIC_CHAPTER_STATE,
+                "${EpigraphCoreEntityType.COMIC_CHAPTER_STATE}::${work.portableId}::$portableChapterId",
+            )
             .executeAsOneOrNull()
             ?: return null
-        return chapter._id.takeIf {
-            chapter.url == SuwayomiCoreContentReference.forChapter(serverId, profileId, chapterId)
-        }
+        val record = CoreReplicaPayloadHasher.parse(state.record_json) as? JsonObject ?: return null
+        return coreBackedLocalChapterId(database, record, work)
     }
 
     /**
@@ -1024,16 +1093,18 @@ class EpigraphCoreDomainProjection(
             chapterBinding = bindFetchedLocalChapter(
                 database, store, workBinding, chapterBinding, record.long("readAtMs") ?: now(record),
             )
+            val localChapterId = chapterBinding.localReference?.toLongOrNull()
+                ?: coreBackedLocalChapterId(database, recordKey.key.scopeId, workBinding, portableChapterId)
             applyComicProgress(
                 database = database,
                 comicId = portableWorkId,
                 chapterEntityId = portableChapterId,
-                localChapterId = chapterBinding.localReference?.toLongOrNull(),
+                localChapterId = localChapterId,
                 record = record,
                 serverRevision = recordKey.serverVersion,
                 updatedAt = record.long("readAtMs") ?: now(record),
             )
-            recordComicHistory(database, chapterBinding.localReference?.toLongOrNull(), record)
+            recordComicHistory(database, localChapterId, record)
             return
         }
         // The server-scoped identity may not exist yet: the Core catalog sync that materializes
@@ -2335,8 +2406,19 @@ class EpigraphCoreDomainProjection(
         database.aethon_syncQueries.selectIdentityByEntityId(entityId).executeAsOneOrNull()
             ?.local_reference?.toLongOrNull()?.takeIf { it > 0 }
 
+    /** The row a comic entry reaches, directly or through the identity that owns its work's row. */
+    private fun comicLocalMangaId(database: Database, entityId: String): Long? =
+        localMangaId(database, entityId)
+            ?: database.aethon_syncQueries.selectCanonicalEntityId(entityId).executeAsOneOrNull()
+                ?.let { localMangaId(database, it) }
+
     private fun demoteEntry(database: Database, entityId: String) {
         val localId = localMangaId(database, entityId) ?: return
+        demoteManga(database, localId)
+    }
+
+    private fun demoteComicEntry(database: Database, entityId: String) {
+        val localId = comicLocalMangaId(database, entityId) ?: return
         demoteManga(database, localId)
     }
 

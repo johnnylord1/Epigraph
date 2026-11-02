@@ -251,6 +251,13 @@ suspend fun syncChaptersWithSource(
     }
 
     handler.await(inTransaction = true) {
+        // A chapter that comes back under a new URL keeps its history, as it keeps its read state.
+        val deletedById = toDelete.filter { it.isRecognizedNumber }.associateBy { it.id }
+        val deletedHistory = manga.id.takeIf { deletedById.isNotEmpty() }
+            ?.let { mangaId -> historyQueries.getByMangaId(mangaId).executeAsList() }
+            .orEmpty()
+            .filter { it.history_chapter_id in deletedById }
+
         if (toDelete.isNotEmpty()) {
             val idsToDelete = toDelete.mapNotNull { it.id }
             deleteChapter.awaitAllById(idsToDelete)
@@ -258,6 +265,17 @@ suspend fun syncChaptersWithSource(
 
         if (updatedToAdd.isNotEmpty()) {
             updatedToAdd = insertChapter.awaitBulk(updatedToAdd)
+        }
+
+        val addedByNumber = updatedToAdd.associateBy { it.chapter_number }
+        deletedHistory.forEach { history ->
+            val number = deletedById.getValue(history.history_chapter_id).chapter_number
+            val chapterId = addedByNumber[number]?.id ?: return@forEach
+            historyQueries.mergeIntoChapter(
+                historyChapterId = chapterId,
+                historyLastRead = history.history_last_read ?: 0L,
+                historyTimeRead = history.history_time_read ?: 0L,
+            )
         }
 
         if (toChange.isNotEmpty()) {

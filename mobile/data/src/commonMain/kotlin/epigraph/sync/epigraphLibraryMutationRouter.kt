@@ -58,11 +58,18 @@ data class LibraryMembershipMutation(
      * Used when a newly paired or rewound Core does not hold a favorite this device already knows.
      */
     val republish: Boolean = false,
+    /**
+     * The work a republished row stands for when the row is not bound to it. A title held only
+     * through a previous Core has no source on this device, so the entry names the work and the row
+     * stays as it is: a bound row would count as resolved and never reach its extension.
+     */
+    val unboundWorkRef: PortableWorkRef.Comic? = null,
 ) {
     init {
         require(localMangaId > 0) { "local manga ID must be positive" }
         require(categoryIds.all { it > 0 }) { "local category IDs must be positive" }
         require(!republish || inLibrary) { "only library members can be republished" }
+        require(unboundWorkRef == null || republish) { "only a republished entry can name an unbound work" }
     }
 }
 
@@ -154,6 +161,7 @@ class EpigraphLibraryMutationRouter(
             .workByLocalReference(mutation.localMangaId.toString())
             ?.takeIf { it.resolution.state.name == "BOUND" }
             ?.ref
+            ?: mutation.unboundWorkRef
         val syncEntityId = portableWork?.let(PortableIdentityV3::workId)?.let(::EpigraphEntityId) ?: workEntityId
 
         // Legacy Suwayomi comics (no portable binding) also travel through the causal Core path. A

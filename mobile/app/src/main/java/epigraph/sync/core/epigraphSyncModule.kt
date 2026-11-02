@@ -36,6 +36,7 @@ import epigraph.sync.core.extensions.CoreSourceRelinkStore
 import epigraph.sync.core.extensions.ExtensionReconciliationNotifier
 import epigraph.sync.core.extensions.ExtensionReconciliationStore
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
+import epigraph.sync.core.suwayomi.DisplacedComicRowRepair
 import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
 import epigraph.sync.core.suwayomi.CoreHeldChapterProgressFilter
 import epigraph.sync.core.suwayomi.COMIC_PROGRESS_HELD_PREFERENCES
@@ -350,6 +351,7 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single { LocalNovelLibraryOutboxRepair(get(), get(), get(), get()) }
     single { LocalComicLibraryOutboxRepair(get(), get(), get(), get()) }
+    single { DisplacedComicRowRepair(get()) }
     single {
         CoreHeldChapterProgressFilter(
             get(),

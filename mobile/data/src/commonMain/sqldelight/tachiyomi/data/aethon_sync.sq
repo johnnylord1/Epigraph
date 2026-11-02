@@ -1603,6 +1603,19 @@ ON CONFLICT(alias_entity_id) DO UPDATE SET
     canonical_entity_id = :canonicalEntityId,
     received_at = :receivedAt;
 
+selectCanonicalEntityId:
+SELECT canonical_entity_id FROM aethon_entity_alias WHERE alias_entity_id = :aliasEntityId;
+
+-- Comic rows a portable entry took from the catalog identity that owned them. They keep the Core
+-- URL (or the work's id in its place) under a source that lists nothing.
+selectDisplacedComicRows:
+SELECT I.entity_id, M._id AS manga_id, M.url
+FROM aethon_content_identity AS I
+JOIN mangas AS M ON M._id = CAST(I.local_reference AS INTEGER)
+WHERE I.content_type = 'MANGA' AND I.entity_id LIKE 'comic:%'
+  AND (M.url = I.entity_id OR (M.url LIKE 'aethon-core://%' AND M.source <> :coreSourceId))
+ORDER BY M._id;
+
 deleteCoreReplicaRecordsByScope:
 DELETE FROM aethon_core_replica_record WHERE scope_id = :scopeId;
 
@@ -1736,14 +1749,17 @@ SELECT EXISTS(
 );
 
 -- Every comic favorite with what the library repair needs, in one pass instead of three lookups per
--- favorite: its identity count, its manga identity and its latest bound portable binding.
+-- favorite: its identity count, its manga identity, its latest bound portable binding and the work
+-- its source binding records, which is all a bridge row knows about its work.
 selectComicLibraryRepairRows:
 SELECT M._id AS manga_id, M.source, M.url,
     (SELECT count(*) FROM aethon_content_identity AS IC
      WHERE IC.content_type IN ('MANGA', 'NOVEL') AND IC.local_reference = CAST(M._id AS TEXT)) AS identity_count,
     I.entity_id AS manga_entity_id,
     B.portable_id AS binding_portable_id,
-    B.ecosystem AS binding_ecosystem
+    B.ecosystem AS binding_ecosystem,
+    S.source_id AS work_source_id,
+    S.normalized_url AS work_provider_key
 FROM mangas AS M
 -- UNIQUE(content_type, local_reference) keeps this join to at most one row per favorite.
 LEFT JOIN aethon_content_identity AS I
@@ -1752,6 +1768,12 @@ LEFT JOIN aethon_portable_work_binding AS B ON B.portable_id = (
     SELECT B2.portable_id FROM aethon_portable_work_binding AS B2
     WHERE B2.local_reference = CAST(M._id AS TEXT) AND B2.resolution_state = 'BOUND'
     ORDER BY B2.updated_at DESC
+    LIMIT 1
+)
+LEFT JOIN aethon_source_binding AS S ON S.binding_id = (
+    SELECT S2.binding_id FROM aethon_source_binding AS S2
+    WHERE S2.entity_id = I.entity_id AND S2.ecosystem = 'SUWAYOMI'
+    ORDER BY S2.is_primary DESC
     LIMIT 1
 )
 WHERE M.favorite = 1;

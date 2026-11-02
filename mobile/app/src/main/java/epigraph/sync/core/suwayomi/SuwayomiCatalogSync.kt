@@ -121,7 +121,7 @@ class SuwayomiCatalogSync(
             val known = serverMangaEntityIds(this, credentials)
             library.mapNotNull { node ->
                 node.long("id")?.let { mangaId ->
-                    mangaId to resolveMangaEntityId(this, credentials, mangaId, known)
+                    mangaId to resolveMangaEntityId(this, credentials, mangaId, known, node.workKey())
                 }
             }.toMap()
         }
@@ -665,6 +665,7 @@ class SuwayomiCatalogSync(
             credentials: CoreCredentialSession,
             mangaId: Long,
             knownServerScoped: Set<String> = emptySet(),
+            work: CatalogWorkKey? = null,
         ): String {
             val serverScoped = serverMangaEntityId(credentials, mangaId)
             if (credentials.serverId == LEGACY_UNBOUND_SERVER_ID) return serverScoped
@@ -678,7 +679,7 @@ class SuwayomiCatalogSync(
             // under the previous server id would otherwise be stranded on a dead reference (the
             // bridge refuses mismatched servers) while this sync creates a duplicate row. Rebind
             // the proven stale row to the current server and reuse it instead.
-            rebindStaleServerIdentity(database, credentials, mangaId)
+            rebindStaleServerIdentity(database, credentials, mangaId, work)
             val rebound = database.aethon_syncQueries
                 .selectCoreRemoteIdentity(
                     credentials.serverId,
@@ -722,14 +723,16 @@ class SuwayomiCatalogSync(
 
         /**
          * Rebinds a bridge work that still points at a previous Core server identity. Every
-         * write requires double proof: the current catalog observes (profile, mangaId) AND the
-         * local row is a bridge row whose URL parses to the same pair. Without both proofs
-         * nothing is touched.
+         * write requires three proofs: the current catalog observes (profile, mangaId), the local
+         * row is a bridge row whose URL parses to the same pair, and no source binding of that row
+         * names another work. A Core set up from scratch numbers its works anew, so the pair alone
+         * can name a different title. Without all three nothing is touched.
          */
         private fun rebindStaleServerIdentity(
             database: yokai.data.Database,
             credentials: CoreCredentialSession,
             mangaId: Long,
+            work: CatalogWorkKey?,
         ) {
             val currentServerId = credentials.serverId
             if (currentServerId == LEGACY_UNBOUND_SERVER_ID) return
@@ -757,7 +760,8 @@ class SuwayomiCatalogSync(
                     if (manga.source != EpigraphCoreSource.ID) return@firstOrNull false
                     val reference = SuwayomiCoreContentReference.parseManga(manga.url)
                         ?: return@firstOrNull false
-                    reference.profileId == credentials.profileId && reference.mangaId == mangaId
+                    reference.profileId == credentials.profileId && reference.mangaId == mangaId &&
+                        standsForWork(database, row.entity_id, work)
                 } ?: return
             val localId = candidate.local_reference.toLongOrNull() ?: return
             database.mangasQueries.update(
@@ -794,6 +798,23 @@ class SuwayomiCatalogSync(
                 bindingStatus = "BOUND",
                 updatedAt = System.currentTimeMillis(),
             )
+        }
+
+        private fun standsForWork(
+            database: yokai.data.Database,
+            entityId: String,
+            work: CatalogWorkKey?,
+        ): Boolean {
+            work ?: return true
+            val bindings = database.aethon_syncQueries.selectBindingsByEntityId(entityId).executeAsList()
+            return bindings.isEmpty() ||
+                bindings.any { it.source_id == work.sourceId && it.normalized_url in work.urls }
+        }
+
+        /** A source binding holds the work's web address when a record carried no provider key. */
+        private fun JsonObject.workKey(): CatalogWorkKey? {
+            val sourceId = string("sourceId") ?: return null
+            return CatalogWorkKey(sourceId, setOfNotNull(string("url"), string("realUrl"))).takeIf { it.urls.isNotEmpty() }
         }
 
         /**
@@ -944,6 +965,9 @@ class SuwayomiCatalogSync(
 
     }
 }
+
+/** What a Core says a catalog work is, apart from its number: its source and addresses there. */
+data class CatalogWorkKey(val sourceId: String, val urls: Set<String>)
 
 internal fun suwayomiServerCategoryEntityId(serverId: String, profileId: String, categoryId: Long): String =
     if (serverId == LEGACY_UNBOUND_SERVER_ID) {
