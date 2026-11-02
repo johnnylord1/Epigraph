@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <item name="action_mark_range_as_read" type="id"/>
+    <item name="action_mark_range_as_unread" type="id"/>
+    <item name="action_select_chapters" type="id"/>
     <item name="reader_pager" type="id"/>
     <item name="predictive_back_outline" type="id"/>
     <item name="list_entry_played" type="id"/>

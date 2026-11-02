@@ -26,6 +26,13 @@ interface Chapter : SChapter, Serializable {
     val isRecognizedNumber: Boolean
         get() = chapter_number >= 0f
 
+    /**
+     * Whether opening this chapter continues from [last_page_read]. A re-read left part-way keeps
+     * its place even though the chapter stays read; a finished chapter starts over.
+     */
+    val hasResumablePage: Boolean
+        get() = !read || pages_left > 1
+
     fun toProgressUpdate() =
         ChapterUpdate(
             id = this.id!!,

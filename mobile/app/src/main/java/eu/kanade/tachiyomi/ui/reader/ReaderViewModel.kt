@@ -1137,6 +1137,8 @@ class ReaderViewModel(
                     (readerChapter.pages?.lastIndex == page.index && page.firstHalf != true) ||
                     (hasExtraPage && readerChapter.pages?.lastIndex?.minus(1) == page.index)
                 ) {
+                    // The last spread finishes the chapter, so it must not count as a place to resume.
+                    if (hasExtraPage) readerChapter.chapter.pages_left = 1
                     onChapterReadComplete(readerChapter)
                 }
             }

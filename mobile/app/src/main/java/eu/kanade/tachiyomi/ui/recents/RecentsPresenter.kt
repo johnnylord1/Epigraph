@@ -768,10 +768,10 @@ class RecentsPresenter(
         presenterScope.launchNonCancellableIO {
             chapter.apply {
                 this.read = read
-                if (!read) {
-                    last_page_read = lastRead ?: 0
-                    pages_left = pagesLeft ?: 0
-                }
+                // Undo passes the saved position back. Marking read on purpose drops the resume
+                // position, as the reader's toggle does.
+                if (!read || lastRead != null) last_page_read = lastRead ?: 0
+                pages_left = pagesLeft ?: 0
             }
             chapterStateWriter.await(chapter.toProgressUpdate())
             getRecents()
@@ -907,10 +907,8 @@ class RecentsPresenter(
             chapterIds.forEach { id ->
                 val chapter = findChapterById(id) ?: return@forEach
                 chapter.read = read
-                if (!read) {
-                    chapter.last_page_read = 0
-                    chapter.pages_left = 0
-                }
+                if (!read) chapter.last_page_read = 0
+                chapter.pages_left = 0
                 chapterStateWriter.await(chapter.toProgressUpdate())
             }
             getRecents()

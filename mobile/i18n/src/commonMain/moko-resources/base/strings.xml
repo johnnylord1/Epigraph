@@ -1306,6 +1306,7 @@
     <string name="save_search_delete_message">Are you sure you wish to delete this saved search query: \'%1$s\'?</string>
     <string name="search">Search</string>
     <string name="search_">Search %1$s</string>
+    <string name="select_chapters">Select chapters</string>
     <string name="select_all">Select all</string>
     <string name="select_none">Select none</string>
     <string name="select_inverse">Select inverse</string>

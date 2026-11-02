@@ -63,7 +63,7 @@ class ChapterLoader(
 
                 if (page != null) {
                     chapter.requestedPage = page
-                } else if (!source.isNovelSource() && !chapter.chapter.read) {
+                } else if (!source.isNovelSource() && chapter.chapter.hasResumablePage) {
                     // If the chapter is partially read, set the starting page to the last the user read
                     chapter.requestedPage = resolveRequestedPage(
                         storedPageIndex = chapter.chapter.last_page_read,

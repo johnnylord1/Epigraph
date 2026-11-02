@@ -89,6 +89,7 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.icon
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.base.MaterialMenuSheet
 import eu.kanade.tachiyomi.ui.base.SmallToolbarInterface
 import eu.kanade.tachiyomi.ui.base.controller.BaseCoroutineController
 import eu.kanade.tachiyomi.ui.base.controller.DialogController
@@ -118,6 +119,7 @@ import eu.kanade.tachiyomi.ui.source.browse.BrowseSourceController
 import eu.kanade.tachiyomi.ui.source.globalsearch.GlobalSearchController
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.addOrRemoveToFavorites
+import eu.kanade.tachiyomi.util.chapter.ChapterUtil.Companion.preferredChapterName
 import eu.kanade.tachiyomi.util.chapter.updateTrackChapterMarkedAsRead
 import eu.kanade.tachiyomi.util.isLocal
 import eu.kanade.tachiyomi.util.moveCategories
@@ -1173,12 +1175,13 @@ class MangaDetailsController :
         val chapterItem = (adapter?.getItem(position) as? ChapterItem) ?: return false
         val chapter = chapterItem.chapter
         // mihon-style multi-select: a tap toggles this chapter's selection (no range anchor).
-        // Single source of truth: any selected chapter means taps toggle selection.
-        if (isSelectionMode || selectedChapterCount() > 0) {
+        // Single source of truth: any selected chapter means taps toggle selection. The range gesture
+        // also selects its anchor, so while rangeMode is set the tap has to reach the branch below.
+        if (isSelectionMode || (rangeMode == null && selectedChapterCount() > 0)) {
             toggleChapterSelection(position)
             return false
         }
-        // Legacy download-range gesture: startDownloadRange sets rangeMode before routing the tap here.
+        // Range gesture: startDownloadRange and startMarkRange set rangeMode before routing the tap here.
         if (!isSelectionMode && rangeMode != null) {
             if (startingRangeChapterPos == null) {
                 adapter?.addSelection(position)
@@ -1204,6 +1207,8 @@ class MangaDetailsController :
                         chapterList.filter { it.status != Download.State.NOT_DOWNLOADED },
                         false,
                     )
+                    RangeMode.MarkRead -> markAsRead(chapterList)
+                    RangeMode.MarkUnread -> markAsUnread(chapterList)
                 }
                 presenter.fetchChapters(false)
                 adapter?.removeSelection(startingPosition)
@@ -1221,11 +1226,86 @@ class MangaDetailsController :
     }
 
     override fun onItemLongClick(position: Int) {
-        val adapter = adapter ?: return
-        if (adapter.getItem(position) !is ChapterItem) return
-        // Long-press is the entry point to mihon-style multi-select. The first long-press starts
-        // selection mode; a later long-press range-selects from the previous anchor.
-        enterSelectionMode(position)
+        val item = adapter?.getItem(position) as? ChapterItem ?: return
+        // A long-press during a multi-select range-selects from the previous anchor.
+        if (isSelectionMode) {
+            enterSelectionMode(position)
+            return
+        }
+        if (rangeMode != null) return
+        showChapterActions(position, item)
+    }
+
+    /** The J2K long-press sheet: labeled chapter actions, with multi-select as its last row. */
+    private fun showChapterActions(position: Int, item: ChapterItem) {
+        val activity = activity ?: return
+        val manga = manga ?: return
+        val previousChaptersBelow = presenter.sortDescending()
+        val items = buildList {
+            if (presenter.getChapterUrl(item.chapter) != null) {
+                add(
+                    MaterialMenuSheet.MenuSheetItem(
+                        R.id.action_open_in_web_view,
+                        R.drawable.ic_open_in_webview_24dp,
+                        MR.strings.open_in_webview,
+                    ),
+                )
+            }
+            add(
+                MaterialMenuSheet.MenuSheetItem(
+                    R.id.action_mark_previous_as_read,
+                    if (previousChaptersBelow) R.drawable.ic_eye_down_24dp else R.drawable.ic_eye_up_24dp,
+                    MR.strings.mark_previous_as_read,
+                ),
+            )
+            add(
+                MaterialMenuSheet.MenuSheetItem(
+                    R.id.action_mark_previous_as_unread,
+                    if (previousChaptersBelow) R.drawable.ic_eye_off_down_24dp else R.drawable.ic_eye_off_up_24dp,
+                    MR.strings.mark_previous_as_unread,
+                ),
+            )
+            add(
+                MaterialMenuSheet.MenuSheetItem(
+                    R.id.action_mark_range_as_read,
+                    R.drawable.ic_eye_range_24dp,
+                    MR.strings.mark_range_as_read,
+                ),
+            )
+            add(
+                MaterialMenuSheet.MenuSheetItem(
+                    R.id.action_mark_range_as_unread,
+                    R.drawable.ic_eye_off_range_24dp,
+                    MR.strings.mark_range_as_unread,
+                ),
+            )
+            add(
+                MaterialMenuSheet.MenuSheetItem(
+                    R.id.action_select_chapters,
+                    R.drawable.ic_select_all_24dp,
+                    MR.strings.select_chapters,
+                ),
+            )
+        }
+        val title = item.chapter.preferredChapterName(activity, manga, presenter.preferences)
+        MaterialMenuSheet(activity, items, title) { _, id ->
+            when (id) {
+                R.id.action_open_in_web_view -> openChapterInWebView(item)
+                R.id.action_mark_previous_as_read -> markPreviousAs(item, true)
+                R.id.action_mark_previous_as_unread -> markPreviousAs(item, false)
+                R.id.action_mark_range_as_read -> startMarkRange(position, RangeMode.MarkRead)
+                R.id.action_mark_range_as_unread -> startMarkRange(position, RangeMode.MarkUnread)
+                R.id.action_select_chapters -> enterSelectionMode(position)
+            }
+            true
+        }.show()
+    }
+
+    /** Uses the long-pressed chapter as the range start; the next tap picks the end. */
+    private fun startMarkRange(position: Int, mode: RangeMode) {
+        createActionModeIfNeeded()
+        rangeMode = mode
+        onItemClick(null, position)
     }
 
     override fun onActionStateChanged(viewHolder: RecyclerView.ViewHolder?, actionState: Int) {
@@ -2373,7 +2453,7 @@ class MangaDetailsController :
         isSelectionMode = false
         lastSelectionPosition = null
         actionBarState = ChapterActionBarState(visible = false)
-        if (startingRangeChapterPos != null && rangeMode in setOf(RangeMode.Download, RangeMode.RemoveDownload)) {
+        if (startingRangeChapterPos != null && rangeMode != null) {
             val item = adapter?.getItem(startingRangeChapterPos!!) as? ChapterItem
             (binding.recycler.findViewHolderForAdapterPosition(startingRangeChapterPos!!) as? ChapterHolder)?.notifyStatus(
                 item?.status ?: Download.State.NOT_DOWNLOADED,
@@ -2673,6 +2753,8 @@ class MangaDetailsController :
         private enum class RangeMode {
             Download,
             RemoveDownload,
+            MarkRead,
+            MarkUnread,
         }
 
         fun bundle(

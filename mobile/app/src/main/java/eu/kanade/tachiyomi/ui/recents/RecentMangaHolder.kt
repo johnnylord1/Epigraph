@@ -245,7 +245,7 @@ class RecentMangaHolder(
                 }
             }
             item.chapter.id != item.mch.chapter.id -> readLastText(!moreVisible)
-            item.chapter.last_page_read > 0 && !item.chapter.read -> {
+            item.chapter.last_page_read > 0 && item.chapter.hasResumablePage -> {
                 val progressText = if (item.mch.manga.isNovel()) {
                     itemView.context.getString(
                         MR.strings.resume_progress_percent,
