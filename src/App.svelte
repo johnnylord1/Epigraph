@@ -107,7 +107,8 @@
   import { playShellEntrance, pointerEffects, setAnimationPreference, SPLASH_EXIT_EVENT } from "./lib/motion/motion";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeConstants";
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPending, writeCompletedFirstRunMarker } from "./lib/firstRun";
-  import { firstRunBackgroundSync, resumeFirstRunBackgroundSync } from "./lib/setup/firstRunBackgroundSync.svelte";
+  import { resumeFirstRunBackgroundSync } from "./lib/setup/firstRunBackgroundSync.svelte";
+  import { createLibraryArrivalTracker, libraryLookupGate, libraryLookupsWaitForSync, setLibraryWorksArriving } from "./lib/recommendations/libraryLookupGate.svelte";
 
   type DiscordRuntime = typeof import("./lib/discord");
   let discordRuntimePromise: Promise<DiscordRuntime> | null = null;
@@ -197,9 +198,20 @@
   });
   // A restored or synced library arrives during setup; its lookups and their toasts wait until
   // setup is done, so they do not cover setup's own buttons, and until a sync setup left running
-  // has imported everything, so they read the whole library.
+  // (or any later sync from a paired device) has brought every work here, so they read the whole
+  // library. Settings can ask for them sooner.
   let firstRunOpen = $state(readFirstRunPending(hadPersistedStoreAtStartup));
-  const libraryLookupsWait = $derived(firstRunOpen || firstRunBackgroundSync.running);
+  const libraryLookupsWait = $derived(firstRunOpen || libraryLookupsWaitForSync());
+  // Bumped once a requested analysis has cleared the lookups, so both start over on the library.
+  let libraryAnalysisRun = $state(0);
+  $effect(() => {
+    const requested = libraryLookupGate.requested;
+    if (requested === 0) return;
+    void import("./lib/recommendations/anilistLibraryLookup").then((lookup) => {
+      lookup.stopAniListLibraryLookup();
+      libraryAnalysisRun = requested;
+    });
+  });
   onMount(() => resumeFirstRunBackgroundSync());
   $effect(() => {
     const syncFirstRunOpen = () => { firstRunOpen = readFirstRunPending(hadPersistedStoreAtStartup); };
@@ -212,6 +224,7 @@
   });
   $effect(() => {
     if (libraryLookupsWait) return;
+    void libraryAnalysisRun;
     const works = store.libraryMangaSnapshot;
     if (works.length === 0) return;
     void import("./lib/recommendations/anilistLibraryLookup").then((lookup) => {
@@ -224,6 +237,7 @@
     // user picked on the tracker, so it is not looked up.
     if (libraryLookupsWait) return;
     void store.navPage;
+    void libraryAnalysisRun;
     const books = store.books.map((book) => ({ id: book.id, key: `book:${book.id}`, title: book.title, author: book.author, genres: book.genres }));
     const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
     void Promise.all([
@@ -3072,7 +3086,10 @@
     let disposed = false;
     let stop: (() => void) | undefined;
     void import("./lib/comicSync/syncLandingWatch")
-      .then(({ startSyncLandingWatch }) => startSyncLandingWatch(reloadLibraryAfterSyncLanded, () => pageHidden))
+      .then(({ startSyncLandingWatch }) => startSyncLandingWatch(reloadLibraryAfterSyncLanded, () => pageHidden, {
+        arriving: createLibraryArrivalTracker(),
+        onArriving: setLibraryWorksArriving,
+      }))
       .then((started) => {
         if (disposed) started();
         else stop = started;

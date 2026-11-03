@@ -8,6 +8,7 @@
   import "../pages/migrationModal.css";
   import { slide } from "svelte/transition";
   import { _, translate } from "../../lib/i18n/runtime";
+  import { requestLibraryAnalysis } from "../../lib/recommendations/libraryLookupGate.svelte";
   import { formatRelativeTime } from "../../lib/i18n/format";
   import { operationFailure, presentOperationFailure, restoreNote, restorePayloadSummary, type OperationFailure } from "../../lib/i18n/operationPresentation";
   import "../../lib/i18n/runtime";
@@ -359,6 +360,15 @@
     if (minutes <= 0) return $_("common.never");
     return $_(minutes === 1 ? "common.minute" : "common.minutes", {
       values: { count: minutes },
+    });
+  }
+
+  function analyzeLibraryNow() {
+    requestLibraryAnalysis();
+    addToast({
+      kind: "success",
+      title: translate("settings.inline.analyzeLibraryToastTitle"),
+      body: translate("settings.inline.analyzeLibraryToastBody"),
     });
   }
 
@@ -4816,6 +4826,15 @@
                     aria-label={$_("settings_inline_downloadNewNovelChapters")}
                     onclick={() => updateSettings({ downloadNewNovelChapters: !store.settings.downloadNewNovelChapters })}
                   ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings_inline_analyzeLibrary")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_analyzeLibraryHint")}</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={analyzeLibraryNow}>
+                    {$_("settings_inline_analyzeLibraryAction")}
+                  </button>
                 </div>
               </div>
             </div>

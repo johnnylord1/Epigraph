@@ -25,14 +25,24 @@ describe("createSyncLandingDetector", () => {
     expect(landed(progress(3))).toBe(false);
   });
 
-  it("waits while Core is still applying, then lands once it stops", () => {
-    const landed = createSyncLandingDetector();
+  it("shows a long sync as it applies, at most once per interval, then lands once it stops", () => {
+    let clock = 0;
+    const landed = createSyncLandingDetector(() => clock, 20_000);
     landed(progress(0, 900));
-    expect(landed(progress(50, 850))).toBe(false);
+    clock = 5_000;
+    expect(landed(progress(50, 850))).toBe(true);
+    clock = 10_000;
     expect(landed(progress(120, 780))).toBe(false);
-    // Stalled on retries: what landed so far is shown instead of waiting for the rest.
-    expect(landed(progress(120, 780))).toBe(true);
-    expect(landed(progress(120, 780))).toBe(false);
+    clock = 15_000;
+    expect(landed(progress(200, 700))).toBe(false);
+    clock = 25_000;
+    expect(landed(progress(260, 640))).toBe(true);
+    clock = 30_000;
+    expect(landed(progress(300, 600))).toBe(false);
+    // Stalled on retries: what landed so far is shown without waiting for the interval.
+    clock = 35_000;
+    expect(landed(progress(300, 600))).toBe(true);
+    expect(landed(progress(300, 600))).toBe(false);
   });
 
   it("lands when the last work's details finish loading", () => {
