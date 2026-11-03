@@ -39,6 +39,8 @@ class LibraryItemTest {
         val changed = bookItem(title = "Other EPUB", type = ContentType.EPUB)
 
         assertNotEquals(original.bindingContentSignature(), changed.bindingContentSignature())
+        val otherBadge = bookItem(title = "Example PDF", type = ContentType.PDF, unreadType = 1)
+        assertNotEquals(original.bindingContentSignature(), otherBadge.bindingContentSignature())
         assertEquals(true, original.filter("pdf"))
         assertEquals(true, original.filter("example"))
         assertEquals(false, original.filter("missing"))
@@ -69,7 +71,7 @@ class LibraryItemTest {
         }
     }
 
-    private fun bookItem(title: String, type: ContentType): LibraryBookItem {
+    private fun bookItem(title: String, type: ContentType, unreadType: Int = 2): LibraryBookItem {
         val category = Category.create("Books").apply {
             id = -2
         }
@@ -94,6 +96,7 @@ class LibraryItemTest {
             ),
             header = header,
             context = null,
+            unreadType = unreadType,
         )
     }
 }

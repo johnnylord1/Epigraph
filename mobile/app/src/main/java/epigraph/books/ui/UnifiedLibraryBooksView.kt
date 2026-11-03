@@ -421,6 +421,7 @@ class UnifiedLibraryBooksView(
                 }
             }
             if (selectedType == TypeFilter.ALL || selectedType == TypeFilter.EPUB || selectedType == TypeFilter.PDF) {
+                val unreadType = preferences.unreadBadgeType().get()
                 books.filter { book ->
                     selectedType == TypeFilter.ALL ||
                         (selectedType == TypeFilter.EPUB && book.contentType.name == "EPUB") ||
@@ -433,6 +434,7 @@ class UnifiedLibraryBooksView(
                             header,
                             context,
                             BookChapterMetrics.unreadChapterCount(book, bookLocators[book.bookId]),
+                            unreadType,
                         )
                         if (matchesFilters(item, trackerFilterId)) add(item)
                     }

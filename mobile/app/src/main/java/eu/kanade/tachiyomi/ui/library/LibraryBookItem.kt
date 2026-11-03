@@ -45,12 +45,13 @@ class LibraryBookItem(
     context: android.content.Context?,
     /** Chapters left to read at the saved position, see BookChapterMetrics.unreadChapterCount. */
     val unread: Int = 0,
+    /** The unread badge setting, read once per list like [LibraryMangaItem.unreadType]. */
+    val unreadType: Int = 2,
 ) : LibraryItem(header, context) {
 
     /** The manga unread badge rules, see LibraryHolder.setUnreadBadge. */
     internal fun setUnreadBadge(badge: LibraryBadge) {
         val showTotal = sectionHeader.category.sortingMode() == LibrarySort.TotalChapters
-        val unreadType = preferences.unreadBadgeType().get()
         badge.setUnreadLabel(
             when {
                 showTotal -> book.chapterCount ?: book.pageCount ?: 0
