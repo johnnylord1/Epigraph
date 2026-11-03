@@ -51,6 +51,10 @@ pub struct ShutdownRequest {
     pub server_id: String,
     pub expected_pid: u32,
     pub reason: ShutdownReason,
+    /// Keep running while a paired device is connected, and stop once devices have left. A Core
+    /// that predates the field ignores it and stops at once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unless_devices_connected: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -62,6 +66,8 @@ pub enum ShutdownReason {
     Uninstall,
     ParentExited,
     OsSignal,
+    /// The desktop closed while devices were connected, and they have since left.
+    DevicesDisconnected,
 }
 
 impl ShutdownReason {
@@ -84,6 +90,9 @@ pub struct ShutdownResponse {
     pub accepted: bool,
     pub server_id: String,
     pub pid: u32,
+    /// Shutdown was declined because paired devices are connected; see `unless_devices_connected`.
+    #[serde(default)]
+    pub kept_for_devices: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -179,6 +188,31 @@ pub async fn post_local_shutdown(
     if coordinator.subscribe().borrow().is_some() {
         return Err(AppError::Forbidden("Core shutdown already pending; request not accepted".into()));
     }
+    if request.unless_devices_connected {
+        let connected = state.device_presence.connected_devices();
+        if connected > 0 {
+            tracing::info!(connected, "Core kept running for connected devices");
+            if state.device_presence.arm_exit_when_devices_leave() {
+                spawn_exit_when_devices_leave(
+                    state.clone(),
+                    coordinator.clone(),
+                    DEVICES_LEFT_GRACE,
+                    DEVICES_LEFT_CHECK,
+                );
+            }
+            return Ok((
+                StatusCode::OK,
+                Json(ShutdownResponse {
+                    run_id: request.run_id,
+                    nonce: request.nonce,
+                    accepted: false,
+                    server_id: identity.server_id,
+                    pid: std::process::id(),
+                    kept_for_devices: true,
+                }),
+            ));
+        }
+    }
     if state.config.ownership_mode == super::config::SyncdOwnershipMode::PersistentAttached {
         super::suwayomi_process::prepare_shutdown().await.map_err(AppError::Internal)?;
     }
@@ -191,8 +225,59 @@ pub async fn post_local_shutdown(
             accepted,
             server_id: identity.server_id,
             pid: std::process::id(),
+            kept_for_devices: false,
         }),
     ))
+}
+
+/// How long a Core the desktop left running for devices waits, once none is connected, before it
+/// stops. Covers a phone reconnecting after a network change or a short background pause.
+const DEVICES_LEFT_GRACE: Duration = Duration::from_secs(5 * 60);
+const DEVICES_LEFT_CHECK: Duration = Duration::from_secs(30);
+
+/// Stop this Core once no paired device has been connected for `grace`. A desktop opening the app
+/// again (a new local-authority event stream) takes the decision back and ends the watch.
+fn spawn_exit_when_devices_leave(
+    state: SharedAppState,
+    coordinator: ShutdownCoordinator,
+    grace: Duration,
+    check: Duration,
+) {
+    let presence = state.device_presence.clone();
+    let desktop_streams = presence.local_stream_opens();
+    let mut shutdown = coordinator.subscribe();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(check);
+        let mut idle_since: Option<tokio::time::Instant> = None;
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {}
+                _ = wait_for_shutdown_request(&mut shutdown) => break,
+            }
+            if presence.local_stream_opens() != desktop_streams {
+                tracing::info!("desktop is back; Core stays running");
+                break;
+            }
+            if presence.connected_devices() > 0 {
+                idle_since = None;
+                continue;
+            }
+            let since = *idle_since.get_or_insert_with(tokio::time::Instant::now);
+            if since.elapsed() >= grace {
+                tracing::info!("no device connected since the desktop closed; stopping Core");
+                coordinator.request(ShutdownRequest {
+                    run_id: super::runtime_manifest::current_run_id().into(),
+                    nonce: uuid::Uuid::new_v4().to_string(),
+                    server_id: String::new(),
+                    expected_pid: std::process::id(),
+                    reason: ShutdownReason::DevicesDisconnected,
+                    unless_devices_connected: false,
+                });
+                break;
+            }
+        }
+        presence.disarm_exit_when_devices_leave();
+    });
 }
 
 /// Stops or starts the main profile's Suwayomi for the Epigraph process that holds its runtime for
@@ -501,26 +586,48 @@ fn run_autostart_command(arguments: Vec<std::ffi::OsString>) -> anyhow::Result<(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShutdownOutcome {
+    /// No Core was running for this data directory.
+    NotRunning,
+    Stopped,
+    /// The Core declined because paired devices are connected, and keeps running.
+    KeptForDevices,
+}
+
 pub async fn request_persistent_shutdown(
     data_dir: &Path,
     reason: ShutdownReason,
     timeout: Duration,
 ) -> anyhow::Result<bool> {
-    tokio::time::timeout(timeout, request_shutdown_inner(data_dir, reason, timeout, None))
+    tokio::time::timeout(timeout, request_shutdown_inner(data_dir, reason, timeout, None, false))
         .await.context("Core shutdown deadline exceeded; evidence retained")?
+        .map(|outcome| outcome == ShutdownOutcome::Stopped)
 }
 
-pub async fn request_exact_shutdown(data_dir: &Path, reason: ShutdownReason, timeout: Duration, expected: &SyncdRuntimeManifest) -> anyhow::Result<bool> {
-    tokio::time::timeout(timeout, request_shutdown_inner(data_dir, reason, timeout, Some(expected)))
-        .await.context("Exact Core shutdown deadline exceeded; evidence retained")?
+/// Stop exactly the Core `expected` names. With `unless_devices_connected` the Core keeps running
+/// while a paired device is connected and stops on its own once devices leave.
+pub async fn request_exact_shutdown(
+    data_dir: &Path,
+    reason: ShutdownReason,
+    timeout: Duration,
+    expected: &SyncdRuntimeManifest,
+    unless_devices_connected: bool,
+) -> anyhow::Result<ShutdownOutcome> {
+    tokio::time::timeout(
+        timeout,
+        request_shutdown_inner(data_dir, reason, timeout, Some(expected), unless_devices_connected),
+    )
+    .await
+    .context("Exact Core shutdown deadline exceeded; evidence retained")?
 }
 
-async fn request_shutdown_inner(data_dir: &Path, reason: ShutdownReason, timeout: Duration, retained: Option<&SyncdRuntimeManifest>) -> anyhow::Result<bool> {
+async fn request_shutdown_inner(data_dir: &Path, reason: ShutdownReason, timeout: Duration, retained: Option<&SyncdRuntimeManifest>, unless_devices_connected: bool) -> anyhow::Result<ShutdownOutcome> {
     let manifest_path = runtime_manifest_path(data_dir);
     // Nothing to stop when no Core ever ran here, it already stopped gracefully, or it was ended
     // by a reboot/crash. Installer hooks and repeated requests rely on this being idempotent.
     if reconcile_exited_runtime_manifest(&manifest_path) {
-        return Ok(false);
+        return Ok(ShutdownOutcome::NotRunning);
     }
     let original = std::fs::read(&manifest_path).context("Missing Core ownership; graceful/manual reconciliation required")?;
     let manifest: SyncdRuntimeManifest = serde_json::from_slice(&original).context("Malformed Core evidence preserved")?;
@@ -560,6 +667,7 @@ async fn request_shutdown_inner(data_dir: &Path, reason: ShutdownReason, timeout
             server_id: manifest.server_id.clone(),
             expected_pid: manifest.pid,
             reason,
+            unless_devices_connected,
         })
         .send()
         .await
@@ -577,6 +685,11 @@ async fn request_shutdown_inner(data_dir: &Path, reason: ShutdownReason, timeout
         .json::<ShutdownResponse>()
         .await
         .context("Core returned an invalid shutdown response")?;
+    if unless_devices_connected && response.kept_for_devices && !response.accepted
+        && response.run_id == manifest.run_id && response.nonce == nonce
+        && response.server_id == manifest.server_id && response.pid == manifest.pid {
+        return Ok(ShutdownOutcome::KeptForDevices);
+    }
     if !response.accepted || response.run_id != manifest.run_id || response.nonce != nonce
         || response.server_id != manifest.server_id || response.pid != manifest.pid {
         bail!("Core shutdown acknowledgement identity mismatch");
@@ -590,7 +703,7 @@ async fn request_shutdown_inner(data_dir: &Path, reason: ShutdownReason, timeout
         if std::fs::read(&manifest_path).ok().as_deref() != Some(original.as_slice()) { bail!("Core evidence replaced; completion receipt refused"); }
         crate::suwayomi_runtime::record_confirmed_stop(&manifest_path, &original).map_err(anyhow::Error::msg)?;
     }
-    Ok(true)
+    Ok(ShutdownOutcome::Stopped)
 }
 
 async fn fetch_descriptor(
@@ -824,6 +937,7 @@ mod tests {
             server_id: "server-a".to_string(),
             expected_pid: 10,
             reason: ShutdownReason::PreUpdate,
+            unless_devices_connected: false,
         };
         let second = ShutdownRequest {
             run_id: crate::syncd::runtime_manifest::current_run_id().into(),
@@ -831,6 +945,7 @@ mod tests {
             server_id: "server-a".to_string(),
             expected_pid: 10,
             reason: ShutdownReason::Uninstall,
+            unless_devices_connected: false,
         };
 
         assert!(coordinator.request(first.clone()));
@@ -847,6 +962,7 @@ mod tests {
             server_id: "server-a".to_string(),
             expected_pid: 10,
             reason: ShutdownReason::Manual,
+            unless_devices_connected: false,
         });
         assert_eq!(
             wait_for_shutdown_request(&mut receiver)
@@ -887,6 +1003,7 @@ mod tests {
             pairing_status_sender,
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "a".repeat(64),
+            device_presence: Default::default(),
         });
         (temp, state)
     }
@@ -959,6 +1076,15 @@ mod tests {
     }
 
     fn shutdown_http_request(token: &str, server_id: &str, remote: &str) -> Request<Body> {
+        shutdown_http_request_with(token, server_id, remote, false)
+    }
+
+    fn shutdown_http_request_with(
+        token: &str,
+        server_id: &str,
+        remote: &str,
+        unless_devices_connected: bool,
+    ) -> Request<Body> {
         Request::post("/v1/local/shutdown")
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
@@ -974,6 +1100,7 @@ mod tests {
                     server_id: server_id.to_string(),
                     expected_pid: std::process::id(),
                     reason: ShutdownReason::PreUpdate,
+                    unless_devices_connected,
                 })
                 .unwrap(),
             ))
@@ -1064,5 +1191,134 @@ mod tests {
             .unwrap();
         assert_eq!(remote.status(), StatusCode::FORBIDDEN);
         assert!(receiver.borrow().is_none());
+    }
+    async fn local_shutdown_app(
+        state: SharedAppState,
+    ) -> (axum::Router, String, String, watch::Receiver<Option<ShutdownRequest>>) {
+        let identity = super::super::db::load_server_identity(&state.pool).await.unwrap();
+        let local = issue_test_local_token(
+            &state.pool,
+            &state.config,
+            LOCAL_AUTHORITY_DEVICE_ID,
+            LOCAL_AUTHORITY_PROFILE_ID,
+        )
+        .await
+        .unwrap();
+        let (coordinator, receiver) = ShutdownCoordinator::channel();
+        let app = super::super::app::build_test_router_with_shutdown(state, coordinator);
+        (app, local.access_token, identity.server_id, receiver)
+    }
+
+    #[tokio::test]
+    async fn shutdown_unless_devices_connected_keeps_the_core_for_a_connected_device() {
+        let (_temp, state) = test_state().await;
+        let phone = state.device_presence.open_stream("paired-phone-token", "phone");
+        let (app, token, server_id, receiver) = local_shutdown_app(state.clone()).await;
+
+        let response = app
+            .clone()
+            .oneshot(shutdown_http_request_with(&token, &server_id, "127.0.0.1:61234", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload: ShutdownResponse =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert!(!payload.accepted);
+        assert!(payload.kept_for_devices);
+        assert!(receiver.borrow().is_none());
+        assert!(
+            !state.device_presence.arm_exit_when_devices_leave(),
+            "the Core watches for the devices to leave"
+        );
+
+        // A plain shutdown, such as an update, still stops the Core with a device connected.
+        let response = app
+            .oneshot(shutdown_http_request(&token, &server_id, "127.0.0.1:61234"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert_eq!(receiver.borrow().as_ref().unwrap().reason, ShutdownReason::PreUpdate);
+        drop(phone);
+    }
+
+    #[tokio::test]
+    async fn shutdown_unless_devices_connected_stops_the_core_when_no_device_is_connected() {
+        let (_temp, state) = test_state().await;
+        // The desktop's own event stream is not a device.
+        let _desktop = state
+            .device_presence
+            .open_stream("local-authority-desktop-main", LOCAL_AUTHORITY_DEVICE_ID);
+        let (app, token, server_id, receiver) = local_shutdown_app(state.clone()).await;
+
+        let response = app
+            .oneshot(shutdown_http_request_with(&token, &server_id, "127.0.0.1:61234", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let payload: ShutdownResponse =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert!(payload.accepted);
+        assert!(!payload.kept_for_devices);
+        assert!(receiver.borrow().as_ref().unwrap().unless_devices_connected);
+    }
+
+    #[tokio::test]
+    async fn a_core_kept_for_devices_stops_once_they_have_been_gone_for_the_grace_period() {
+        let (_temp, state) = test_state().await;
+        let (coordinator, mut receiver) = ShutdownCoordinator::channel();
+        let phone = state.device_presence.open_stream("paired-phone-token", "phone");
+        assert!(state.device_presence.arm_exit_when_devices_leave());
+        spawn_exit_when_devices_leave(
+            state.clone(),
+            coordinator,
+            Duration::from_millis(150),
+            Duration::from_millis(20),
+        );
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(receiver.borrow().is_none(), "the phone is still connected");
+
+        drop(phone);
+        // The closed stream keeps the phone connected for the recent window; forget it.
+        state.device_presence.forget_recent_activity_for_test();
+        let request = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_shutdown_request(&mut receiver),
+        )
+        .await
+        .expect("the Core stops once devices left")
+        .unwrap();
+        assert_eq!(request.reason, ShutdownReason::DevicesDisconnected);
+        assert_eq!(request.expected_pid, std::process::id());
+        assert!(!request.unless_devices_connected);
+    }
+
+    #[tokio::test]
+    async fn a_desktop_opening_the_app_again_takes_back_a_core_kept_for_devices() {
+        let (_temp, state) = test_state().await;
+        let (coordinator, receiver) = ShutdownCoordinator::channel();
+        assert!(state.device_presence.arm_exit_when_devices_leave());
+        let phone = state.device_presence.open_stream("paired-phone-token", "phone");
+        spawn_exit_when_devices_leave(
+            state.clone(),
+            coordinator,
+            Duration::from_millis(150),
+            Duration::from_millis(20),
+        );
+
+        let _desktop = state
+            .device_presence
+            .open_stream("local-authority-desktop-main", LOCAL_AUTHORITY_DEVICE_ID);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !state.device_presence.arm_exit_when_devices_leave() {
+            assert!(tokio::time::Instant::now() < deadline, "the watch ends");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        drop(phone);
+        state.device_presence.forget_recent_activity_for_test();
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(receiver.borrow().is_none(), "the desktop decides again on its next Quit");
     }
 }

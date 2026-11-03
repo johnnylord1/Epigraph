@@ -1250,6 +1250,7 @@ mod tests {
             pairing_status_sender,
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
+            device_presence: Default::default(),
         });
 
         start_discovery_provider(state.clone()).await;

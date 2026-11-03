@@ -35,6 +35,7 @@ pub struct AppState {
     pub pairing_status_sender: broadcast::Sender<PairingStatusEvent>,
     pub mutation_gate: Arc<Mutex<()>>,
     pub tls_cert_sha256: String,
+    pub device_presence: super::device_presence::DevicePresence,
 }
 
 pub type SharedAppState = Arc<AppState>;

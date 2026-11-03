@@ -232,6 +232,7 @@ async fn authenticate_token(
         .map(|row| row.get::<String, _>("scope_id"))
         .collect::<BTreeSet<_>>();
 
+    state.device_presence.record_request(&token_id, &device_id);
     Ok(AuthenticatedSession {
         token_id,
         device_id,
@@ -333,6 +334,7 @@ mod tests {
             pairing_status_sender,
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
+            device_presence: Default::default(),
         })
     }
 
@@ -463,6 +465,7 @@ mod tests {
             pairing_status_sender,
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
+            device_presence: Default::default(),
         });
 
         let session = authenticate_token(&state, "secret-token").await.unwrap();
@@ -536,6 +539,7 @@ mod tests {
             pairing_status_sender,
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
+            device_presence: Default::default(),
         });
 
         let error = authenticate_token(&state, "secret-token")

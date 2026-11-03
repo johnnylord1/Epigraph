@@ -1,12 +1,14 @@
 # Epigraph Core Windows lifecycle
 
-The Windows Core is a current-user daemon. Quitting the Epigraph desktop ends a persistent Core only when the desktop launched it and no sign-in autostart (`Epigraph Core` in `HKCU\...\Run`) is registered for that Core executable:
+The Windows Core is a current-user daemon. Quitting the Epigraph desktop stops the persistent Core and its Suwayomi unless a paired device is connected:
 
-- A Core registered to start at sign-in keeps serving paired devices after Quit. The desktop only detaches from it, whether it found the Core running or launched it itself.
-- A Core the desktop launched without that registration is owned by the desktop. Quit asks it to stop through the authenticated shutdown below (8 seconds), then ends whatever is left of its process tree, including the Suwayomi Java it started, through a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The same job ends the tree if the desktop crashes or is ended from Task Manager.
-- A Core the desktop found already running, but did not launch, is never stopped by Quit.
+- Quit sends the authenticated shutdown below with `unlessDevicesConnected`. A device is a paired client with an open `/v1/events` stream or a request in the last 120 seconds; the desktop's own local-authority token never counts.
+- With a device connected, the Core declines (`200`, `keptForDevices: true`) and keeps serving it. It stops itself (`DevicesDisconnected`) once no device has been connected for 5 minutes, checked every 30 seconds. A desktop that opens the app again (a new local-authority event stream) ends that watch, and its next Quit decides again.
+- With no device connected, the Core stops as for any other shutdown. Accepting a shutdown ends open event streams, so the server's graceful shutdown does not wait on them.
+- A Core the desktop launched without a sign-in autostart (`Epigraph Core` in `HKCU\...\Run`) is owned by the desktop and contained in a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Quit waits 8 seconds for the graceful stop, then ends whatever is left of the tree, including the Suwayomi Java it started. The same job ends the tree if the desktop crashes or is ended from Task Manager. When the Core is kept for devices, Quit clears kill-on-close and releases the job instead.
+- A Core registered to start at sign-in, or found already running, is only attached. Quit asks it to stop the same way but never kills it, and a failed request only detaches.
 
-When the registration cannot be read, the desktop keeps the daemon behaviour and detaches. Phase-gate (ephemeral) Cores are always owned and are contained the same way.
+Updates, uninstall and restarts still stop the Core with devices connected. When the registration cannot be read, the desktop treats the Core as attached. Phase-gate (ephemeral) Cores always end with their desktop and are contained the same way.
 
 ## Commands
 

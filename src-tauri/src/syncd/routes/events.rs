@@ -12,6 +12,8 @@ use tokio::time::{interval, MissedTickBehavior};
 
 use crate::syncd::models::{AppError, AuthenticatedSession, ChangeEnvelope, SharedAppState};
 use crate::syncd::replay::{self, ReplayContext};
+use crate::syncd::device_presence::StreamLease;
+use crate::syncd::lifecycle::{wait_for_shutdown_request, ShutdownCoordinator, ShutdownRequest};
 use crate::syncd::{catalog_revision, db};
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +44,7 @@ pub struct ChangesResponse {
 pub async fn get_events(
     State(state): State<SharedAppState>,
     Extension(session): Extension<AuthenticatedSession>,
+    Extension(shutdown): Extension<ShutdownCoordinator>,
     Query(query): Query<EventsQuery>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
@@ -49,7 +52,18 @@ pub async fn get_events(
     let catalog = query.catalog_events.then(catalog_revision::subscribe);
     let replay =
         replay::prepare_replay(&state, &session, query.scope_id.as_deref(), &headers).await?;
-    let stream = sse_stream(state, replay, receiver, catalog, session.token_id);
+    let presence = state
+        .device_presence
+        .open_stream(&session.token_id, &session.device_id);
+    let stream = sse_stream(
+        state,
+        replay,
+        receiver,
+        catalog,
+        session.token_id,
+        presence,
+        shutdown.subscribe(),
+    );
     Ok(Sse::new(stream))
 }
 
@@ -108,8 +122,12 @@ fn sse_stream(
     mut receiver: tokio::sync::broadcast::Receiver<ChangeEnvelope>,
     mut catalog: Option<tokio::sync::broadcast::Receiver<String>>,
     token_id: String,
+    presence: StreamLease,
+    mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     stream! {
+        // Counts this device as connected until the client goes away and the stream drops.
+        let _presence = presence;
         for envelope in replay.backlog {
             yield Ok(change_event(&envelope));
         }
@@ -120,6 +138,8 @@ fn sse_stream(
 
         loop {
             tokio::select! {
+                // An open stream would hold the server's graceful shutdown; clients reconnect.
+                Some(_) = wait_for_shutdown_request(&mut shutdown) => break,
                 _ = ping.tick() => {
                     if !token_still_grants(&state, &token_id, &replay.allowed_scopes).await {
                         break;

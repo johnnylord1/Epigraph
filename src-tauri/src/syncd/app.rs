@@ -76,6 +76,7 @@ pub async fn run() -> anyhow::Result<()> {
         pairing_status_sender,
         mutation_gate: Arc::new(Mutex::new(())),
         tls_cert_sha256: tls.fingerprint_sha256.clone(),
+        device_presence: Default::default(),
     });
 
     for instance in super::suwayomi_process::attach_owned_instances() {
@@ -383,6 +384,7 @@ fn spawn_parent_watchdog(state: Arc<AppState>, shutdown: ShutdownCoordinator) {
                     server_id: String::new(),
                     expected_pid: std::process::id(),
                     reason: ShutdownReason::ParentExited,
+                    unless_devices_connected: false,
                 });
                 break;
             }
@@ -409,6 +411,7 @@ fn spawn_shutdown_task(
                     server_id: String::new(),
                     expected_pid: std::process::id(),
                     reason: ShutdownReason::OsSignal,
+                    unless_devices_connected: false,
                 };
                 coordinator.request(request.clone());
                 Some(request)
@@ -568,6 +571,7 @@ mod tests {
             pairing_status_sender,
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
+            device_presence: Default::default(),
         });
         (temp, state)
     }
@@ -2254,6 +2258,43 @@ mod tests {
         .unwrap()
         .to_bytes();
         assert!(!String::from_utf8_lossy(&body).contains("event: change"));
+    }
+
+    #[tokio::test]
+    async fn an_accepted_shutdown_ends_open_event_streams() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["books:global"],
+        )
+        .await
+        .unwrap();
+        let (shutdown, _receiver) = ShutdownCoordinator::channel();
+        let app = build_test_router_with_shutdown(state.clone(), shutdown.clone());
+
+        let response = open_books_event_stream(app).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.device_presence.connected_devices(), 1);
+        shutdown.request(ShutdownRequest {
+            run_id: String::new(),
+            nonce: String::new(),
+            server_id: String::new(),
+            expected_pid: std::process::id(),
+            reason: ShutdownReason::ParentExited,
+            unless_devices_connected: false,
+        });
+
+        // Otherwise the server's graceful shutdown waits on the stream until its deadline.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            response.into_body().collect(),
+        )
+        .await
+        .expect("an accepted shutdown ends the live stream")
+        .unwrap();
     }
 
     #[tokio::test]

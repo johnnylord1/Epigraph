@@ -15,6 +15,7 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 use crate::syncd::config::SyncdOwnershipMode;
+use crate::syncd::lifecycle::ShutdownOutcome;
 use crate::syncd::models::SyncdDiscoveryDescriptor;
 use crate::syncd::network::detect_lan_ip;
 use crate::syncd::runtime_manifest::{
@@ -180,6 +181,27 @@ impl OwnedCoreJob {
         Ok(accounting.ActiveProcesses)
     }
 
+    /// Let the Core outlive this desktop: clear kill-on-close and close the handle, so neither
+    /// the desktop exiting nor this call ends the tree.
+    fn release(self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectExtendedLimitInformation, SetInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        };
+        let handle = self.handle as windows_sys::Win32::Foundation::HANDLE;
+        unsafe {
+            let limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+            CloseHandle(handle);
+        }
+    }
+
     /// End every process still in the job and wait until none remains. Safe to repeat: an empty
     /// job terminates at once.
     fn terminate(self, timeout: Duration) -> Result<(), (Self, String)> {
@@ -227,6 +249,8 @@ impl OwnedCoreJob {
     fn terminate(self, _timeout: Duration) -> Result<(), (Self, String)> {
         Err((self, "Core containment is available only on Windows".into()))
     }
+
+    fn release(self) {}
 }
 
 #[derive(Default)]
@@ -495,13 +519,7 @@ pub fn shutdown_confirmed(app: &AppHandle) -> Result<(), String> {
                 return Err(error);
             }
         } else {
-            let _ = append_line(
-                &running.log_path,
-                &format!(
-                    "[{}] desktop detached; the Core registered to start at sign-in keeps serving paired devices",
-                    running.pid
-                ),
-            );
+            stop_attached_core_unless_devices_connected(&running);
         }
     }
 
@@ -509,6 +527,36 @@ pub fn shutdown_confirmed(app: &AppHandle) -> Result<(), String> {
         let _ = fs::remove_file(status_path);
     }
     Ok(())
+}
+
+/// Quit stops a Core this desktop only attached to, such as the one started at sign-in, unless a
+/// paired device is connected: then the Core keeps serving it and stops on its own once devices
+/// have left. Quit never fails because of it; an attached Core is not this desktop's to kill.
+fn stop_attached_core_unless_devices_connected(running: &RunningSyncd) {
+    let outcome = match running.manifest.as_ref() {
+        Some(manifest) => tauri::async_runtime::block_on(
+            crate::syncd::lifecycle::request_exact_shutdown(
+                &running.data_dir,
+                crate::syncd::lifecycle::ShutdownReason::ParentExited,
+                OWNED_CORE_GRACEFUL_SHUTDOWN,
+                manifest,
+                true,
+            ),
+        )
+        .map_err(|error| error.to_string()),
+        None => Err("no Core run identity to address".to_string()),
+    };
+    let line = match outcome {
+        Ok(ShutdownOutcome::KeptForDevices) => {
+            "desktop detached; the Core keeps serving connected devices and stops once they leave"
+                .to_string()
+        }
+        Ok(ShutdownOutcome::Stopped | ShutdownOutcome::NotRunning) => {
+            "desktop closed the Core; no device was connected".to_string()
+        }
+        Err(error) => format!("desktop detached without stopping the Core: {error}"),
+    };
+    let _ = append_line(&running.log_path, &format!("[{}] {line}", running.pid));
 }
 
 /// How long Quit waits for an owned persistent Core to stop its Suwayomi and exit before the
@@ -545,14 +593,17 @@ fn stop_desktop_owned_core(running: &mut RunningSyncd) -> Result<(), String> {
         {
             return Err("Core control manifest differs from retained birth identity".to_string());
         }
-        tauri::async_runtime::block_on(crate::syncd::lifecycle::request_exact_shutdown(
-            &running.data_dir,
-            crate::syncd::lifecycle::ShutdownReason::ParentExited,
-            timeout,
-            manifest,
-        ))
-        .map_err(|error| error.to_string())?;
-        Ok(())
+        tauri::async_runtime::block_on(
+            crate::syncd::lifecycle::request_exact_shutdown(
+                &running.data_dir,
+                crate::syncd::lifecycle::ShutdownReason::ParentExited,
+                timeout,
+                manifest,
+                // A phase gate always ends with its desktop.
+                running.ownership == SyncdOwnershipMode::PersistentAttached,
+            ),
+        )
+        .map_err(|error| error.to_string())
     })();
     if let Err(error) = &graceful {
         let _ = append_line(
@@ -561,11 +612,25 @@ fn stop_desktop_owned_core(running: &mut RunningSyncd) -> Result<(), String> {
         );
     }
 
-    // The job also ends a Suwayomi the Core could not stop. It is empty after a clean shutdown.
     let owned = running
         .desktop_owned
         .as_mut()
         .expect("caller checked ownership");
+    if matches!(graceful, Ok(ShutdownOutcome::KeptForDevices)) {
+        if let Some(job) = owned.job.take() {
+            job.release();
+        }
+        let _ = append_line(
+            &running.log_path,
+            &format!(
+                "[{}] owned Core keeps serving connected devices and stops once they leave",
+                running.pid
+            ),
+        );
+        return Ok(());
+    }
+    let graceful = graceful.map(|_| ());
+    // The job also ends a Suwayomi the Core could not stop. It is empty after a clean shutdown.
     let swept = match owned.job.take() {
         Some(job) => match job.terminate(OWNED_CORE_TERMINATION_WAIT) {
             Ok(()) => Ok(()),

@@ -3,6 +3,7 @@ pub mod autostart;
 pub mod catalog_revision;
 pub mod config;
 pub mod db;
+pub mod device_presence;
 pub mod discovery;
 pub mod extension_store_seed;
 pub mod lifecycle;
