@@ -65,6 +65,168 @@ pub struct RunningSyncd {
     pub db_path: PathBuf,
     pub cert_path: PathBuf,
     pub log_path: PathBuf,
+    /// Set when this desktop launched the Core and must end it on Quit. `None` for a Core this
+    /// desktop only attached to, such as the one started at sign-in for paired devices.
+    pub desktop_owned: Option<DesktopOwnedCore>,
+}
+
+/// A Core this desktop launched and owns: phase-gate Cores, and a persistent Core started while
+/// no sign-in autostart is registered for its executable, so nothing else would keep it running
+/// for paired devices.
+pub struct DesktopOwnedCore {
+    /// Kill-on-close containment, used when the graceful shutdown cannot finish. `None` when the
+    /// job could not be created; the graceful shutdown is then the only way to end the Core.
+    job: Option<OwnedCoreJob>,
+}
+
+/// Whether the desktop owns a Core it just launched. A persistent Core registered to start at
+/// sign-in is a background service for paired devices, so the desktop only attaches to it.
+fn desktop_owns_launched_core(
+    ownership: SyncdOwnershipMode,
+    autostart_registered: Result<bool, String>,
+) -> bool {
+    match ownership {
+        SyncdOwnershipMode::EphemeralOwned => true,
+        // When the registration cannot be read, keep the documented daemon behaviour.
+        SyncdOwnershipMode::PersistentAttached => autostart_registered == Ok(false),
+    }
+}
+
+/// A Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` holding a desktop-owned Core. The
+/// Suwayomi Java the Core starts inherits the job, so the whole tree ends when the job is
+/// terminated, and the OS ends it when the desktop exits without a clean shutdown (a crash or
+/// Task Manager). Dropping this value never terminates anything; only `terminate` does.
+pub struct OwnedCoreJob {
+    #[cfg(windows)]
+    handle: usize,
+}
+
+#[cfg(windows)]
+impl OwnedCoreJob {
+    /// Contain a child this desktop spawned. The caller keeps the spawn handle (`CommandChild`)
+    /// alive, so the PID cannot be reused while the birth identity is compared.
+    fn contain(
+        pid: u32,
+        birth: Option<&crate::suwayomi_runtime::RuntimeProcessIdentity>,
+    ) -> Result<Self, String> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+        };
+
+        let birth = birth.ok_or("Core birth identity missing; containment skipped")?;
+        if birth.pid != pid
+            || crate::suwayomi_runtime::capture_process_identity(pid).as_ref() != Some(birth)
+        {
+            return Err("Core process identity changed before containment".into());
+        }
+        unsafe {
+            let process = OpenProcess(
+                PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            );
+            if process.is_null() {
+                return Err("Could not open the Core process for containment".into());
+            }
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                CloseHandle(process);
+                return Err("Could not create the Core Job Object".into());
+            }
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let configured = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) != 0;
+            let assigned = configured && AssignProcessToJobObject(job, process) != 0;
+            CloseHandle(process);
+            if !assigned {
+                CloseHandle(job);
+                return Err("Could not contain the Core process tree".into());
+            }
+            Ok(Self {
+                handle: job as usize,
+            })
+        }
+    }
+
+    fn active_processes(&self) -> Result<u32, String> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicAccountingInformation, QueryInformationJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        };
+        let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+        let queried = unsafe {
+            QueryInformationJobObject(
+                self.handle as windows_sys::Win32::Foundation::HANDLE,
+                JobObjectBasicAccountingInformation,
+                &mut accounting as *mut _ as *mut std::ffi::c_void,
+                std::mem::size_of_val(&accounting) as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if queried == 0 {
+            return Err("Cannot read the Core Job Object".into());
+        }
+        Ok(accounting.ActiveProcesses)
+    }
+
+    /// End every process still in the job and wait until none remains. Safe to repeat: an empty
+    /// job terminates at once.
+    fn terminate(self, timeout: Duration) -> Result<(), (Self, String)> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+        let handle = self.handle as windows_sys::Win32::Foundation::HANDLE;
+        let active = match self.active_processes() {
+            Ok(active) => active,
+            Err(error) => return Err((self, error)),
+        };
+        if active > 0 && unsafe { TerminateJobObject(handle, 1) } == 0 {
+            return Err((self, "Core tree termination failed; job retained".into()));
+        }
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match self.active_processes() {
+                Ok(0) => {
+                    unsafe { CloseHandle(handle) };
+                    return Ok(());
+                }
+                Ok(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(25))
+                }
+                Ok(remaining) => {
+                    return Err((
+                        self,
+                        format!("{remaining} Core process(es) still running; job retained"),
+                    ))
+                }
+                Err(error) => return Err((self, error)),
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl OwnedCoreJob {
+    fn contain(
+        _pid: u32,
+        _birth: Option<&crate::suwayomi_runtime::RuntimeProcessIdentity>,
+    ) -> Result<Self, String> {
+        Err("Core containment is available only on Windows".into())
+    }
+
+    fn terminate(self, _timeout: Duration) -> Result<(), (Self, String)> {
+        Err((self, "Core containment is available only on Windows".into()))
+    }
 }
 
 #[derive(Default)]
@@ -325,36 +487,21 @@ pub fn shutdown_confirmed(app: &AppHandle) -> Result<(), String> {
         guard.take()
     };
 
-    if let Some(running) = running {
-        match running.ownership {
-            SyncdOwnershipMode::EphemeralOwned => {
-                let _ = append_line(
-                    &running.log_path,
-                    &format!("[{}] ephemeral shutdown requested by app", running.pid),
-                );
-                let result = (|| {
-                    let child = running.child.as_ref().ok_or("Missing retained Core spawn")?;
-                    let manifest = running.manifest.as_ref().ok_or("Missing original Core run identity")?;
-                    if manifest.pid != child.pid() || manifest.process_identity != running.birth || running.birth.is_none() {
-                        return Err("Core control manifest differs from retained birth identity".into());
-                    }
-                    tauri::async_runtime::block_on(crate::syncd::lifecycle::request_exact_shutdown(
-                        &running.data_dir, crate::syncd::lifecycle::ShutdownReason::ParentExited, Duration::from_secs(15), manifest,
-                    )).map_err(|e| e.to_string())?;
-                    Ok::<(), String>(())
-                })();
-                if let Err(error) = result {
-                    let _ = append_line(&running.log_path, &format!("cleanup unconfirmed: {error}"));
-                    *app.state::<SyncdState>().runtime.lock().unwrap() = Some(running);
-                    return Err(error);
-                }
+    if let Some(mut running) = running {
+        if running.desktop_owned.is_some() {
+            if let Err(error) = stop_desktop_owned_core(&mut running) {
+                let _ = append_line(&running.log_path, &format!("cleanup unconfirmed: {error}"));
+                *app.state::<SyncdState>().runtime.lock().unwrap() = Some(running);
+                return Err(error);
             }
-            SyncdOwnershipMode::PersistentAttached => {
-                let _ = append_line(
-                    &running.log_path,
-                    &format!("[{}] desktop detached from persistent syncd", running.pid),
-                );
-            }
+        } else {
+            let _ = append_line(
+                &running.log_path,
+                &format!(
+                    "[{}] desktop detached; the Core registered to start at sign-in keeps serving paired devices",
+                    running.pid
+                ),
+            );
         }
     }
 
@@ -362,6 +509,87 @@ pub fn shutdown_confirmed(app: &AppHandle) -> Result<(), String> {
         let _ = fs::remove_file(status_path);
     }
     Ok(())
+}
+
+/// How long Quit waits for an owned persistent Core to stop its Suwayomi and exit before the
+/// job ends the tree. Phase gates keep their longer budget.
+const OWNED_CORE_GRACEFUL_SHUTDOWN: Duration = Duration::from_secs(8);
+const EPHEMERAL_CORE_GRACEFUL_SHUTDOWN: Duration = Duration::from_secs(15);
+const OWNED_CORE_TERMINATION_WAIT: Duration = Duration::from_secs(5);
+
+/// Stop a Core this desktop launched: the authenticated shutdown first, so the Core stops its
+/// Suwayomi and closes its database, then the Job Object for anything still running. Repeating
+/// it after a success is a no-op because the runtime is taken out of `SyncdState`.
+fn stop_desktop_owned_core(running: &mut RunningSyncd) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let timeout = match running.ownership {
+        SyncdOwnershipMode::EphemeralOwned => EPHEMERAL_CORE_GRACEFUL_SHUTDOWN,
+        SyncdOwnershipMode::PersistentAttached => OWNED_CORE_GRACEFUL_SHUTDOWN,
+    };
+    let _ = append_line(
+        &running.log_path,
+        &format!("[{}] owned Core shutdown requested by app", running.pid),
+    );
+    let graceful = (|| {
+        let child = running
+            .child
+            .as_ref()
+            .ok_or("Missing retained Core spawn")?;
+        let manifest = running
+            .manifest
+            .as_ref()
+            .ok_or("Missing original Core run identity")?;
+        if manifest.pid != child.pid()
+            || manifest.process_identity != running.birth
+            || running.birth.is_none()
+        {
+            return Err("Core control manifest differs from retained birth identity".to_string());
+        }
+        tauri::async_runtime::block_on(crate::syncd::lifecycle::request_exact_shutdown(
+            &running.data_dir,
+            crate::syncd::lifecycle::ShutdownReason::ParentExited,
+            timeout,
+            manifest,
+        ))
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+    if let Err(error) = &graceful {
+        let _ = append_line(
+            &running.log_path,
+            &format!("graceful Core shutdown failed: {error}; ending the owned process tree"),
+        );
+    }
+
+    // The job also ends a Suwayomi the Core could not stop. It is empty after a clean shutdown.
+    let owned = running
+        .desktop_owned
+        .as_mut()
+        .expect("caller checked ownership");
+    let swept = match owned.job.take() {
+        Some(job) => match job.terminate(OWNED_CORE_TERMINATION_WAIT) {
+            Ok(()) => Ok(()),
+            Err((job, error)) => {
+                owned.job = Some(job);
+                Err(error)
+            }
+        },
+        None => graceful.clone(),
+    };
+    let _ = append_line(
+        &running.log_path,
+        &format!(
+            "owned Core shutdown finished in {} ms (graceful: {}, tree: {})",
+            started.elapsed().as_millis(),
+            if graceful.is_ok() { "ok" } else { "failed" },
+            if swept.is_ok() {
+                "ended"
+            } else {
+                "unconfirmed"
+            },
+        ),
+    );
+    swept
 }
 
 pub(crate) fn current_runtime_info(app: &AppHandle) -> Option<SyncdRuntimeInfo> {
@@ -407,7 +635,7 @@ async fn ensure_spawned(
                             true
                         }
                         Some(validated) => {
-                            let running = running_from_validated(&request, validated, None);
+                            let running = running_from_validated(&request, validated, None, None);
                             let info = runtime_info_from_running(&running);
                             *state.runtime.lock().unwrap() = Some(running);
                             return Ok(info);
@@ -449,7 +677,7 @@ async fn ensure_spawned(
 
     if request.ownership == SyncdOwnershipMode::PersistentAttached {
         if let Some(validated) = validate_existing_persistent_runtime(&request).await? {
-            let running = running_from_validated(&request, validated, None);
+            let running = running_from_validated(&request, validated, None, None);
             let info = runtime_info_from_running(&running);
             *state.runtime.lock().unwrap() = Some(running);
             return Ok(info);
@@ -517,6 +745,7 @@ async fn ensure_spawned(
 
     let pid = child.pid();
     let birth = crate::suwayomi_runtime::capture_process_identity(pid);
+    let desktop_owned = claim_launched_core(request.ownership, &child, birth.as_ref(), &log_path);
     spawn_log_drain(rx, log_path.clone(), pid);
 
     let running = match request.ownership {
@@ -529,7 +758,7 @@ async fn ensure_spawned(
                         child: Some(child), ownership: request.ownership, pid, server_id: None,
                         local_base_url, advertised_base_url, host_mode: request.bind_host != "127.0.0.1",
                         bind_host: request.bind_host, port: request.port, data_dir: request.data_dir,
-                        db_path, cert_path, log_path,
+                        db_path, cert_path, log_path, desktop_owned,
                     });
                     return Err(cleanup_error);
                 }
@@ -553,6 +782,7 @@ async fn ensure_spawned(
                 db_path,
                 cert_path,
                 log_path,
+                desktop_owned,
             };
             if running.manifest.is_none() {
                 *state.runtime.lock().unwrap() = Some(running);
@@ -569,16 +799,55 @@ async fn ensure_spawned(
                         pid, server_id: None, local_base_url, advertised_base_url,
                         host_mode: request.bind_host != "127.0.0.1", bind_host: request.bind_host,
                         port: request.port, data_dir: request.data_dir, db_path, cert_path, log_path,
+                        desktop_owned,
                     });
                     return Err(format!("persistent Core identity readiness failed; evidence retained: {error}"));
                 }
             };
-            running_from_validated(&request, validated, Some(child))
+            running_from_validated(&request, validated, Some(child), desktop_owned)
         }
     };
     let info = runtime_info_from_running(&running);
     *state.runtime.lock().unwrap() = Some(running);
     Ok(info)
+}
+
+/// Decide whether this desktop owns the Core it just launched and, when it does, contain the Core
+/// so it and the Suwayomi it starts cannot outlive the desktop.
+fn claim_launched_core(
+    ownership: SyncdOwnershipMode,
+    child: &CommandChild,
+    birth: Option<&crate::suwayomi_runtime::RuntimeProcessIdentity>,
+    log_path: &Path,
+) -> Option<DesktopOwnedCore> {
+    let autostart_registered = birth
+        .and_then(|birth| birth.executable_path.as_deref())
+        .ok_or_else(|| "Core executable unknown".to_string())
+        .and_then(|executable| {
+            crate::syncd::autostart::is_registered(Path::new(executable))
+                .map_err(|error| error.to_string())
+        });
+    if !desktop_owns_launched_core(ownership, autostart_registered.clone()) {
+        let _ = append_line(
+            log_path,
+            &format!(
+                "[{}] Core registered to start at sign-in ({autostart_registered:?}); it keeps running for paired devices after Quit",
+                child.pid()
+            ),
+        );
+        return None;
+    }
+    let job = match OwnedCoreJob::contain(child.pid(), birth) {
+        Ok(job) => Some(job),
+        Err(error) => {
+            let _ = append_line(
+                log_path,
+                &format!("[{}] Core containment unavailable: {error}", child.pid()),
+            );
+            None
+        }
+    };
+    Some(DesktopOwnedCore { job })
 }
 
 /// Only a retained spawn object grants authority; a remembered PID never does.
@@ -631,6 +900,7 @@ fn running_from_validated(
     request: &SpawnRequest,
     validated: ValidatedPersistentRuntime,
     child: Option<CommandChild>,
+    desktop_owned: Option<DesktopOwnedCore>,
 ) -> RunningSyncd {
     let local_base_url = format!("https://127.0.0.1:{}", validated.manifest.port);
     RunningSyncd {
@@ -648,6 +918,7 @@ fn running_from_validated(
         db_path: request.data_dir.join("syncd.sqlite"),
         cert_path: request.data_dir.join("cert.pem"),
         log_path: request.data_dir.join("syncd-sidecar.log"),
+        desktop_owned,
     }
 }
 
@@ -1114,5 +1385,65 @@ mod tests {
         );
 
         assert!(!runtime_process_matches(&manifest).unwrap());
+    }
+
+    #[test]
+    fn desktop_owns_only_cores_nothing_else_keeps_running() {
+        use SyncdOwnershipMode::{EphemeralOwned, PersistentAttached};
+        assert!(desktop_owns_launched_core(EphemeralOwned, Ok(false)));
+        assert!(desktop_owns_launched_core(EphemeralOwned, Ok(true)));
+        assert!(desktop_owns_launched_core(EphemeralOwned, Err("unreadable".into())));
+        assert!(desktop_owns_launched_core(PersistentAttached, Ok(false)));
+        // A Core started at sign-in serves paired devices after the desktop closes.
+        assert!(!desktop_owns_launched_core(PersistentAttached, Ok(true)));
+        assert!(!desktop_owns_launched_core(PersistentAttached, Err("unreadable".into())));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn owned_core_job_ends_the_child_and_its_descendants() {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // cmd starts the long ping about a second later, after containment, the way the Core
+        // starts Suwayomi after it is running.
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "ping -n 2 127.0.0.1 >nul & ping -n 60 127.0.0.1 >nul"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let birth = crate::suwayomi_runtime::capture_process_identity(pid);
+        let job = OwnedCoreJob::contain(pid, birth.as_ref()).unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while job.active_processes().unwrap() < 2 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(job.active_processes().unwrap() >= 2, "descendant joined the job");
+
+        let started = std::time::Instant::now();
+        assert!(job.terminate(Duration::from_secs(5)).is_ok());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // The job's count drops as the processes end; their handles are signaled a moment later.
+        let exit_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while child.try_wait().unwrap().is_none() && std::time::Instant::now() < exit_deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(child.try_wait().unwrap().is_some(), "contained child ended");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn owned_core_job_refuses_a_mismatched_birth_identity() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "ping -n 30 127.0.0.1 >nul"])
+            .spawn()
+            .unwrap();
+        let mut birth = crate::suwayomi_runtime::capture_process_identity(child.id()).unwrap();
+        birth.command_line_hash = Some("different".into());
+        assert!(OwnedCoreJob::contain(child.id(), Some(&birth)).is_err());
+        assert!(OwnedCoreJob::contain(child.id(), None).is_err());
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 }

@@ -1,6 +1,12 @@
 # Epigraph Core Windows lifecycle
 
-The Windows Core is a current-user daemon. Closing the Epigraph desktop window only detaches the desktop client; it does not terminate a persistent Core.
+The Windows Core is a current-user daemon. Quitting the Epigraph desktop ends a persistent Core only when the desktop launched it and no sign-in autostart (`Epigraph Core` in `HKCU\...\Run`) is registered for that Core executable:
+
+- A Core registered to start at sign-in keeps serving paired devices after Quit. The desktop only detaches from it, whether it found the Core running or launched it itself.
+- A Core the desktop launched without that registration is owned by the desktop. Quit asks it to stop through the authenticated shutdown below (8 seconds), then ends whatever is left of its process tree, including the Suwayomi Java it started, through a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The same job ends the tree if the desktop crashes or is ended from Task Manager.
+- A Core the desktop found already running, but did not launch, is never stopped by Quit.
+
+When the registration cannot be read, the desktop keeps the daemon behaviour and detaches. Phase-gate (ephemeral) Cores are always owned and are contained the same way.
 
 ## Commands
 

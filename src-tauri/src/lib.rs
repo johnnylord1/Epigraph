@@ -7505,10 +7505,34 @@ pub(crate) fn prepare_owned_desktop_shutdown(app: &tauri::AppHandle) -> Result<(
 
 fn request_owned_desktop_shutdown(app: &tauri::AppHandle) {
     let app = app.clone();
+    // Stopping the runtimes takes a few seconds; the window goes away at once so Quit feels
+    // immediate, and comes back if the app has to stay open.
+    let main_window = app.get_webview_window(MAIN_WINDOW_LABEL);
+    let was_visible = main_window
+        .as_ref()
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if was_visible {
+        if let Some(window) = main_window.as_ref() {
+            let _ = window.hide();
+        }
+    }
     tauri::async_runtime::spawn_blocking(move || {
+        let started = std::time::Instant::now();
         match prepare_owned_desktop_shutdown(&app) {
-            Ok(()) => app.exit(0),
-            Err(error) => eprintln!("[desktop shutdown] {error}; application and evidence preserved"),
+            Ok(()) => {
+                eprintln!("[desktop shutdown] confirmed in {} ms", started.elapsed().as_millis());
+                app.exit(0)
+            }
+            Err(error) => {
+                eprintln!("[desktop shutdown] {error}; application and evidence preserved");
+                if was_visible {
+                    if let Some(window) = main_window {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
         }
     });
 }
