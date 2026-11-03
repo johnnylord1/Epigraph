@@ -144,6 +144,9 @@ sealed interface CoreSyncResult {
     data class Pending(val remaining: Long) : CoreSyncResult
     data class Blocked(val blocked: Long) : CoreSyncResult
     data object WillRetry : CoreSyncResult
+
+    /** The desktop is still applying what it received, or its library is busy; nothing failed here. */
+    data object DesktopBusy : CoreSyncResult
 }
 
 /**
@@ -156,9 +159,13 @@ fun coreSyncResult(status: CoreSyncStatus): CoreSyncResult? = when (status) {
     CoreSyncStatus.Idle -> CoreSyncResult.Finished
     is CoreSyncStatus.Pending -> CoreSyncResult.Pending(status.counts.unsettled)
     is CoreSyncStatus.Blocked -> CoreSyncResult.Blocked(status.counts.blocked)
-    is CoreSyncStatus.Retrying -> CoreSyncResult.WillRetry
+    is CoreSyncStatus.Retrying ->
+        if (status.reason in DESKTOP_BUSY_REASONS) CoreSyncResult.DesktopBusy else CoreSyncResult.WillRetry
     else -> null
 }
+
+/** Retries that wait on the desktop's own work, not on a failure the phone ran into. */
+private val DESKTOP_BUSY_REASONS = setOf("outbox_pending", "suwayomi")
 
 /**
  * The line that says what a run is doing. Every text takes the remaining count as its only
@@ -287,6 +294,9 @@ class CoreSyncNotifier(context: Context) {
             CoreSyncResult.WillRetry ->
                 context.getString(MR.strings.epigraph_core_sync_notification_incomplete) to
                     context.getString(MR.strings.epigraph_core_sync_notification_retry_text)
+            CoreSyncResult.DesktopBusy ->
+                context.getString(MR.strings.epigraph_core_sync_notification_desktop_busy) to
+                    context.getString(MR.strings.epigraph_core_sync_notification_desktop_busy_text)
         }
         val notification = context.notificationBuilder(Notifications.CHANNEL_CORE_SYNC) {
             setSmallIcon(R.drawable.ic_epigraph)

@@ -2355,6 +2355,8 @@
     <string name="epigraph_core_sync_notification_blocked_text">Some changes couldn\'t be sent: %1$d. Tap to review.</string>
     <string name="epigraph_core_sync_notification_incomplete">Sync didn\'t finish</string>
     <string name="epigraph_core_sync_notification_retry_text">Epigraph will try again automatically.</string>
+    <string name="epigraph_core_sync_notification_desktop_busy">Desktop still catching up</string>
+    <string name="epigraph_core_sync_notification_desktop_busy_text">Your changes are safe. Epigraph finishes on its own when the desktop is ready.</string>
     <string name="epigraph_core_sync_background_hint">You can keep using the app. Progress shows in a notification.</string>
     <string name="epigraph_core_sync_status_syncing">Syncing… Pending changes: %1$d</string>
     <string name="epigraph_core_sync_status_queued">Waiting for the network to sync. Pending changes: %1$d</string>

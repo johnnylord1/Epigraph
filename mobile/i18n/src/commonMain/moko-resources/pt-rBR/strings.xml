@@ -1232,6 +1232,8 @@
     <string name="epigraph_core_sync_notification_blocked_text">Algumas alterações não puderam ser enviadas: %1$d. Toque para revisar.</string>
     <string name="epigraph_core_sync_notification_incomplete">A sincronização não terminou</string>
     <string name="epigraph_core_sync_notification_retry_text">O Epigraph vai tentar de novo automaticamente.</string>
+    <string name="epigraph_core_sync_notification_desktop_busy">O desktop ainda está atualizando</string>
+    <string name="epigraph_core_sync_notification_desktop_busy_text">Suas alterações estão salvas. O Epigraph termina sozinho quando o desktop estiver pronto.</string>
     <string name="epigraph_core_sync_background_hint">Você pode continuar usando o app. O progresso aparece em uma notificação.</string>
     <string name="epigraph_core_sync_status_syncing">Sincronizando… Alterações pendentes: %1$d</string>
     <string name="epigraph_core_sync_status_queued">Aguardando a rede para sincronizar. Alterações pendentes: %1$d</string>

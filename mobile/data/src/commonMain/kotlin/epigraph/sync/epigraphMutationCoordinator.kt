@@ -70,17 +70,19 @@ class EpigraphMutationCoordinator(
             }
 
             mutation.envelopes.forEach { envelope ->
+                val createdAt = mutation.envelopeCreatedAt[envelope.clientMutationId]
+                    ?.also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
+                    ?: createdAtEpochMillis
+                val (queued, queuedAt) = foldIntoUnsent(envelope, createdAt)
                 aethon_syncQueries.enqueueMutation(
-                    clientMutationId = envelope.clientMutationId.value,
-                    deviceId = envelope.deviceId.value,
-                    scopeId = envelope.scopeId.value,
-                    entityType = envelope.entityType.value,
-                    entityId = envelope.command.entityId.value,
-                    operation = envelope.command.operationWireName(),
-                    payloadJson = json.encodeToString(envelope),
-                    createdAt = mutation.envelopeCreatedAt[envelope.clientMutationId]
-                        ?.also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
-                        ?: createdAtEpochMillis,
+                    clientMutationId = queued.clientMutationId.value,
+                    deviceId = queued.deviceId.value,
+                    scopeId = queued.scopeId.value,
+                    entityType = queued.entityType.value,
+                    entityId = queued.command.entityId.value,
+                    operation = queued.command.operationWireName(),
+                    payloadJson = json.encodeToString(queued),
+                    createdAt = queuedAt,
                     nextAttemptAt = createdAtEpochMillis,
                 )
             }
@@ -147,37 +149,120 @@ class EpigraphMutationCoordinator(
         }
     }
 
-    suspend fun acknowledge(acknowledgement: EpigraphMutationAcknowledgement) {
-        databaseHandler.await(inTransaction = true) {
-            aethon_syncQueries.upsertReceipt(
-                deviceId = acknowledgement.deviceId.value,
-                clientMutationId = acknowledgement.clientMutationId.value,
-                canonicalEntityId = acknowledgement.canonicalEntityId?.value,
-                receivedAt = acknowledgement.receivedAtEpochMillis,
-            )
-            aethon_syncQueries.upsertReplicaWait(
-                deviceId = acknowledgement.deviceId.value,
-                clientMutationId = acknowledgement.clientMutationId.value,
-                scopeId = acknowledgement.scopeId.value,
-                entityType = acknowledgement.entityType,
-                entityId = acknowledgement.entityId.value,
-                canonicalEntityId = acknowledgement.canonicalEntityId?.value,
-                resultStatus = acknowledgement.resultStatus,
-                requiredServerVersion = acknowledgement.requiredServerVersion,
-                appliedLamport = acknowledgement.appliedLamport,
-                eventClockJson = acknowledgement.eventClockJson,
-                canonicalRecordSha256 = acknowledgement.canonicalRecordSha256,
-                receivedAt = acknowledgement.receivedAtEpochMillis,
-            )
-            aethon_syncQueries.reconcileReplicaWaitWithApplied(
-                acknowledgement.deviceId.value,
-                acknowledgement.clientMutationId.value,
-            )
-            aethon_syncQueries.deleteAcknowledgedMutation(
-                acknowledgement.deviceId.value,
-                acknowledgement.clientMutationId.value,
-            )
+    /**
+     * Folds [envelope] into the unsent rows of the same entity and command kind, deleting them.
+     * The folded row carries the newest timestamp, which the Core uses as the event time.
+     */
+    private fun Database.foldIntoUnsent(
+        envelope: SyncCommandEnvelope,
+        createdAt: Long,
+    ): Pair<SyncCommandEnvelope, Long> {
+        if (!OutboxFolding.isFoldable(envelope.command)) return envelope to createdAt
+        val unsent = aethon_syncQueries.selectUnattemptedMutationsForEntity(
+            deviceId = envelope.deviceId.value,
+            scopeId = envelope.scopeId.value,
+            entityType = envelope.entityType.value,
+            entityId = envelope.command.entityId.value,
+            operation = envelope.command.operationWireName(),
+        ).executeAsList().mapNotNull { row ->
+            decodeEnvelope(row.payload_json)?.let { Triple(row.sequence, row.created_at, it) }
         }
+        if (unsent.isEmpty()) return envelope to createdAt
+        // Stable by time, so the new command stays last among equal timestamps.
+        val ordered = (unsent.map { it.second to it.third.command } + (createdAt to envelope.command))
+            .sortedBy { it.first }
+        val folded = OutboxFolding.fold(ordered.map { it.second }) ?: return envelope to createdAt
+        unsent.forEach { aethon_syncQueries.deleteUnattemptedMutation(it.first) }
+        return envelope.copy(command = folded) to ordered.maxOf { it.first }
+    }
+
+    /**
+     * Folds queues written before folding existed, a bounded number of entities per transaction.
+     * Returns how many rows were removed.
+     */
+    suspend fun foldUnsentMutations(groupsPerTransaction: Long = 200): Int {
+        var removed = 0
+        while (true) {
+            val (groups, removedNow) = databaseHandler.await(inTransaction = true) {
+                val groups = aethon_syncQueries.selectFoldableMutationGroups(
+                    operations = OutboxFolding.operations,
+                    limit = groupsPerTransaction,
+                ).executeAsList()
+                var removedNow = 0
+                groups.forEach { group ->
+                    val rows = aethon_syncQueries.selectUnattemptedMutationsForEntity(
+                        deviceId = group.device_id,
+                        scopeId = group.scope_id,
+                        entityType = group.entity_type,
+                        entityId = group.entity_id,
+                        operation = group.operation,
+                    ).executeAsList().mapNotNull { row ->
+                        decodeEnvelope(row.payload_json)?.let { Triple(row.sequence, row.created_at, it) }
+                    }
+                    if (rows.size < 2) return@forEach
+                    val ordered = rows.sortedBy { it.second }
+                    val folded = OutboxFolding.fold(ordered.map { it.third.command }) ?: return@forEach
+                    // The newest row keeps its place and identity; the others were never sent.
+                    val kept = rows.maxBy { it.first }
+                    aethon_syncQueries.replaceUnattemptedMutationPayload(
+                        payloadJson = json.encodeToString(kept.third.copy(command = folded)),
+                        createdAt = ordered.maxOf { it.second },
+                        sequence = kept.first,
+                    )
+                    rows.filter { it !== kept }.forEach { aethon_syncQueries.deleteUnattemptedMutation(it.first) }
+                    removedNow += rows.size - 1
+                }
+                groups.size to removedNow
+            }
+            removed += removedNow
+            // A group whose rows cannot be decoded is left as it is, so stop once nothing folds.
+            if (groups.toLong() < groupsPerTransaction || removedNow == 0) return removed
+        }
+    }
+
+    private fun decodeEnvelope(payloadJson: String): SyncCommandEnvelope? =
+        runCatching { json.decodeFromString<SyncCommandEnvelope>(payloadJson) }.getOrNull()
+
+    suspend fun acknowledge(acknowledgement: EpigraphMutationAcknowledgement) =
+        acknowledgeAll(listOf(acknowledgement))
+
+    /** Settles one Core response in a single transaction instead of one per row. */
+    suspend fun acknowledgeAll(acknowledgements: List<EpigraphMutationAcknowledgement>) {
+        if (acknowledgements.isEmpty()) return
+        databaseHandler.await(inTransaction = true) {
+            acknowledgements.forEach { acknowledgement -> settleAcknowledgement(acknowledgement) }
+        }
+    }
+
+    private fun Database.settleAcknowledgement(acknowledgement: EpigraphMutationAcknowledgement) {
+        aethon_syncQueries.upsertReceipt(
+            deviceId = acknowledgement.deviceId.value,
+            clientMutationId = acknowledgement.clientMutationId.value,
+            canonicalEntityId = acknowledgement.canonicalEntityId?.value,
+            receivedAt = acknowledgement.receivedAtEpochMillis,
+        )
+        aethon_syncQueries.upsertReplicaWait(
+            deviceId = acknowledgement.deviceId.value,
+            clientMutationId = acknowledgement.clientMutationId.value,
+            scopeId = acknowledgement.scopeId.value,
+            entityType = acknowledgement.entityType,
+            entityId = acknowledgement.entityId.value,
+            canonicalEntityId = acknowledgement.canonicalEntityId?.value,
+            resultStatus = acknowledgement.resultStatus,
+            requiredServerVersion = acknowledgement.requiredServerVersion,
+            appliedLamport = acknowledgement.appliedLamport,
+            eventClockJson = acknowledgement.eventClockJson,
+            canonicalRecordSha256 = acknowledgement.canonicalRecordSha256,
+            receivedAt = acknowledgement.receivedAtEpochMillis,
+        )
+        aethon_syncQueries.reconcileReplicaWaitWithApplied(
+            acknowledgement.deviceId.value,
+            acknowledgement.clientMutationId.value,
+        )
+        aethon_syncQueries.deleteAcknowledgedMutation(
+            acknowledgement.deviceId.value,
+            acknowledgement.clientMutationId.value,
+        )
     }
 
     /**

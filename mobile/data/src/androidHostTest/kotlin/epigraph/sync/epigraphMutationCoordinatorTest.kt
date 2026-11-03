@@ -13,6 +13,9 @@ import epigraph.contract.SyncScopeId
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -395,6 +398,130 @@ class EpigraphMutationCoordinatorTest {
     }
 
     @Test
+    fun `page turns on one work leave a single row with the newest progress and time`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        coordinator.mutateLocal(progressEnvelope(deviceId, ClientMutationId("page-1"), 1, 20), 100) { Unit }
+        coordinator.mutateLocal(progressEnvelope(deviceId, ClientMutationId("page-2"), 2, 20), 110) { Unit }
+        coordinator.mutateLocal(progressEnvelope(deviceId, ClientMutationId("page-3"), 3, 20), 120) { Unit }
+
+        val row = coordinator.claimReady(200, leaseDurationMillis = 1_000, limit = 10).single()
+        assertEquals("page-3", row.client_mutation_id)
+        assertEquals(120, row.created_at)
+        assertTrue(row.payload_json.contains("\"pageIndex\":3"), row.payload_json)
+    }
+
+    @Test
+    fun `an older backfilled page does not replace newer unsent progress`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        coordinator.mutateLocal(progressEnvelope(deviceId, ClientMutationId("live"), 9, 20), 500) { Unit }
+        coordinator.mutateLocal(progressEnvelope(deviceId, ClientMutationId("backfill"), 2, 20), 100) { Unit }
+
+        val row = coordinator.claimReady(600, leaseDurationMillis = 1_000, limit = 10).single()
+        assertEquals(500, row.created_at)
+        assertTrue(row.payload_json.contains("\"pageIndex\":9"), row.payload_json)
+    }
+
+    @Test
+    fun `chapter state folds field by field and keeps an explicit reset`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        coordinator.mutateLocal(chapterStateEnvelope(deviceId, "reset", ChapterStatePatch(
+            chapterId = "chapter-1", lastPageRead = 0, lastReadAtEpochMillis = 100, explicitProgressReset = true,
+        )), 100) { Unit }
+        coordinator.mutateLocal(chapterStateEnvelope(deviceId, "bookmark", ChapterStatePatch(
+            chapterId = "chapter-1", bookmarked = true,
+        )), 110) { Unit }
+        coordinator.mutateLocal(chapterStateEnvelope(deviceId, "read", ChapterStatePatch(
+            chapterId = "chapter-1", read = true, lastPageRead = 7, lastReadAtEpochMillis = 120,
+        )), 120) { Unit }
+
+        val row = coordinator.claimReady(200, leaseDurationMillis = 1_000, limit = 10).single()
+        val state = (decode(row.payload_json).command as SyncCommand.SetChapterState).state
+        assertEquals(ChapterStatePatch(
+            chapterId = "chapter-1",
+            read = true,
+            bookmarked = true,
+            lastPageRead = 7,
+            lastReadAtEpochMillis = 120,
+            explicitProgressReset = true,
+        ), state)
+        assertEquals(120, row.created_at)
+    }
+
+    @Test
+    fun `a row already handed to the drainer is never folded`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        coordinator.mutateLocal(progressEnvelope(deviceId, ClientMutationId("sent"), 1, 20), 100) { Unit }
+        assertEquals(1, coordinator.claimReady(100, leaseDurationMillis = 1_000, limit = 10).size)
+
+        coordinator.mutateLocal(progressEnvelope(deviceId, ClientMutationId("next"), 2, 20), 110) { Unit }
+
+        assertEquals(2, coordinator.pendingCount())
+    }
+
+    @Test
+    fun `library and history rows are not folded`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        coordinator.mutateLocal(envelope(deviceId, ClientMutationId("entry-1")), 100) { Unit }
+        coordinator.mutateLocal(envelope(deviceId, ClientMutationId("entry-2")), 110) { Unit }
+
+        assertEquals(2, coordinator.pendingCount())
+    }
+
+    @Test
+    fun `a queue written before folding is folded once into its newest row`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        listOf(1 to 100L, 2 to 110L, 3 to 120L).forEach { (page, at) ->
+            val envelope = progressEnvelope(deviceId, ClientMutationId("legacy-$page"), page, 20)
+            database.aethon_syncQueries.enqueueMutation(
+                clientMutationId = envelope.clientMutationId.value,
+                deviceId = deviceId.value,
+                scopeId = envelope.scopeId.value,
+                entityType = envelope.entityType.value,
+                entityId = envelope.command.entityId.value,
+                operation = "set_progress",
+                payloadJson = json.encodeToString(envelope),
+                createdAt = at,
+                nextAttemptAt = at,
+            )
+        }
+        coordinator.mutateLocal(envelope(deviceId, ClientMutationId("entry")), 130) { Unit }
+
+        assertEquals(2, coordinator.foldUnsentMutations())
+
+        val rows = coordinator.claimReady(200, leaseDurationMillis = 1_000, limit = 10)
+        assertEquals(listOf("legacy-3", "entry"), rows.map { it.client_mutation_id })
+        assertTrue(rows.first().payload_json.contains("\"pageIndex\":3"), rows.first().payload_json)
+        assertEquals(0, coordinator.foldUnsentMutations())
+    }
+
+    @Test
+    fun `one response settles all of its rows together`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        coordinator.mutateLocal(envelope(deviceId, ClientMutationId("a")), 100) { Unit }
+        coordinator.mutateLocal(envelope(deviceId, ClientMutationId("b")), 100) { Unit }
+        coordinator.claimReady(100, leaseDurationMillis = 1_000, limit = 10)
+
+        coordinator.acknowledgeAll(listOf("a", "b").map { id ->
+            EpigraphMutationAcknowledgement(
+                deviceId = deviceId,
+                clientMutationId = ClientMutationId(id),
+                scopeId = SyncScopeId("comics:profile:main"),
+                entityType = "comic.entry",
+                entityId = EpigraphEntityId("manga:example:42"),
+                canonicalEntityId = null,
+                resultStatus = "APPLIED",
+                requiredServerVersion = 5,
+                appliedLamport = null,
+                eventClockJson = null,
+                canonicalRecordSha256 = null,
+                receivedAtEpochMillis = 120,
+            )
+        })
+
+        assertEquals(0, coordinator.pendingCount())
+    }
+
+    @Test
     fun `local progress remains writable after a newer remote revision`() = runTest {
         database.aethon_syncQueries.upsertIdentity(
             entityId = "manga:progress",
@@ -460,6 +587,26 @@ class EpigraphMutationCoordinatorTest {
                     pageCount = pageCount,
                     progression = 1.0,
                 ),
+            ),
+        )
+
+    private val json = Json {
+        classDiscriminator = "operation"
+        encodeDefaults = true
+    }
+
+    private fun decode(payloadJson: String): SyncCommandEnvelope = json.decodeFromString(payloadJson)
+
+    private fun chapterStateEnvelope(deviceId: DeviceId, mutationId: String, state: ChapterStatePatch) =
+        SyncCommandEnvelope(
+            protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
+            deviceId = deviceId,
+            clientMutationId = ClientMutationId(mutationId),
+            scopeId = SyncScopeId("comics:profile:main"),
+            entityType = SyncEntityType("comic.chapter_state"),
+            command = SyncCommand.SetChapterState(
+                entityId = EpigraphEntityId("comic.chapter_state::manga:example:42::chapter-1"),
+                state = state,
             ),
         )
 

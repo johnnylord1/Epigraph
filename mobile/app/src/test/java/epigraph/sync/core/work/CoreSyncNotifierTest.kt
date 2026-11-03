@@ -115,6 +115,9 @@ class CoreSyncNotifierTest {
         assertEquals(CoreSyncResult.Blocked(2), result(CoreSyncCounts(unsettled = 5, blocked = 2), drained))
         assertEquals(CoreSyncResult.Finished, result(clean, run(CoreSyncRunState.OUTBOX_DEFERRED)))
         assertEquals(CoreSyncResult.WillRetry, result(clean, run(CoreSyncRunState.RETRY, "connection")))
+        // The desktop still applying or its library being busy is not a failed sync.
+        assertEquals(CoreSyncResult.DesktopBusy, result(clean, run(CoreSyncRunState.RETRY, "outbox_pending")))
+        assertEquals(CoreSyncResult.DesktopBusy, result(CoreSyncCounts(4, 0), run(CoreSyncRunState.RETRY, "suwayomi")))
         // These raise the attention notice instead.
         assertNull(result(clean, run(CoreSyncRunState.NEEDS_PAIRING, "token_expired")))
         assertNull(result(clean, run(CoreSyncRunState.NEEDS_USER_ACTION, "remote_projection_blocked")))

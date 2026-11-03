@@ -410,7 +410,8 @@ class EpigraphReaderProgressRouterTest {
 
         val unchanged = router.setChapterStates(listOf(ChapterStateChange(chapterId, read = false, lastPageRead = 0)))
         assertEquals(0, unchanged.emittedCommandCount)
-        assertEquals(2, queuedMutations().size)
+        // Neither state was sent yet, so the second one folded into the first row.
+        assertEquals(listOf(second.sequence), queuedMutations().map { it.sequence })
     }
 
     @Test

@@ -51,6 +51,14 @@ interface CoreOutboxStore {
         receivedAtEpochMillis: Long,
     )
 
+    /** Settles the acknowledged rows of one Core response; stores that can do it in one transaction. */
+    suspend fun acknowledgeAll(
+        acknowledged: List<CoreOutboxAcknowledgedRecord>,
+        receivedAtEpochMillis: Long,
+    ) {
+        acknowledged.forEach { acknowledge(it.record, it.result, receivedAtEpochMillis) }
+    }
+
     /** Releases the lease but deliberately keeps the row pending/error. */
     suspend fun markFailed(
         identity: CoreOutboxIdentity,
@@ -58,6 +66,11 @@ interface CoreOutboxStore {
         nextAttemptAtEpochMillis: Long,
     )
 }
+
+data class CoreOutboxAcknowledgedRecord(
+    val record: CoreOutboxRecord,
+    val result: CoreMutationResult,
+)
 
 /** This port must return a durable, strictly increasing value; wall-clock time is forbidden. */
 fun interface CoreLamportSource {
@@ -364,7 +377,7 @@ class CoreOutboxDrainer(
         }
         val readyById = ready.associateBy { it.mutation.clientMutationId }
         val resultById = body.results.associateBy { it.clientMutationId }
-        var acknowledged = 0
+        val acknowledged = mutableListOf<CoreOutboxAcknowledgedRecord>()
         var retries = 0
         var blocked = 0
         decisions.forEach { decision ->
@@ -382,12 +395,7 @@ class CoreOutboxDrainer(
                         item.claim.release("invalid_core_result", nowEpochMillis)
                         retries += 1
                     } else {
-                        store.acknowledge(
-                            record = item.claim.record,
-                            result = result,
-                            receivedAtEpochMillis = nowEpochMillis,
-                        )
-                        acknowledged += 1
+                        acknowledged += CoreOutboxAcknowledgedRecord(item.claim.record, result)
                     }
                 }
 
@@ -402,7 +410,8 @@ class CoreOutboxDrainer(
                 }
             }
         }
-        return Settlement(ready.size, acknowledged, retries, blocked)
+        store.acknowledgeAll(acknowledged, nowEpochMillis)
+        return Settlement(ready.size, acknowledged.size, retries, blocked)
     }
 
     private data class Settlement(

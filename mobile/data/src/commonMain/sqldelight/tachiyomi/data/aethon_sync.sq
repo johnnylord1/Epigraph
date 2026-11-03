@@ -1211,6 +1211,42 @@ WHERE device_id = :deviceId
   AND status = 'PENDING'
   AND attempt_count = 0;
 
+-- Rows of one entity and command kind that never left the device, so they can still be folded.
+selectUnattemptedMutationsForEntity:
+SELECT sequence, client_mutation_id, payload_json, created_at FROM aethon_sync_outbox
+WHERE device_id = :deviceId
+  AND scope_id = :scopeId
+  AND entity_type = :entityType
+  AND entity_id = :entityId
+  AND operation = :operation
+  AND status = 'PENDING'
+  AND attempt_count = 0
+ORDER BY sequence ASC;
+
+deleteUnattemptedMutation:
+DELETE FROM aethon_sync_outbox
+WHERE sequence = :sequence
+  AND status = 'PENDING'
+  AND attempt_count = 0;
+
+replaceUnattemptedMutationPayload:
+UPDATE aethon_sync_outbox
+SET payload_json = :payloadJson,
+    created_at = :createdAt
+WHERE sequence = :sequence
+  AND status = 'PENDING'
+  AND attempt_count = 0;
+
+-- Entities with more than one unsent row of a foldable kind; queues written before folding existed.
+selectFoldableMutationGroups:
+SELECT device_id, scope_id, entity_type, entity_id, operation FROM aethon_sync_outbox
+WHERE status = 'PENDING'
+  AND attempt_count = 0
+  AND operation IN :operations
+GROUP BY device_id, scope_id, entity_type, entity_id, operation
+HAVING COUNT(*) > 1
+LIMIT :limit;
+
 selectReadyMutations:
 SELECT * FROM aethon_sync_outbox
 WHERE (
