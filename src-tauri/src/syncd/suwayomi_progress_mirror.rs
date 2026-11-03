@@ -1144,7 +1144,10 @@ async fn write_chapter_states(
                 planned_chapter_state_updated_at(
                     chapter,
                     baselines.get(&chapter.manga_id),
-                    chapter_edits.get(&chapter.chapter_id).copied(),
+                    chapter_edits
+                        .get(&chapter.chapter_id)
+                        .copied()
+                        .max(agreeing_record_at_ms(chapter, stored.get(&identity.entity_id))),
                     Some(row),
                     observed_at_ms,
                 )
@@ -1342,12 +1345,25 @@ fn planned_chapter_state_writes(
             planned_chapter_state_updated_at(
                 observed,
                 baseline,
-                desktop_edit_at_ms,
+                desktop_edit_at_ms.max(agreeing_record_at_ms(observed, stored)),
                 Some(row),
                 observed_at_ms,
             )
         }),
     }
+}
+
+/// When the chapter's own record says what Suwayomi says, the time it was written. A record under
+/// another address of the chapter that is older and disagrees has been overtaken by it, even when
+/// the change that overtook it happened before Core started and left no desktop edit or scan
+/// transition behind; without this such a record would stay stuck until the next desktop edit.
+fn agreeing_record_at_ms(
+    observed: &ChapterNode,
+    stored: Option<&StoredChapterStateRow>,
+) -> Option<i64> {
+    stored
+        .filter(|row| stored_progress_state(&row.record_json) == Some(observed.progress_state()))
+        .map(|row| row.record_updated_at_ms)
 }
 
 /// Identity of one chapter's `comic.chapter_state` entity.
@@ -2439,6 +2455,61 @@ mod tests {
     }
 
     #[test]
+    fn an_overtaken_record_under_another_address_follows_the_chapters_own_record() {
+        // The phone marked the chapter read under another address at 2_000; the chapter's own
+        // record was un-read at 3_000 before this Core started, so no edit or transition is left.
+        let observed = chapter(508, false, 0);
+        let own = stored_row(
+            "phone-2",
+            3_000,
+            json!({ "read": false, "bookmarked": false, "updatedAtMs": 3_000 }),
+        );
+        let phone = stored_row(
+            "phone-1",
+            2_000,
+            json!({ "read": true, "bookmarked": false, "updatedAtMs": 2_000 }),
+        );
+        assert_eq!(agreeing_record_at_ms(&observed, Some(&own)), Some(3_000));
+        let planned =
+            planned_chapter_state_writes(&observed, None, None, Some(&own), Some(&phone), 5_000);
+        assert_eq!(
+            planned,
+            PlannedChapterStateWrites {
+                identity: None,
+                legacy: Some(3_000)
+            }
+        );
+        let evidence = agreeing_record_at_ms(&observed, Some(&own));
+        let record = planned_record(&observed, None, evidence, Some(&phone), 5_000).unwrap();
+        assert_eq!(record["read"], json!(false));
+        assert_eq!(record["updatedAtMs"], json!(3_000));
+
+        // A newer mark under the other address is the latest word: Suwayomi has not caught up.
+        let newer_phone = stored_row(
+            "phone-1",
+            4_000,
+            json!({ "read": true, "bookmarked": false, "updatedAtMs": 4_000 }),
+        );
+        let planned = planned_chapter_state_writes(
+            &observed,
+            None,
+            None,
+            Some(&own),
+            Some(&newer_phone),
+            5_000,
+        );
+        assert_eq!(planned.legacy, None);
+        // An own record that disagrees with Suwayomi is no evidence for either side.
+        let read_own = stored_row(
+            "phone-2",
+            3_000,
+            json!({ "read": true, "bookmarked": false, "updatedAtMs": 3_000 }),
+        );
+        assert_eq!(agreeing_record_at_ms(&observed, Some(&read_own)), None);
+        assert_eq!(agreeing_record_at_ms(&observed, None), None);
+    }
+
+    #[test]
     fn mirror_owned_legacy_record_seeds_a_missing_portable_record_and_follows_suwayomi() {
         let observed = chapter(508, true, 0);
         let mirror_legacy = stored_row(
@@ -2470,7 +2541,8 @@ mod tests {
             5_000,
         );
         assert_eq!(planned.identity, None);
-        // A stale mirror-owned legacy record still follows Suwayomi for devices that read it.
+        // A stale mirror-owned legacy record still follows Suwayomi for devices that read it, at
+        // the time of the portable record that agrees with Suwayomi rather than the scan's.
         let stale_legacy = stored_row(
             MIRROR_DEVICE_ID,
             2_500,
@@ -2493,7 +2565,7 @@ mod tests {
             planned,
             PlannedChapterStateWrites {
                 identity: None,
-                legacy: Some(5_000)
+                legacy: Some(3_000)
             }
         );
     }
