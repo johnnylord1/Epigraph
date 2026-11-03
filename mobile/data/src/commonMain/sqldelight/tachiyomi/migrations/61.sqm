@@ -1,0 +1,9 @@
+-- Chapter state, history and reader progress used to stamp a work's manifest membership with the
+-- record's server version, a small counter, while manifest walks stamp library works with epoch
+-- milliseconds. Hydration then favorited every bound work, so works known only from history joined
+-- the library and were published to the Core's library. State memberships now use observed_at 0
+-- and only stamps above 0 count as library. Older counter stamps become state memberships; the
+-- next manifest walk stamps every work still in the library again.
+UPDATE aethon_portable_manifest_work
+SET observed_at = 0
+WHERE observed_at > 0 AND observed_at < 1000000000000;

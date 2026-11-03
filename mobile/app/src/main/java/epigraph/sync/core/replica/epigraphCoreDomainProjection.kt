@@ -2470,11 +2470,10 @@ class EpigraphCoreDomainProjection(
             .substringBefore(':')
             .takeIf { it.isNotBlank() }
             ?: return
-        SqlDelightPortableBindingStore(database).markManifestMembership(
+        SqlDelightPortableBindingStore(database).markStateMembership(
             serverId = serverId,
             profileId = profileId,
             portableId = portableId,
-            observedAt = record.serverVersion,
         )
     }
 

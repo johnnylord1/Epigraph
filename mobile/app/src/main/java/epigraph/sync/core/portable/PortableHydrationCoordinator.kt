@@ -96,8 +96,11 @@ class SqlDelightPortableHydrationStore(
             comicDependencies.forEach(dependencies::upsertComic)
             novelDependencies.forEach(dependencies::upsertNovel)
             works.forEach(bindings::upsertWork)
+            // Only library works become favorites. A work bound for its history or chapter state
+            // stays out of the library, or this device would publish it to the Core's library.
             works.asSequence()
                 .filter { it.resolution.state == PortableResolutionState.BOUND }
+                .filter { bindings.isLibraryMember(it.portableId) }
                 .mapNotNull { it.localReference?.toLongOrNull() }
                 .distinct()
                 .forEach { localMangaId ->

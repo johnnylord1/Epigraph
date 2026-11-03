@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import yokai.data.AndroidDatabaseHandler
@@ -75,6 +76,10 @@ class SqlDelightPortableHydrationStoreTest {
             attemptCount = 1,
             updatedAt = 100,
         )
+        epigraph.sync.portable.SqlDelightPortableBindingStore(database).apply {
+            upsertWork(record)
+            markManifestMembership("server", "main", record.portableId, LIBRARY_WALK_AT)
+        }
 
         SqlDelightPortableHydrationStore(handler).persist(
             comicDependencies = emptyList(),
@@ -83,6 +88,101 @@ class SqlDelightPortableHydrationStoreTest {
         )
 
         assertTrue(database.mangasQueries.findById(localId).executeAsOne().favorite)
+    }
+
+    @Test
+    fun `work bound only for its history or chapter state stays out of the library`() = runTest {
+        val localId = insertComic(source = 10002, url = "/manga/history-only", favorite = false)
+        val ref = PortableWorkRef.Comic(DecimalSourceId("10002"), ProviderOwnedKey("/manga/history-only"))
+        val record = PortableWorkBindingRecord(
+            portableId = PortableIdentityV3.workId(ref),
+            ref = ref,
+            localReference = localId.toString(),
+            resolution = PortableResolution(PortableResolutionState.BOUND),
+            titleHint = null,
+            providerLabelHint = null,
+            attemptCount = 1,
+            updatedAt = 100,
+        )
+        val bindings = epigraph.sync.portable.SqlDelightPortableBindingStore(database)
+        bindings.upsertWork(record.copy(localReference = null, resolution = PortableResolution(PortableResolutionState.PENDING_PROVIDER)))
+        bindings.markStateMembership("server", "main", record.portableId)
+
+        assertEquals(
+            listOf(record.portableId),
+            SqlDelightPortableHydrationStore(handler).load("server", "main", 10).works.map { it.portableId },
+        )
+        SqlDelightPortableHydrationStore(handler).persist(
+            comicDependencies = emptyList(),
+            novelDependencies = emptyList(),
+            works = listOf(record),
+        )
+
+        assertFalse(database.mangasQueries.findById(localId).executeAsOne().favorite)
+        assertFalse(bindings.isLibraryMember(record.portableId))
+    }
+
+    @Test
+    fun `state membership never moves a library work's manifest stamp back`() = runTest {
+        val ref = PortableWorkRef.Comic(DecimalSourceId("10002"), ProviderOwnedKey("/manga/in-library"))
+        val record = PortableWorkBindingRecord(
+            portableId = PortableIdentityV3.workId(ref),
+            ref = ref,
+            localReference = null,
+            resolution = PortableResolution(PortableResolutionState.PENDING_PROVIDER),
+            titleHint = "In library",
+            providerLabelHint = null,
+            attemptCount = 0,
+            updatedAt = 100,
+        )
+        val bindings = epigraph.sync.portable.SqlDelightPortableBindingStore(database)
+        bindings.upsertWork(record)
+        bindings.markManifestMembership("server", "main", record.portableId, LIBRARY_WALK_AT)
+        bindings.markStateMembership("server", "main", record.portableId)
+
+        // A walk that started before the state arrived must not drop the work as stale.
+        database.aethon_syncQueries.deleteStalePortableManifestMembershipsForEcosystem(
+            serverId = "server",
+            profileId = "main",
+            observedAt = LIBRARY_WALK_AT,
+            ecosystem = "SUWAYOMI",
+        )
+
+        assertTrue(bindings.isLibraryMember(record.portableId))
+        assertEquals(
+            1L,
+            database.aethon_syncQueries
+                .countPortableManifestMembershipsForEcosystem("server", "main", "SUWAYOMI")
+                .executeAsOne(),
+        )
+    }
+
+    private fun insertComic(source: Long, url: String, favorite: Boolean): Long {
+        database.mangasQueries.insert(
+            source = source,
+            url = url,
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = url,
+            status = 0,
+            thumbnailUrl = null,
+            favorite = favorite,
+            lastUpdate = null,
+            initialized = false,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = 0,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        return database.mangasQueries.selectLastInsertedRowId().executeAsOne()
     }
 
     @Test
@@ -389,5 +489,9 @@ class SqlDelightPortableHydrationStoreTest {
         )
 
         assertEquals(4242L, database.manga_syncQueries.getAllByMangaId(localId).executeAsList().single().remote_id)
+    }
+
+    private companion object {
+        const val LIBRARY_WALK_AT = 1_700_000_000_000L
     }
 }

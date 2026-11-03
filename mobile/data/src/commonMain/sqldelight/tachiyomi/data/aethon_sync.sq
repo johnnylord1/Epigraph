@@ -556,6 +556,19 @@ INSERT INTO aethon_portable_manifest_work(server_id, profile_id, portable_id, ob
 VALUES (:serverId, :profileId, :portableId, :observedAt)
 ON CONFLICT(server_id, profile_id, portable_id) DO UPDATE SET observed_at = :observedAt;
 
+-- Chapter state, history and reader progress also name works outside the library. They join at
+-- observed_at 0 so hydration can bind them for History, without making them library members or
+-- moving a library work's manifest stamp back.
+insertPortableStateMembership:
+INSERT INTO aethon_portable_manifest_work(server_id, profile_id, portable_id, observed_at)
+VALUES (:serverId, :profileId, :portableId, 0)
+ON CONFLICT(server_id, profile_id, portable_id) DO NOTHING;
+
+-- A manifest walk stamps library works with its epoch-millis start; state-only works keep 0.
+countPortableLibraryMemberships:
+SELECT COUNT(*) FROM aethon_portable_manifest_work
+WHERE portable_id = :portableId AND observed_at > 0;
+
 selectPendingPortableWorkIdsForManifest:
 SELECT binding.portable_id
 FROM aethon_portable_work_binding AS binding
@@ -745,6 +758,7 @@ FROM aethon_portable_manifest_work AS membership
 JOIN aethon_portable_work_binding AS binding ON binding.portable_id = membership.portable_id
 WHERE membership.server_id = :serverId
   AND membership.profile_id = :profileId
+  AND membership.observed_at > 0
   AND binding.ecosystem = :ecosystem;
 
 -- Cheap fingerprint of the local comic library a catalog apply reconciles.

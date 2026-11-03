@@ -47,6 +47,12 @@ interface PortableBindingStore {
 
     fun markManifestMembership(serverId: String, profileId: String, portableId: String, observedAt: Long)
 
+    /** Lets hydration bind a work named only by synced state; it never makes it a library work. */
+    fun markStateMembership(serverId: String, profileId: String, portableId: String)
+
+    /** True when a manifest walk listed the work in a paired Core's library. */
+    fun isLibraryMember(portableId: String): Boolean
+
     fun pendingWorks(serverId: String, profileId: String, limit: Long): List<PortableWorkBindingRecord>
 
     fun pendingChapters(serverId: String, profileId: String, limit: Long): List<PortableChapterBindingRecord>
@@ -267,6 +273,16 @@ class SqlDelightPortableBindingStore(
         require(observedAt >= 0)
         database.aethon_syncQueries.upsertPortableManifestWork(serverId, profileId, portableId, observedAt)
     }
+
+    override fun markStateMembership(serverId: String, profileId: String, portableId: String) {
+        requireIdentifier(serverId, "server ID")
+        requireIdentifier(profileId, "profile ID")
+        requireIdentifier(portableId, "portable ID")
+        database.aethon_syncQueries.insertPortableStateMembership(serverId, profileId, portableId)
+    }
+
+    override fun isLibraryMember(portableId: String): Boolean =
+        database.aethon_syncQueries.countPortableLibraryMemberships(portableId).executeAsOne() > 0
 
     override fun pendingWorks(
         serverId: String,

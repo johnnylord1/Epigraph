@@ -868,6 +868,8 @@ class EpigraphCoreDomainProjectionTest {
             portableStore.pendingChapters(ORIGIN_SERVER_ID, "main", 10).map { it.portableChapterId },
         )
         assertTrue(portableStore.pendingWorks("other-server", "main", 10).isEmpty())
+        // Hydration binds it for History but must not add it to the library.
+        assertFalse(portableStore.isLibraryMember(workId))
 
         projection.upsert(
             database,
