@@ -146,6 +146,14 @@ describe("base themed components", () => {
     expect(source).toContain("toast-glow-pulse");
   });
 
+  test("stops the toast glow instead of looping while a progress toast stays open", () => {
+    const source = readFileSync(join(process.cwd(), "src/components/layout/Toaster.svelte"), "utf8");
+    const glowRule = source.match(/\.toast::before\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+
+    expect(glowRule).toMatch(/animation:[^;]*epigraph-glow-rotate[^;]*toast-glow-pulse[^;]*;/);
+    expect(glowRule).not.toContain("infinite");
+  });
+
   test("uses the approved regular semantic glyphs and keeps library progress inline", async () => {
     render(Toaster);
     addToast({

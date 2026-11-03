@@ -1775,16 +1775,18 @@ fn trim_library_cover_cache_to_limit(max_bytes: u64) -> Result<(), String> {
         return Ok(());
     }
 
+    // The listing's own metadata: on Windows it comes with the directory read, while
+    // `fs::metadata` opens every cached file once more.
     let mut entries: Vec<(PathBuf, u64, SystemTime)> = fs::read_dir(&root)
         .map_err(|err| err.to_string())?
         .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            let metadata = fs::metadata(&path).ok()?;
+            let entry = entry.ok()?;
+            let metadata = entry.metadata().ok()?;
             if !metadata.is_file() {
                 return None;
             }
             let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
-            Some((path, metadata.len(), modified))
+            Some((entry.path(), metadata.len(), modified))
         })
         .collect();
 
@@ -1806,8 +1808,10 @@ fn trim_library_cover_cache_to_limit(max_bytes: u64) -> Result<(), String> {
     Ok(())
 }
 
+// Async so the lookup runs on the async runtime, not the main thread: a library-wide cover warm
+// calls it once per title back to back, and each call on the main thread delays window input.
 #[tauri::command]
-fn get_cached_library_cover(
+async fn get_cached_library_cover(
     profile_id: String,
     server_url: String,
     manga_id: i64,
@@ -1839,11 +1843,7 @@ async fn cache_library_cover(
         return Ok(Some(path.to_string_lossy().into_owned()));
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|err| err.to_string())?;
-    let mut request = client.get(parsed_url);
+    let mut request = library_cover_http_client()?.get(parsed_url);
     if let Some(header) = auth_header
         .as_deref()
         .map(str::trim)
@@ -1867,27 +1867,78 @@ async fn cache_library_cover(
         return Ok(None);
     }
 
-    let (cache_bytes, ext): (Vec<u8>, &'static str) =
-        if let Some(thumbnail_bytes) = downscale_library_cover_bytes(&bytes) {
-            (thumbnail_bytes, "jpg")
-        } else {
-            let ext = library_cover_extension_from_content_type(content_type.as_deref())
-                .or_else(|| library_cover_extension_from_url(&cover_url))
-                .unwrap_or("jpg");
-            (bytes.to_vec(), ext)
-        };
+    // Decoding, resizing and writing take tens of milliseconds per cover; on a blocking thread
+    // they no longer hold an async worker that other commands are waiting for.
+    tauri::async_runtime::spawn_blocking(move || {
+        let (cache_bytes, ext): (Vec<u8>, &'static str) =
+            if let Some(thumbnail_bytes) = downscale_library_cover_bytes(&bytes) {
+                (thumbnail_bytes, "jpg")
+            } else {
+                let ext = library_cover_extension_from_content_type(content_type.as_deref())
+                    .or_else(|| library_cover_extension_from_url(&cover_url))
+                    .unwrap_or("jpg");
+                (bytes.to_vec(), ext)
+            };
 
-    for candidate in library_cover_cache_candidates(&key) {
-        let _ = fs::remove_file(candidate);
+        for candidate in library_cover_cache_candidates(&key) {
+            let _ = fs::remove_file(candidate);
+        }
+
+        let target = root.join(format!("{key}.{ext}"));
+        let tmp = root.join(format!("{key}.{ext}.tmp"));
+        fs::write(&tmp, &cache_bytes).map_err(|err| err.to_string())?;
+        fs::rename(&tmp, &target).map_err(|err| err.to_string())?;
+        trim_library_cover_cache_when_due();
+
+        Ok(Some(target.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// One client for every cover fetch, so a library-wide warm reuses its connections to the server
+/// instead of building a client (TLS roots, connection pool) for each cover.
+fn library_cover_http_client() -> Result<&'static reqwest::Client, String> {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
     }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|err| err.to_string())?;
+    Ok(CLIENT.get_or_init(|| client))
+}
 
-    let target = root.join(format!("{key}.{ext}"));
-    let tmp = root.join(format!("{key}.{ext}.tmp"));
-    fs::write(&tmp, &cache_bytes).map_err(|err| err.to_string())?;
-    fs::rename(&tmp, &target).map_err(|err| err.to_string())?;
-    let _ = trim_library_cover_cache_to_limit(LIBRARY_COVER_CACHE_MAX_BYTES);
+/// The trim lists the whole cache, thousands of files for a large library, so it runs after the
+/// first write and then at most once a minute rather than after every cover. Between trims the
+/// cache can exceed its limit by the covers written in that minute.
+const LIBRARY_COVER_TRIM_INTERVAL_SECS: u64 = 60;
+static LIBRARY_COVER_LAST_TRIM_SECS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
-    Ok(Some(target.to_string_lossy().into_owned()))
+fn library_cover_trim_due(last_trim_secs: u64, now_secs: u64) -> bool {
+    // A clock that moved back counts as due, so it cannot postpone the trim until it catches up.
+    last_trim_secs == 0
+        || now_secs < last_trim_secs
+        || now_secs - last_trim_secs >= LIBRARY_COVER_TRIM_INTERVAL_SECS
+}
+
+fn trim_library_cover_cache_when_due() {
+    use std::sync::atomic::Ordering;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs().max(1))
+        .unwrap_or(1);
+    let last = LIBRARY_COVER_LAST_TRIM_SECS.load(Ordering::Acquire);
+    // Only the thread that claims this slot trims; concurrent writers skip it.
+    if library_cover_trim_due(last, now)
+        && LIBRARY_COVER_LAST_TRIM_SECS
+            .compare_exchange(last, now, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    {
+        let _ = trim_library_cover_cache_to_limit(LIBRARY_COVER_CACHE_MAX_BYTES);
+    }
 }
 
 fn book_library_profile_key(profile_id: Option<&str>) -> String {
@@ -2188,6 +2239,15 @@ mod tests {
             .unwrap();
         assert!(validate_book_cover_bytes(&png, "png").is_ok());
         assert!(validate_book_cover_bytes(&png, "jpg").is_err());
+    }
+
+    #[test]
+    fn library_cover_trim_runs_first_then_once_per_interval() {
+        assert!(library_cover_trim_due(0, 1_000));
+        assert!(!library_cover_trim_due(1_000, 1_000));
+        assert!(!library_cover_trim_due(1_000, 1_000 + LIBRARY_COVER_TRIM_INTERVAL_SECS - 1));
+        assert!(library_cover_trim_due(1_000, 1_000 + LIBRARY_COVER_TRIM_INTERVAL_SECS));
+        assert!(library_cover_trim_due(1_000, 900));
     }
 
     #[test]

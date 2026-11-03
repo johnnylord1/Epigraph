@@ -221,7 +221,10 @@
     transform: translate(-50%, -50%) rotate(0deg);
     transform-origin: center center;
     pointer-events: none;
-    animation: epigraph-glow-rotate var(--component-toast-glow-rotate-duration) linear infinite, toast-glow-pulse var(--component-toast-glow-pulse-duration) ease-in-out infinite alternate;
+    /* The glow turns twice and pulses twice, then rests at its start, which matches the resting
+       style. A turning glow costs about a core of GPU and renderer time in WebView2, so it must
+       not loop for as long as a progress toast stays open. */
+    animation: epigraph-glow-rotate var(--component-toast-glow-rotate-duration) linear 2, toast-glow-pulse var(--component-toast-glow-pulse-duration) ease-in-out 4 alternate;
   }
 
   .toast::after {

@@ -40,4 +40,12 @@ describe("Settings brand card typography", () => {
       expect(nocturneTokens).toContain(`${token}:`);
     }
   });
+
+  it("stops the brand card glow instead of looping while Settings stays open", () => {
+    const styles = read("src/styles/nocturne-port.css");
+    const glowRule = styles.match(/\.epigraph-port--settings \.settings-brand-card::before\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+
+    expect(glowRule).toMatch(/animation:[^;]*epigraph-glow-rotate[^;]*;/);
+    expect(glowRule).not.toContain("infinite");
+  });
 });

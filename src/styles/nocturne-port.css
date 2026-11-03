@@ -3144,7 +3144,9 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   transform-origin: center center;
   z-index: 0;
   pointer-events: none;
-  animation: epigraph-glow-rotate 6s linear infinite, epigraph-border-pulse 4s ease-in-out infinite alternate;
+  /* Turns twice when Settings opens, then rests: a looping turn costs about a core of GPU and
+     renderer time while the page stays open. An odd pulse count ends at full opacity, as at rest. */
+  animation: epigraph-glow-rotate 6s linear 2, epigraph-border-pulse 4s ease-in-out 3 alternate;
 }
 
 .epigraph-port--settings .settings-brand-card::after {
