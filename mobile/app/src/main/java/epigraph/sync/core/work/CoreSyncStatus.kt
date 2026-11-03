@@ -46,6 +46,7 @@ data class CoreWorkSnapshot(
     val runAttemptCount: Int,
     /** Only immediate wakes count as "queued"; the periodic reconciliation is always enqueued. */
     val immediate: Boolean,
+    val progress: CoreSyncRunProgress? = null,
 )
 
 /** Local outbox rows plus replica waits, and the subset the drainer parked as blocked. */
@@ -57,7 +58,8 @@ data class CoreSyncCounts(val unsettled: Long, val blocked: Long)
  */
 sealed interface CoreSyncStatus {
     data object NotPaired : CoreSyncStatus
-    data class Syncing(val counts: CoreSyncCounts) : CoreSyncStatus
+    /** [progress] is what the running pass last published; null until its first refresh. */
+    data class Syncing(val counts: CoreSyncCounts, val progress: CoreSyncRunProgress? = null) : CoreSyncStatus
     data class Queued(val counts: CoreSyncCounts) : CoreSyncStatus
     data class Retrying(val reason: String?, val counts: CoreSyncCounts) : CoreSyncStatus
     data class NeedsPairing(val counts: CoreSyncCounts) : CoreSyncStatus
@@ -77,15 +79,20 @@ fun coreSyncActivity(works: List<CoreWorkSnapshot>): CoreSyncActivity = when {
     else -> CoreSyncActivity.IDLE
 }
 
+/** The progress of the running pass, if one is running and has published any. */
+fun coreSyncRunningProgress(works: List<CoreWorkSnapshot>): CoreSyncRunProgress? =
+    works.firstOrNull { it.state == WorkInfo.State.RUNNING && it.progress != null }?.progress
+
 fun resolveCoreSyncStatus(
     paired: Boolean,
     activity: CoreSyncActivity,
     counts: CoreSyncCounts,
     lastRun: CoreSyncLastRun?,
+    progress: CoreSyncRunProgress? = null,
 ): CoreSyncStatus {
     if (!paired) return CoreSyncStatus.NotPaired
     when (activity) {
-        CoreSyncActivity.RUNNING -> return CoreSyncStatus.Syncing(counts)
+        CoreSyncActivity.RUNNING -> return CoreSyncStatus.Syncing(counts, progress)
         CoreSyncActivity.BACKING_OFF -> return CoreSyncStatus.Retrying(lastRun?.retryReason(), counts)
         CoreSyncActivity.QUEUED -> return CoreSyncStatus.Queued(counts)
         CoreSyncActivity.IDLE -> Unit
@@ -191,15 +198,15 @@ class CoreSyncStatusMonitor(
         val activity = WorkManager.getInstance(context.applicationContext)
             .getWorkInfosByTagFlow(EpigraphCoreSyncWorker.TAG)
             .map { infos ->
-                coreSyncActivity(
-                    infos.map { info ->
-                        CoreWorkSnapshot(
-                            state = info.state,
-                            runAttemptCount = info.runAttemptCount,
-                            immediate = EpigraphCoreSyncWorker.IMMEDIATE_TAG in info.tags,
-                        )
-                    },
-                )
+                val works = infos.map { info ->
+                    CoreWorkSnapshot(
+                        state = info.state,
+                        runAttemptCount = info.runAttemptCount,
+                        immediate = EpigraphCoreSyncWorker.IMMEDIATE_TAG in info.tags,
+                        progress = info.progress.toCoreSyncRunProgress(),
+                    )
+                }
+                coreSyncActivity(works) to coreSyncRunningProgress(works)
             }
         val counts = flow {
             while (true) {
@@ -214,8 +221,8 @@ class CoreSyncStatusMonitor(
             activity,
             counts,
             runs.lastRun,
-        ) { paired, currentActivity, currentCounts, lastRun ->
-            resolveCoreSyncStatus(paired, currentActivity, currentCounts, lastRun)
+        ) { paired, (currentActivity, progress), currentCounts, lastRun ->
+            resolveCoreSyncStatus(paired, currentActivity, currentCounts, lastRun, progress)
         }
             .distinctUntilChanged()
             .flowOn(Dispatchers.IO)
@@ -226,7 +233,8 @@ class CoreSyncStatusMonitor(
         scheduler.enqueue(CoreBackgroundSyncReason.MANUAL)
     }
 
-    private suspend fun readCounts(): CoreSyncCounts = try {
+    /** The outbox as Settings counts it; an unreadable outbox reads as unsettled. */
+    suspend fun readCounts(): CoreSyncCounts = try {
         CoreSyncCounts(unsettled = coordinator.unsettledCount(), blocked = coordinator.blockedCount())
     } catch (cancelled: CancellationException) {
         throw cancelled

@@ -12,6 +12,7 @@ import epigraph.sync.core.setup.SyncDomainChoice
 import epigraph.sync.core.setup.coreDependencySetupCounts
 import epigraph.sync.core.setup.inventoryDetail
 import epigraph.sync.core.setup.rememberLocalNovelInventoryPreview
+import epigraph.sync.core.setup.rememberSyncNotificationPermissionRequest
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyActionCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyInventory
@@ -30,6 +31,7 @@ import epigraph.sync.core.work.CoreOutboxRetryReason
 import epigraph.sync.core.work.CoreSyncStatus
 import epigraph.sync.core.work.CoreSyncStatusMonitor
 import epigraph.sync.core.work.CoreUserActionReason
+import epigraph.sync.core.work.coreSyncPhaseText
 import eu.kanade.tachiyomi.util.relativeTimeSpanString
 import java.util.UUID
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -122,6 +124,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         val syncStatus by remember(syncMonitor) { syncMonitor.status() }
             .collectAsState(initial = null)
         val syncPaused by controller.syncPaused.collectAsState()
+        val requestSyncNotifications = rememberSyncNotificationPermissionRequest()
         val novelCoverageCheck = remember { GlobalContext.get().get<NovelChapterCoverageCheck>() }
         var novelsWithoutChapters by remember { mutableStateOf<List<String>>(emptyList()) }
         // Counts change on every poll while a sync runs; these lists only change when a sync ends.
@@ -606,8 +609,14 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                 state = state,
                 syncStatus = syncStatus,
                 syncPaused = syncPaused,
-                onSyncNow = { coroutineScope.launch { runCatching { syncMonitor.syncNow() } } },
-                onReconnect = { controller.setSyncPaused(false) },
+                onSyncNow = {
+                    requestSyncNotifications()
+                    coroutineScope.launch { runCatching { syncMonitor.syncNow() } }
+                },
+                onReconnect = {
+                    requestSyncNotifications()
+                    controller.setSyncPaused(false)
+                },
             )
         }
 
@@ -883,8 +892,31 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    // A sync the user started: it keeps going if they leave, so say so and show how far it got.
+                    val userSync = (syncStatus as? CoreSyncStatus.Syncing)?.progress?.takeIf { !syncPaused && it.userVisible }
+                    if (userSync != null) {
+                        LinearProgressIndicator(
+                            progress = { userSync.percent / 100f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 12.dp),
+                        )
+                        Text(
+                            text = stringResource(coreSyncPhaseText(userSync), userSync.remaining),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        Text(
+                            text = stringResource(MR.strings.epigraph_core_sync_background_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
                     FilledTonalButton(
                         onClick = if (syncPaused) onReconnect else onSyncNow,
+                        // One sync the user asked for at a time; a silent background run can still be shown.
+                        enabled = userSync == null,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 12.dp),

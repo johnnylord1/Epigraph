@@ -88,6 +88,7 @@ import epigraph.sync.core.pairing.EpigraphCorePairingController
 import epigraph.sync.core.pairing.PairingSyncSelection
 import epigraph.sync.core.policy.SyncDomain
 import epigraph.sync.core.work.CoreSyncStatus
+import epigraph.sync.core.work.coreSyncPhaseText
 import epigraph.sync.core.work.CoreSyncStatusMonitor
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.util.system.setThemeByPref
@@ -249,7 +250,10 @@ private fun CoreDependencySetupContent(
         if (step == STEP_SELECTION) pairingController.cancelPairingSelection()
         onClose()
     }
+    val requestSyncNotifications = rememberSyncNotificationPermissionRequest()
     val onConfirmSelection: () -> Unit = {
+        // The first sync shows its progress in a notification; it starts whatever the answer.
+        requestSyncNotifications()
         syncRequestedAtMs = System.currentTimeMillis()
         awaitingSync = true
         step = STEP_REPOSITORIES
@@ -1317,7 +1321,12 @@ private fun SyncProgressPage(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        CircularProgressIndicator()
+        val runProgress = (status as? CoreSyncStatus.Syncing)?.progress
+        if (runProgress != null) {
+            CircularProgressIndicator(progress = { runProgress.percent / 100f })
+        } else {
+            CircularProgressIndicator()
+        }
         Spacer(Modifier.height(16.dp))
         // Until the desktop approves the pairing nothing syncs; say what it is waiting for.
         val title = when (pairing?.stage) {
@@ -1336,8 +1345,9 @@ private fun SyncProgressPage(
             textAlign = TextAlign.Center,
         )
         val detail = when (val current = status) {
-            is CoreSyncStatus.Syncing ->
-                stringResource(MR.strings.epigraph_core_sync_status_syncing, current.counts.unsettled)
+            is CoreSyncStatus.Syncing -> current.progress
+                ?.let { stringResource(coreSyncPhaseText(it), it.remaining) }
+                ?: stringResource(MR.strings.epigraph_core_sync_status_syncing, current.counts.unsettled)
             is CoreSyncStatus.Queued ->
                 stringResource(MR.strings.epigraph_core_sync_status_queued, current.counts.unsettled)
             else -> null
@@ -1348,6 +1358,13 @@ private fun SyncProgressPage(
                 detail,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                stringResource(MR.strings.epigraph_core_sync_background_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
         }
     }

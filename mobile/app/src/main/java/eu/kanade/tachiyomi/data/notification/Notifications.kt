@@ -111,6 +111,7 @@ object Notifications {
     const val CHANNEL_CORE_SYNC = "core_sync_channel"
     const val ID_CORE_SYNC_PROGRESS = -901
     const val ID_CORE_SYNC_ATTENTION = -902
+    const val ID_CORE_SYNC_RESULT = -903
 
     private val deprecatedChannels = listOf(
         "backup_restore_channel",

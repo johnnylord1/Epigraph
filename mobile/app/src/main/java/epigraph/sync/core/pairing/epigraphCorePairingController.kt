@@ -239,7 +239,8 @@ class EpigraphCorePairingController(
     fun setSyncPaused(paused: Boolean) {
         lifetimeScope.launch {
             syncPause.setPaused(paused)
-            if (!paused) syncScheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
+            // Reconnecting is the user asking to sync: it shows its progress like "Sync now".
+            if (!paused) syncScheduler.enqueue(CoreBackgroundSyncReason.MANUAL)
         }
     }
 
@@ -316,7 +317,8 @@ class EpigraphCorePairingController(
                     syncPause.setPaused(false)
                     // State negotiated with a previously paired Core must not leak into this one.
                     notifyPairingEnded()
-                    syncScheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
+                    // The first sync of a pairing is one the user started, so it shows its progress.
+                    syncScheduler.enqueue(CoreBackgroundSyncReason.MANUAL)
                     CorePairingUiState.Paired(
                         origin = result.origin,
                         profileId = result.profileId,

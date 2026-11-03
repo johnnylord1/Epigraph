@@ -123,4 +123,21 @@ class CoreSyncStatusTest {
             EpigraphCoreSyncWorker.immediateWorkPolicy(CoreBackgroundSyncReason.MANUAL, executionActive = true),
         )
     }
+
+    @Test
+    fun `a running pass carries the progress it published`() {
+        val progress = CoreSyncRunProgress(CoreSyncPhase.EXCHANGE, percent = 40, remaining = 3, userVisible = true)
+        val works = listOf(
+            CoreWorkSnapshot(androidx.work.WorkInfo.State.ENQUEUED, 0, immediate = false),
+            CoreWorkSnapshot(androidx.work.WorkInfo.State.RUNNING, 0, immediate = true, progress = progress),
+        )
+        val counts = CoreSyncCounts(unsettled = 3, blocked = 0)
+
+        assertEquals(progress, coreSyncRunningProgress(works))
+        assertEquals(
+            CoreSyncStatus.Syncing(counts, progress),
+            resolveCoreSyncStatus(true, coreSyncActivity(works), counts, null, coreSyncRunningProgress(works)),
+        )
+        assertEquals(null, coreSyncRunningProgress(works.take(1)))
+    }
 }

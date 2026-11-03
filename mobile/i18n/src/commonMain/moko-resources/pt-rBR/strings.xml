@@ -1222,6 +1222,17 @@
     <string name="epigraph_core_sync_notification_stopped">Sincronização parada</string>
     <string name="epigraph_core_sync_notification_pair_again">Pareie este aparelho de novo com o desktop para continuar sincronizando.</string>
     <string name="epigraph_core_sync_notification_attention">A sincronização com o desktop precisa da sua atenção. Toque para ver o que fazer.</string>
+    <string name="epigraph_core_sync_notification_preparing">Preparando sua biblioteca</string>
+    <string name="epigraph_core_sync_notification_reading_progress">Enviando o progresso de leitura</string>
+    <string name="epigraph_core_sync_notification_done">Sincronização concluída</string>
+    <string name="epigraph_core_sync_notification_done_text">Tudo em dia com o desktop.</string>
+    <string name="epigraph_core_sync_notification_finished">Sincronização terminada</string>
+    <string name="epigraph_core_sync_notification_finished_text">Nada pendente para enviar.</string>
+    <string name="epigraph_core_sync_notification_pending_text">Alterações ainda aguardando envio: %1$d</string>
+    <string name="epigraph_core_sync_notification_blocked_text">Algumas alterações não puderam ser enviadas: %1$d. Toque para revisar.</string>
+    <string name="epigraph_core_sync_notification_incomplete">A sincronização não terminou</string>
+    <string name="epigraph_core_sync_notification_retry_text">O Epigraph vai tentar de novo automaticamente.</string>
+    <string name="epigraph_core_sync_background_hint">Você pode continuar usando o app. O progresso aparece em uma notificação.</string>
     <string name="epigraph_core_sync_status_syncing">Sincronizando… Alterações pendentes: %1$d</string>
     <string name="epigraph_core_sync_status_queued">Aguardando a rede para sincronizar. Alterações pendentes: %1$d</string>
     <string name="epigraph_core_sync_status_retrying">Nova tentativa agendada após uma falha. Alterações pendentes: %1$d</string>

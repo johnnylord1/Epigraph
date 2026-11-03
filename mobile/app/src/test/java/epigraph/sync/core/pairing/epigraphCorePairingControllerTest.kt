@@ -115,7 +115,7 @@ class EpigraphCorePairingControllerTest {
         controller.setSyncPaused(false)
         advanceUntilIdle()
         assertFalse(controller.syncPaused.value)
-        verify(exactly = 1) { scheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING) }
+        verify(exactly = 1) { scheduler.enqueue(CoreBackgroundSyncReason.MANUAL) }
         confirmVerified(credentials)
     }
 

@@ -141,4 +141,36 @@ class CoreSyncSchedulingPolicyTest {
             scheduler.degradedRetryWorkPolicy(scheduledFromDegradedRetry = false),
         )
     }
+
+    @Test
+    fun `only a sync the user asks for is visible and it is never delayed`() {
+        assertTrue(scheduler.immediateRequestIsUserVisible(CoreBackgroundSyncReason.MANUAL))
+        assertEquals(0, scheduler.immediateDelayMillis(CoreBackgroundSyncReason.MANUAL))
+        listOf(
+            CoreBackgroundSyncReason.APP_START,
+            CoreBackgroundSyncReason.CONNECTIVITY_RESTORED,
+            CoreBackgroundSyncReason.PERIODIC_RECONCILIATION,
+            CoreBackgroundSyncReason.OUTBOX_PENDING,
+        ).forEach { reason -> assertFalse(scheduler.immediateRequestIsUserVisible(reason), reason.name) }
+    }
+
+    @Test
+    fun `a request stays pending until a pass that started after it ends`() {
+        val requests = CoreUserSyncRequests()
+        assertFalse(requests.pending())
+
+        requests.request()
+        val passStart = requests.snapshot()
+        assertTrue(requests.pending())
+        // Asked again while that pass ran: the pass does not cover it.
+        requests.request()
+        requests.markServed(passStart)
+        assertTrue(requests.pending())
+
+        requests.markServed(requests.snapshot())
+        assertFalse(requests.pending())
+        // A late, older snapshot never brings a served request back.
+        requests.markServed(passStart)
+        assertFalse(requests.pending())
+    }
 }

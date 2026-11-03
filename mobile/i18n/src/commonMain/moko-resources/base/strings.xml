@@ -2345,6 +2345,17 @@
     <string name="epigraph_core_sync_notification_stopped">Sync stopped</string>
     <string name="epigraph_core_sync_notification_pair_again">Pair this device with the desktop again to keep syncing.</string>
     <string name="epigraph_core_sync_notification_attention">Sync with the desktop needs your attention. Tap to see what to do.</string>
+    <string name="epigraph_core_sync_notification_preparing">Preparing your library</string>
+    <string name="epigraph_core_sync_notification_reading_progress">Sending reading progress</string>
+    <string name="epigraph_core_sync_notification_done">Sync complete</string>
+    <string name="epigraph_core_sync_notification_done_text">Up to date with the desktop.</string>
+    <string name="epigraph_core_sync_notification_finished">Sync finished</string>
+    <string name="epigraph_core_sync_notification_finished_text">Nothing left to send.</string>
+    <string name="epigraph_core_sync_notification_pending_text">Changes still waiting to send: %1$d</string>
+    <string name="epigraph_core_sync_notification_blocked_text">Some changes couldn\'t be sent: %1$d. Tap to review.</string>
+    <string name="epigraph_core_sync_notification_incomplete">Sync didn\'t finish</string>
+    <string name="epigraph_core_sync_notification_retry_text">Epigraph will try again automatically.</string>
+    <string name="epigraph_core_sync_background_hint">You can keep using the app. Progress shows in a notification.</string>
     <string name="epigraph_core_sync_status_syncing">Syncing… Pending changes: %1$d</string>
     <string name="epigraph_core_sync_status_queued">Waiting for the network to sync. Pending changes: %1$d</string>
     <string name="epigraph_core_sync_status_retrying">A retry is scheduled after a failure. Pending changes: %1$d</string>

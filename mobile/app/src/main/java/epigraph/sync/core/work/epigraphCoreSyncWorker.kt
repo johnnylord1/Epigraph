@@ -15,8 +15,10 @@ import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import androidx.work.WorkerParameters
@@ -39,34 +41,66 @@ class WorkManagerCoreBackgroundSyncScheduler(
     }
 }
 
-/** Network-constrained product worker. Its success output says outbox-drained, never synced. */
+/**
+ * Network-constrained product worker. Its success output says outbox-drained, never synced. A sync
+ * the user asked for runs as expedited foreground work with a progress notification; every other
+ * wake stays silent.
+ */
 class EpigraphCoreSyncWorker(
     context: Context,
     workerParameters: WorkerParameters,
 ) : CoroutineWorker(context, workerParameters) {
+    /** What the current pass is doing, read by the progress ticker. */
+    @Volatile
+    private var phase = CoreSyncPhase.LIBRARY
+
+    /** Used to start an expedited run as a foreground service before API 31. */
+    override suspend fun getForegroundInfo(): ForegroundInfo = get<CoreSyncNotifier>().startingForegroundInfo()
+
     override suspend fun doWork(): Result {
         if (!isCurrentSchedulerVersion(inputData.getInt(INPUT_SCHEDULER_VERSION, 0))) {
             return Result.success(workDataOf(OUTPUT_STATE to STATE_STALE_SCHEDULER))
         }
         // Disconnected from Settings: stand down without a follow-up wake; reconnecting enqueues one.
         if (get<CoreSyncPause>().paused.value) {
+            // Nothing will run what was asked before the disconnect; reconnecting asks again.
+            USER_REQUESTS.markServed(USER_REQUESTS.snapshot())
             // A notice about a sync the user just disconnected no longer asks for anything.
             runCatching { get<CoreSyncNotifier>().clearAttention() }
             return Result.success(workDataOf(OUTPUT_STATE to STATE_PAUSED))
         }
         if (!EXECUTION_MUTEX.tryLock()) {
+            // The running worker sees the pending request and shows its progress instead.
             return Result.success(workDataOf(OUTPUT_STATE to STATE_COALESCED))
         }
         var drainedGeneration: Long? = null
         var usesBackoff = false
+        // A retry after backoff stays silent: the user already saw how the run they asked for ended.
+        var userVisible = runAttemptCount == 0 && inputData.getBoolean(INPUT_USER_VISIBLE, false)
+        var servedUpTo = USER_REQUESTS.snapshot()
         return try {
             val notifier = get<CoreSyncNotifier>()
             val outbox = get<CorePendingOutbox>()
-            val execution = notifier.withProgress(remaining = { outbox.unsettledCount() }) {
+            if (userVisible) notifier.clearResult()
+            val execution = notifier.withProgress(
+                // Latched: a request that arrives while a background run is going makes it visible.
+                userVisible = {
+                    if (!userVisible && USER_REQUESTS.pending()) {
+                        userVisible = true
+                        notifier.clearResult()
+                    }
+                    userVisible
+                },
+                phase = { phase },
+                remaining = { outbox.unsettledCount() },
+                publish = { progress -> setProgress(progress.toWorkData()) },
+                promote = { info -> promoteToForeground(info) },
+            ) {
                 var drained: WorkerExecution
                 var attempts = 0
                 var observedGeneration: Long
                 do {
+                    servedUpTo = USER_REQUESTS.snapshot()
                     observedGeneration = WAKE_GENERATION.get()
                     val passGeneration = observedGeneration
                     val pass = attempts
@@ -81,8 +115,10 @@ class EpigraphCoreSyncWorker(
                 drained
             }
             usesBackoff = execution.usesWorkManagerBackoff
-            runCatching { get<CoreSyncRunStore>().lastRun.value?.let(notifier::update) }
+            val lastRun = runCatching { get<CoreSyncRunStore>().lastRun.value }.getOrNull()
+            runCatching { lastRun?.let { notifier.update(it, force = userVisible) } }
                 .onFailure { failure -> Log.w(LOG_TAG, "sync notice could not be updated", failure) }
+            if (userVisible) showResult(notifier, lastRun)
             if (shouldScheduleFollowUp(execution.usesWorkManagerBackoff, execution.awaitingExternalAction)) {
                 scheduleNextWake()
             }
@@ -96,12 +132,43 @@ class EpigraphCoreSyncWorker(
             }
             execution.result
         } finally {
+            // Requests made after the last pass started were not served; the follow-up wake shows them.
+            // Marked even when the run failed, so a later background run does not show itself for it.
+            USER_REQUESTS.markServed(servedUpTo)
             EXECUTION_MUTEX.unlock()
             // A wake that arrived after the last drain started was coalesced or kept behind this
             // run while the mutex was held; nothing else would run it.
             if (missedWakeAfterDrain(drainedGeneration, WAKE_GENERATION.get(), usesBackoff)) {
                 enqueueFollowUp(applicationContext)
             }
+        }
+    }
+
+    private suspend fun promoteToForeground(info: ForegroundInfo): Boolean = try {
+        setForeground(info)
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        // Android refuses a foreground service started from the background; the plain notice stays.
+        Log.w(LOG_TAG, "sync could not run in the foreground: ${failure::class.simpleName}")
+        false
+    }
+
+    private suspend fun showResult(notifier: CoreSyncNotifier, lastRun: CoreSyncLastRun?) {
+        try {
+            val counts = get<CoreSyncStatusMonitor>().readCounts()
+            val status = resolveCoreSyncStatus(
+                paired = true,
+                activity = CoreSyncActivity.IDLE,
+                counts = counts,
+                lastRun = lastRun,
+            )
+            coreSyncResult(status)?.let(notifier::showResult)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Log.w(LOG_TAG, "sync result could not be shown", failure)
         }
     }
 
@@ -148,10 +215,12 @@ class EpigraphCoreSyncWorker(
         // no-ops until paired. Reading progress is not part of the catalog and its backfill scans every
         // read chapter, which took seconds on a large library, so it waits for the pass after the first
         // drain instead of delaying a desktop change.
+        phase = CoreSyncPhase.LIBRARY
         repairLibraries(includeProgress = false, checkWithCore = false)
         var sentBackfill = false
         val outcome = try {
             val runner = get<CoreOutboxSyncRunner>()
+            phase = CoreSyncPhase.EXCHANGE
             val first = runner.run(
                 nowEpochMillis = System.currentTimeMillis(),
                 synchronizeReplica = true,
@@ -164,7 +233,12 @@ class EpigraphCoreSyncWorker(
             val reachable = coreAnswered(first)
             // A desktop change that arrived during this pass waits for it to end; the next pass runs
             // the backfill instead, so it no longer delays that change by the length of a library scan.
-            val repaired = if (deferProgress()) 0 else repairLibraries(includeProgress = true, checkWithCore = reachable)
+            val repaired = if (deferProgress()) {
+                0
+            } else {
+                phase = CoreSyncPhase.READING_PROGRESS
+                repairLibraries(includeProgress = true, checkWithCore = reachable)
+            }
             sentBackfill = reachable && repaired > 0
             if (sentBackfill) {
                 runner.run(
@@ -316,6 +390,7 @@ class EpigraphCoreSyncWorker(
         private const val LOG_TAG = "EpigraphCoreSync"
         private const val INPUT_REASON = "reason"
         private const val INPUT_SCHEDULER_VERSION = "scheduler_version"
+        private const val INPUT_USER_VISIBLE = "user_visible"
         private const val OUTPUT_STATE = "state"
         private const val OUTPUT_REASON = "reason"
         private const val OUTPUT_PENDING_COUNT = "pending_count"
@@ -335,6 +410,7 @@ class EpigraphCoreSyncWorker(
             .build()
         private val EXECUTION_MUTEX = Mutex()
         private val WAKE_GENERATION = AtomicLong(0)
+        private val USER_REQUESTS = CoreUserSyncRequests()
 
         /** Consecutive comic-side retries in this process; any other outcome resets it. */
         private val DEGRADED_RETRY_STREAK = AtomicInteger(0)
@@ -346,10 +422,19 @@ class EpigraphCoreSyncWorker(
         private const val SCHEDULER_V6_MIGRATION_COMPLETE = "v6_migration_complete"
 
         fun enqueueImmediate(context: Context, reason: CoreBackgroundSyncReason) {
+            val userVisible = immediateRequestIsUserVisible(reason)
+            // Counted before the wake, so a run already going sees it when it checks the generation.
+            if (userVisible) USER_REQUESTS.request()
             WAKE_GENERATION.incrementAndGet()
+            val delayMillis = immediateDelayMillis(reason)
             val request = OneTimeWorkRequestBuilder<EpigraphCoreSyncWorker>()
                 .setConstraints(NETWORK_CONSTRAINTS)
-                .setInitialDelay(immediateDelayMillis(reason), TimeUnit.MILLISECONDS)
+                .apply {
+                    // Expedited work cannot be delayed.
+                    if (delayMillis > 0) setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
+                    // Out of quota, it still runs at once and promotes itself to the foreground.
+                    if (userVisible) setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                }
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL,
                     WorkRequest.MIN_BACKOFF_MILLIS,
@@ -359,6 +444,7 @@ class EpigraphCoreSyncWorker(
                     workDataOf(
                         INPUT_REASON to reason.name.lowercase(),
                         INPUT_SCHEDULER_VERSION to SCHEDULER_VERSION,
+                        INPUT_USER_VISIBLE to userVisible,
                     ),
                 )
                 .addTag(TAG)
@@ -539,6 +625,10 @@ class EpigraphCoreSyncWorker(
         internal fun immediateWorkName(reason: CoreBackgroundSyncReason): String =
             if (reason == CoreBackgroundSyncReason.OUTBOX_PENDING) UNIQUE_OUTBOX_SYNC else UNIQUE_SYNC
 
+        /** Only a sync the user asked for shows a notification; the others stay silent. */
+        internal fun immediateRequestIsUserVisible(reason: CoreBackgroundSyncReason): Boolean =
+            reason == CoreBackgroundSyncReason.MANUAL
+
         internal fun isCurrentSchedulerVersion(version: Int): Boolean = version == SCHEDULER_VERSION
 
         internal fun shouldScheduleFollowUp(
@@ -557,6 +647,27 @@ class EpigraphCoreSyncWorker(
             executionActive -> ExistingWorkPolicy.KEEP
             else -> ExistingWorkPolicy.REPLACE
         }
+    }
+}
+
+/**
+ * Syncs the user asked for in this process, and how many of them a finished pass covered. A run
+ * shows its progress while any request is still unserved, so a tap during a silent background run
+ * makes that run visible instead of waiting behind it.
+ */
+internal class CoreUserSyncRequests {
+    private val requested = AtomicLong(0)
+    private val served = AtomicLong(0)
+
+    fun request(): Long = requested.incrementAndGet()
+
+    fun snapshot(): Long = requested.get()
+
+    fun pending(): Boolean = served.get() < requested.get()
+
+    /** [upTo] is the [snapshot] taken when the pass that served them started. */
+    fun markServed(upTo: Long) {
+        served.accumulateAndGet(upTo) { current, next -> maxOf(current, next) }
     }
 }
 
