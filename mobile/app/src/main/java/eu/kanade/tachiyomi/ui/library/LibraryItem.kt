@@ -48,7 +48,7 @@ abstract class LibraryItem(
 
     internal val sourceManager: SourceManager by injectLazy()
     private val uiPreferences: UiPreferences by injectLazy()
-    private val preferences: PreferencesHelper by injectLazy()
+    protected val preferences: PreferencesHelper by injectLazy()
 
     internal val uniformSize: Boolean
         get() = uiPreferences.uniformGrid().get()
@@ -127,6 +127,8 @@ abstract class LibraryItem(
                 include(book.chapterCount)
                 include(book.pageCount)
                 include(book.updatedAt)
+                include(unread)
+                include(preferences.unreadBadgeType().get())
             }
             is LibraryPlaceholderItem -> {
                 include(category)

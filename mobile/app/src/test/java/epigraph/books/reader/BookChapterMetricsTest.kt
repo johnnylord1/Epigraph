@@ -1,5 +1,7 @@
 package epigraph.books.reader
 
+import epigraph.books.local.LocalBook
+import epigraph.books.local.LocalBookPdfSection
 import epigraph.contract.ContentType
 import epigraph.contract.EpigraphEntityId
 import epigraph.contract.ReaderLocator
@@ -82,4 +84,57 @@ class BookChapterMetricsTest {
         assertEquals(2, BookChapterMetrics.epubChapterIndex(locator, 3, listOf("a", "b", "c")))
         assertEquals(0, BookChapterMetrics.epubChapterIndex(0.2, 3, "missing.xhtml", listOf("a", "b", "c")))
     }
+
+    @Test
+    fun `unread badge counts the current chapter and none once the book is finished`() {
+        val epub = book(ContentType.EPUB, chapterCount = 5)
+        val epubId = EpigraphEntityId("epub:sha256:" + "a".repeat(64))
+        assertEquals(5, BookChapterMetrics.unreadChapterCount(epub, null))
+        assertEquals(5, BookChapterMetrics.unreadChapterCount(epub, ReaderLocator.Epub(epubId, progression = 0.0)))
+        assertEquals(3, BookChapterMetrics.unreadChapterCount(epub, ReaderLocator.Epub(epubId, progression = 0.45)))
+        assertEquals(1, BookChapterMetrics.unreadChapterCount(epub, ReaderLocator.Epub(epubId, progression = 0.9)))
+        assertEquals(0, BookChapterMetrics.unreadChapterCount(epub, ReaderLocator.Epub(epubId, progression = 1.0)))
+
+        val pdf = book(
+            ContentType.PDF,
+            chapterCount = 3,
+            pageCount = 10,
+            sections = listOf(LocalBookPdfSection("A", 0), LocalBookPdfSection("B", 4), LocalBookPdfSection("C", 8)),
+        )
+        val pdfId = EpigraphEntityId("pdf:sha256:" + "a".repeat(64))
+        assertEquals(3, BookChapterMetrics.unreadChapterCount(pdf, ReaderLocator.Pdf(pdfId, pageIndex = 0)))
+        assertEquals(2, BookChapterMetrics.unreadChapterCount(pdf, ReaderLocator.Pdf(pdfId, pageIndex = 5)))
+        assertEquals(
+            0,
+            BookChapterMetrics.unreadChapterCount(pdf, ReaderLocator.Pdf(pdfId, pageIndex = 9, documentProgression = 1.0)),
+        )
+        // A book the reader has not inspected yet still has one chapter to read.
+        assertEquals(1, BookChapterMetrics.unreadChapterCount(book(ContentType.EPUB, chapterCount = null), null))
+    }
+
+    private fun book(
+        type: ContentType,
+        chapterCount: Int?,
+        pageCount: Int? = null,
+        sections: List<LocalBookPdfSection> = emptyList(),
+    ) = LocalBook(
+        bookId = "book-${"a".repeat(64)}",
+        contentType = type,
+        sha256 = "a".repeat(64),
+        displayName = "Book",
+        author = null,
+        description = null,
+        coverPath = null,
+        coverAssetSha256 = null,
+        coverAssetByteSize = null,
+        coverAssetMimeType = null,
+        privatePath = "book",
+        mimeType = if (type == ContentType.PDF) "application/pdf" else "application/epub+zip",
+        byteSize = 1,
+        chapterCount = chapterCount,
+        pageCount = pageCount,
+        importedAt = 1,
+        updatedAt = 1,
+        pdfSections = sections,
+    )
 }

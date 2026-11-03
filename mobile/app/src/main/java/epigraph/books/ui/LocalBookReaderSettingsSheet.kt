@@ -1,10 +1,12 @@
 package epigraph.books.ui
 
+import epigraph.books.reader.BOOK_ORIENTATION_TYPES
 import epigraph.books.reader.BookReaderPreferences
+import epigraph.books.reader.bookOrientationType
 import epigraph.books.tts.BookTtsPlaybackService
 import epigraph.contract.ContentType
+import epigraph.novel.reader.NovelTapAction
 import android.content.Context
-import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.util.AttributeSet
 import android.view.LayoutInflater
@@ -17,6 +19,7 @@ import androidx.viewpager.widget.PagerAdapter
 import com.google.android.material.tabs.TabLayout
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.databinding.ReaderBookSettingsPageBinding
 import eu.kanade.tachiyomi.databinding.TabbedBottomSheetBinding
@@ -316,13 +319,9 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
             Page.GENERAL -> {
                 bindSpinner(
                     orientation,
-                    listOf(context.getString(MR.strings.automatic), context.getString(MR.strings.portrait), context.getString(MR.strings.landscape)),
-                    listOf(
-                        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
-                        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
-                        ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
-                    ),
-                    bookPreferences.orientation.get(),
+                    BOOK_ORIENTATION_TYPES.map { context.getString(it.stringRes) },
+                    BOOK_ORIENTATION_TYPES.map { it.flag },
+                    bookOrientationType(bookPreferences.orientation.get()).flag,
                     bookPreferences.orientation::set,
                     onChanged,
                 )
@@ -350,10 +349,19 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
             Page.NAVIGATION -> {
                 epubFlow.isVisible = contentType == ContentType.EPUB
                 animateTransitions.isVisible = contentType == ContentType.EPUB
+                // The novel reader's chapter-change options; the card and swipe belong to the
+                // EPUB scroll flow, and PDF pages keep long press for text selection.
+                alwaysShowChapterTransition.isVisible = contentType == ContentType.EPUB
+                swipeChapterNavigation.isVisible = contentType == ContentType.EPUB
+                longTapAction.isVisible = contentType == ContentType.EPUB
                 if (contentType == ContentType.EPUB) {
                     bindSpinner(epubFlow, listOf(context.getString(MR.strings.book_reader_flow_scroll), context.getString(MR.strings.book_reader_flow_paginated)), listOf("scroll", "paginated"), bookPreferences.epubFlow.get(), bookPreferences.epubFlow::set, onChanged)
                     animateTransitions.bindToPreference(bookPreferences.epubAnimateTransitions) { onChanged() }
+                    alwaysShowChapterTransition.bindToPreference(commonPreferences.alwaysShowChapterTransition()) { onChanged() }
+                    swipeChapterNavigation.bindToPreference(bookPreferences.swipeChapterNavigation) { onChanged() }
+                    bindTapActionSpinner(longTapAction, bookPreferences.longTapAction, onChanged)
                 }
+                bindTapActionSpinner(doubleTapAction, bookPreferences.doubleTapAction, onChanged)
                 volumeKeys.bindToPreference(bookPreferences.volumeKeys) { onChanged() }
                 invertVolumeKeys.bindToPreference(bookPreferences.volumeKeysInverted) { onChanged() }
 
@@ -518,6 +526,21 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
         }
     }
 
+    private fun bindTapActionSpinner(
+        spinner: eu.kanade.tachiyomi.widget.MaterialSpinnerView,
+        preference: Preference<Int>,
+        onChanged: () -> Unit,
+    ) {
+        bindSpinner(
+            spinner,
+            BOOK_TAP_ACTIONS.map { context.getString(it.labelRes) },
+            BOOK_TAP_ACTIONS.map { it.ordinal },
+            NovelTapAction.fromOrdinal(preference.get()).ordinal,
+            preference::set,
+            onChanged,
+        )
+    }
+
     private fun <T> bindSpinner(
         spinner: eu.kanade.tachiyomi.widget.MaterialSpinnerView,
         labels: List<String>,
@@ -569,3 +592,15 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
 }
 
 enum class SettingsReaderTarget { COMICS, NOVELS, BOOKS }
+
+/** The novel reader's tap actions that books can run; auto-scroll and define have no book equivalent. */
+private val BOOK_TAP_ACTIONS = listOf(
+    NovelTapAction.NONE,
+    NovelTapAction.TOGGLE_MENU,
+    NovelTapAction.NEXT_CHAPTER,
+    NovelTapAction.PREVIOUS_CHAPTER,
+    NovelTapAction.SCROLL_DOWN,
+    NovelTapAction.SCROLL_UP,
+    NovelTapAction.START_TTS,
+    NovelTapAction.STOP_TTS,
+)

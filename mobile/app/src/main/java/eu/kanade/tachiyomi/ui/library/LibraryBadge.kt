@@ -204,6 +204,18 @@ class LibraryBadge @JvmOverloads constructor(context: Context, attrs: AttributeS
         }
     }
 
+    /**
+     * A local book's unread chapters beside its EPUB/PDF format, laid out like a manga's unread
+     * count beside the Local label. [unread] follows [setUnreadDownload]: -1 is a dot, -2 hidden.
+     */
+    fun setUnreadLabel(unread: Int, showTotalChapters: Boolean, label: String) {
+        unreadDownloadContent = null
+        setUnreadDownload(unread, -2, showTotalChapters, null, true)
+        binding.downloadText.text = label
+        // The label replaced the cached Local text, so the next bind must lay the badge out again.
+        unreadDownloadContent = null
+    }
+
     fun setInLibrary(inLibrary: Boolean) {
         unreadDownloadContent = null
         this.isVisible = inLibrary

@@ -1,5 +1,8 @@
 package epigraph.books.ui
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
@@ -18,9 +21,12 @@ import android.view.KeyEvent
 import android.view.Menu
 import android.view.MotionEvent
 import android.view.View
+import android.webkit.WebView
 import android.view.MenuItem
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.ViewConfiguration
+import android.view.animation.DecelerateInterpolator
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -41,6 +47,7 @@ import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePaddingRelative
 import androidx.lifecycle.lifecycleScope
+import androidx.vectordrawable.graphics.drawable.AnimatedVectorDrawableCompat
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.R
 import com.google.android.material.R as materialR
@@ -53,10 +60,12 @@ import epigraph.books.local.LocalBook
 import epigraph.books.local.LocalBookRepository
 import epigraph.books.local.BookBookmark
 import epigraph.books.local.BookHighlight
+import epigraph.books.reader.BOOK_ORIENTATION_TYPES
 import epigraph.books.reader.BookChapterMetrics
 import epigraph.books.reader.BookReaderRouter
 import epigraph.books.reader.BookReaderPreferences
 import epigraph.books.reader.LegacyBookReaderPreferences
+import epigraph.books.reader.bookOrientationType
 import epigraph.books.reader.epubPageMarginsForContentWidth
 import epigraph.books.reader.EpubNavigatorSession
 import epigraph.books.reader.OpenedBookReader
@@ -68,9 +77,11 @@ import epigraph.books.pdf.PdfReaderSession
 import epigraph.books.pdf.PdfOcrEngine
 import epigraph.books.pdf.PdfSelectionSegments
 import epigraph.books.pdf.PdfTextReflow
+import epigraph.books.pdf.PdfBorderCrop
 import epigraph.books.pdf.PdfPageBitmapRenderer
 import epigraph.books.pdf.PdfPageView
 import epigraph.books.tts.BookTtsPlaybackService
+import epigraph.novel.reader.NovelTapAction
 import epigraph.sync.core.assets.BookAssetCoordinator
 import epigraph.contract.EpigraphEntityId
 import epigraph.contract.ContentType
@@ -84,16 +95,21 @@ import epigraph.reader.settings.applyReaderTheme
 import epigraph.reader.selection.showSelectionWebSheet
 import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.data.preference.toggle
 import eu.kanade.tachiyomi.ui.base.MaterialMenuSheet
 import eu.kanade.tachiyomi.ui.main.SearchActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderSlider
+import eu.kanade.tachiyomi.ui.reader.settings.OrientationType
+import eu.kanade.tachiyomi.ui.reader.settings.ReaderBottomButton
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.getPrefTheme
 import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.system.materialAlertDialog
 import eu.kanade.tachiyomi.util.view.compatToolTipText
+import eu.kanade.tachiyomi.util.view.popupMenu
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -111,6 +127,7 @@ import org.readium.r2.shared.util.AbsoluteUrl
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import java.lang.ref.WeakReference
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
@@ -165,6 +182,9 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     private var epubTheme = "system"
     private var epubFlow = "scroll"
     private var epubContentWidth = 0
+    private var marginsCropped = false
+    private var epubChapterTitle: String? = null
+    private var lastCropRes = 0
     private var pdfNightMode = false
     private var pdfFitEachPage = true
     private var pdfHorizontal = false
@@ -241,9 +261,15 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     return false
                 }
                 if (!readerProgressIsPdf) {
-                    // The paginated EPUB WebView does not page on a swipe by itself; scroll flow
-                    // keeps horizontal flings for the WebView.
-                    if (epubNavigator == null || epubFlow != EPUB_FLOW_PAGINATED) return false
+                    if (epubNavigator == null) return false
+                    if (epubFlow != EPUB_FLOW_PAGINATED) {
+                        // Scroll flow keeps horizontal flings for the WebView unless the novel
+                        // reader's "Swipe to change chapters" is on.
+                        if (!bookReaderPreferences.swipeChapterNavigation.get()) return false
+                        stepBookChapter(if (velocityX < 0f) 1 else -1)
+                        return true
+                    }
+                    // The paginated EPUB WebView does not page on a swipe by itself.
                     turnPage(forward = velocityX < 0f)
                     return true
                 }
@@ -251,18 +277,382 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 navigateReader(if (velocityX < 0f) 1 else -1)
                 return true
             }
+
+            override fun onDoubleTap(event: MotionEvent): Boolean {
+                if (readerSettingsPanel != null || epubPullActive) return false
+                val action = NovelTapAction.fromOrdinal(bookReaderPreferences.doubleTapAction.get())
+                if (action == NovelTapAction.NONE) return false
+                runBookTapAction(action)
+                return true
+            }
+
+            override fun onLongPress(event: MotionEvent) {
+                // PDF pages keep their long-press text selection.
+                if (readerSettingsPanel != null || epubPullActive || readerProgressIsPdf) return
+                val navigator = epubNavigator ?: return
+                val action = NovelTapAction.fromOrdinal(bookReaderPreferences.longTapAction.get())
+                if (action == NovelTapAction.NONE) return
+                // As in the novel reader, a long press that selected text keeps its selection
+                // toolbar; the action runs only on a press that selected nothing.
+                lifecycleScope.launch {
+                    delay(LONG_PRESS_SELECTION_SETTLE_MS)
+                    if (runCatching { navigator.currentSelection() }.getOrNull() == null) {
+                        runBookTapAction(action)
+                    }
+                }
+            }
         })
     }
 
-    /** One page for PDF and a viewport for EPUB, whose [navigateReader] steps whole chapters. */
+    /** The novel reader's double-tap/long-press actions that books support. */
+    private fun runBookTapAction(action: NovelTapAction) {
+        when (action) {
+            NovelTapAction.TOGGLE_MENU -> setBookReaderMenuVisibility(!bookMenuVisible)
+            NovelTapAction.NEXT_CHAPTER -> stepBookChapter(1)
+            NovelTapAction.PREVIOUS_CHAPTER -> stepBookChapter(-1)
+            NovelTapAction.SCROLL_DOWN -> turnPage(forward = true)
+            NovelTapAction.SCROLL_UP -> turnPage(forward = false)
+            NovelTapAction.START_TTS -> if (
+                readerSettingsCapabilities.supportsTts &&
+                BookTtsPlaybackService.playbackState.value == BookTtsPlaybackService.PlaybackState.STOPPED
+            ) {
+                speakCurrent()
+            }
+            NovelTapAction.STOP_TTS -> stopBookTts()
+            NovelTapAction.NONE,
+            NovelTapAction.TOGGLE_AUTO_SCROLL,
+            NovelTapAction.DEFINE_SELECTED,
+            -> Unit
+        }
+    }
+
+    /** EPUB steps spine chapters; PDF steps its outline sections, or pages without one. */
+    private fun stepBookChapter(delta: Int) {
+        if (!readerProgressIsPdf) {
+            navigateReader(delta)
+            return
+        }
+        val starts = pdfChapterStartPages.distinct().sorted()
+        if (starts.size < 2) {
+            navigateReader(delta)
+            return
+        }
+        val current = pdfCurrentPage
+        val target = if (delta > 0) {
+            starts.firstOrNull { it > current }
+        } else {
+            val sectionStart = starts.lastOrNull { it <= current } ?: starts.first()
+            starts.lastOrNull { it < sectionStart } ?: sectionStart
+        } ?: return
+        if (target != current) navigatePdfTo(target)
+    }
+
+    /**
+     * One page for PDF and a viewport for EPUB, whose [navigateReader] steps whole chapters. The
+     * EPUB scroll flow scrolls the chapter instead, as the novel reader does, and continues into
+     * the next chapter from its edge.
+     */
     private fun turnPage(forward: Boolean) {
         val navigator = epubNavigator
+        if (epubScrollFlowActive()) {
+            val direction = if (forward) 1 else -1
+            val pinned = epubTransitionPinned
+            if (pinned != 0) {
+                // A pinned transition card: the same direction continues, the other hides it.
+                if (pinned == direction) continueEpubChapter(forward) else hideEpubTransition()
+                return
+            }
+            val root = readerBinding?.root
+            val webView = root?.let { epubWebViewAt(it.width / 2, it.height / 2) }
+            when {
+                webView != null && webView.canScrollVertically(direction) ->
+                    webView.scrollBy(0, direction * (webView.height * EPUB_TAP_SCROLL_FRACTION).toInt())
+                epubTransitionsEnabled() -> pinEpubTransition(direction)
+                else -> continueEpubChapter(forward)
+            }
+            return
+        }
         if (!readerProgressIsPdf && navigator != null) {
             val animated = bookReaderPreferences.epubAnimateTransitions.get()
             if (forward) navigator.goForward(animated) else navigator.goBackward(animated)
             return
         }
         navigateReader(if (forward) 1 else -1)
+    }
+
+    /**
+     * Readium scrolls one spine resource at a time. A drag that keeps pulling past a chapter edge
+     * reveals the novel reader's transition card, pushing the text as the novel's in-flow card
+     * does, and pulling on past the card continues into the neighbouring chapter. Once the pull
+     * starts the WebView gets a cancel, so the gesture belongs to the card. A drag that scrolled
+     * the text into the edge stops at the card, so one long swipe cannot skip it.
+     */
+    private var epubDragWebView: WeakReference<WebView>? = null
+    private var epubDragStartX = 0f
+    private var epubDragStartY = 0f
+    private var epubPullActive = false
+    private var epubPullOriginY = 0f
+    private var epubPullBase = 0f
+    private var epubPullDirection = 0
+    private var epubDragScrolledText = false
+    /** A horizontal drag "Swipe to change chapters" owns, kept from Readium's resource pager. */
+    private var epubSwipeClaimed = false
+    private var epubContentView: View? = null
+    private var epubTransitionCard: BookChapterTransitionView? = null
+    /** 1 while the bound card is the next-chapter one at the bottom, -1 for the previous one. */
+    private var epubTransitionDirection = 0
+    /** The card's direction while it rests fully revealed after a release or a tap, otherwise 0. */
+    private var epubTransitionPinned = 0
+    private var epubTransitionHeight = 0f
+    private var epubTransitionReveal = 0f
+    private var epubTransitionAnimator: ValueAnimator? = null
+    private val bookTouchSlop by lazy { ViewConfiguration.get(this).scaledTouchSlop }
+
+    private fun epubScrollFlowActive(): Boolean =
+        !readerProgressIsPdf && epubNavigator != null && epubFlow != EPUB_FLOW_PAGINATED
+
+    /** The shared manga/novel "Always show chapter transition" preference. */
+    private fun epubTransitionsEnabled(): Boolean =
+        epubTransitionCard != null && commonReaderPreferences.alwaysShowChapterTransition().get()
+
+    private fun startEpubChapterPull(event: MotionEvent) {
+        epubDragWebView = null
+        epubPullActive = false
+        epubDragScrolledText = false
+        epubSwipeClaimed = false
+        if (!epubScrollFlowActive()) return
+        val webView = epubWebViewAt(event.rawX.toInt(), event.rawY.toInt()) ?: return
+        epubDragWebView = WeakReference(webView)
+        epubDragStartX = event.rawX
+        epubDragStartY = event.rawY
+    }
+
+    /** Returns true while the gesture is the chapter pull, which the WebView must no longer see. */
+    private fun moveEpubChapterPull(event: MotionEvent): Boolean {
+        if (epubPullActive) {
+            setEpubTransitionReveal(epubPullDistance(event.rawY))
+            return true
+        }
+        val webView = epubDragWebView?.get() ?: return false
+        if (readerSettingsPanel != null || epubSwipeClaimed) return false
+        val dx = event.rawX - epubDragStartX
+        val dy = event.rawY - epubDragStartY
+        if (abs(dy) < bookTouchSlop || abs(dy) <= abs(dx) * 1.5f) return false
+        val direction = if (dy < 0f) 1 else -1
+        val pinned = epubTransitionPinned
+        when {
+            pinned != 0 -> {
+                // A pinned card owns vertical drags: the same way continues, back hides it.
+                epubTransitionAnimator?.cancel()
+                epubPullDirection = pinned
+                epubPullBase = epubTransitionReveal
+                epubPullOriginY = epubDragStartY
+            }
+            // The pull starts where the chapter edge is reached, even mid-gesture.
+            !webView.canScrollVertically(direction) -> {
+                epubPullDirection = direction
+                epubPullBase = 0f
+                epubPullOriginY = event.rawY
+                if (epubTransitionsEnabled()) bindEpubTransition(direction)
+            }
+            else -> {
+                epubDragScrolledText = true
+                return false
+            }
+        }
+        epubPullActive = true
+        setEpubTransitionReveal(epubPullDistance(event.rawY))
+        return true
+    }
+
+    /**
+     * With "Swipe to change chapters" on, a horizontal drag changes chapter through the fling
+     * detector; Readium's pager would otherwise also settle on a neighbouring resource.
+     */
+    private fun claimEpubChapterSwipe(event: MotionEvent): Boolean {
+        if (epubSwipeClaimed) return true
+        if (epubDragWebView?.get() == null || readerSettingsPanel != null) return false
+        if (!bookReaderPreferences.swipeChapterNavigation.get()) return false
+        val dx = event.rawX - epubDragStartX
+        val dy = event.rawY - epubDragStartY
+        if (abs(dx) < bookTouchSlop || abs(dx) <= abs(dy) * 1.5f) return false
+        epubSwipeClaimed = true
+        return true
+    }
+
+    private fun epubPullDistance(rawY: Float): Float =
+        (epubPullBase + (epubPullOriginY - rawY) * epubPullDirection).coerceAtLeast(0f)
+
+    private fun finishEpubChapterPull(event: MotionEvent, cancelled: Boolean = false) {
+        if (!epubPullActive) return
+        epubPullActive = false
+        val pull = epubPullDistance(event.rawY)
+        val direction = epubPullDirection
+        val threshold = EPUB_CHAPTER_PULL_DISTANCE_DP.dpToPx
+        if (!epubTransitionsEnabled() || epubTransitionDirection != direction) {
+            if (!cancelled && pull >= threshold) continueEpubChapter(forward = direction > 0)
+            return
+        }
+        when {
+            !cancelled && !epubDragScrolledText && pull >= epubTransitionHeight + threshold &&
+                hasEpubChapter(direction) ->
+                continueEpubChapter(forward = direction > 0)
+            pull >= epubTransitionHeight / 2f -> pinEpubTransition(direction)
+            else -> hideEpubTransition()
+        }
+    }
+
+    private fun hasEpubChapter(direction: Int): Boolean =
+        epubChapterIndex + direction in 0 until epubChapterCount
+
+    /** Names the current and neighbouring chapter on the card and places it at that edge. */
+    private fun bindEpubTransition(direction: Int) {
+        val card = epubTransitionCard ?: return
+        val content = epubContentView ?: return
+        epubTransitionAnimator?.cancel()
+        val current = epubChapterTitleAt(epubChapterIndex)
+        val neighbour = (epubChapterIndex + direction).takeIf { hasEpubChapter(direction) }
+            ?.let(::epubChapterTitleAt)
+        val colors = ReaderThemeColors.book(this, epubTheme)
+        if (direction > 0) {
+            card.bind(
+                top = BookChapterTransitionView.Row(getString(MR.strings.finished_chapter), current),
+                bottom = BookChapterTransitionView.Row(getString(MR.strings.next_title), neighbour),
+                missing = getString(MR.strings.theres_no_next_chapter),
+                foreground = colors.foreground,
+                background = colors.background,
+            )
+        } else {
+            card.bind(
+                top = BookChapterTransitionView.Row(getString(MR.strings.previous_title), neighbour),
+                bottom = BookChapterTransitionView.Row(getString(MR.strings.current_chapter), current),
+                missing = getString(MR.strings.theres_no_previous_chapter),
+                foreground = colors.foreground,
+                background = colors.background,
+            )
+        }
+        val bars = ViewCompat.getRootWindowInsets(content)
+            ?.getInsets(WindowInsetsCompat.Type.systemBars())
+        val side = EPUB_TRANSITION_SIDE_PADDING_DP.dpToPx
+        val edge = EPUB_TRANSITION_EDGE_PADDING_DP.dpToPx
+        if (direction > 0) {
+            card.setPadding(side, edge, side, edge + (bars?.bottom ?: 0))
+        } else {
+            card.setPadding(side, edge + (bars?.top ?: 0), side, edge)
+        }
+        card.updateLayoutParams<FrameLayout.LayoutParams> {
+            gravity = if (direction > 0) Gravity.BOTTOM else Gravity.TOP
+        }
+        val width = content.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        card.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        epubTransitionHeight = card.measuredHeight.toFloat()
+        epubTransitionDirection = direction
+        epubTransitionPinned = 0
+        setEpubTransitionReveal(0f)
+    }
+
+    /** Slides the card in from its edge by [pull] pixels and pushes the chapter away by as much. */
+    private fun setEpubTransitionReveal(pull: Float) {
+        val card = epubTransitionCard ?: return
+        val content = epubContentView ?: return
+        val direction = epubTransitionDirection
+        if (direction == 0 || !epubTransitionsEnabled()) return
+        val reveal = pull.coerceIn(0f, epubTransitionHeight)
+        epubTransitionReveal = reveal
+        card.isVisible = reveal > 0f
+        card.translationY = direction * (epubTransitionHeight - reveal)
+        content.translationY = -direction * reveal
+    }
+
+    private fun animateEpubTransitionReveal(target: Float, onEnd: () -> Unit = {}) {
+        epubTransitionAnimator?.cancel()
+        epubTransitionAnimator = ValueAnimator.ofFloat(epubTransitionReveal, target).apply {
+            duration = EPUB_TRANSITION_ANIMATION_MS
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { setEpubTransitionReveal(it.animatedValue as Float) }
+            addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+
+                override fun onAnimationCancel(animation: Animator) {
+                    cancelled = true
+                }
+
+                override fun onAnimationEnd(animation: Animator) {
+                    if (!cancelled) onEnd()
+                }
+            })
+            start()
+        }
+    }
+
+    private fun pinEpubTransition(direction: Int) {
+        if (epubTransitionDirection != direction) bindEpubTransition(direction)
+        if (epubTransitionDirection != direction) return
+        epubTransitionPinned = direction
+        animateEpubTransitionReveal(epubTransitionHeight)
+    }
+
+    private fun hideEpubTransition() {
+        epubTransitionPinned = 0
+        animateEpubTransitionReveal(0f) { epubTransitionDirection = 0 }
+    }
+
+    /** Drops the card at once; chapter changes and remounts start without it. */
+    private fun resetEpubTransition() {
+        epubTransitionAnimator?.cancel()
+        epubTransitionAnimator = null
+        epubTransitionPinned = 0
+        epubTransitionDirection = 0
+        epubTransitionReveal = 0f
+        epubPullActive = false
+        epubTransitionCard?.isVisible = false
+        epubContentView?.translationY = 0f
+    }
+
+    /** The card names chapters as the TOC does; untitled spine items keep the count. */
+    private fun epubChapterTitleAt(index: Int): String =
+        epubSession?.chapterTitle(index)
+            ?: epubChapterTitle.takeIf { index == epubChapterIndex }
+            ?: epubChapterLabel(index)
+
+    /** The next chapter opens at its start; the previous one opens at its end, where reading left it. */
+    private fun continueEpubChapter(forward: Boolean) {
+        val localBook = book ?: return
+        val lastChapter = (epubChapterCount - 1).coerceAtLeast(0)
+        val target = epubChapterIndex + if (forward) 1 else -1
+        if (target !in 0..lastChapter) return
+        if (forward) {
+            navigateReader(1)
+            return
+        }
+        navigateEpubTo(
+            ReaderLocator.Epub(
+                entityId = localBook.document().entityId,
+                cfi = "aethon-spine:$target",
+                // The session maps this to the end of [target] within the spine.
+                progression = ((target + 1).toDouble() / lastChapter.coerceAtLeast(1)).coerceIn(0.0, 1.0),
+            ),
+        )
+    }
+
+    /** The chapter WebView Readium shows under a screen point; off-screen pager pages are skipped. */
+    private fun epubWebViewAt(rawX: Int, rawY: Int): WebView? {
+        val root = epubNavigator?.view ?: return null
+        val bounds = android.graphics.Rect()
+        fun find(view: View): WebView? {
+            if (!view.isShown) return null
+            if (view is WebView) {
+                return view.takeIf { it.getGlobalVisibleRect(bounds) && bounds.contains(rawX, rawY) }
+            }
+            if (view is ViewGroup) {
+                for (index in 0 until view.childCount) find(view.getChildAt(index))?.let { return it }
+            }
+            return null
+        }
+        return find(root)
     }
     private val pdfOcrEngine = PdfOcrEngine()
 
@@ -385,17 +775,56 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     val inSheet = chrome.chaptersSheet.root.isVisible &&
                         event.y >= chrome.chaptersSheet.root.top
                     bookGestureStartedOnContent = !inToolbar && !inHud && !inSheet
-                    if (bookGestureStartedOnContent) bookChromeGestureDetector.onTouchEvent(event)
+                    if (bookGestureStartedOnContent) {
+                        bookChromeGestureDetector.onTouchEvent(event)
+                        startEpubChapterPull(event)
+                    } else {
+                        epubDragWebView = null
+                    }
                 }
-                MotionEvent.ACTION_MOVE,
+                MotionEvent.ACTION_MOVE -> if (bookGestureStartedOnContent) {
+                    val pulling = epubPullActive
+                    if (moveEpubChapterPull(event)) {
+                        if (!pulling) {
+                            // The chapter pull takes over: the WebView and the tap detector stop here.
+                            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                            bookChromeGestureDetector.onTouchEvent(cancel)
+                            super.dispatchTouchEvent(cancel)
+                            cancel.recycle()
+                        }
+                        return true
+                    }
+                    val swiping = epubSwipeClaimed
+                    if (claimEpubChapterSwipe(event)) {
+                        // The detector keeps tracking for its fling; the pager stops here.
+                        if (!swiping) {
+                            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                            super.dispatchTouchEvent(cancel)
+                            cancel.recycle()
+                        }
+                        bookChromeGestureDetector.onTouchEvent(event)
+                        return true
+                    }
+                    bookChromeGestureDetector.onTouchEvent(event)
+                }
                 MotionEvent.ACTION_UP,
-                MotionEvent.ACTION_CANCEL
-                -> if (bookGestureStartedOnContent) bookChromeGestureDetector.onTouchEvent(event)
+                MotionEvent.ACTION_CANCEL,
+                -> if (bookGestureStartedOnContent && !epubPullActive) {
+                    bookChromeGestureDetector.onTouchEvent(event)
+                }
             }
             if (event.actionMasked == MotionEvent.ACTION_UP ||
                 event.actionMasked == MotionEvent.ACTION_CANCEL
             ) {
+                val pulled = epubPullActive || epubSwipeClaimed
+                if (bookGestureStartedOnContent) {
+                    finishEpubChapterPull(event, cancelled = event.actionMasked == MotionEvent.ACTION_CANCEL)
+                }
                 bookGestureStartedOnContent = false
+                epubDragWebView = null
+                epubPullActive = false
+                epubSwipeClaimed = false
+                if (pulled) return true
             }
         }
         return super.dispatchTouchEvent(event)
@@ -502,9 +931,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     ) {
         val renderer = reader.session as? PdfPageBitmapRenderer ?: return
         val generation = ++pdfSpreadGeneration
+        val cropBorders = marginsCropped
         lifecycleScope.launch {
             val bitmap = withContext(Dispatchers.IO) {
                 renderer.renderPageBitmap(page.coerceAtLeast(0), maxDimension = 2_800)
+                    ?.let { if (cropBorders) PdfBorderCrop.crop(it) else it }
             }
             if (generation != pdfSpreadGeneration || isFinishing || isDestroyed || pdfView !== view) {
                 bitmap?.recycle()
@@ -618,14 +1049,13 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             if (secondPage != safeFirst) showPdfTextSelectionDialog(onlyPage = secondPage)
             true
         }
+        val cropBorders = marginsCropped
         pdfSpreadRenderJob = lifecycleScope.launch {
             val bitmaps = withContext(Dispatchers.IO) {
-                val first = renderer.renderPageBitmap(safeFirst, maxDimension = 2_000)
-                val second = if (secondPage != safeFirst) {
-                    renderer.renderPageBitmap(secondPage, maxDimension = 2_000)
-                } else {
-                    null
-                }
+                suspend fun render(page: Int) = renderer.renderPageBitmap(page, maxDimension = 2_000)
+                    ?.let { if (cropBorders) PdfBorderCrop.crop(it) else it }
+                val first = render(safeFirst)
+                val second = if (secondPage != safeFirst) render(secondPage) else null
                 first to second
             }
             if (generation != pdfSpreadGeneration || isFinishing || isDestroyed) {
@@ -786,6 +1216,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         textView.setBackgroundColor(colors.background)
         (textView.parent as? View)?.setBackgroundColor(colors.background)
         val width = resources.displayMetrics.widthPixels
+        if (marginsCropped) {
+            // The crop toggle zeroes the margins, as in the novel reader.
+            textView.setPadding(0, 0, 0, 0)
+            return
+        }
         val side = epubPageMarginsForContentWidth(epubContentWidth)
             ?.let { factor -> (width * factor / 12).toInt() }
             ?: 0
@@ -795,6 +1230,16 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     /** Text settings apply in reflow and EPUB; the original PDF page keeps its own colors. */
     private fun usesTextTheme(localBook: LocalBook? = book): Boolean =
         localBook?.contentType == ContentType.EPUB || (localBook?.contentType == ContentType.PDF && pdfReflow)
+
+    /**
+     * The reader theme behind the HUD and sheets. PDF has no page-theme selector, so its chrome
+     * follows the app like the novel reader's default theme; inverted pages take the OLED surface.
+     */
+    private fun bookChromeTheme(localBook: LocalBook? = book): String = when {
+        usesTextTheme(localBook) -> bookReaderPreferences.epubTheme.get()
+        bookReaderPreferences.invertedColors.get() -> "oled"
+        else -> "system"
+    }
 
     private fun highlightPdfText(text: String, page: Int): CharSequence {
         val result = SpannableString(text)
@@ -948,7 +1393,21 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         // The Activity installs the dummy factory in onCreate; here we replace it with the
         // publication-bound factory and mount the only EPUB renderer.
         val navigatorContainer = FrameLayout(this).apply { id = android.view.View.generateViewId() }
-        setReaderContent(localBook, navigatorContainer)
+        val transitionCard = BookChapterTransitionView(this).apply { isVisible = false }
+        val epubContent = FrameLayout(this).apply {
+            addView(
+                navigatorContainer,
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+            )
+            addView(
+                transitionCard,
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            )
+        }
+        epubContentView = navigatorContainer
+        epubTransitionCard = transitionCard
+        resetEpubTransition()
+        setReaderContent(localBook, epubContent)
         // A process-death restore may have materialized a dummy navigator before the publication
         // was reopened. Remove that placeholder before mounting the publication-bound fragment.
         supportFragmentManager.findFragmentByTag(EPUB_NAVIGATOR_TAG)?.let { restored ->
@@ -970,12 +1429,16 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     val current = session.toReaderLocator(locator)
                     epubLocator = current
                     latestReaderLocator = current
-                    epubChapterIndex = session.chapterIndexFor(current)
+                    val chapterIndex = session.chapterIndexFor(current)
+                    // TTS and links can change chapter under a card naming the old one.
+                    if (chapterIndex != epubChapterIndex) resetEpubTransition()
+                    epubChapterIndex = chapterIndex
+                    epubChapterTitle = locator.title?.trim()?.takeIf { it.isNotEmpty() }
                     val global = current.progression.coerceIn(0.0, 1.0)
                     updateReaderProgress(
                         value = (global * READER_PROGRESS_MAX).toInt(),
                         max = READER_PROGRESS_MAX,
-                        label = epubChapterLabel(),
+                        label = epubChapterSubtitle(),
                     )
                     lifecycleScope.launch(Dispatchers.IO) {
                         persistProgress(localBook, current)
@@ -1004,7 +1467,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         updateReaderProgress(
             value = (initialProgress * READER_PROGRESS_MAX).toInt(),
             max = READER_PROGRESS_MAX,
-            label = epubChapterLabel(),
+            label = epubChapterSubtitle(),
         )
     }
 
@@ -1089,11 +1552,13 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         configureBookBottomSheet(chrome)
         ViewCompat.setOnApplyWindowInsetsListener(chrome.root) { _, insets ->
             val system = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // The bar reaches under the status bar so a white PDF page never shows behind its icons.
             chrome.appBar.updateLayoutParams<ViewGroup.MarginLayoutParams> {
-                topMargin = system.top
+                topMargin = 0
                 leftMargin = system.left
                 rightMargin = system.right
             }
+            chrome.appBar.updatePaddingRelative(top = system.top)
             applyBookReaderNavLayout(chrome, system)
             chrome.chaptersSheet.root.updateLayoutParams<ViewGroup.MarginLayoutParams> {
                 leftMargin = system.left
@@ -1130,6 +1595,9 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         chrome.navLayout.isVisible = true
         chrome.readerNav.leftChapter.setOnClickListener { navigateReader(-1) }
         chrome.readerNav.rightChapter.setOnClickListener { navigateReader(1) }
+        // Like the novel rail, the ends carry only the chapter buttons; the pill shows the position.
+        chrome.readerNav.leftPageText.isVisible = false
+        chrome.readerNav.rightPageText.isVisible = false
         chrome.readerNav.pageSeekbar.apply {
             valueFrom = 0f
             valueTo = if (readerProgressIsPdf) {
@@ -1301,17 +1769,59 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             compatToolTipText = getString(MR.strings.book_reader_annotations)
             setOnClickListener { showAnnotationOptionsMenu() }
         }
-        sheet.rotationSheetButton.isVisible = false
-        sheet.cropBordersSheetButton.isVisible = false
+        sheet.rotationSheetButton.apply {
+            // The same orientation shortcut as the novel reader, bound to the books preference.
+            compatToolTipText = getString(MR.strings.rotation)
+            setImageResource(bookOrientationType(bookReaderPreferences.orientation.get()).iconRes)
+            setOnClickListener {
+                popupMenu(
+                    items = BOOK_ORIENTATION_TYPES.map { it.flagValue to it.stringRes },
+                    selectedItemId = bookOrientationType(bookReaderPreferences.orientation.get()).flagValue,
+                ) {
+                    val selected = OrientationType.fromPreference(itemId)
+                    bookReaderPreferences.orientation.set(selected.flag)
+                    setImageResource(selected.iconRes)
+                    applyBookReaderSettings(reloadContent = false)
+                }
+            }
+        }
+        sheet.cropBordersSheetButton.setOnClickListener {
+            bookReaderPreferences.marginsCropped.toggle()
+            applyBookReaderSettings()
+        }
         sheet.doublePage.isVisible = false
         sheet.shiftPageButton.isVisible = false
         sheet.displayOptions.apply {
             isVisible = true
-            setImageResource(R.drawable.ic_outline_settings_24dp)
             contentDescription = getString(MR.strings.reader_settings)
             compatToolTipText = getString(MR.strings.reader_settings)
             setOnClickListener { showReaderSettings() }
         }
+        // A freshly inflated chrome starts without the crop icon.
+        lastCropRes = 0
+        updateBookBottomShortcuts(chrome)
+    }
+
+    /**
+     * Mirrors the novel HUD: rotation follows the shared bottom-button preference, and the crop
+     * toggle drops text margins (EPUB, reflowed PDF) or trims blank page borders (PDF pages).
+     */
+    private fun updateBookBottomShortcuts(chrome: ReaderActivityBinding? = readerBinding) {
+        val sheet = chrome?.chaptersSheet ?: return
+        sheet.rotationSheetButton.isVisible =
+            ReaderBottomButton.Rotation.isIn(commonReaderPreferences.readerBottomButtons().get())
+        sheet.cropBordersSheetButton.isVisible = true
+        val cropped = bookReaderPreferences.marginsCropped.get()
+        val drawableRes = if (cropped) R.drawable.anim_free_to_crop else R.drawable.anim_crop_to_free
+        if (lastCropRes != drawableRes) {
+            val drawable = AnimatedVectorDrawableCompat.create(this, drawableRes)
+            sheet.cropBordersSheetButton.setImageDrawable(drawable)
+            drawable?.start()
+            lastCropRes = drawableRes
+        }
+        sheet.cropBordersSheetButton.compatToolTipText =
+            getString(if (cropped) MR.strings.remove_crop else MR.strings.crop_borders)
+        sheet.cropBordersSheetButton.contentDescription = sheet.cropBordersSheetButton.compatToolTipText
     }
 
     private fun showTtsOptionsMenu() {
@@ -2383,10 +2893,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             height = 20.dpToPx
         }
         root.backgroundTintList = ColorStateList.valueOf(
-            ReaderThemeColors.book(
-                this,
-                if (usesTextTheme(localBook)) bookReaderPreferences.epubTheme.get() else "light",
-            ).surface,
+            ReaderThemeColors.book(this, bookChromeTheme(localBook)).surface,
         )
         chrome.chaptersSheet.apply {
             chaptersButton.isVisible = false
@@ -2457,10 +2964,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
 
         root?.removeView(panel)
         root?.backgroundTintList = ColorStateList.valueOf(
-            ReaderThemeColors.book(
-                this,
-                if (usesTextTheme()) bookReaderPreferences.epubTheme.get() else "light",
-            ).surface,
+            ReaderThemeColors.book(this, bookChromeTheme()).surface,
         )
         chrome?.chaptersSheet?.root?.binding?.chapterRecycler?.apply {
             isVisible = true
@@ -2472,12 +2976,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             chaptersButton.isVisible = true
             webviewButton.isVisible = true
             readingMode.isVisible = true
-            rotationSheetButton.isVisible = false
-            cropBordersSheetButton.isVisible = false
             doublePage.isVisible = false
             shiftPageButton.isVisible = false
             displayOptions.isVisible = true
         }
+        updateBookBottomShortcuts(chrome)
         chrome?.chaptersSheet?.topbarLayout?.updateLayoutParams<ViewGroup.LayoutParams> {
             height = readerSettingsTopbarHeight?.takeIf { it > 0 } ?: 56.dpToPx
         }
@@ -2571,6 +3074,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         epubTheme = bookReaderPreferences.epubTheme.get()
         epubFlow = bookReaderPreferences.epubFlow.get()
         epubContentWidth = bookReaderPreferences.epubContentWidth.get()
+        marginsCropped = bookReaderPreferences.marginsCropped.get()
         // Night mode is now the shared Books inverted-color filter, applied above the engine.
         pdfNightMode = false
         pdfFitMode = bookReaderPreferences.pdfFitMode.get()
@@ -2580,18 +3084,12 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         pdfReflow = bookReaderPreferences.pdfReflow.get()
     }
 
+    /** Page images re-render when the crop toggles; reflowed text only changes its padding. */
+    private fun pdfPageCrop(): Boolean = marginsCropped && !pdfReflow
+
     private fun applyBookChromeTheme(localBook: LocalBook? = book) {
         val currentBook = localBook ?: return
-        val theme = if (usesTextTheme(currentBook)) {
-            bookReaderPreferences.epubTheme.get()
-        } else if (bookReaderPreferences.invertedColors.get()) {
-            // PDF has no separate page-theme selector; inverted content is the OLED-equivalent
-            // reader surface and should tint its chrome consistently.
-            "oled"
-        } else {
-            "light"
-        }
-        val colors = ReaderThemeColors.book(this, theme)
+        val colors = ReaderThemeColors.book(this, bookChromeTheme(currentBook))
         readerBinding?.applyReaderTheme(colors)
         // The cutout strip left by hidden system bars shows the window, so it takes the page color.
         window.decorView.setBackgroundColor(colors.background)
@@ -2604,11 +3102,16 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     }
 
     internal fun applyBookReaderSettings(reloadContent: Boolean = true) {
-        val oldPdfState = listOf(pdfFitMode, pdfHorizontal, pdfTwoPage, pdfReflow, pdfNightMode)
+        val oldPdfState = listOf(pdfFitMode, pdfHorizontal, pdfTwoPage, pdfReflow, pdfNightMode, pdfPageCrop())
         readTypedBookReaderPreferences()
+        // A pinned transition card carries the old theme and may no longer be wanted.
+        resetEpubTransition()
         val chrome = readerBinding ?: return
 
         requestedOrientation = bookReaderPreferences.orientation.get()
+        chrome.chaptersSheet.rotationSheetButton.setImageResource(
+            bookOrientationType(bookReaderPreferences.orientation.get()).iconRes,
+        )
         WindowCompat.setDecorFitsSystemWindows(window, !bookReaderPreferences.fullscreen.get())
         if (bookReaderPreferences.keepScreenOn.get()) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -2618,6 +3121,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         chrome.pageNumber.isVisible = bookReaderPreferences.showPageNumber.get()
         applyBookChromeTheme()
         applyBookFilters(chrome)
+        if (readerSettingsPanel == null) updateBookBottomShortcuts(chrome)
         val currentInsets = ViewCompat.getRootWindowInsets(chrome.root)
             ?.getInsets(WindowInsetsCompat.Type.systemBars())
             ?: androidx.core.graphics.Insets.NONE
@@ -2625,7 +3129,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
 
         if (!reloadContent) return
         if (book?.contentType == ContentType.PDF) {
-            val newPdfState = listOf(pdfFitMode, pdfHorizontal, pdfTwoPage, pdfReflow, pdfNightMode)
+            val newPdfState = listOf(pdfFitMode, pdfHorizontal, pdfTwoPage, pdfReflow, pdfNightMode, pdfPageCrop())
             if (newPdfState != oldPdfState) {
                 reloadPdf()
             } else {
@@ -2703,20 +3207,25 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         val session = epubSession ?: return
         val navigator = epubNavigator ?: return
         val readiumLocator = session.toReadiumLocator(locator)
+        resetEpubTransition()
         epubLocator = locator
         session.updateFromNavigator(readiumLocator)
         epubChapterIndex = session.chapterIndexFor(locator)
+        epubChapterTitle = readiumLocator.title?.trim()?.takeIf { it.isNotEmpty() }
         navigator.go(readiumLocator, bookReaderPreferences.epubAnimateTransitions.get())
         updateReaderProgress(
             value = (locator.progression * READER_PROGRESS_MAX).toInt(),
             max = READER_PROGRESS_MAX,
-            label = epubChapterLabel(),
+            label = epubChapterSubtitle(),
         )
     }
 
     /** Estimate for a slider position; the navigator's own locator resolves [epubChapterIndex] exactly. */
     private fun epubChapterIndexForProgress(progress: Double): Int =
         BookChapterMetrics.epubChapterIndex(progress, epubChapterCount.coerceAtLeast(1))
+
+    /** The toolbar names the chapter, as the novel reader does; untitled spine items keep the count. */
+    private fun epubChapterSubtitle(): String = epubChapterTitle ?: epubChapterLabel()
 
     private fun epubChapterLabel(index: Int = epubChapterIndex): String =
         getString(MR.strings.local_book_chapter_progress, index.coerceIn(0, (epubChapterCount - 1).coerceAtLeast(0)) + 1, epubChapterCount.coerceAtLeast(1))
@@ -2749,7 +3258,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         runCatching { editor.fontSize.set(epubFontScale.toDouble().coerceIn(0.5, 3.0)) }
         runCatching { editor.lineHeight.set(epubLineHeight.toDouble().coerceIn(1.0, 3.0)) }
         runCatching { editor.paragraphSpacing.set(epubParagraphSpacing.toDouble().coerceIn(0.0, 3.0)) }
-        epubPageMarginsForContentWidth(epubContentWidth)?.let { margins ->
+        (if (marginsCropped) 0.0 else epubPageMarginsForContentWidth(epubContentWidth))?.let { margins ->
             runCatching { editor.pageMargins.set(margins) }
         }
         runCatching { editor.fontFamily.set(FontFamily(epubFontFamily)) }
@@ -2930,6 +3439,12 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         private const val KEY_PDF_REFLOW = "pdf_reflow"
         private const val PDF_REFLOW_PARAGRAPH_BREAK = "\n\n"
         private const val BOOK_PAGE_FLING_VELOCITY = 600f
+        private const val EPUB_CHAPTER_PULL_DISTANCE_DP = 96
+        private const val EPUB_TAP_SCROLL_FRACTION = 0.8f
+        private const val EPUB_TRANSITION_SIDE_PADDING_DP = 24
+        private const val EPUB_TRANSITION_EDGE_PADDING_DP = 40
+        private const val EPUB_TRANSITION_ANIMATION_MS = 220L
+        private const val LONG_PRESS_SELECTION_SETTLE_MS = 250L
         private const val PDF_REFLOW_BASE_TEXT_SP = 18f
 
         /** TextView's default line box is about 1.2× the font size; settings are absolute. */

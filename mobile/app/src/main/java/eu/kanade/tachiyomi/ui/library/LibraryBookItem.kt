@@ -43,7 +43,25 @@ class LibraryBookItem(
     val book: LocalBook,
     header: LibraryHeaderItem,
     context: android.content.Context?,
+    /** Chapters left to read at the saved position, see BookChapterMetrics.unreadChapterCount. */
+    val unread: Int = 0,
 ) : LibraryItem(header, context) {
+
+    /** The manga unread badge rules, see LibraryHolder.setUnreadBadge. */
+    internal fun setUnreadBadge(badge: LibraryBadge) {
+        val showTotal = sectionHeader.category.sortingMode() == LibrarySort.TotalChapters
+        val unreadType = preferences.unreadBadgeType().get()
+        badge.setUnreadLabel(
+            when {
+                showTotal -> book.chapterCount ?: book.pageCount ?: 0
+                unreadType == 2 -> unread
+                unreadType == 1 -> if (unread > 0) -1 else -2
+                else -> -2
+            },
+            showTotal,
+            book.contentType.name,
+        )
+    }
 
     override fun getLayoutRes(): Int = if (libraryLayout == LAYOUT_LIST) {
         R.layout.book_library_list_item
@@ -226,7 +244,7 @@ private class LibraryBookGridHolder(
         titleLayoutTask = layoutTask
         binding.title.post(layoutTask)
         loadCover(binding.coverThumbnail, book)
-        binding.unreadDownloadBadge.badgeView.setLabel(book.contentType.name)
+        item.setUnreadBadge(binding.unreadDownloadBadge.badgeView)
         binding.playLayout.isVisible = !item.hideReadingButton
         setSelected(adapter.isSelected(flexibleAdapterPosition))
     }
@@ -299,7 +317,7 @@ private class LibraryBookListHolder(
             itemView.context.getResourceColor(android.R.attr.colorBackground),
         )
         loadCover(binding.coverThumbnail, book)
-        binding.unreadDownloadBadge.badgeView.setLabel(book.contentType.name)
+        item.setUnreadBadge(binding.unreadDownloadBadge.badgeView)
     }
 
     override fun recycle() {

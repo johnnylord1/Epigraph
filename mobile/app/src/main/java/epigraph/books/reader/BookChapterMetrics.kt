@@ -82,6 +82,39 @@ internal object BookChapterMetrics {
         }.getOrNull()
     }
 
+    /**
+     * Chapters still to read at a saved position, for the Library unread badge. The current
+     * chapter counts as unread, as in the details list: every chapter at the start and none
+     * once the position reaches the end.
+     */
+    fun unreadChapterCount(book: LocalBook, progress: ReaderLocator?): Int {
+        val chapterCount = effectiveChapterCount(book.contentType, book.chapterCount, inspected = null)
+        val current = when (progress) {
+            is ReaderLocator.Epub -> when {
+                progress.progression >= 1.0 -> return 0
+                (progress.progression * 100).roundToInt() == 0 -> return chapterCount
+                else -> epubChapterIndex(progress, chapterCount)
+            }
+
+            is ReaderLocator.Pdf -> {
+                val totalPages = (book.pageCount ?: progress.totalPages ?: 1).coerceAtLeast(1)
+                when {
+                    (progress.documentProgression ?: 0.0) >= 1.0 -> return 0
+                    progress.pageIndex == 0 -> return chapterCount
+                    else -> chapterIndexForPage(
+                        progress.pageIndex,
+                        totalPages,
+                        chapterCount,
+                        book.pdfSections.map { it.pageIndex },
+                    )
+                }
+            }
+
+            else -> return chapterCount
+        }
+        return (chapterCount - current).coerceIn(0, chapterCount)
+    }
+
     /** A synchronized PDF TOC is richer than PdfRenderer's one-document fallback. */
     fun effectiveChapterCount(
         contentType: ContentType,

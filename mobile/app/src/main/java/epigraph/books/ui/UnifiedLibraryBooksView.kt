@@ -2,6 +2,7 @@ package epigraph.books.ui
 
 import android.content.Context
 import epigraph.books.local.LocalBookRepository
+import epigraph.books.reader.BookChapterMetrics
 import epigraph.contract.ReaderLocator
 import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.database.models.LibraryManga
@@ -108,6 +109,7 @@ class UnifiedLibraryBooksView(
     private var query = ""
     private var booksFilterStates: Map<Char, Int> = emptyMap()
     private var bookProgress: Map<String, Double> = emptyMap()
+    private var bookLocators: Map<String, ReaderLocator?> = emptyMap()
     private var bookmarkedBooks: Set<String> = emptySet()
     private var novelDownloadCounts: Map<Long, Int> = emptyMap()
 
@@ -212,6 +214,7 @@ class UnifiedLibraryBooksView(
                     snapshot.book.bookId to snapshot.categoryIds.map { it.toInt() }
                 }
                 bookProgress = snapshots.associate { it.book.bookId to it.progress.progressionOrZero() }
+                bookLocators = snapshots.associate { it.book.bookId to it.progress }
                 bookmarkedBooks = snapshots
                     .filter { it.bookmarks.isNotEmpty() }
                     .map { it.book.bookId }
@@ -425,7 +428,12 @@ class UnifiedLibraryBooksView(
                 }.forEach { book ->
                     val categoryIds = if (grouped) bookCategoryIds[book.bookId].orEmpty().ifEmpty { listOf(0) } else listOf(0)
                     categoryIds.map(::headerFor).distinct().forEach { header ->
-                        val item = LibraryBookItem(book, header, context)
+                        val item = LibraryBookItem(
+                            book,
+                            header,
+                            context,
+                            BookChapterMetrics.unreadChapterCount(book, bookLocators[book.bookId]),
+                        )
                         if (matchesFilters(item, trackerFilterId)) add(item)
                     }
                 }

@@ -173,6 +173,21 @@ class ReadiumEpubReaderSession(
             .coerceIn(0, last)
     }
 
+    override fun chapterTitle(index: Int): String? {
+        val link = readingOrder.getOrNull(index) ?: return null
+        link.title?.trim()?.takeIf(String::isNotEmpty)?.let { return it }
+        fun find(entries: List<Link>): String? {
+            for (entry in entries) {
+                if (chapterIndexForHref(entry.href.toString()) == index) {
+                    entry.title?.trim()?.takeIf(String::isNotEmpty)?.let { return it }
+                }
+                find(entry.children)?.let { return it }
+            }
+            return null
+        }
+        return find(publication.tableOfContents)
+    }
+
     override suspend fun tableOfContents(): List<ReaderTocEntry<ReaderLocator.Epub>> {
         ensureOpen()
         fun convert(link: Link): ReaderTocEntry<ReaderLocator.Epub> =
@@ -290,4 +305,7 @@ interface EpubNavigatorSession {
     fun toReadiumLocator(locator: ReaderLocator.Epub): Locator
     fun chapterIndexFor(locator: ReaderLocator.Epub): Int
     fun updateFromNavigator(locator: Locator)
+
+    /** The spine item's title, or the first table-of-contents entry pointing into it. */
+    fun chapterTitle(index: Int): String?
 }

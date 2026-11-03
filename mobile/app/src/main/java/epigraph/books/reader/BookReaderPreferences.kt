@@ -2,6 +2,7 @@ package epigraph.books.reader
 
 import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.core.preference.PreferenceStore
+import eu.kanade.tachiyomi.ui.reader.settings.OrientationType
 
 class BookReaderPreferences(private val store: PreferenceStore) {
     val fullscreen = store.getBoolean("aethon_book_reader_fullscreen", true)
@@ -20,6 +21,19 @@ class BookReaderPreferences(private val store: PreferenceStore) {
     val epubFlow = store.getString("aethon_epub_flow", "scroll")
     val epubAnimateTransitions = store.getBoolean("aethon_epub_animate_transitions", true)
     val epubContentWidth = store.getInt("aethon_epub_content_width", 0)
+    /** The HUD "Crop borders" toggle: drops the text margins without touching the saved width. */
+    val marginsCropped = store.getBoolean("epigraph_book_margins_cropped", false)
+    /** Scroll flow: a horizontal swipe changes chapter, as "Swipe to change chapters" does for novels. */
+    val swipeChapterNavigation = store.getBoolean("epigraph_book_swipe_chapter_navigation", false)
+    /** [epigraph.novel.reader.NovelTapAction] ordinals, with the novel reader's defaults. */
+    val doubleTapAction = store.getInt(
+        "epigraph_book_double_tap_action",
+        epigraph.novel.reader.NovelTapAction.TOGGLE_MENU.ordinal,
+    )
+    val longTapAction = store.getInt(
+        "epigraph_book_long_tap_action",
+        epigraph.novel.reader.NovelTapAction.NONE.ordinal,
+    )
 
     val pdfFitMode = store.getString("aethon_pdf_fit_mode", "both")
     val pdfHorizontal = store.getBoolean("aethon_pdf_horizontal", false)
@@ -58,6 +72,10 @@ class BookReaderPreferences(private val store: PreferenceStore) {
         epubFlow.set("scroll")
         epubAnimateTransitions.set(true)
         epubContentWidth.set(0)
+        marginsCropped.set(false)
+        swipeChapterNavigation.set(false)
+        doubleTapAction.set(epigraph.novel.reader.NovelTapAction.TOGGLE_MENU.ordinal)
+        longTapAction.set(epigraph.novel.reader.NovelTapAction.NONE.ordinal)
 
         pdfFitMode.set("both")
         pdfHorizontal.set(false)
@@ -134,3 +152,12 @@ interface LegacyBookReaderPreferences {
     fun string(key: String): String?
     fun boolean(key: String): Boolean?
 }
+
+/**
+ * The orientations the novel reader offers. Books store the [OrientationType.flag] itself, so the
+ * per-series DEFAULT is left out and FREE stands for the unspecified flag.
+ */
+val BOOK_ORIENTATION_TYPES: List<OrientationType> = OrientationType.entries - OrientationType.DEFAULT
+
+fun bookOrientationType(flag: Int): OrientationType =
+    BOOK_ORIENTATION_TYPES.firstOrNull { it.flag == flag } ?: OrientationType.FREE
