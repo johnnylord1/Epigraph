@@ -424,14 +424,17 @@ export function listenSyncdReplicationState(
   return listen<SyncdReplicationSnapshot>("syncd-replication-state", ({ payload }) => handler(payload));
 }
 
-/** Also fires when this window brought the other computer's comics in. */
+/**
+ * Also fires when this window brought the other computer's comics in, and when it reloaded the
+ * library after synced changes (`libraryReloaded`: the works and categories were just read).
+ */
 export async function listenSyncdComicLibraryChanged(
-  handler: (payload: { localProfileId: string }) => void,
+  handler: (payload: { localProfileId: string; libraryReloaded?: boolean }) => void,
 ): Promise<UnlistenFn> {
   const unlisten = await listen<{ localProfileId: string }>("syncd-comic-library-changed", ({ payload }) => handler(payload));
   const onReconciled = (event: Event) => {
-    const detail = (event as CustomEvent<{ localProfileId?: string }>).detail;
-    if (detail?.localProfileId) handler({ localProfileId: detail.localProfileId });
+    const detail = (event as CustomEvent<{ localProfileId?: string; libraryReloaded?: boolean }>).detail;
+    if (detail?.localProfileId) handler({ localProfileId: detail.localProfileId, libraryReloaded: detail.libraryReloaded });
   };
   window.addEventListener("epigraph-comic-library-reconciled", onReconciled);
   return () => {

@@ -39,10 +39,73 @@ describe("createSyncLandingDetector", () => {
     expect(landed(progress(260, 640))).toBe(true);
     clock = 30_000;
     expect(landed(progress(300, 600))).toBe(false);
-    // Stalled on retries: what landed so far is shown without waiting for the interval.
+    // Stalled on retries: what landed so far still waits for the interval, then is shown once.
     clock = 35_000;
+    expect(landed(progress(300, 600))).toBe(false);
+    clock = 45_000;
     expect(landed(progress(300, 600))).toBe(true);
     expect(landed(progress(300, 600))).toBe(false);
+  });
+
+  it("limits changes that keep landing with nothing queued, and shows the last ones", () => {
+    let clock = 0;
+    const landed = createSyncLandingDetector(() => clock, 20_000);
+    landed(progress(0));
+    const landings: number[] = [];
+    for (let tick = 1; tick <= 12; tick += 1) {
+      clock = tick * 5_000;
+      if (landed(progress(tick * 3))) landings.push(clock);
+    }
+    expect(landings).toEqual([5_000, 25_000, 45_000]);
+    clock = 65_000;
+    expect(landed(progress(36))).toBe(true);
+    clock = 90_000;
+    expect(landed(progress(36))).toBe(false);
+  });
+
+  it("shows an isolated change at once after a quiet interval", () => {
+    let clock = 0;
+    const landed = createSyncLandingDetector(() => clock, 20_000);
+    landed(progress(0));
+    clock = 5_000;
+    expect(landed(progress(1))).toBe(true);
+    clock = 300_000;
+    expect(landed(progress(2))).toBe(true);
+  });
+
+  it("waits longer while only reading progress is pending, then lands the end of the sync", () => {
+    let clock = 0;
+    const landed = createSyncLandingDetector(() => clock, 20_000, 60_000);
+    const progressOnly = (applied: number, pending: number) => ({ ...progress(applied, pending), pendingCatalogProjections: 0 });
+    landed(progressOnly(0, 40_000));
+    clock = 5_000;
+    expect(landed(progressOnly(100, 39_900))).toBe(true);
+    clock = 30_000;
+    expect(landed(progressOnly(600, 39_400))).toBe(false);
+    clock = 65_000;
+    expect(landed(progressOnly(1_200, 38_800))).toBe(true);
+    // Library works still arriving, or an older Core that does not tell: the short interval.
+    clock = 85_000;
+    expect(landed({ ...progress(1_300, 38_700), pendingCatalogProjections: 4 })).toBe(true);
+    clock = 105_000;
+    expect(landed(progress(1_400, 38_600))).toBe(true);
+    // Nothing left: the last changes wait only the short interval.
+    clock = 110_000;
+    expect(landed(progressOnly(40_000, 0))).toBe(false);
+    clock = 125_000;
+    expect(landed(progressOnly(40_000, 0))).toBe(true);
+  });
+
+  it("waits as long as a slow reload asks", () => {
+    let clock = 0;
+    const landed = createSyncLandingDetector(() => clock, 20_000);
+    landed(progress(0));
+    clock = 5_000;
+    expect(landed(progress(1), 80_000)).toBe(true);
+    clock = 30_000;
+    expect(landed(progress(2), 80_000)).toBe(false);
+    clock = 85_000;
+    expect(landed(progress(3), 80_000)).toBe(true);
   });
 
   it("lands when the last work's details finish loading", () => {

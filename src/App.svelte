@@ -3076,7 +3076,8 @@
     cache.clear(CACHE_KEYS.CATEGORIES);
     await preloadLibrarySnapshot(true);
     const { COMIC_LIBRARY_RECONCILED_EVENT } = await import("./lib/comicSync/desktopComicBridge");
-    window.dispatchEvent(new CustomEvent(COMIC_LIBRARY_RECONCILED_EVENT, { detail: { localProfileId: profileId } }));
+    const libraryReloaded = store.libraryBootstrapStatus === "ready";
+    window.dispatchEvent(new CustomEvent(COMIC_LIBRARY_RECONCILED_EVENT, { detail: { localProfileId: profileId, libraryReloaded } }));
   }
 
   // Phones and other computers reach Suwayomi through Core's projection, outside this window, so

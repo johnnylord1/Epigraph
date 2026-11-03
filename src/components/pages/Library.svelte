@@ -2099,11 +2099,19 @@
     // Comics edited on another device reach Suwayomi through the syncd projection, which
     // runs every couple of seconds, so wait for it before refetching the library.
     let comicLibraryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const comicLibraryUnlisten = listenSyncdComicLibraryChanged(({ localProfileId }) => {
+    let comicLibraryNeedsRead = false;
+    const comicLibraryUnlisten = listenSyncdComicLibraryChanged(({ localProfileId, libraryReloaded }) => {
       if (localProfileId !== normalizeLocalProfileId(store.runtimeResolvedLocalProfileId)) return;
       if (comicLibraryRefreshTimer) clearTimeout(comicLibraryRefreshTimer);
+      comicLibraryNeedsRead ||= !libraryReloaded;
       comicLibraryRefreshTimer = setTimeout(() => {
         comicLibraryRefreshTimer = null;
+        // Reading the library is expensive: after a reload only the category members are left.
+        if (!comicLibraryNeedsRead) {
+          void hydrateCategoryMembers(true).catch(console.error);
+          return;
+        }
+        comicLibraryNeedsRead = false;
         cache.clearGroup(CACHE_GROUPS.LIBRARY);
         cache.clear(CACHE_KEYS.CATEGORIES);
         cache.clear(CATEGORY_MEMBERS_CACHE_KEY);
