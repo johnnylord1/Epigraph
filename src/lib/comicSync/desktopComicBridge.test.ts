@@ -6,7 +6,10 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("../../store/state.svelte", () => ({ store: {}, bumpContentSetupVersion: vi.fn() }));
 
-const { fillChapters, importBatches } = await import("./desktopComicBridge");
+const { COMIC_LIBRARY_RECONCILED_EVENT, fillChapters, importBatches, libraryMembershipChanges, showLocalComicChanges } = await import(
+  "./desktopComicBridge"
+);
+const { MAX_WORKS_PER_READ } = await import("./syncLandingWatch");
 
 function work(n: number, chapters = 0): MihonImportWork {
   return {
@@ -82,5 +85,83 @@ describe("fillChapters", () => {
 
     expect(await fillChapters(from, to, [{ key: comicKey("1", "/manga/a"), source: comic(7), target: comic(9) }], 0)).toBe(0);
     expect(to.fetchChapters).toHaveBeenCalledWith(9);
+  });
+});
+
+describe("libraryMembershipChanges", () => {
+  const library = (...ids: number[]) => new Map(ids.map((id) => [comicKey("1", `/manga/${id}`), { id } as never]));
+
+  test("names the works that joined and left", () => {
+    expect(libraryMembershipChanges(library(1, 2), library(2, 3))).toEqual([3, 1]);
+  });
+
+  test("is empty when the same works stay", () => {
+    expect(libraryMembershipChanges(library(1, 2), library(2, 1))).toEqual([]);
+  });
+});
+
+describe("showLocalComicChanges", () => {
+  function reader(overrides: Partial<{ readWorks: () => Promise<void>; readLibrary: () => Promise<void> }> = {}) {
+    return { readWorks: vi.fn(async () => {}), readLibrary: vi.fn(async () => {}), ...overrides };
+  }
+
+  async function announced(run: () => Promise<void>) {
+    const details: unknown[] = [];
+    const target = new EventTarget();
+    target.addEventListener(COMIC_LIBRARY_RECONCILED_EVENT, (event) => details.push((event as CustomEvent).detail));
+    vi.stubGlobal("window", target);
+    try {
+      await run();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    return details;
+  }
+
+  test("reads only the works that changed", async () => {
+    const lib = reader();
+    const details = await announced(() => showLocalComicChanges("p", { works: [1, 2], categories: false }, lib));
+    expect(lib.readWorks).toHaveBeenCalledWith([1, 2]);
+    expect(lib.readLibrary).not.toHaveBeenCalled();
+    expect(details).toEqual([]);
+  });
+
+  test("reads nothing when the library did not change", async () => {
+    const lib = reader();
+    const details = await announced(() => showLocalComicChanges("p", { works: [], categories: false }, lib));
+    expect(lib.readWorks).not.toHaveBeenCalled();
+    expect(lib.readLibrary).not.toHaveBeenCalled();
+    expect(details).toEqual([]);
+  });
+
+  test("reads the whole library when too many works changed", async () => {
+    const lib = reader();
+    const works = Array.from({ length: MAX_WORKS_PER_READ + 1 }, (_, id) => id);
+    await showLocalComicChanges("p", { works, categories: false }, lib);
+    expect(lib.readWorks).not.toHaveBeenCalled();
+    expect(lib.readLibrary).toHaveBeenCalledOnce();
+  });
+
+  test("reads the whole library when the works could not be read", async () => {
+    const lib = reader({ readWorks: vi.fn(async () => Promise.reject(new Error("offline"))) });
+    const details = await announced(() => showLocalComicChanges("p", { works: [1], categories: false }, lib));
+    expect(lib.readLibrary).toHaveBeenCalledOnce();
+    expect(details).toEqual([]);
+  });
+
+  test("leaves the read to the library page when nothing could be read", async () => {
+    const lib = reader({
+      readWorks: vi.fn(async () => Promise.reject(new Error("offline"))),
+      readLibrary: vi.fn(async () => Promise.reject(new Error("offline"))),
+    });
+    const details = await announced(() => showLocalComicChanges("p", { works: [1], categories: true }, lib));
+    expect(details).toEqual([{ localProfileId: "p" }]);
+  });
+
+  test("announces a change of categories without a read of the works", async () => {
+    const lib = reader();
+    const details = await announced(() => showLocalComicChanges("p", { works: [], categories: true }, lib));
+    expect(lib.readWorks).not.toHaveBeenCalled();
+    expect(details).toEqual([{ localProfileId: "p", libraryReloaded: true }]);
   });
 });

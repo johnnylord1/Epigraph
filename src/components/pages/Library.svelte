@@ -2096,13 +2096,13 @@
     };
     globalThis.addEventListener?.("epigraph-hardcover-state-changed", handleHardcoverStateChanged);
 
-    // Comics edited on another device reach Suwayomi through the syncd projection, which
-    // runs every couple of seconds, so wait for it before refetching the library.
+    // The window reads the works that landed by itself, so only what it could not read and changes
+    // to categories are left here. A change that was only received has not landed yet.
     let comicLibraryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     let comicLibraryNeedsRead = false;
-    const comicLibraryUnlisten = listenSyncdComicLibraryChanged(({ localProfileId, libraryReloaded, landedWorks }) => {
+    const comicLibraryUnlisten = listenSyncdComicLibraryChanged(({ localProfileId, replicated, libraryReloaded, landedWorks }) => {
       if (localProfileId !== normalizeLocalProfileId(store.runtimeResolvedLocalProfileId)) return;
-      if (landedWorks) return;
+      if (replicated || landedWorks) return;
       if (comicLibraryRefreshTimer) clearTimeout(comicLibraryRefreshTimer);
       comicLibraryNeedsRead ||= !libraryReloaded;
       comicLibraryRefreshTimer = setTimeout(() => {

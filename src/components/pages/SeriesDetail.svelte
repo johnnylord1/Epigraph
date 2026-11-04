@@ -1323,7 +1323,7 @@
   .link-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
   .link-manga-title, .link-source, .link-status { overflow: hidden; color: var(--component-detail-link-status-color); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .link-manga-title { color: var(--component-detail-link-manga-title-color); font-size: 12px; font-weight: 700; }
-  :global(.anim-spin) { animation: spin 0.85s linear infinite; }
+  :global(.anim-spin) { animation: spin 0.85s steps(12) infinite; }
   @keyframes overlayFadeIn { from { opacity: var(--component-detail-keyframes-overlayfadein-from-opacity); } to { opacity: var(--component-detail-to-opacity); } }
   @keyframes modalRiseIn { from { opacity: var(--component-detail-keyframes-modalrisein-from-opacity); transform: translateY(8px) scale(0.985); } to { opacity: var(--component-detail-to-opacity); transform: translateY(0) scale(1); } }
   @keyframes spin { to { transform: rotate(360deg); } }

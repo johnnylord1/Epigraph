@@ -3115,8 +3115,9 @@
     let disposed = false;
     let stop: (() => void) | undefined;
     void import("./lib/comicSync/syncLandingWatch")
-      .then(({ startSyncLandingWatch }) => startSyncLandingWatch({
-        isPaused: () => pageHidden,
+      .then(({ startSyncLandingWatch, isWindowOutOfSight }) => startSyncLandingWatch({
+        // Not `pageHidden`: a window left open beside another app, with the phone in hand, still shows the library.
+        isPaused: () => isWindowOutOfSight(win),
         profileId: () => normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId),
         readWorks: readLandedLibraryWorks,
         readLibrary: reloadLibraryAfterSyncLanded,
@@ -3143,7 +3144,10 @@
     let disposed = false;
     let stop: (() => void) | undefined;
     void import("./lib/comicSync/desktopComicBridge")
-      .then(({ startJoinedComicSync }) => startJoinedComicSync())
+      .then(({ startJoinedComicSync }) => startJoinedComicSync({
+        readWorks: readLandedLibraryWorks,
+        readLibrary: reloadLibraryAfterSyncLanded,
+      }))
       .then((started) => {
         if (disposed) started();
         else stop = started;
@@ -3218,6 +3222,7 @@
     document.body.dataset.epigraphMotion = uiMotionActive ? "active" : "idle";
     document.documentElement.dataset.epigraphIdle = idle ? "true" : "false";
     document.body.dataset.epigraphIdle = idle ? "true" : "false";
+    document.documentElement.dataset.epigraphBackground = pageHidden ? "true" : "false";
   });
 
   $effect(() => {

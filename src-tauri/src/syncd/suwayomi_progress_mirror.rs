@@ -90,6 +90,26 @@ const LIBRARY_WITH_PROGRESS_QUERY: &str = r#"
   }
 "#;
 
+const WORKS_READ_PROGRESS_QUERY: &str = r#"
+  query EpigraphProgressMirrorWorks($ids: [Int!]!, $first: Int!) {
+    mangas(filter: { id: { in: $ids } }, first: $first, offset: 0) {
+      nodes {
+        id
+        url
+        sourceId
+        latestReadChapter {
+          id
+          url
+          isRead
+          lastReadAt
+          lastPageRead
+          pageCount
+        }
+      }
+    }
+  }
+"#;
+
 const BOOKMARKED_CHAPTERS_QUERY: &str = r#"
   query EpigraphProgressMirrorBookmarks($first: Int!, $offset: Int!) {
     chapters(condition: { isBookmarked: true }, first: $first, offset: $offset) {
@@ -469,7 +489,7 @@ async fn mirror_desktop_edits(
     .filter(|chapter| library_ids.contains(&chapter.manga_id))
     .collect::<Vec<_>>();
     // No baselines: the edit request time is the evidence for every chapter here.
-    write_chapter_states(
+    let written = write_chapter_states(
         state,
         &session,
         &scope_id,
@@ -480,7 +500,31 @@ async fn mirror_desktop_edits(
         &edits.chapter_edits,
         db::now_ms(),
     )
-    .await
+    .await?;
+    // Only a finished chapter enters the history, so a page turn stops here.
+    let works = fetch_works_read_progress(state, &session, &finished_edited_works(&chapters)).await?;
+    let history = mirror_comic_history(
+        state,
+        &session,
+        &scope_id,
+        &server_identity.server_id,
+        profile_id,
+        &works,
+    )
+    .await?;
+    Ok(written + history)
+}
+
+/// The works in which an edit finished a chapter.
+fn finished_edited_works(chapters: &[ChapterNode]) -> Vec<i64> {
+    let mut works = chapters
+        .iter()
+        .filter(|chapter| chapter.is_read)
+        .map(|chapter| chapter.manga_id)
+        .collect::<Vec<_>>();
+    works.sort_unstable();
+    works.dedup();
+    works
 }
 
 async fn mirror_all_profiles(
@@ -565,70 +609,7 @@ async fn mirror_profile(
         state, &session, &scope_id, server_id, profile_id, &library, memory, hints,
     )
     .await?;
-    let read_chapters = library
-        .iter()
-        .filter_map(|(manga_id, node)| {
-            let chapter = node.latest_read_chapter.as_ref()?;
-            Some(ChapterNode {
-                manga_id: *manga_id,
-                chapter_id: chapter.chapter_id,
-                url: chapter.url.clone(),
-                is_read: chapter.is_read,
-                is_bookmarked: false,
-                last_read_at: chapter.last_read_at,
-                last_page_read: chapter.last_page_read,
-            })
-        })
-        .collect::<Vec<_>>();
-    let mut read_portable = load_portable_refs_batch(state, profile_id, &read_chapters).await?;
-    for (manga_id, node) in &library {
-        let Some(chapter) = node.latest_read_chapter.as_ref() else {
-            continue;
-        };
-        let portable = read_portable.remove(&chapter.chapter_id);
-        let (comic_id, chapter_id, portable_work_ref, portable_chapter_ref) = history_identity(
-            server_id,
-            profile_id,
-            *manga_id,
-            chapter.chapter_id,
-            portable,
-        );
-        let entity_id = format!("comic.history::{comic_id}");
-        let progress_percent = match (chapter.page_count, chapter.last_page_read) {
-            (Some(page_count), page) if page > 0 => {
-                (page as f64 / page_count as f64).clamp(0.0, 1.0)
-            }
-            _ => 1.0,
-        };
-        let patch = ComicHistoryPatch {
-            history_id: entity_id.clone(),
-            comic_id: comic_id.clone(),
-            chapter_id: chapter_id.clone(),
-            portable_work_ref,
-            portable_chapter_ref,
-            page_index: chapter.last_page_read,
-            page_count: chapter.page_count,
-            progress_percent,
-            read_at_ms: chapter.last_read_at,
-        };
-        if needs_comic_history_write(state, &scope_id, &entity_id, &patch).await? {
-            let _writer_guard = state.mutation_gate.lock().await;
-            let outcome = db::apply_mirrored_comic_history_mutation(
-                &state.pool,
-                &session,
-                &scope_id,
-                &entity_id,
-                &patch,
-                0,
-                None,
-                retention_window,
-            )
-            .await?;
-            if publish_applied_change(state, &outcome) {
-                mirrored += 1;
-            }
-        }
-    }
+    mirrored += mirror_comic_history(state, &session, &scope_id, server_id, profile_id, &library).await?;
     let bookmarks = fetch_bookmarked_chapters(state, &session).await?;
     tracing::debug!(
         bookmarks = bookmarks.len(),
@@ -945,6 +926,83 @@ struct ChapterProgressState {
 /// `comic.chapter_state` record and written only when it differs and the write is provably not
 /// older than a phone-originated record.
 #[allow(clippy::too_many_arguments)]
+/// Writes the last finished chapter of each work to the history, when that changed it.
+async fn mirror_comic_history(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    server_id: &str,
+    profile_id: &str,
+    library: &[(i64, LibraryMangaNode)],
+) -> anyhow::Result<usize> {
+    let mut mirrored = 0usize;
+    let read_chapters = library
+        .iter()
+        .filter_map(|(manga_id, node)| {
+            let chapter = node.latest_read_chapter.as_ref()?;
+            Some(ChapterNode {
+                manga_id: *manga_id,
+                chapter_id: chapter.chapter_id,
+                url: chapter.url.clone(),
+                is_read: chapter.is_read,
+                is_bookmarked: false,
+                last_read_at: chapter.last_read_at,
+                last_page_read: chapter.last_page_read,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut read_portable = load_portable_refs_batch(state, profile_id, &read_chapters).await?;
+    for (manga_id, node) in library {
+        let Some(chapter) = node.latest_read_chapter.as_ref() else {
+            continue;
+        };
+        let portable = read_portable.remove(&chapter.chapter_id);
+        let (comic_id, chapter_id, portable_work_ref, portable_chapter_ref) = history_identity(
+            server_id,
+            profile_id,
+            *manga_id,
+            chapter.chapter_id,
+            portable,
+        );
+        let entity_id = format!("comic.history::{comic_id}");
+        let progress_percent = match (chapter.page_count, chapter.last_page_read) {
+            (Some(page_count), page) if page > 0 => {
+                (page as f64 / page_count as f64).clamp(0.0, 1.0)
+            }
+            _ => 1.0,
+        };
+        let patch = ComicHistoryPatch {
+            history_id: entity_id.clone(),
+            comic_id: comic_id.clone(),
+            chapter_id: chapter_id.clone(),
+            portable_work_ref,
+            portable_chapter_ref,
+            page_index: chapter.last_page_read,
+            page_count: chapter.page_count,
+            progress_percent,
+            read_at_ms: chapter.last_read_at,
+        };
+        if needs_comic_history_write(state, scope_id, &entity_id, &patch).await? {
+            let _writer_guard = state.mutation_gate.lock().await;
+            let outcome = db::apply_mirrored_comic_history_mutation(
+                &state.pool,
+                session,
+                scope_id,
+                &entity_id,
+                &patch,
+                0,
+                None,
+                state.config.retention_window,
+            )
+            .await?;
+            if publish_applied_change(state, &outcome) {
+                mirrored += 1;
+            }
+        }
+    }
+    Ok(mirrored)
+}
+
 async fn mirror_chapter_states(
     state: &SharedAppState,
     session: &AuthenticatedSession,
@@ -1742,53 +1800,7 @@ async fn fetch_library_with_progress(
             .and_then(Value::as_array)
             .context("invalid library progress mirror nodes")?;
         for node in nodes {
-            let Some(manga_id) = node
-                .get("id")
-                .and_then(Value::as_i64)
-                .filter(|value| *value > 0)
-            else {
-                continue;
-            };
-            let Some(source_id) = scalar_string(node.get("sourceId")) else {
-                continue;
-            };
-            let Some(manga_key) = text(node.get("url")).map(str::to_string) else {
-                continue;
-            };
-            let portable_comic_id =
-                canonical_portable_work_id(&PortableWorkRefV3::comic(source_id, manga_key));
-            let latest_read_chapter = node
-                .get("latestReadChapter")
-                .filter(|value| !value.is_null())
-                .and_then(parse_read_chapter);
-            let last_read_chapter = node
-                .get("lastReadChapter")
-                .filter(|value| !value.is_null())
-                .and_then(parse_read_chapter);
-            let fingerprint = MangaFingerprint {
-                unread_count: node.get("unreadCount").and_then(Value::as_i64).unwrap_or(0),
-                bookmark_count: node
-                    .get("bookmarkCount")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
-                chapter_count: node
-                    .get("chapters")
-                    .and_then(|value| value.get("totalCount"))
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
-                latest_read: latest_read_chapter
-                    .as_ref()
-                    .map(ReadChapterNode::fingerprint),
-                last_read: last_read_chapter.as_ref().map(ReadChapterNode::fingerprint),
-            };
-            mangas.push((
-                manga_id,
-                LibraryMangaNode {
-                    portable_comic_id,
-                    latest_read_chapter: latest_read_chapter.filter(|chapter| chapter.is_read),
-                    fingerprint,
-                },
-            ));
+            mangas.extend(parse_library_node(node));
         }
         let has_next = connection
             .get("pageInfo")
@@ -1801,6 +1813,76 @@ async fn fetch_library_with_progress(
     }
     Ok(mangas)
 }
+fn parse_library_node(node: &Value) -> Option<(i64, LibraryMangaNode)> {
+    let manga_id = node
+        .get("id")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)?;
+    let source_id = scalar_string(node.get("sourceId"))?;
+    let manga_key = text(node.get("url")).map(str::to_string)?;
+    let portable_comic_id =
+        canonical_portable_work_id(&PortableWorkRefV3::comic(source_id, manga_key));
+    let latest_read_chapter = node
+        .get("latestReadChapter")
+        .filter(|value| !value.is_null())
+        .and_then(parse_read_chapter);
+    let last_read_chapter = node
+        .get("lastReadChapter")
+        .filter(|value| !value.is_null())
+        .and_then(parse_read_chapter);
+    let fingerprint = MangaFingerprint {
+        unread_count: node.get("unreadCount").and_then(Value::as_i64).unwrap_or(0),
+        bookmark_count: node
+            .get("bookmarkCount")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        chapter_count: node
+            .get("chapters")
+            .and_then(|value| value.get("totalCount"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        latest_read: latest_read_chapter
+            .as_ref()
+            .map(ReadChapterNode::fingerprint),
+        last_read: last_read_chapter.as_ref().map(ReadChapterNode::fingerprint),
+    };
+    Some((
+        manga_id,
+        LibraryMangaNode {
+            portable_comic_id,
+            latest_read_chapter: latest_read_chapter.filter(|chapter| chapter.is_read),
+            fingerprint,
+        },
+    ))
+}
+
+/// Reads the last finished chapter of these works only, without the rest of the library.
+async fn fetch_works_read_progress(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    work_ids: &[i64],
+) -> anyhow::Result<Vec<(i64, LibraryMangaNode)>> {
+    let mut works = Vec::with_capacity(work_ids.len());
+    for ids in work_ids.chunks(MIRROR_PAGE_SIZE as usize) {
+        let data = suwayomi_catalog::execute_graphql_document(
+            state,
+            session,
+            WORKS_READ_PROGRESS_QUERY,
+            json!({ "ids": ids, "first": MIRROR_PAGE_SIZE }),
+            false,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("work progress mirror query failed: {error:?}"))?;
+        let nodes = data
+            .get("mangas")
+            .and_then(|value| value.get("nodes"))
+            .and_then(Value::as_array)
+            .context("invalid work progress mirror nodes")?;
+        works.extend(nodes.iter().filter_map(parse_library_node));
+    }
+    Ok(works)
+}
+
 fn parse_read_chapter(chapter: &Value) -> Option<ReadChapterNode> {
     let chapter_id = chapter
         .get("id")
@@ -2132,6 +2214,51 @@ fn chapter_state_semantically_equal(stored_json: &str, incoming_json: &str) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_finished_chapter_asks_for_the_history_of_its_work() {
+        let chapter = |manga_id, chapter_id, is_read| ChapterNode {
+            manga_id,
+            chapter_id,
+            url: None,
+            is_read,
+            is_bookmarked: false,
+            last_read_at: 0,
+            last_page_read: 3,
+        };
+        assert!(finished_edited_works(&[chapter(1, 10, false)]).is_empty());
+        assert_eq!(
+            finished_edited_works(&[
+                chapter(2, 20, true),
+                chapter(1, 10, true),
+                chapter(2, 21, true),
+                chapter(3, 30, false),
+            ]),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn a_work_read_alone_gives_the_same_history_as_in_the_library_read() {
+        let node = json!({
+            "id": 7,
+            "url": "/manga/7",
+            "sourceId": "99",
+            "latestReadChapter": {
+                "id": 70, "url": "/c/70", "isRead": true, "lastReadAt": 5, "lastPageRead": 2, "pageCount": 9
+            },
+        });
+        let (manga_id, work) = parse_library_node(&node).unwrap();
+        assert_eq!(manga_id, 7);
+        let chapter = work.latest_read_chapter.unwrap();
+        assert_eq!(chapter.chapter_id, 70);
+        assert_eq!(chapter.last_page_read, 2);
+
+        let mut unfinished = node.clone();
+        unfinished["latestReadChapter"]["isRead"] = json!(false);
+        assert!(parse_library_node(&unfinished).unwrap().1.latest_read_chapter.is_none());
+        assert!(parse_library_node(&json!({ "id": 7, "url": "/manga/7" })).is_none());
+    }
 
     #[test]
     fn a_tick_waits_longer_when_the_fast_path_already_sent_the_edits() {

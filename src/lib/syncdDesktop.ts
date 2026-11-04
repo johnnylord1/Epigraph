@@ -443,12 +443,13 @@ export function listenSyncdReplicationState(
 /**
  * Also fires when this window brought the other computer's comics in, and when it read the library
  * after synced changes: `libraryReloaded` means the works are already current, and `landedWorks`
- * that only those works changed, with no category involved.
+ * that only those works changed, with no category involved. `replicated` means a change was only
+ * received: what it does to the library is announced again once it lands there.
  */
 export async function listenSyncdComicLibraryChanged(
-  handler: (payload: { localProfileId: string; libraryReloaded?: boolean; landedWorks?: number[] }) => void,
+  handler: (payload: { localProfileId: string; replicated?: boolean; libraryReloaded?: boolean; landedWorks?: number[] }) => void,
 ): Promise<UnlistenFn> {
-  const unlisten = await listen<{ localProfileId: string }>("syncd-comic-library-changed", ({ payload }) => handler(payload));
+  const unlisten = await listen<{ localProfileId: string }>("syncd-comic-library-changed", ({ payload }) => handler({ ...payload, replicated: true }));
   const onReconciled = (event: Event) => {
     const detail = (event as CustomEvent<{ localProfileId?: string; libraryReloaded?: boolean; landedWorks?: number[] }>).detail;
     if (detail?.localProfileId) handler({ localProfileId: detail.localProfileId, libraryReloaded: detail.libraryReloaded, landedWorks: detail.landedWorks });

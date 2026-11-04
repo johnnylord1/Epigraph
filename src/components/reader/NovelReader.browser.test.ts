@@ -328,7 +328,8 @@ describe("novel reader progress lifecycle", () => {
   test("restore preparation waits for a pending scope load that can migrate legacy state", async () => {
     let release!: () => void;
     disk.pendingFirstRead = new Promise<void>((resolve) => { release = resolve; });
-    const { component } = await mountedReader();
+    const { component } = render(NovelReader);
+    await waitFor(() => expect(disk.reads).toBe(1));
     let authorized = false;
     const preparation = component.prepareNovelReaderForRestore();
     void preparation.then((result: { ok: boolean }) => { authorized = result.ok; });
@@ -349,17 +350,21 @@ describe("novel reader progress lifecycle", () => {
     expect(disk.writes).toBe(0);
   });
 
-  test("a late legacy migration cannot replace acknowledged reading progress during preparation", async () => {
+  test("a legacy migration ends before reading starts, so it cannot replace reading progress", async () => {
     localStorage.setItem("epigraph-novels-library-state", JSON.stringify({ "profile:test": disk.state }));
     disk.firstReadMissing = true;
     let release!: () => void;
     disk.pendingFirstWrite = new Promise<void>((resolve) => { release = resolve; });
-    const { component, viewer } = await mountedReader();
-    await scrollTo(viewer, 0.6);
-    await waitFor(() => expect(disk.state.progress[0]?.progressPercent).toBeCloseTo(0.3, 1));
-    const preparation = component.prepareNovelReaderForRestore();
+    const { component, container } = render(NovelReader);
+    await waitFor(() => expect(disk.writes).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(container.querySelector("article")).toBeNull();
+    expect(disk.reads).toBe(1);
     release();
-    expect(await preparation).toEqual({ ok: true });
+    await waitFor(() => expect(container.querySelector("article")?.textContent).toContain("Reading paragraph"));
+    await scrollTo(container.querySelector<HTMLElement>(".novel-viewer")!, 0.6);
+    await waitFor(() => expect(disk.state.progress[0]?.progressPercent).toBeCloseTo(0.3, 1));
+    expect(await component.prepareNovelReaderForRestore()).toEqual({ ok: true });
     expect(disk.state.progress[0]?.progressPercent).toBeCloseTo(0.3, 1);
   });
 

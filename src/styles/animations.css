@@ -44,7 +44,10 @@
 .anim-fade-down { animation: fadeDown 0.18s ease both; }
 .anim-scale-in { animation: scaleIn 0.14s ease both; }
 .anim-pulse    { animation: pulse   1.6s  ease infinite; }
-.anim-spin     { animation: spin    0.7s  linear infinite; }
+/* Stepped on purpose: a smooth spinner makes the compositor draw 60 frames per second for as long as
+   it runs, which alone costs about one CPU core in the webview. Twelve steps look the same and cost
+   a third of that. */
+.anim-spin     { animation: spin    0.7s  steps(12) infinite; }
 
 /* Skeleton shimmer */
 .skeleton {

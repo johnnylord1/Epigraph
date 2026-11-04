@@ -443,7 +443,7 @@ impl RetryBook {
         .fetch_all(pool)
         .await
         .context("failed to read the retries of synced comics")?;
-        let latest = now_ms.saturating_add(MAX_RETRY.as_millis() as i64);
+        let latest = now_ms.saturating_add(MAX_RETRY.as_millis() as i64 * 5 / 4);
         let entries = rows
             .into_iter()
             .map(|(profile_id, manga_id, failures, due_at_ms)| {
@@ -488,7 +488,7 @@ impl RetryBook {
             .entry((profile_id.to_string(), manga_id))
             .or_insert((0, now_ms));
         entry.0 = entry.0.saturating_add(1);
-        entry.1 = now_ms.saturating_add(retry_delay(entry.0).as_millis() as i64);
+        entry.1 = now_ms.saturating_add(spread_retry(retry_delay(entry.0), manga_id).as_millis() as i64);
         self.dirty = true;
     }
 
@@ -510,6 +510,14 @@ impl RetryBook {
 fn retry_delay(failures: u32) -> Duration {
     let shift = failures.saturating_sub(1).min(10);
     BASE_RETRY.saturating_mul(1 << shift).min(MAX_RETRY)
+}
+
+/// Each work waits its own 75% to 125% of the delay, so the works of a source that failed together
+/// do not all try again together. Derived from the work, so it stays the same across restarts.
+fn spread_retry(delay: Duration, manga_id: i64) -> Duration {
+    let share = manga_id.unsigned_abs().wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
+    let permille = 750 + (share % 501) as u32;
+    delay.saturating_mul(permille) / 1000
 }
 
 #[cfg(test)]
@@ -574,15 +582,16 @@ mod tests {
         assert_eq!(retry_delay(50), MAX_RETRY);
 
         let now = 1_000_000;
-        let base_retry = BASE_RETRY.as_millis() as i64;
+        let longest_first_wait = BASE_RETRY.as_millis() as i64 * 5 / 4;
         let mut book = RetryBook::default();
         assert!(book.is_due("p", 1, now));
         book.fail("p", 1, now);
         assert!(!book.is_due("p", 1, now));
-        assert!(book.is_due("p", 1, now + base_retry));
+        assert!(book.is_due("p", 1, now + longest_first_wait));
         assert!(book.is_due("other", 1, now));
         book.fail("p", 1, now);
-        assert!(!book.is_due("p", 1, now + base_retry));
+        book.fail("p", 1, now);
+        assert!(!book.is_due("p", 1, now + longest_first_wait));
         book.clear("p", 1);
         assert!(book.is_due("p", 1, now));
 
@@ -593,13 +602,45 @@ mod tests {
         assert!(!book.is_due("p", 3, now));
     }
 
+    #[test]
+    fn works_that_failed_together_try_again_apart() {
+        let now = 1_000_000;
+        let mut book = RetryBook::default();
+        for manga_id in 1..=200 {
+            book.fail("p", manga_id, now);
+        }
+        let base_retry = BASE_RETRY.as_millis() as i64;
+        let mut due_at = book
+            .entries
+            .values()
+            .map(|(_, due_at_ms)| *due_at_ms - now)
+            .collect::<Vec<_>>();
+        due_at.sort_unstable();
+        assert!(due_at.first().is_some_and(|wait| *wait >= base_retry * 3 / 4));
+        assert!(due_at.last().is_some_and(|wait| *wait <= base_retry * 5 / 4));
+        // Spread over the range, with no 5 s window holding more than a tenth of them.
+        assert!(due_at.last().unwrap() - due_at.first().unwrap() > base_retry * 2 / 5);
+        let crowded = due_at
+            .iter()
+            .map(|start| due_at.iter().filter(|wait| (*start..*start + 5_000).contains(wait)).count())
+            .max()
+            .unwrap();
+        assert!(crowded <= 40, "{crowded} of 200 in one 5 s window");
+
+        assert_eq!(
+            spread_retry(MAX_RETRY, 42),
+            spread_retry(MAX_RETRY, 42),
+            "a work keeps its share across restarts"
+        );
+    }
+
     #[tokio::test]
     async fn the_wait_of_failed_works_survives_a_restart() {
         let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         let now = 1_000_000;
-        let base_retry = BASE_RETRY.as_millis() as i64;
+        let base_retry = BASE_RETRY.as_millis() as i64 * 5 / 4;
 
         let mut book = RetryBook::load(&pool, now).await.unwrap();
         assert!(book.is_due("p", 1, now));
@@ -627,7 +668,7 @@ mod tests {
         // A clock that was set back does not make a work wait longer than the longest wait.
         let earlier = now - 86_400_000;
         let set_back = RetryBook::load(&pool, earlier).await.unwrap();
-        assert!(set_back.is_due("p", 2, earlier + MAX_RETRY.as_millis() as i64));
+        assert!(set_back.is_due("p", 2, earlier + MAX_RETRY.as_millis() as i64 * 5 / 4));
     }
 
     #[tokio::test]

@@ -224,7 +224,7 @@
         {#if sortPanelOpen}
         <div class="dropdown-panel sort-panel n-popover-surface n-popover-menu" role="menu">
           <p class="n-popover-label">{sortLabel}</p>
-          {#each toolbar.sortOptions as option}
+          {#each toolbar.sortOptions as option (option.id)}
             <button
               type="button"
               class="n-popover-item"
@@ -282,7 +282,7 @@
         {#if filterPanelOpen}
           <div class="dropdown-panel filter-panel n-popover-surface n-popover-menu" role="menu">
             <p class="n-popover-label">{filterLabel}</p>
-            {#each toolbar.filterOptions as option}
+            {#each toolbar.filterOptions as option (option.id)}
               <button
                 type="button"
                 class="n-popover-item"
@@ -359,6 +359,13 @@
 
   .library-toolbar-btn :global(*) {
     -webkit-app-region: no-drag;
+  }
+
+  /* The automatic library update only starts when nobody is looking and runs for minutes: a spinner
+     nobody sees should not keep the webview drawing all that time. */
+  :global([data-epigraph-idle="true"]) .library-toolbar-btn :global(.anim-spin),
+  :global([data-epigraph-background="true"]) .library-toolbar-btn :global(.anim-spin) {
+    animation-play-state: paused;
   }
 
   .dropdown-panel {

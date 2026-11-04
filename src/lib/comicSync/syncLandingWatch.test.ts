@@ -7,6 +7,7 @@ import {
   ARRIVAL_RECONCILE_WORKS,
   createLandedWorksTracker,
   createSyncLandingDetector,
+  isWindowOutOfSight,
   MAX_WORKS_PER_READ,
   startSyncLandingWatch,
 } from "./syncLandingWatch";
@@ -426,6 +427,20 @@ describe("startSyncLandingWatch", () => {
     stop();
   });
 
+  it("waits for an answer the window has to be asked for", async () => {
+    const progress = readings(reading(10));
+    const { handlers, stop } = watch();
+    await vi.advanceTimersByTimeAsync(0);
+    const checks = progress.mock.calls.length;
+    handlers.isPaused.mockImplementation((() => Promise.resolve(true)) as never);
+    await check();
+    expect(progress.mock.calls.length).toBe(checks);
+    handlers.isPaused.mockImplementation((() => Promise.resolve(false)) as never);
+    await check();
+    expect(progress.mock.calls.length).toBe(checks + 1);
+    stop();
+  });
+
   it("takes the first reading while hidden, so what lands meanwhile is read once shown", async () => {
     const progress = readings(reading(10), reading(12, [7]));
     const { handlers, stop } = watch(() => false, true);
@@ -451,5 +466,38 @@ describe("startSyncLandingWatch", () => {
     await check();
     expect(progress).toHaveBeenCalledTimes(1);
     expect(handlers.readWorks).not.toHaveBeenCalled();
+  });
+});
+
+describe("isWindowOutOfSight", () => {
+  const windowThat = (minimized: boolean, visible: boolean) => ({
+    isMinimized: async () => minimized,
+    isVisible: async () => visible,
+  });
+
+  beforeEach(() => vi.stubGlobal("document", { hidden: false }));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps a window that is only unfocused in sight", async () => {
+    expect(await isWindowOutOfSight(windowThat(false, true))).toBe(false);
+  });
+
+  it("sees a minimized window that the page still reports as visible", async () => {
+    expect(await isWindowOutOfSight(windowThat(true, true))).toBe(true);
+  });
+
+  it("sees a window hidden in the tray", async () => {
+    expect(await isWindowOutOfSight(windowThat(false, false))).toBe(true);
+  });
+
+  it("trusts the page when it says it is hidden, without asking the window", async () => {
+    vi.stubGlobal("document", { hidden: true });
+    expect(await isWindowOutOfSight(null)).toBe(true);
+  });
+
+  it("keeps the library current when the window cannot answer", async () => {
+    const failing = { isMinimized: async () => { throw new Error("denied"); }, isVisible: async () => true };
+    expect(await isWindowOutOfSight(failing)).toBe(false);
+    expect(await isWindowOutOfSight(null)).toBe(false);
   });
 });

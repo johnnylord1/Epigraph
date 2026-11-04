@@ -436,12 +436,15 @@
       if (cached) {
         const decoded = await decodeCoverUrl(cached);
         if (coverKey !== getCoverStateKey(manga)) return;
-        if (!decoded) return;
-        pendingCachedCoverUrls.set(coverKey, cached);
-        setSessionLibraryCoverUrl(scope, manga, cached);
-        pendingCheckedCoverKeys.add(coverKey);
-        scheduleCoverCacheFlush();
+        if (decoded) {
+          pendingCachedCoverUrls.set(coverKey, cached);
+          setSessionLibraryCoverUrl(scope, manga, cached);
+        }
       }
+      // Asked once: the card still loads its cover by itself, and a new cover or cache generation
+      // asks again. Otherwise each batch of covers would ask again for all the missing ones.
+      pendingCheckedCoverKeys.add(coverKey);
+      scheduleCoverCacheFlush();
     } finally {
       coverCacheInflight.delete(key);
     }

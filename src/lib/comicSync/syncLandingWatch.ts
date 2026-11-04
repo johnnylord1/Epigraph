@@ -91,8 +91,25 @@ export function createLandedWorksTracker() {
   };
 }
 
+/**
+ * Minimized or hidden in the tray. WebView2 keeps `document.hidden` false for both, and a window that
+ * only lost focus is still on screen beside another app, so its library stays current.
+ */
+export async function isWindowOutOfSight(
+  win: { isMinimized: () => Promise<boolean>; isVisible: () => Promise<boolean> } | null,
+): Promise<boolean> {
+  if (document.hidden) return true;
+  if (!win) return false;
+  try {
+    const [minimized, visible] = await Promise.all([win.isMinimized(), win.isVisible()]);
+    return minimized || !visible;
+  } catch {
+    return false;
+  }
+}
+
 export interface SyncLandingHandlers {
-  isPaused: () => boolean;
+  isPaused: () => boolean | Promise<boolean>;
   profileId: () => string | null;
   /** Reads only these works. Throws when they were not read. */
   readWorks: (ids: number[]) => Promise<void> | void;
@@ -151,11 +168,12 @@ export function startSyncLandingWatch(handlers: SyncLandingHandlers): () => void
 
   const tick = async () => {
     if (stopped || running) return;
-    // The first reading says where changes count from, so it does not wait for the window: what
-    // lands while it stays hidden is read once it is shown.
-    if (startedReading && handlers.isPaused()) return;
     running = true;
     try {
+      // The first reading says where changes count from, so it does not wait for the window: what
+      // lands while it stays hidden is read once it is shown.
+      if (startedReading && await handlers.isPaused()) return;
+      if (stopped) return;
       const progress = await syncdGetSyncProgressIfRunning(works.cursor()).catch(() => null);
       if (stopped) return;
       if (progress) startedReading = true;

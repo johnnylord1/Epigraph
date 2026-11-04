@@ -343,6 +343,20 @@ pub async fn connect(config: &SyncdConfig) -> anyhow::Result<sqlx::SqlitePool> {
     preserve_change_log_sequence(&pool)
         .await
         .context("failed to preserve the change log sequence")?;
+    // Not a numbered migration: an older version refuses a database with a migration it does not
+    // know, and this table is only a backoff that can be lost, so it is no reason to lock that out.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS suwayomi_hydration_retries (
+            profile_id TEXT NOT NULL,
+            manga_id INTEGER NOT NULL,
+            failures INTEGER NOT NULL,
+            next_attempt_at_ms INTEGER NOT NULL,
+            PRIMARY KEY (profile_id, manga_id)
+        ) STRICT, WITHOUT ROWID",
+    )
+    .execute(&pool)
+    .await
+    .context("failed to create the retries of synced comics")?;
     Ok(pool)
 }
 

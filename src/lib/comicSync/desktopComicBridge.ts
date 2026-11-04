@@ -23,6 +23,7 @@ import {
   type ComicSyncBaseline,
   type ComicWork,
 } from "./plan";
+import { MAX_WORKS_PER_READ } from "./syncLandingWatch";
 
 /**
  * Keeps the comics of a profile joined to another desktop the same on both. The host desktop's Core
@@ -766,6 +767,7 @@ async function applyCategories(
   let [localCategories, remoteCategories] = await Promise.all([readCategories(local), readCategories(remote)]);
   const plan = planCategories(new Set(localCategories.keys()), new Set(remoteCategories.keys()), baseline);
   let changed = 0;
+  let localChanged = plan.createLocal.length > 0 || plan.deleteLocal.length > 0;
   for (const name of plan.createLocal) await local.createCategory(name).then(() => changed++);
   for (const name of plan.createRemote) await remote.createCategory(name).then(() => changed++);
   for (const name of plan.deleteLocal) await local.deleteCategory(localCategories.get(name)!).then(() => changed++);
@@ -787,10 +789,11 @@ async function applyCategories(
       if (addTo.length || removeFrom.length) {
         await side.updateMangaCategories(work.id, addTo, removeFrom);
         changed += 1;
+        if (side === local) localChanged = true;
       }
     }
   }
-  return { changed, names: [...shared].sort(), assignments };
+  return { changed, localChanged, names: [...shared].sort(), assignments };
 }
 
 async function applyChapters(
@@ -814,7 +817,7 @@ async function applyChapters(
     if (baseline?.chapters[key]) chapters[key] = baseline.chapters[key];
     if (baseline?.digests[key]) digests[key] = baseline.digests[key];
   }
-  if (!keys.length) return { changed: 0, chapters, digests, swept: sweep };
+  if (!keys.length) return { changed: 0, localWorks: [], chapters, digests, swept: sweep };
 
   const [localChapters, remoteChapters] = await Promise.all([
     readChapters(local, keys.map((key) => localLibrary.works.get(key)!.id)),
@@ -824,6 +827,7 @@ async function applyChapters(
   const remoteUpdates: ChapterUpdate[] = [];
   const localGaps: ChapterGap[] = [];
   const remoteGaps: ChapterGap[] = [];
+  const localWorks: number[] = [];
   for (const key of keys) {
     const mine = localLibrary.works.get(key)!;
     const theirs = remoteLibrary.works.get(key)!;
@@ -838,23 +842,43 @@ async function applyChapters(
     const plan = planChapters(localList, remoteList, baseline?.chapters[key]);
     localUpdates.push(...plan.localUpdates);
     remoteUpdates.push(...plan.remoteUpdates);
+    if (plan.localUpdates.length) localWorks.push(mine.id);
     chapters[key] = plan.merged;
     digests[key] = digestOf(key);
   }
   for (const batch of batchChapterUpdates(localUpdates)) await local.updateChapters(batch);
   for (const batch of batchChapterUpdates(remoteUpdates)) await remote.updateChapters(batch);
-  const filled = (await fillChapters(remote, local, localGaps, now)) + (await fillChapters(local, remote, remoteGaps, now));
+  const filledLocal = await fillChapters(remote, local, localGaps, now);
+  if (filledLocal) localWorks.push(...localGaps.map((gap) => gap.target.id));
+  const filled = filledLocal + (await fillChapters(local, remote, remoteGaps, now));
   return {
     changed: localUpdates.length + remoteUpdates.length + filled,
+    localWorks,
     chapters,
     digests,
     swept: sweep && candidates.length <= MAX_CHAPTER_WORKS_PER_RUN,
   };
 }
 
-/** One full reconciliation; answers whether this desktop's comics changed. */
-export async function reconcileJoinedComics(profileId: string): Promise<boolean> {
-  if (!(await invoke<boolean>("syncd_comic_bridge_available", { profileId }))) return false;
+/** What a reconciliation changed in this desktop's library, which then has only that to read. */
+export interface LocalComicChanges {
+  /** Works that joined or left the library, or whose chapters changed. */
+  works: number[];
+  /** Categories or their members, which no work's own fields show. */
+  categories: boolean;
+}
+
+/** The works that joined or left a library between two readings of it. */
+export function libraryMembershipChanges(before: ReadonlyMap<ComicKey, ComicWork>, after: ReadonlyMap<ComicKey, ComicWork>): number[] {
+  const ids: number[] = [];
+  for (const [key, work] of after) if (!before.has(key)) ids.push(work.id);
+  for (const [key, work] of before) if (!after.has(key)) ids.push(work.id);
+  return ids;
+}
+
+/** One full reconciliation; answers what it changed in this desktop's library. */
+export async function reconcileJoinedComics(profileId: string): Promise<LocalComicChanges> {
+  if (!(await invoke<boolean>("syncd_comic_bridge_available", { profileId }))) return { works: [], categories: false };
   const assertTarget = () => {
     if (store.runtimeResolvedLocalProfileId !== profileId) throw Error("COMIC_SYNC_TARGET_CHANGED");
   };
@@ -862,17 +886,20 @@ export async function reconcileJoinedComics(profileId: string): Promise<boolean>
   const local = localSide();
   const remote = remoteSide(profileId);
 
-  // Works can only be found once their extension is installed, so extensions go first.
-  const extensionsChanged = await reconcileExtensions(profileId, assertTarget, remote).catch((error) => {
+  // Works can only be found once their extension is installed, so extensions go first. Pages that
+  // list sources hear about those on their own.
+  await reconcileExtensions(profileId, assertTarget, remote).catch((error) => {
     console.warn("Comic extension sync failed:", error);
     return false;
   });
   assertTarget();
 
   let [localLibrary, remoteLibrary] = await Promise.all([readLibrary(local), readLibrary(remote)]);
+  const worksBefore = localLibrary.works;
   const libraryChanged = await applyLibrary(local, remote, localLibrary, remoteLibrary, baseline);
   assertTarget();
   if (libraryChanged) [localLibrary, remoteLibrary] = await Promise.all([readLibrary(local), readLibrary(remote)]);
+  const membership = libraryMembershipChanges(worksBefore, localLibrary.works);
 
   const categories = await applyCategories(local, remote, localLibrary, remoteLibrary, baseline);
   assertTarget();
@@ -889,25 +916,52 @@ export async function reconcileJoinedComics(profileId: string): Promise<boolean>
     sweptAt: progress.swept ? Date.now() : baseline?.sweptAt ?? 0,
   };
   await invoke("syncd_write_comic_sync_baseline", { profileId, baseline: next });
-  return extensionsChanged || libraryChanged > 0 || categories.changed > 0 || progress.changed > 0;
+  return {
+    works: [...new Set([...membership, ...progress.localWorks])],
+    categories: categories.localChanged || membership.length > 0,
+  };
+}
+
+/** Shows what a reconciliation changed. */
+export interface LocalComicReader {
+  /** Reads only these works. Throws when they were not read. */
+  readWorks: (ids: number[]) => Promise<void>;
+  /** Reads the whole library. Throws when it was not read. */
+  readLibrary: () => Promise<void>;
+}
+
+export async function showLocalComicChanges(profileId: string, changes: LocalComicChanges, reader: LocalComicReader): Promise<void> {
+  const announce = (detail: { libraryReloaded?: boolean }) =>
+    window.dispatchEvent(new CustomEvent(COMIC_LIBRARY_RECONCILED_EVENT, { detail: { localProfileId: profileId, ...detail } }));
+  if (changes.works.length) {
+    try {
+      if (changes.works.length > MAX_WORKS_PER_READ) await reader.readLibrary();
+      else await reader.readWorks(changes.works).catch(() => reader.readLibrary());
+    } catch (error) {
+      // The library page keeps its own read, with its retries, for what could not be read here.
+      console.warn("Could not read the library after syncing with the other computer:", error);
+      announce({});
+      return;
+    }
+  }
+  if (changes.categories) announce({ libraryReloaded: true });
 }
 
 let running: Promise<void> | null = null;
 let rerun = false;
 let debounce: ReturnType<typeof setTimeout> | null = null;
+let localReader: LocalComicReader | null = null;
 
 function currentProfileId(): string | null {
   const profileId = store.runtimeResolvedLocalProfileId?.trim();
   return profileId ? profileId : null;
 }
 
-async function runOnce(): Promise<void> {
+async function runOnce(reader: LocalComicReader): Promise<void> {
   const profileId = currentProfileId();
   if (!profileId || !store.runtimeServerUrl) return;
   try {
-    if (await reconcileJoinedComics(profileId)) {
-      window.dispatchEvent(new CustomEvent(COMIC_LIBRARY_RECONCILED_EVENT, { detail: { localProfileId: profileId } }));
-    }
+    await showLocalComicChanges(profileId, await reconcileJoinedComics(profileId), reader);
   } catch (error) {
     if (String(error).includes("needs_reauth")) return;
     console.warn("Comic sync with the other computer failed:", error);
@@ -920,11 +974,12 @@ export function requestComicSync(delayMs = COMIC_SYNC_DEBOUNCE_MS) {
   if (debounce !== null) clearTimeout(debounce);
   debounce = setTimeout(() => {
     debounce = null;
+    if (!localReader) return;
     if (running) {
       rerun = true;
       return;
     }
-    running = runOnce().finally(() => {
+    running = runOnce(localReader).finally(() => {
       running = null;
       if (rerun) {
         rerun = false;
@@ -935,7 +990,8 @@ export function requestComicSync(delayMs = COMIC_SYNC_DEBOUNCE_MS) {
 }
 
 /** Starts reconciling on changes from the other computer, on this window's edits, and periodically. */
-export async function startJoinedComicSync(): Promise<() => void> {
+export async function startJoinedComicSync(reader: LocalComicReader): Promise<() => void> {
+  localReader = reader;
   const unlisten: UnlistenFn = await listen("syncd-comic-library-changed", () => requestComicSync());
   const onLocalEdit = () => requestComicSync();
   window.addEventListener(COMIC_LOCAL_EDIT_EVENT, onLocalEdit);
@@ -947,5 +1003,6 @@ export async function startJoinedComicSync(): Promise<() => void> {
     clearInterval(timer);
     if (debounce !== null) clearTimeout(debounce);
     debounce = null;
+    localReader = null;
   };
 }

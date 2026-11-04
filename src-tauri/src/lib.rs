@@ -1817,7 +1817,6 @@ async fn get_cached_library_cover(
     manga_id: i64,
     thumbnail_url: String,
 ) -> Result<Option<String>, String> {
-    fs::create_dir_all(library_cover_cache_dir()).map_err(|err| err.to_string())?;
     let key = library_cover_cache_key(&profile_id, &server_url, manga_id, &thumbnail_url);
     Ok(find_cached_library_cover_path(&key).map(|path| path.to_string_lossy().into_owned()))
 }

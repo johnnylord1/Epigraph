@@ -837,7 +837,9 @@
     will-change: transform;
   }
 
-  .card.library-motion-running .cover-progress-fill::before {
+  /* Only the card being pointed at flows. Every visible card flowing at once keeps the compositor
+     drawing at full frame rate for as long as the library sits open. */
+  .card.library-motion-running:is(:hover, :focus-visible) .cover-progress-fill::before {
     animation-play-state: running;
   }
 
@@ -854,7 +856,7 @@
     will-change: transform;
   }
 
-  .card.library-motion-running .cover-progress-wave {
+  .card.library-motion-running:is(:hover, :focus-visible) .cover-progress-wave {
     animation-play-state: running;
   }
 
