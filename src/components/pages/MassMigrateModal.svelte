@@ -38,6 +38,7 @@
   import MigrationSourcePicker from "./MigrationSourcePicker.svelte";
   import MigrationResultList from "./MigrationResultList.svelte";
   import { enterOnMount, glideHeight, listFlip, popIn, popOut } from "../../lib/motion/motion";
+  import { floatMenu } from "./migrationMenu";
   import "./migrationModal.css";
 
   interface Props {
