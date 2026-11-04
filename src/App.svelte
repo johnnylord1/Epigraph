@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { createNovelReaderPreparation, registerNovelReaderPreparation, type NovelReaderPreparation } from "./lib/reader/restorePreparation";
   import { invoke } from "@tauri-apps/api/core";
   import { enableBuiltinCloudflareSolver } from "./lib/flaresolverr";
@@ -33,6 +33,7 @@
     GET_DOWNLOAD_STATUS,
     GET_LIBRARY,
     GET_LIBRARY_TRACKING_SUMMARY,
+    GET_LIBRARY_WORKS,
     GET_RESTORE_STATUS,
     GET_TRACKERS,
     RESTORE_BACKUP,
@@ -109,6 +110,7 @@
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPending, writeCompletedFirstRunMarker } from "./lib/firstRun";
   import { resumeFirstRunBackgroundSync } from "./lib/setup/firstRunBackgroundSync.svelte";
   import { createLibraryArrivalTracker, libraryLookupGate, libraryLookupsWaitForSync, setLibraryWorksArriving } from "./lib/recommendations/libraryLookupGate.svelte";
+  import { patchLibraryWorks } from "./lib/library/landedWorks";
 
   type DiscordRuntime = typeof import("./lib/discord");
   let discordRuntimePromise: Promise<DiscordRuntime> | null = null;
@@ -3069,25 +3071,59 @@
     };
   });
 
+  async function announceLibraryRead(localProfileId: string, detail: { libraryReloaded: boolean; landedWorks?: number[] }) {
+    const { COMIC_LIBRARY_RECONCILED_EVENT } = await import("./lib/comicSync/desktopComicBridge");
+    window.dispatchEvent(new CustomEvent(COMIC_LIBRARY_RECONCILED_EVENT, { detail: { localProfileId, ...detail } }));
+  }
+
   async function reloadLibraryAfterSyncLanded() {
     const profileId = normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId);
     if (!profileId || !store.runtimeServerUrl) return;
     cache.clearGroup(CACHE_GROUPS.LIBRARY);
     cache.clear(CACHE_KEYS.CATEGORIES);
     await preloadLibrarySnapshot(true);
-    const { COMIC_LIBRARY_RECONCILED_EVENT } = await import("./lib/comicSync/desktopComicBridge");
     const libraryReloaded = store.libraryBootstrapStatus === "ready";
-    window.dispatchEvent(new CustomEvent(COMIC_LIBRARY_RECONCILED_EVENT, { detail: { localProfileId: profileId, libraryReloaded } }));
+    await announceLibraryRead(profileId, { libraryReloaded });
+    if (!libraryReloaded) throw new Error("The library could not be read after synced changes.");
+  }
+
+  async function readLandedLibraryWorks(ids: number[]) {
+    const profileId = normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId);
+    if (!profileId || !store.runtimeServerUrl) return;
+    if (libraryBootstrapInFlight) await libraryBootstrapInFlight;
+    const libraryRead = store.libraryBootstrapStatus === "ready";
+    // A few works are no library: with nothing to add them to, the full read is what is missing.
+    if (!libraryRead && store.libraryMangaSnapshot.length === 0) throw new Error("The library has not been read yet.");
+    const data = await gql<{ mangas: { nodes: Manga[] } }>(GET_LIBRARY_WORKS, { ids });
+    const works = patchLibraryWorks(store.libraryMangaSnapshot, ids, data.mangas.nodes);
+    setLibraryMangaSnapshot(works);
+    // A list saved from the last session must not answer the full read still to come.
+    if (libraryRead) cache.set(CACHE_KEYS.LIBRARY, works, CACHE_GROUPS.LIBRARY);
+    const { loadLibrarySnapshot, saveLibrarySnapshot } = await import("./lib/library/snapshot");
+    const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
+    const saved = loadLibrarySnapshot(scope);
+    if (saved) saveLibrarySnapshot(scope, { ...saved, mangas: works, updatedAt: undefined });
+    await announceLibraryRead(profileId, { libraryReloaded: true, landedWorks: ids });
+    // Counted in the pause before the next read: showing them is most of what they cost.
+    await tick();
   }
 
   // Phones and other computers reach Suwayomi through Core's projection, outside this window, so
-  // the library (works, categories, progress) is reloaded once their changes land there.
+  // the works they changed are read again once their changes land there.
   $effect(() => {
     if (!shellReady || isNovelRuntimeHostWindow) return;
     let disposed = false;
     let stop: (() => void) | undefined;
     void import("./lib/comicSync/syncLandingWatch")
-      .then(({ startSyncLandingWatch }) => startSyncLandingWatch(reloadLibraryAfterSyncLanded, () => pageHidden, {
+      .then(({ startSyncLandingWatch }) => startSyncLandingWatch({
+        isPaused: () => pageHidden,
+        profileId: () => normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId),
+        readWorks: readLandedLibraryWorks,
+        readLibrary: reloadLibraryAfterSyncLanded,
+        catalogChanged: () => {
+          const profileId = normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId);
+          if (profileId) void announceLibraryRead(profileId, { libraryReloaded: true });
+        },
         arriving: createLibraryArrivalTracker(),
         onArriving: setLibraryWorksArriving,
       }))

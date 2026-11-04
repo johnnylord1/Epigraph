@@ -880,20 +880,26 @@ pub struct SyncdSyncProgress {
     /// Projections the running Core has applied to Suwayomi; absent (0) from older Cores.
     #[serde(default)]
     pub applied_projections: u64,
+    /// Which works changed after the requested cursor; absent from older Cores.
+    #[serde(default)]
+    pub landed: Option<crate::syncd::landed_works::LandedWorksView>,
 }
 
 /// What the running Core still has to apply from paired devices (works, progress, categories and
 /// tracker logins). `None` when no Core runtime is attached or it is older; never starts Core.
+/// `landed_since` also asks which works changed after that cursor.
 #[tauri::command]
 pub async fn syncd_get_sync_progress_if_running(
     app: AppHandle,
+    landed_since: Option<u64>,
 ) -> Result<Option<SyncdSyncProgress>, String> {
     let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
         return Ok(None);
     };
     let client = insecure_local_client()?;
+    let cursor = landed_since.map_or(String::new(), |since| format!("?landedSince={since}"));
     let response = client
-        .get(format!("{}/v1/local/sync-progress", runtime.local_base_url))
+        .get(format!("{}/v1/local/sync-progress{cursor}", runtime.local_base_url))
         .timeout(Duration::from_secs(5))
         .send()
         .await

@@ -276,11 +276,27 @@ export interface SyncdSyncProgress {
   pendingLibraryUploads?: number | null;
   /** Projections Core applied since it started; absent from older Cores. */
   appliedProjections?: number;
+  /** Which works changed in Suwayomi; absent from older Cores. */
+  landed?: SyncdLandedWorks | null;
 }
 
-/** Null when this computer's Core is not running (or is older); never starts it. */
-export function syncdGetSyncProgressIfRunning(): Promise<SyncdSyncProgress | null> {
-  return invoke("syncd_get_sync_progress_if_running");
+/** What synced changes reached Suwayomi, after the cursor the caller asked from. */
+export interface SyncdLandedWorks {
+  /** The cursor to ask from next. */
+  sequence: number;
+  /** A cursor below this may have missed works, so the whole library has to be read. */
+  floor: number;
+  /** Moves when library membership or categories changed, not when only reading progress did. */
+  catalogSequence: number;
+  works: { profileId: string; mangaId: number; sequence: number }[];
+}
+
+/**
+ * Null when this computer's Core is not running (or is older); never starts it.
+ * `landedSince` also asks which works changed after that cursor.
+ */
+export function syncdGetSyncProgressIfRunning(landedSince?: number): Promise<SyncdSyncProgress | null> {
+  return invoke("syncd_get_sync_progress_if_running", { landedSince });
 }
 
 export function syncdUpdatePairedDeviceGrantedScopes(
@@ -425,16 +441,17 @@ export function listenSyncdReplicationState(
 }
 
 /**
- * Also fires when this window brought the other computer's comics in, and when it reloaded the
- * library after synced changes (`libraryReloaded`: the works and categories were just read).
+ * Also fires when this window brought the other computer's comics in, and when it read the library
+ * after synced changes: `libraryReloaded` means the works are already current, and `landedWorks`
+ * that only those works changed, with no category involved.
  */
 export async function listenSyncdComicLibraryChanged(
-  handler: (payload: { localProfileId: string; libraryReloaded?: boolean }) => void,
+  handler: (payload: { localProfileId: string; libraryReloaded?: boolean; landedWorks?: number[] }) => void,
 ): Promise<UnlistenFn> {
   const unlisten = await listen<{ localProfileId: string }>("syncd-comic-library-changed", ({ payload }) => handler(payload));
   const onReconciled = (event: Event) => {
-    const detail = (event as CustomEvent<{ localProfileId?: string; libraryReloaded?: boolean }>).detail;
-    if (detail?.localProfileId) handler({ localProfileId: detail.localProfileId, libraryReloaded: detail.libraryReloaded });
+    const detail = (event as CustomEvent<{ localProfileId?: string; libraryReloaded?: boolean; landedWorks?: number[] }>).detail;
+    if (detail?.localProfileId) handler({ localProfileId: detail.localProfileId, libraryReloaded: detail.libraryReloaded, landedWorks: detail.landedWorks });
   };
   window.addEventListener("epigraph-comic-library-reconciled", onReconciled);
   return () => {

@@ -2,7 +2,8 @@
 //! device whose last apply carried the same revision can skip reading the catalog again.
 //!
 //! The progress mirror computes them at the start of each tick from a light read of what devices
-//! apply, before its own progress reads, which take seconds on a large library. A write that may
+//! apply, before its own progress reads, which take seconds on a large library, and a keepalive
+//! does while that tick is backing off. A write that may
 //! change what a revision covers drops it until the next computation, and a computation that
 //! started before such a write is discarded. A device that gets no revision applies the catalog
 //! in full, so dropping one is always safe; announcing a stale one is not.
@@ -24,7 +25,7 @@ use super::routes::{suwayomi_catalog, suwayomi_extensions};
 
 /// Bumped when what a revision covers changes, so devices apply in full once after an update.
 const REVISION_SCHEMA: u32 = 2;
-/// A revision the mirror has not confirmed for this long is not announced (it ticks every 45 s).
+/// A revision not confirmed for this long is not announced (the keepalive runs every 120 s at most).
 const REVISION_TTL: Duration = Duration::from_secs(180);
 const LIBRARY_PAGE_SIZE: i64 = 250;
 /// A larger library gets no revision, so its devices always apply it in full.

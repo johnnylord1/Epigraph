@@ -2100,8 +2100,9 @@
     // runs every couple of seconds, so wait for it before refetching the library.
     let comicLibraryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     let comicLibraryNeedsRead = false;
-    const comicLibraryUnlisten = listenSyncdComicLibraryChanged(({ localProfileId, libraryReloaded }) => {
+    const comicLibraryUnlisten = listenSyncdComicLibraryChanged(({ localProfileId, libraryReloaded, landedWorks }) => {
       if (localProfileId !== normalizeLocalProfileId(store.runtimeResolvedLocalProfileId)) return;
+      if (landedWorks) return;
       if (comicLibraryRefreshTimer) clearTimeout(comicLibraryRefreshTimer);
       comicLibraryNeedsRead ||= !libraryReloaded;
       comicLibraryRefreshTimer = setTimeout(() => {
@@ -2207,7 +2208,7 @@
           <div class="library-hero__collections-row">
             <div class="library-hero__collections-stack">
               <div class="library-chip-row library-chip-row--user">
-                {#each heroUserCollections as collection}
+                {#each heroUserCollections as collection (collection.id)}
                   <button
                     type="button"
                     class="n-chip"
@@ -2240,7 +2241,7 @@
                       onscroll={updateGenreOverflow}
                       onwheel={handleGenreWheel}
                     >
-                      {#each activeGenreChips as chip}
+                      {#each activeGenreChips as chip (normalizeGenreKey(chip.label))}
                         <button
                           type="button"
                           class="n-genre-chip library-genre-chip"
@@ -2260,7 +2261,7 @@
 
               {#if heroSystemCollections.length}
                 <div class="library-chip-row library-chip-row--system">
-                  {#each heroSystemCollections as collection}
+                  {#each heroSystemCollections as collection (collection.id)}
                     <button
                       type="button"
                       class="n-chip n-chip--system"

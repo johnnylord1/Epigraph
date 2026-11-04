@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Context;
 use futures_util::{stream, StreamExt};
@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use super::lifecycle::{wait_for_shutdown_request, ShutdownRequest};
 use super::models::{AppError, AuthenticatedSession, PortableWorkBindingRow, SharedAppState};
 use super::routes::suwayomi_catalog;
-use super::{catalog_revision, db, suwayomi_projection};
+use super::{catalog_revision, db, landed_works, suwayomi_projection};
 
 /// Sources fetched at once, one work at a time each, as Mihon's library update does: sources keep
 /// their own rate limits, so a library on a single source is not hammered.
@@ -79,7 +79,12 @@ pub fn spawn_hydration_task(
     mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
 ) {
     tokio::spawn(async move {
-        let mut retries = RetryBook::default();
+        let mut retries = RetryBook::load(&state.pool, db::now_ms())
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(error = %error, "failed to read when synced comics are due again");
+                RetryBook::default()
+            });
         let mut ticker = tokio::time::interval(PASS_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -143,13 +148,16 @@ async fn hydrate_profiles(state: &SharedAppState, retries: &mut RetryBook) -> an
         Ordering::Relaxed,
     );
     retries.retain(|profile_id, manga_id| {
-        listed.iter().any(|(session, works)| {
-            session.profile_id == profile_id && works.iter().any(|work| work.manga_id == manga_id)
-        })
+        // A profile whose runtime did not answer says nothing about its works.
+        listed
+            .iter()
+            .find(|(session, _)| session.profile_id == profile_id)
+            .is_none_or(|(_, works)| works.iter().any(|work| work.manga_id == manga_id))
     });
+    save_retries(state, retries).await;
 
     for (session, works) in &listed {
-        let now = Instant::now();
+        let now = db::now_ms();
         let queues = due_queues_by_source(works, |manga_id| {
             retries.is_due(&session.profile_id, manga_id, now)
         });
@@ -166,17 +174,29 @@ async fn hydrate_profiles(state: &SharedAppState, retries: &mut RetryBook) -> an
             match outcome {
                 Outcome::Hydrated => {
                     retries.clear(&session.profile_id, manga_id);
+                    landed_works::record_work(&session.profile_id, manga_id);
                     hydrated += 1;
                 }
-                Outcome::Failed => retries.fail(&session.profile_id, manga_id, Instant::now()),
+                Outcome::Failed => retries.fail(&session.profile_id, manga_id, db::now_ms()),
                 Outcome::RuntimeUnavailable => {}
             }
         }
+        save_retries(state, retries).await;
         if hydrated > 0 {
             tracing::info!(profile = session.profile_id, hydrated, "completed synced comics from their sources");
         }
     }
     Ok(())
+}
+
+async fn save_retries(state: &SharedAppState, retries: &mut RetryBook) {
+    if !retries.dirty {
+        return;
+    }
+    let _writer_guard = state.mutation_gate.lock().await;
+    if let Err(error) = retries.save(&state.pool).await {
+        tracing::warn!(error = %error, "failed to save when synced comics are due again");
+    }
 }
 
 /// One source's works, in order. Stops when the runtime goes away, leaving the rest due.
@@ -406,37 +426,84 @@ fn due_queues_by_source(
     queues.into_values().collect()
 }
 
-/// Backoff of works whose source failed: a missing extension, a source that is down. It lives in
-/// memory, since the work's own `initialized: false` already survives restarts.
+/// Backoff of works whose source failed: a missing extension, a source that is down. It is stored,
+/// or every restart would try them all at once, each one costing Suwayomi a source request.
 #[derive(Default)]
 struct RetryBook {
-    entries: HashMap<(String, i64), (u32, Instant)>,
+    /// Failures so far and when the work is due again, in Unix milliseconds.
+    entries: HashMap<(String, i64), (u32, i64)>,
+    dirty: bool,
 }
 
 impl RetryBook {
-    fn is_due(&self, profile_id: &str, manga_id: i64, now: Instant) -> bool {
-        self.entries
-            .get(&(profile_id.to_string(), manga_id))
-            .is_none_or(|(_, due_at)| *due_at <= now)
+    async fn load(pool: &sqlx::SqlitePool, now_ms: i64) -> anyhow::Result<Self> {
+        let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+            "SELECT profile_id, manga_id, failures, next_attempt_at_ms FROM suwayomi_hydration_retries",
+        )
+        .fetch_all(pool)
+        .await
+        .context("failed to read the retries of synced comics")?;
+        let latest = now_ms.saturating_add(MAX_RETRY.as_millis() as i64);
+        let entries = rows
+            .into_iter()
+            .map(|(profile_id, manga_id, failures, due_at_ms)| {
+                // A clock that was set back does not make a work wait longer than the longest wait.
+                ((profile_id, manga_id), (failures.clamp(0, i64::from(u32::MAX)) as u32, due_at_ms.min(latest)))
+            })
+            .collect();
+        Ok(Self { entries, dirty: false })
     }
 
-    fn fail(&mut self, profile_id: &str, manga_id: i64, now: Instant) {
+    /// Replaces what is stored. The caller holds the write gate.
+    async fn save(&mut self, pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+        let mut tx = db::begin_write(pool).await?;
+        sqlx::query("DELETE FROM suwayomi_hydration_retries")
+            .execute(&mut *tx)
+            .await?;
+        for ((profile_id, manga_id), (failures, due_at_ms)) in &self.entries {
+            sqlx::query(
+                "INSERT INTO suwayomi_hydration_retries (profile_id, manga_id, failures, next_attempt_at_ms) VALUES (?, ?, ?, ?)",
+            )
+            .bind(profile_id)
+            .bind(manga_id)
+            .bind(i64::from(*failures))
+            .bind(due_at_ms)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        self.dirty = false;
+        Ok(())
+    }
+
+    fn is_due(&self, profile_id: &str, manga_id: i64, now_ms: i64) -> bool {
+        self.entries
+            .get(&(profile_id.to_string(), manga_id))
+            .is_none_or(|(_, due_at_ms)| *due_at_ms <= now_ms)
+    }
+
+    fn fail(&mut self, profile_id: &str, manga_id: i64, now_ms: i64) {
         let entry = self
             .entries
             .entry((profile_id.to_string(), manga_id))
-            .or_insert((0, now));
+            .or_insert((0, now_ms));
         entry.0 = entry.0.saturating_add(1);
-        entry.1 = now + retry_delay(entry.0);
+        entry.1 = now_ms.saturating_add(retry_delay(entry.0).as_millis() as i64);
+        self.dirty = true;
     }
 
     fn clear(&mut self, profile_id: &str, manga_id: i64) {
-        self.entries.remove(&(profile_id.to_string(), manga_id));
+        if self.entries.remove(&(profile_id.to_string(), manga_id)).is_some() {
+            self.dirty = true;
+        }
     }
 
     /// Forgets works that are no longer waiting.
     fn retain(&mut self, keep: impl Fn(&str, i64) -> bool) {
+        let before = self.entries.len();
         self.entries
             .retain(|(profile_id, manga_id), _| keep(profile_id, *manga_id));
+        self.dirty |= self.entries.len() != before;
     }
 }
 
@@ -506,15 +573,16 @@ mod tests {
         assert_eq!(retry_delay(3), BASE_RETRY * 4);
         assert_eq!(retry_delay(50), MAX_RETRY);
 
-        let now = Instant::now();
+        let now = 1_000_000;
+        let base_retry = BASE_RETRY.as_millis() as i64;
         let mut book = RetryBook::default();
         assert!(book.is_due("p", 1, now));
         book.fail("p", 1, now);
         assert!(!book.is_due("p", 1, now));
-        assert!(book.is_due("p", 1, now + BASE_RETRY));
+        assert!(book.is_due("p", 1, now + base_retry));
         assert!(book.is_due("other", 1, now));
         book.fail("p", 1, now);
-        assert!(!book.is_due("p", 1, now + BASE_RETRY));
+        assert!(!book.is_due("p", 1, now + base_retry));
         book.clear("p", 1);
         assert!(book.is_due("p", 1, now));
 
@@ -523,6 +591,43 @@ mod tests {
         book.retain(|_, manga_id| manga_id == 3);
         assert!(book.is_due("p", 2, now));
         assert!(!book.is_due("p", 3, now));
+    }
+
+    #[tokio::test]
+    async fn the_wait_of_failed_works_survives_a_restart() {
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let now = 1_000_000;
+        let base_retry = BASE_RETRY.as_millis() as i64;
+
+        let mut book = RetryBook::load(&pool, now).await.unwrap();
+        assert!(book.is_due("p", 1, now));
+        assert!(!book.dirty);
+        book.fail("p", 1, now);
+        book.fail("p", 2, now);
+        book.fail("p", 2, now);
+        book.save(&pool).await.unwrap();
+        assert!(!book.dirty);
+
+        let mut restarted = RetryBook::load(&pool, now + 1).await.unwrap();
+        assert!(!restarted.is_due("p", 1, now + 1));
+        assert!(restarted.is_due("p", 1, now + base_retry));
+        assert!(!restarted.is_due("p", 2, now + base_retry), "its failures were kept");
+        assert!(restarted.is_due("p", 3, now + 1));
+
+        // Works that stopped waiting are gone from what is stored, too.
+        restarted.clear("p", 1);
+        assert!(restarted.dirty);
+        restarted.save(&pool).await.unwrap();
+        let again = RetryBook::load(&pool, now + 1).await.unwrap();
+        assert!(again.is_due("p", 1, now + 1));
+        assert!(!again.is_due("p", 2, now + 1));
+
+        // A clock that was set back does not make a work wait longer than the longest wait.
+        let earlier = now - 86_400_000;
+        let set_back = RetryBook::load(&pool, earlier).await.unwrap();
+        assert!(set_back.is_due("p", 2, earlier + MAX_RETRY.as_millis() as i64));
     }
 
     #[tokio::test]

@@ -1,11 +1,12 @@
 use std::net::SocketAddr;
 
 use axum::body::Bytes;
-use axum::extract::{ConnectInfo, Path, State};
+use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use serde::Deserialize;
 
+use crate::syncd::landed_works::{self, LandedWorksView};
 use crate::syncd::models::{AppError, PairingTokenResponse, SharedAppState};
 use crate::syncd::tracker_credentials::{self, DESKTOP_DEVICE_ID};
 use crate::syncd::{
@@ -323,6 +324,14 @@ pub struct LocalSyncProgress {
     pub pending_library_uploads: Option<i64>,
     /// Projections applied since Core started; when it moves, the UI reloads what it shows.
     pub applied_projections: u64,
+    /// Which works changed in Suwayomi after `landedSince`, so the UI reads only those.
+    pub landed: LandedWorksView,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSyncProgressQuery {
+    pub landed_since: Option<u64>,
 }
 
 /// What synced data this desktop has not applied yet, as counts only, so the first run can wait
@@ -330,6 +339,7 @@ pub struct LocalSyncProgress {
 pub async fn get_local_sync_progress(
     State(state): State<SharedAppState>,
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    Query(query): Query<LocalSyncProgressQuery>,
 ) -> Result<Json<LocalSyncProgress>, AppError> {
     if !remote_addr.ip().is_loopback() {
         return Err(AppError::Forbidden(
@@ -350,6 +360,7 @@ pub async fn get_local_sync_progress(
         pending_uploads: super::status::pending_uploads(),
         pending_library_uploads: super::status::pending_library_uploads(),
         applied_projections: suwayomi_projection::applied_projection_count(),
+        landed: landed_works::view(query.landed_since),
     }))
 }
 

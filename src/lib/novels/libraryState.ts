@@ -29,6 +29,8 @@ import {
 const NOVEL_LIBRARY_STATE_KEY = "epigraph-novels-library-state";
 const NOVEL_LIBRARY_STATE_VERSION = 1 as const;
 const novelLibraryStateCache = new Map<string, PersistedNovelLibraryState>();
+/** Pages opening together share one read: the file can be megabytes, and each read is parsed again. */
+const novelLibraryStateLoads = new Map<string, Promise<PersistedNovelLibraryState>>();
 
 interface StorageLike {
   getItem(key: string): string | null;
@@ -280,6 +282,7 @@ export function rememberNovelLibraryState(
 
 export function resetNovelLibraryStateCacheForTests() {
   novelLibraryStateCache.clear();
+  novelLibraryStateLoads.clear();
 }
 
 async function persistNovelLibraryStateToDesktop(
@@ -309,7 +312,20 @@ export async function loadNovelLibraryState(
   const scopeKey = resolveNovelsProfileScope(scope);
   const cached = novelLibraryStateCache.get(scopeKey);
   if (cached) return cached;
+  const loading = novelLibraryStateLoads.get(scopeKey);
+  if (loading) return loading;
+  const load = readStoredNovelLibraryState(scopeInput, scope, scopeKey).finally(() => {
+    if (novelLibraryStateLoads.get(scopeKey) === load) novelLibraryStateLoads.delete(scopeKey);
+  });
+  novelLibraryStateLoads.set(scopeKey, load);
+  return load;
+}
 
+async function readStoredNovelLibraryState(
+  scopeInput: NovelRepositoryScopeInput,
+  scope: { profileId: string | null; serverUrl: string | null },
+  scopeKey: string,
+): Promise<PersistedNovelLibraryState> {
   if (!canUseDesktopNovelStorage()) {
     const legacy = readLegacyNovelLibraryState(scopeInput) ?? createEmptyState(scopeInput);
     return persistNovelLibraryStateCache(legacy);
@@ -344,6 +360,8 @@ export async function reloadNovelLibraryState(
   const scope = normalizeScopeInput(scopeInput);
   const scopeKey = resolveNovelsProfileScope(scope);
   novelLibraryStateCache.delete(scopeKey);
+  // Asked for after a change, so a read that started before it does not answer.
+  novelLibraryStateLoads.delete(scopeKey);
   return loadNovelLibraryState(scopeInput);
 }
 

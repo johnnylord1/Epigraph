@@ -24,6 +24,8 @@ use crate::syncd::runtime_manifest::{
 
 const DEFAULT_SYNCD_PORT: u16 = 4777;
 const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(20);
+/// The sidecar log keeps at most this much, plus one older file of about the same size.
+const MAX_SIDECAR_LOG_BYTES: u64 = 8 * 1024 * 1024;
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1217,9 +1219,19 @@ fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    rotate_log_when_full(path, MAX_SIDECAR_LOG_BYTES);
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(file, "{line}")?;
     Ok(())
+}
+
+/// Moves a full log aside, replacing the older one, so the two together stay bounded. A log that
+/// cannot be moved keeps growing for now: losing a line would be worse, and the next one tries again.
+fn rotate_log_when_full(path: &Path, max_bytes: u64) {
+    let full = fs::metadata(path).is_ok_and(|metadata| metadata.len() >= max_bytes);
+    if full {
+        let _ = fs::rename(path, path.with_extension("log.1"));
+    }
 }
 
 fn phase_gate_autostart_enabled() -> bool {
@@ -1273,6 +1285,34 @@ fn unix_now_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_full_log_moves_aside_and_replaces_the_older_one() {
+        let dir = std::env::temp_dir().join(format!("epigraph-sidecar-log-{}", unix_now_millis()));
+        fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("syncd-sidecar.log");
+        let older = dir.join("syncd-sidecar.log.1");
+
+        // Nothing to move yet, and a log below the limit stays where it is.
+        rotate_log_when_full(&log, 8);
+        fs::write(&log, "small").unwrap();
+        rotate_log_when_full(&log, 8);
+        assert_eq!(fs::read_to_string(&log).unwrap(), "small");
+        assert!(!older.exists());
+
+        fs::write(&older, "oldest").unwrap();
+        fs::write(&log, "full log").unwrap();
+        rotate_log_when_full(&log, 8);
+        assert!(!log.exists());
+        assert_eq!(fs::read_to_string(&older).unwrap(), "full log");
+
+        // The next line starts a new log.
+        append_line(&log, "next").unwrap();
+        assert_eq!(fs::read_to_string(&log).unwrap().trim_end(), "next");
+        assert_eq!(fs::read_to_string(&older).unwrap(), "full log");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn request(ownership: SyncdOwnershipMode) -> SpawnRequest {
         SpawnRequest {

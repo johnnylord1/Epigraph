@@ -147,6 +147,25 @@ describe("novel library state storage", () => {
     });
   });
 
+  it("shares one read between pages asking at the same time, and reads again when asked to reload", async () => {
+    invokeMock.mockResolvedValue(JSON.stringify(createState()));
+
+    const [first, second] = await Promise.all([loadNovelLibraryState(SCOPE), loadNovelLibraryState(SCOPE)]);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(second).toBe(first);
+
+    await Promise.all([loadNovelLibraryState(SCOPE), reloadNovelLibraryState(SCOPE)]);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads again after a read that failed", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("not ready"));
+    await expect(loadNovelLibraryState(SCOPE)).rejects.toThrow("not ready");
+
+    invokeMock.mockResolvedValueOnce(JSON.stringify(createState()));
+    expect((await loadNovelLibraryState(SCOPE)).entries[0]?.title).toBe("MANACLED");
+  });
+
   it("loads persisted desktop state from the profile-root file", async () => {
     invokeMock.mockResolvedValueOnce(JSON.stringify(createState()));
 

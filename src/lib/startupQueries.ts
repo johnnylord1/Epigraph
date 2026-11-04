@@ -1,37 +1,61 @@
+const LIBRARY_WORK_FIELDS = `
+  id
+  title
+  thumbnailUrl
+  realUrl
+  inLibrary
+  downloadCount
+  unreadCount
+  chapters {
+    totalCount
+  }
+  inLibraryAt
+  chaptersLastFetchedAt
+  latestFetchedChapter {
+    fetchedAt
+  }
+  latestUploadedChapter {
+    uploadDate
+  }
+  lastReadChapter {
+    lastReadAt
+  }
+  status
+  genre
+  sourceId
+  source {
+    id
+    name
+    lang
+    displayName
+  }
+`;
+
 export const GET_LIBRARY = `
   query GetLibrary {
     mangas(condition: { inLibrary: true }) {
       nodes {
-        id
-        title
-        thumbnailUrl
-        realUrl
-        inLibrary
-        downloadCount
-        unreadCount
-        chapters {
-          totalCount
-        }
-        inLibraryAt
-        chaptersLastFetchedAt
-        latestFetchedChapter {
-          fetchedAt
-        }
-        latestUploadedChapter {
-          uploadDate
-        }
-        lastReadChapter {
-          lastReadAt
-        }
-        status
-        genre
-        sourceId
-        source {
-          id
-          name
-          lang
-          displayName
-        }
+        ${LIBRARY_WORK_FIELDS}
+      }
+    }
+  }
+`;
+
+/** How many works the library holds, without reading any of them. */
+export const COUNT_LIBRARY = `
+  query CountLibrary {
+    mangas(condition: { inLibrary: true }, first: 1) {
+      totalCount
+    }
+  }
+`;
+
+/** The same fields as GET_LIBRARY for only some works, in the library or not. */
+export const GET_LIBRARY_WORKS = `
+  query GetLibraryWorks($ids: [Int!]!) {
+    mangas(filter: { id: { in: $ids } }) {
+      nodes {
+        ${LIBRARY_WORK_FIELDS}
       }
     }
   }

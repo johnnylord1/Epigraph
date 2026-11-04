@@ -21,9 +21,18 @@ use super::{
 /// How often the desktop's Suwayomi reading progress is re-imported into the syncd
 /// replica so the snapshot/replay serve it to paired mobile devices.
 const MIRROR_INTERVAL: Duration = Duration::from_secs(45);
+/// How far the tick backs off while it finds nothing and no device is here to receive anything.
+const MAX_IDLE_MIRROR_INTERVAL: Duration = Duration::from_secs(300);
+/// How soon a device that connects ends that backoff.
+const MIRROR_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+/// Keeps revisions under their expiry while the tick is backing off and nobody streams them.
+const REVISION_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(120);
 /// Lower bound between two ticks requested by desktop edits, so a burst of edits shares one
 /// Suwayomi round trip instead of queueing a tick per click.
 const MIN_REQUESTED_INTERVAL: Duration = Duration::from_millis(1_500);
+/// The same bound when only chapters were edited, as each page turn does: the fast path has already
+/// sent them, and a tick per page would keep Suwayomi reading the whole library during a chapter.
+const MIN_EDITS_ONLY_INTERVAL: Duration = Duration::from_secs(15);
 /// Lower bound between two catalog revision computations, so a burst of writes, each of which
 /// would discard a computation still reading, shares one.
 const MIN_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_millis(400);
@@ -234,15 +243,17 @@ pub fn request_catalog_refresh() {
     catalog_refresh_requests().notify_one();
 }
 
-/// Spawns the task that computes catalog revisions on request, and on its own every
-/// [`CATALOG_WATCH_INTERVAL`] while a device streams catalog events. Requests made while it
-/// computes coalesce into one more computation.
+/// Spawns the task that computes catalog revisions on request, on its own every
+/// [`CATALOG_WATCH_INTERVAL`] while a device streams catalog events, and every
+/// [`REVISION_KEEPALIVE_INTERVAL`] otherwise. Requests made while it computes coalesce into one
+/// more computation.
 pub fn spawn_catalog_refresh_task(
     state: SharedAppState,
     mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
 ) {
     tokio::spawn(async move {
         let requests = catalog_refresh_requests();
+        let started = tokio::time::Instant::now();
         let mut last_refresh: Option<tokio::time::Instant> = None;
         let mut watch = tokio::time::interval_at(
             tokio::time::Instant::now() + CATALOG_WATCH_INTERVAL,
@@ -254,7 +265,8 @@ pub fn spawn_catalog_refresh_task(
                 _ = requests.notified() => {}
                 _ = watch.tick() => {
                     let recent = last_refresh.is_some_and(|at| at.elapsed() < CATALOG_WATCH_INTERVAL);
-                    if recent || !catalog_revision::has_listeners() {
+                    let expiring = last_refresh.unwrap_or(started).elapsed() >= REVISION_KEEPALIVE_INTERVAL;
+                    if recent || !(catalog_revision::has_listeners() || expiring) {
                         continue;
                     }
                 }
@@ -313,20 +325,28 @@ pub fn spawn_progress_mirror_task(
         // Do not contend with pairing/bootstrap writes during Core startup. The mirror is a
         // repair loop; it does not need an immediate tick because successful Suwayomi commands
         // publish confirmed progress synchronously. Desktop edits request a tick explicitly.
-        let mut ticker = tokio::time::interval_at(
-            tokio::time::Instant::now() + MIRROR_INTERVAL,
-            MIRROR_INTERVAL,
-        );
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let started = tokio::time::Instant::now();
+        let mut check = tokio::time::interval_at(started + MIRROR_CHECK_INTERVAL, MIRROR_CHECK_INTERVAL);
+        check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let requests = mirror_requests();
         let mut memory = MirrorMemory::default();
         let mut last_tick: Option<tokio::time::Instant> = None;
+        let mut idle_ticks = 0u32;
         loop {
-            tokio::select! {
-                _ = ticker.tick() => {}
+            let requested = tokio::select! {
+                _ = check.tick() => {
+                    let wait = mirror_wait(idle_ticks, state.device_presence.connected_devices() > 0);
+                    if last_tick.unwrap_or(started).elapsed() < wait {
+                        continue;
+                    }
+                    false
+                }
                 _ = requests.wake.notified() => {
+                    let gap = requested_tick_gap(
+                        &requests.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
+                    );
                     let wait = last_tick
-                        .map(|at| MIN_REQUESTED_INTERVAL.saturating_sub(at.elapsed()))
+                        .map(|at| gap.saturating_sub(at.elapsed()))
                         .unwrap_or_default();
                     if !wait.is_zero() {
                         tokio::select! {
@@ -334,18 +354,22 @@ pub fn spawn_progress_mirror_task(
                             _ = wait_for_shutdown_request(&mut shutdown) => break,
                         }
                     }
-                    // The periodic tick stays a fallback; it restarts its interval from here.
-                    ticker.reset();
+                    true
                 }
                 _ = wait_for_shutdown_request(&mut shutdown) => break,
-            }
+            };
             let hints = take_mirror_hints();
             match mirror_all_profiles(&state, &mut memory, &hints).await {
-                Ok(mirrored) => tracing::debug!(
-                    mirrored,
-                    requested = !hints.is_empty(),
-                    "Suwayomi progress mirror tick completed"
-                ),
+                Ok(mirrored) => {
+                    let useful = mirrored > 0 || requested || !hints.is_empty() || memory.scans_deferred();
+                    idle_ticks = if useful { 0 } else { idle_ticks.saturating_add(1) };
+                    tracing::debug!(
+                        mirrored,
+                        requested = !hints.is_empty(),
+                        idle_ticks,
+                        "Suwayomi progress mirror tick completed"
+                    );
+                }
                 Err(error) => {
                     tracing::warn!(error = %error, "failed to mirror Suwayomi reading progress")
                 }
@@ -353,6 +377,26 @@ pub fn spawn_progress_mirror_task(
             last_tick = Some(tokio::time::Instant::now());
         }
     });
+}
+
+fn requested_tick_gap(hints: &MirrorHints) -> Duration {
+    if hints.manga_ids.is_empty() && !hints.chapter_edits.is_empty() {
+        MIN_EDITS_ONLY_INTERVAL
+    } else {
+        MIN_REQUESTED_INTERVAL
+    }
+}
+
+/// How long the repair tick waits. It reads the whole library, which costs Suwayomi seconds of CPU
+/// on a large one, so it backs off while it finds nothing and no device is here to receive anything.
+/// A connected device always gets [`MIRROR_INTERVAL`], and requests do not wait for it.
+fn mirror_wait(idle_ticks: u32, device_connected: bool) -> Duration {
+    if device_connected {
+        return MIRROR_INTERVAL;
+    }
+    MIRROR_INTERVAL
+        .saturating_mul(1u32 << idle_ticks.min(4))
+        .min(MAX_IDLE_MIRROR_INTERVAL)
 }
 
 /// Mirrors desktop chapter edits as soon as they are requested. A tick reads the whole library
@@ -854,11 +898,19 @@ struct MirrorMemory {
     profiles: HashMap<String, ProfileMirrorMemory>,
 }
 
+impl MirrorMemory {
+    /// Changed titles did not fit in the last tick, so the next one has work waiting.
+    fn scans_deferred(&self) -> bool {
+        self.profiles.values().any(|profile| profile.scans_deferred)
+    }
+}
+
 #[derive(Default)]
 struct ProfileMirrorMemory {
     fingerprints: HashMap<i64, MangaFingerprint>,
     baselines: HashMap<i64, MangaBaseline>,
     sweep_cursor: usize,
+    scans_deferred: bool,
 }
 
 /// Per-title library summary. A change means some chapter's read or page state changed, so
@@ -952,6 +1004,7 @@ async fn mirror_chapter_states(
         memory.sweep_cursor,
     );
     memory.sweep_cursor = plan.next_sweep_cursor;
+    memory.scans_deferred = !plan.deferred.is_empty();
     tracing::debug!(
         hinted = hinted.len(),
         dirty = dirty.len(),
@@ -2079,6 +2132,26 @@ fn chapter_state_semantically_equal(stored_json: &str, incoming_json: &str) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tick_waits_longer_when_the_fast_path_already_sent_the_edits() {
+        let mut hints = MirrorHints::default();
+        assert_eq!(requested_tick_gap(&hints), MIN_REQUESTED_INTERVAL);
+        hints.record(&[], &[508], 1_000);
+        assert_eq!(requested_tick_gap(&hints), MIN_EDITS_ONLY_INTERVAL);
+        hints.record(&[3], &[], 1_000);
+        assert_eq!(requested_tick_gap(&hints), MIN_REQUESTED_INTERVAL);
+    }
+
+    #[test]
+    fn the_repair_tick_backs_off_only_while_no_device_is_connected() {
+        let seconds = |idle, connected| mirror_wait(idle, connected).as_secs();
+        assert_eq!(
+            [0, 1, 2, 3, 4, 100].map(|idle| seconds(idle, false)),
+            [45, 90, 180, 300, 300, 300]
+        );
+        assert_eq!([0, 3, 100].map(|idle| seconds(idle, true)), [45, 45, 45]);
+    }
 
     fn bound_comic_rows() -> (PortableWorkBindingRow, PortableChapterBindingRow) {
         let work_ref = PortableWorkRefV3::comic("1024627298672457456", "/manga/example");

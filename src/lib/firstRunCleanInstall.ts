@@ -70,14 +70,14 @@ export function reopenFirstRun(storage: Pick<Storage, "setItem" | "removeItem">,
 export function createProductionCleanInstallProbe(scope: { profileId: string; serverUrl: string }): CleanInstallProbe {
   return {
     async countComics() {
-      const [{ waitForSuwayomiGraphqlReady }, { gql }, { GET_LIBRARY }] = await Promise.all([
+      const [{ waitForSuwayomiGraphqlReady }, { gql }, { COUNT_LIBRARY }] = await Promise.all([
         import("./suwayomiReadiness"),
         import("./startupClient"),
         import("./startupQueries"),
       ]);
       await waitForSuwayomiGraphqlReady("graphql", { attempts: 40, delayMs: 1000, timeoutMs: 5000 });
-      const data = await gql<{ mangas: { nodes: unknown[] } }>(GET_LIBRARY, undefined, undefined, 12000);
-      return data.mangas.nodes.length;
+      const data = await gql<{ mangas: { totalCount: number } }>(COUNT_LIBRARY, undefined, undefined, 12000);
+      return data.mangas.totalCount;
     },
     async countBooks() {
       const { loadBookLibraryState } = await import("./books/libraryState");

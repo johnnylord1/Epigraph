@@ -833,8 +833,9 @@
     window.addEventListener("focus", reloadChaptersOnFocus);
     // Read state from another device reaches Suwayomi through the syncd projection a moment later.
     let syncedReloadTimer: ReturnType<typeof setTimeout> | null = null;
-    const syncedUnlisten = listenSyncdComicLibraryChanged(({ localProfileId }) => {
+    const syncedUnlisten = listenSyncdComicLibraryChanged(({ localProfileId, landedWorks }) => {
       if (localProfileId !== normalizeLocalProfileId(store.runtimeResolvedLocalProfileId)) return;
+      if (landedWorks && !landedWorks.includes(store.activeManga?.id ?? -1)) return;
       if (syncedReloadTimer) clearTimeout(syncedReloadTimer);
       syncedReloadTimer = setTimeout(() => { syncedReloadTimer = null; reloadChaptersOnFocus(); }, 3000);
     }).catch(() => null);
@@ -963,7 +964,7 @@
             {:else if allCategories.length === 0 && !folderCreating}
               <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("detail.actions.folders")} title={$_("detail.folders.emptyTitle")} body={$_("detail.folders.emptyBody")} />
             {/if}
-            {#each allCategories as cat}
+            {#each allCategories as cat (cat.id)}
               {@const isIn = mangaCategories.some(c => c.id === cat.id)}
               <button class="fp-item" class:fp-item-active={isIn} onclick={() => toggleCategory(cat)}><span class="fp-check" aria-hidden="true">{isIn ? "✓" : ""}</span>{getCategoryDisplayName(cat)}</button>
             {/each}
@@ -1046,13 +1047,13 @@
                 <div class="sort-menu scanlator-menu" role="presentation" onmouseleave={() => scanlatorMenuOpen = false}>
                   <p class="sort-section-label">{$_("library_filter")}</p>
                   <button class="sort-option" class:active={mangaReaderPrefs.scanlatorFilter.length === 0} onclick={() => { updateScanlatorPrefs({ scanlatorFilter: [] }); scanlatorMenuOpen = false; }}>{$_("ui_anyScanlator")}</button>
-                  {#each scanlatorOptions as scanlator}
+                  {#each scanlatorOptions as scanlator (scanlator)}
                     <button class="sort-option" class:active={mangaReaderPrefs.scanlatorFilter.includes(scanlator)} onclick={() => toggleScanlatorFilter(scanlator)}>{scanlator}</button>
                   {/each}
                   <div class="sort-divider"></div>
                   <p class="sort-section-label">{$_("ui_prefer")}</p>
                   <button class="sort-option" class:active={!mangaReaderPrefs.preferredScanlator} onclick={() => { updateScanlatorPrefs({ preferredScanlator: "" }); scanlatorMenuOpen = false; }}>{$_("ui_noPreference")}</button>
-                  {#each scanlatorOptions as scanlator}
+                  {#each scanlatorOptions as scanlator (scanlator)}
                     <button class="sort-option" class:active={mangaReaderPrefs.preferredScanlator === scanlator} onclick={() => { updateScanlatorPrefs({ preferredScanlator: scanlator }); scanlatorMenuOpen = false; }}>{scanlator}</button>
                   {/each}
                 </div>
@@ -1067,7 +1068,7 @@
             </button>
             {#if sortMenuOpen}
               <div class="sort-menu" role="presentation" onmouseleave={() => sortMenuOpen = false}>
-                {#each [["source",$_("ui_sourceOrder")],["chapterNumber",$_("ui_chapterNumber")],["uploadDate",$_("ui_uploadDate")]] as [val, label]}
+                {#each [["source",$_("ui_sourceOrder")],["chapterNumber",$_("ui_chapterNumber")],["uploadDate",$_("ui_uploadDate")]] as [val, label] (val)}
                   <button class="sort-option" class:active={sortMode === val} onclick={() => { updateSettings({ chapterSortMode: val as any }); chapterPage = 1; sortMenuOpen = false; }}>{label}</button>
                 {/each}
                 <div class="sort-divider"></div>
@@ -1094,13 +1095,13 @@
       {/if}
       <div class={viewMode === "grid" ? "ch-grid v3-ch-grid" : "ch-list v3-ch-list"}>
         {#if loadingChapters && chapters.length === 0}
-          {#if viewMode === "grid"}{#each Array(24) as _}<div class="grid-cell-skeleton skeleton"></div>{/each}{:else}{#each Array(8) as _}<div class="row-skeleton"><div class="skeleton sk-line" style="width:55%;height:12px"></div><div class="skeleton sk-line" style="width:25%;height:11px"></div></div>{/each}{/if}
+          {#if viewMode === "grid"}{#each Array(24) as _, i (i)}<div class="grid-cell-skeleton skeleton"></div>{/each}{:else}{#each Array(8) as _, i (i)}<div class="row-skeleton"><div class="skeleton sk-line" style="width:55%;height:12px"></div><div class="skeleton sk-line" style="width:25%;height:11px"></div></div>{/each}{/if}
         {:else if chaptersUnavailable && chapters.length === 0}
           <NocturneState layout="compact" tone="warning" icon="plug" eyebrow={$_("detail.stats.chapters")} title={$_("detail.empty.chaptersUnavailable")} body={$_("detail.errors.couldNotReachSuwayomi")} actions={[{ label: $_("shell.detailState.retry"), kind: "primary", icon: "retry", onClick: () => { if (store.activeManga) loadChapters(store.activeManga.id); } }]} />
         {:else if sortedChapters.length === 0}
           <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("detail.stats.chapters")} title={$_("detail.empty.noChaptersMatch")} body={$_("detail.empty.tryAnotherScanlator")} />
         {:else if viewMode === "grid"}
-          {#each sortedChapters as ch, i}
+          {#each sortedChapters as ch, i (ch.id)}
             {@const inProgress = !ch.isRead && (ch.lastPageRead ?? 0) > 0}
             {@const gridProgress = ch.isRead ? 100 : (ch.pageCount > 0 ? Math.min(100, ((ch.lastPageRead ?? 0) / ch.pageCount) * 100) : 0)}
             <button class="grid-cell" class:read={ch.isRead} class:in-progress={inProgress} onclick={() => openChapterReader(ch)} oncontextmenu={(e) => { e.preventDefault(); ctx = { x: e.clientX, y: e.clientY, chapter: ch, idx: i }; }} title={mangaChapterTitle(ch)}>
@@ -1119,7 +1120,7 @@
             <span>{$_("detail.table.date")}</span>
             <span>{$_("detail.table.status")}</span>
           </div>
-          {#each pageChapters as ch}
+          {#each pageChapters as ch (ch.id)}
             {@const idxInSorted = sortedChapters.indexOf(ch)}{@const isSelected = selectedIds.has(ch.id)}{@const rowProgress = ch.isRead ? 100 : (ch.pageCount > 0 ? Math.min(100, ((ch.lastPageRead ?? 0) / ch.pageCount) * 100) : 0)}
             <div role="button" tabindex="0" class="ch-row v3-ch-row" class:read={ch.isRead} class:ch-selected={isSelected} onclick={(e) => hasSelection ? toggleSelect(ch.id, e) : openChapterReader(ch)} onkeydown={(e) => e.key === "Enter" && (hasSelection ? toggleSelect(ch.id, e) : openChapterReader(ch))} oncontextmenu={(e) => { e.preventDefault(); ctx = { x: e.clientX, y: e.clientY, chapter: ch, idx: idxInSorted }; }}>
               <div class="ch-left">

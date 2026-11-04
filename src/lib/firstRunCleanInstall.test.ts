@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FIRST_RUN_STORAGE_KEY, normalizeFirstRunState } from "./firstRun";
 import {
+  createProductionCleanInstallProbe,
   FIRST_RUN_CONTENT_PROFILES_KEY,
   readInstallContent,
   rememberProfileContent,
@@ -8,6 +9,10 @@ import {
   shouldReopenEmptyProfile,
   type CleanInstallProbe,
 } from "./firstRunCleanInstall";
+
+const gql = vi.hoisted(() => vi.fn());
+vi.mock("./startupClient", () => ({ gql }));
+vi.mock("./suwayomiReadiness", () => ({ waitForSuwayomiGraphqlReady: async () => undefined }));
 
 function probe(counts: [number, number, number, number], failing?: keyof CleanInstallProbe): CleanInstallProbe {
   const answer = (key: keyof CleanInstallProbe, count: number) => async () => {
@@ -31,6 +36,17 @@ function memoryStorage() {
     removeItem: (key: string) => { values.delete(key); },
   };
 }
+
+describe("production probe", () => {
+  it("counts the comics without reading the works of the library", async () => {
+    gql.mockResolvedValueOnce({ mangas: { totalCount: 695 } });
+    const count = await createProductionCleanInstallProbe({ profileId: "profile", serverUrl: "server" }).countComics();
+    expect(count).toBe(695);
+    expect(gql.mock.calls).toHaveLength(1);
+    expect(gql.mock.calls[0][0]).toContain("totalCount");
+    expect(gql.mock.calls[0][0]).not.toContain("nodes");
+  });
+});
 
 describe("install content", () => {
   it("is empty only when no work and no source is set up", async () => {

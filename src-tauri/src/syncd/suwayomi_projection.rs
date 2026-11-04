@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use serde_json::{json, Value};
@@ -16,7 +16,7 @@ use super::models::{
 use super::routes::suwayomi_commands::{self, CommandOperation};
 use super::routes::suwayomi_import;
 use super::routes::suwayomi_proxy;
-use super::{db, routes::suwayomi_catalog};
+use super::{db, landed_works, routes::suwayomi_catalog};
 
 const MAX_BATCH: usize = 8;
 /// How long one tick keeps draining a backlog batch after batch. The 2 s tick only paces an idle or
@@ -151,6 +151,47 @@ struct ProjectionRow {
     attempt_count: i64,
 }
 
+/// The session Core uses to apply synced changes to Suwayomi.
+pub(crate) const PROJECTION_TOKEN_ID: &str = "epigraph-core-projection";
+/// Devices hear about catalog changes when the queue empties, or this often while it does not.
+const MAX_CATALOG_NOTICE_WAIT: Duration = Duration::from_secs(30);
+
+static CATALOG_WRITTEN: AtomicBool = AtomicBool::new(false);
+
+/// A projection may have changed the catalog; it is announced as the queue allows.
+pub(crate) fn note_catalog_write() {
+    CATALOG_WRITTEN.store(true, Ordering::Relaxed);
+}
+
+/// When the catalog writes a queue made are announced.
+#[derive(Default)]
+struct CatalogNotice {
+    last: Option<Instant>,
+}
+
+impl CatalogNotice {
+    fn due(&mut self, drained: bool, now: Instant) -> bool {
+        let waited = self
+            .last
+            .is_none_or(|at| now.duration_since(at) >= MAX_CATALOG_NOTICE_WAIT);
+        let due = drained || waited;
+        if due {
+            self.last = Some(now);
+        }
+        due
+    }
+
+    fn announce_if_due(&mut self, drained: bool) {
+        if CATALOG_WRITTEN.load(Ordering::Relaxed)
+            && self.due(drained, Instant::now())
+            && CATALOG_WRITTEN.swap(false, Ordering::Relaxed)
+        {
+            super::suwayomi_progress_mirror::request_catalog_refresh();
+            super::suwayomi_progress_mirror::request_immediate_mirror(&[], &[]);
+        }
+    }
+}
+
 pub fn spawn_projection_task(
     state: SharedAppState,
     mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
@@ -190,6 +231,7 @@ pub fn spawn_projection_task(
         let mut maintenance = MaintenanceWatch::default();
         let mut runtime_return = RuntimeReturnWatch::default();
         let mut import = ImportWatch::default();
+        let mut catalog_notice = CatalogNotice::default();
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
@@ -217,23 +259,27 @@ pub fn spawn_projection_task(
                         // Works first: their categories and progress need them to be here.
                         match import_unseen_comics(&state, &mut import).await {
                             Ok(ImportPass::Idle) => {}
-                            Ok(ImportPass::Busy) => continue,
+                            Ok(ImportPass::Busy) => {
+                                catalog_notice.announce_if_due(false);
+                                continue;
+                            }
                             Err(error) => {
                                 tracing::warn!(error = %error, "failed to import synced works into Suwayomi")
                             }
                         }
                     }
-                    let started = std::time::Instant::now();
-                    loop {
+                    let started = Instant::now();
+                    let drained = loop {
                         match drain_ready(&state).await {
                             Ok(claimed) if claimed == MAX_BATCH && started.elapsed() < DRAIN_BUDGET => {}
-                            Ok(_) => break,
+                            Ok(claimed) => break claimed < MAX_BATCH,
                             Err(error) => {
                                 tracing::warn!(error = %error, "failed to drain canonical Suwayomi projections");
-                                break;
+                                break true;
                             }
                         }
-                    }
+                    };
+                    catalog_notice.announce_if_due(drained);
                 }
                 _ = PROJECTION_WAKE.notified() => ticker.reset_immediately(),
                 _ = wait_for_shutdown_request(&mut shutdown) => break,
@@ -806,9 +852,10 @@ async fn apply_group(
         {
             Ok(data) => {
                 let confirmed = group_confirmed_ids(updates_library, change, &data);
-                for (row, manga_id, _) in members {
+                for (row, manga_id, variables) in members {
                     let outcome =
                         confirmation_outcome(confirmed.contains(&manga_id), row.attempt_count);
+                    note_landed(&row, &row.operation_name, &variables, &outcome);
                     outcomes.push((row, outcome));
                 }
             }
@@ -872,6 +919,7 @@ async fn apply_chapter_members(
                 for (row, _, variables) in members {
                     let confirmed = chapters_projection_confirmed(&variables, &data);
                     let outcome = confirmation_outcome(confirmed, row.attempt_count);
+                    note_landed(&row, &row.operation_name, &variables, &outcome);
                     outcomes.push((row, outcome));
                 }
             }
@@ -1056,10 +1104,19 @@ async fn apply_projection_with(
         }
         Err(error) => return failed_command_outcome(&error, row.attempt_count),
     };
-    confirmation_outcome(
+    let outcome = confirmation_outcome(
         projection_confirmed(operation, &variables, &data),
         row.attempt_count,
-    )
+    );
+    note_landed(row, operation_name, &variables, &outcome);
+    outcome
+}
+
+/// Tells the window which work a confirmed projection changed, so it reads only that one.
+fn note_landed(row: &ProjectionRow, operation: &str, variables: &Value, outcome: &ProjectionOutcome) {
+    if matches!(outcome, ProjectionOutcome::Applied) {
+        landed_works::record_projection(&row.profile_id, operation, variables);
+    }
 }
 
 /// Applies a confirmed command, retries a mismatch, and blocks it once it has mismatched
@@ -1922,7 +1979,7 @@ fn failed_command_outcome(error: &AppError, attempt_count: i64) -> ProjectionOut
 
 pub(crate) fn projection_session(profile_id: &str) -> AuthenticatedSession {
     AuthenticatedSession {
-        token_id: "epigraph-core-projection".to_string(),
+        token_id: PROJECTION_TOKEN_ID.to_string(),
         device_id: "epigraph-core".to_string(),
         profile_id: profile_id.to_string(),
         scopes: BTreeSet::from([format!("comics:profile:{profile_id}")]),
@@ -2187,6 +2244,17 @@ enum ProjectionOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_writes_are_announced_when_the_queue_drains_or_after_a_bounded_wait() {
+        let start = Instant::now();
+        let mut notice = CatalogNotice::default();
+        assert!(notice.due(false, start), "the first one has waited long enough");
+        assert!(!notice.due(false, start + Duration::from_secs(5)));
+        assert!(notice.due(true, start + Duration::from_secs(6)), "the queue drained");
+        assert!(!notice.due(false, start + Duration::from_secs(35)));
+        assert!(notice.due(false, start + Duration::from_secs(36)));
+    }
 
     #[test]
     fn permanent_command_failures_block_after_bounded_attempts() {
