@@ -20,7 +20,7 @@ import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-class AutofitRecyclerView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
+open class AutofitRecyclerView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
     androidx.recyclerview.widget.RecyclerView(context, attrs) {
 
     var manager: LayoutManager = GridLayoutManagerAccurateOffset(context, 1)
