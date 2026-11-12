@@ -2102,6 +2102,118 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `novel entry without language shares its placeholder with portable hydration`() = runTest {
+        val work = PortableWorkRef.Novel("Illusia", ProviderOwnedKey("/novel/epigraph"))
+        val record = novelEntryRecord().let {
+            it.copy(record = JsonObject((it.record as JsonObject) + ("source" to buildJsonObject { put("pluginId", "Illusia") })))
+        }
+        projection.upsert(database, record)
+        val localId = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID).executeAsOne().local_reference
+        val binding = SqlDelightPortableBindingStore(database).work(work)
+        assertNotNull(binding)
+        assertEquals(localId, binding!!.localReference)
+        assertEquals(1, database.mangasQueries.findFavorites().executeAsList().size)
+    }
+
+    @Test
+    fun `bound portable novel wins over missing language in either arrival order`() = runTest {
+        for (replicaFirst in listOf(false, true)) {
+            val path = "/novel/binding-$replicaFirst"
+            val work = PortableWorkRef.Novel("Illusia", ProviderOwnedKey(path))
+            val workId = PortableIdentityV3.workId(work)
+            val record = novelEntryRecord().let {
+                it.copy(key = it.key.copy(entityId = workId), record = buildJsonObject {
+                    put("novelId", workId)
+                    put("title", "Bound novel")
+                    put("path", path)
+                    put("source", buildJsonObject { put("pluginId", "Illusia") })
+                })
+            }
+            val placeholder = if (replicaFirst) {
+                projection.upsert(database, record)
+                database.aethon_syncQueries.selectIdentityByEntityId(workId).executeAsOne().local_reference.toLong()
+            } else null
+            val nativeId = insertTrackingManga(NovelSource.sourceIdFor("illusia", "pt"), path)
+            SqlDelightPortableBindingStore(database).upsertWork(PortableWorkBindingRecord(
+                portableId = workId, ref = work, localReference = nativeId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Bound novel", providerLabelHint = "Illusia", attemptCount = 1, updatedAt = 1,
+            ))
+            projection.upsert(database, record)
+            projection.upsert(database, record)
+            assertEquals(nativeId.toString(), database.aethon_syncQueries.selectIdentityByEntityId(workId).executeAsOne().local_reference)
+            assertEquals(listOf(nativeId), database.mangasQueries.findFavorites().executeAsList().filter { it.url == path }.map { it._id })
+            placeholder?.let { assertFalse(database.mangasQueries.findById(it).executeAsOne().favorite) }
+        }
+    }
+
+    @Test
+    fun `legacy novel identity aliases an already owned portable native row`() = runTest {
+        val work = PortableWorkRef.Novel("Illusia", ProviderOwnedKey("/novel/epigraph"))
+        val workId = PortableIdentityV3.workId(work)
+        val record = novelEntryRecord().let {
+            it.copy(record = JsonObject((it.record as JsonObject) + ("source" to buildJsonObject { put("pluginId", "Illusia") })))
+        }
+        projection.upsert(database, record)
+        projection.upsert(database, novelChapterRecord(unread = false))
+        projection.upsert(database, progressRecord(progression = 0.4))
+        val placeholderId = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID).executeAsOne().local_reference.toLong()
+        val nativeId = insertTrackingManga(NovelSource.sourceIdFor("illusia", "pt"), "/novel/epigraph")
+        database.aethon_syncQueries.upsertIdentity(workId, "NOVEL", nativeId.toString(), 1, 1)
+        SqlDelightPortableBindingStore(database).upsertWork(PortableWorkBindingRecord(
+            portableId = workId, ref = work, localReference = nativeId.toString(),
+            resolution = PortableResolution(PortableResolutionState.BOUND),
+            titleHint = "Bound novel", providerLabelHint = "Illusia", attemptCount = 1, updatedAt = 1,
+        ))
+        projection.upsert(database, record)
+        projection.upsert(database, record)
+        assertEquals(listOf(nativeId), database.mangasQueries.findFavorites().executeAsList().map { it._id })
+        assertFalse(database.mangasQueries.findById(placeholderId).executeAsOne().favorite)
+        assertEquals(workId, database.aethon_syncQueries.selectCanonicalEntityId(CANONICAL_NOVEL_ID).executeAsOne())
+        assertEquals(nativeId.toString(), SqlDelightPortableBindingStore(database).work(work)!!.localReference)
+        projection.upsert(database, trackingRecord(SCOPE_ID, "novel.tracking", "novelId", CANONICAL_NOVEL_ID, "anilist"))
+        assertEquals(4242L, database.manga_syncQueries.getAllByMangaId(nativeId).executeAsList().single().remote_id)
+        assertTrue(database.manga_syncQueries.getAllByMangaId(placeholderId).executeAsList().isEmpty())
+        assertNotNull(database.aethon_syncQueries.selectChapterBindingByEntityId("chapter-1").executeAsOneOrNull())
+        assertEquals(0.4, database.aethon_syncQueries.selectReaderProgress(CANONICAL_NOVEL_ID).executeAsOne().progression)
+        assertEquals(0.4, database.aethon_syncQueries.selectReaderProgress(workId).executeAsOne().progression)
+
+        projection.upsert(database, novelChapterRecord(unread = true, serverVersion = 12))
+        projection.upsert(database, novelBookmarkRecord())
+        projection.upsert(database, progressRecord(progression = 0.75).copy(serverVersion = 20))
+        val chapter = database.chaptersQueries.getChaptersByMangaId(nativeId, 0).executeAsList().single()
+        assertFalse(chapter.read)
+        assertTrue(chapter.bookmark)
+        assertEquals(0.75, database.aethon_syncQueries.selectReaderProgress(workId).executeAsOne().progression)
+        val portableChapter = PortableChapterRef.Novel(work, ProviderOwnedKey(chapter.url))
+        val portableChapterId = PortableIdentityV3.chapterId(portableChapter)
+        SqlDelightPortableBindingStore(database).upsertChapter(epigraph.sync.portable.PortableChapterBindingRecord(
+            portableChapterId = portableChapterId, portableWorkId = workId, ref = portableChapter,
+            localReference = chapter._id.toString(), resolution = PortableResolution(PortableResolutionState.BOUND),
+            attemptCount = 1, updatedAt = 1,
+        ))
+        projection.upsert(database, CoreConfirmedRecord(
+            key = CoreReplicaKey(SCOPE_ID, "novel.progress", "novel.progress::$workId"), serverVersion = 30, lamport = 30,
+            record = buildJsonObject {
+                put("chapterId", portableChapterId)
+                put("progressPercent", 0.8)
+                put("updatedAtMs", 1_000)
+                put("portableWorkRef", Json.encodeToJsonElement(work))
+                put("portableChapterRef", Json.encodeToJsonElement(portableChapter))
+            },
+        ))
+        val locator = Json.decodeFromString<ReaderLocator>(database.aethon_syncQueries.selectReaderProgress(workId).executeAsOne().locator_json) as ReaderLocator.Novel
+        assertEquals(portableChapterId, locator.chapterId)
+        projection.delete(database, progressTombstone(), progressRecord())
+        assertEquals(0.8, database.aethon_syncQueries.selectReaderProgress(workId).executeAsOne().progression)
+        projection.delete(database, progressTombstone().copy(serverVersion = 31), progressRecord())
+        assertNull(database.aethon_syncQueries.selectReaderProgress(workId).executeAsOneOrNull())
+        assertNull(database.aethon_syncQueries.selectReaderProgress(CANONICAL_NOVEL_ID).executeAsOneOrNull())
+        projection.delete(database, CoreConfirmedTombstone(record.key, 21, 21, 500, "removed"), record)
+        assertFalse(database.mangasQueries.findById(nativeId).executeAsOne().favorite)
+    }
+
+    @Test
     fun `desktop PDF page numbers count from one and never fail the book snapshot`() = runTest {
         val bookProjection = EpigraphCoreDomainProjection(privateBookStorageDirectory = tempDirectory)
         val pdfEntry = CoreConfirmedRecord(
@@ -2787,6 +2899,31 @@ class EpigraphCoreDomainProjectionTest {
             put("savedAtMs", 500)
         },
     )
+
+    @Test
+    fun `explicit null book metadata clears values while omitted fields preserve them`() = runTest {
+        val bookProjection = EpigraphCoreDomainProjection(privateBookStorageDirectory = tempDirectory)
+        val original = bookEntryRecord().let {
+            it.copy(record = JsonObject((it.record as JsonObject) + ("description" to JsonPrimitive("Old description"))))
+        }
+        bookProjection.upsert(database, original)
+        val omitted = original.copy(
+            serverVersion = 2,
+            record = JsonObject((original.record as JsonObject) - "author" - "description"),
+        )
+        bookProjection.upsert(database, omitted)
+        val kept = database.local_booksQueries.findById(BOOK_ID).executeAsOne()
+        assertEquals("Epigraph", kept.author)
+        assertEquals("Old description", kept.description)
+
+        bookProjection.upsert(database, original.copy(
+            serverVersion = 3,
+            record = JsonObject((original.record as JsonObject) + mapOf("author" to JsonNull, "description" to JsonNull)),
+        ))
+        val cleared = database.local_booksQueries.findById(BOOK_ID).executeAsOne()
+        assertNull(cleared.author)
+        assertNull(cleared.description)
+    }
 
     private fun bookEntryRecord() = CoreConfirmedRecord(
         key = CoreReplicaKey(BOOK_SCOPE_ID, "book.entry", BOOK_ID),

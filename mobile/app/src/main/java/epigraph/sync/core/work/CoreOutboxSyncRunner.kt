@@ -119,6 +119,7 @@ class CoordinatorPendingOutbox(
     override suspend fun retryRepairable(nowEpochMillis: Long) {
         coordinator.retryRepairablePageCounts(nowEpochMillis) { ClientMutationId(UUID.randomUUID().toString()) }
         coordinator.retryCoreServedComicIds(nowEpochMillis) { ClientMutationId(UUID.randomUUID().toString()) }
+        coordinator.retryBookEntriesMissingAssets(nowEpochMillis) { ClientMutationId(UUID.randomUUID().toString()) }
     }
 
     override suspend fun unsettledCountActive(policy: EffectiveSyncPolicy): Long =

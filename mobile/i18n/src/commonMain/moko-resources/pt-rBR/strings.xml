@@ -1254,6 +1254,7 @@
     <string name="epigraph_core_blocked_title">Alterações que não sincronizaram</string>
     <string name="epigraph_core_blocked_summary">%1$d aguardando uma decisão</string>
     <string name="epigraph_core_blocked_dialog_body">O desktop recusou estas alterações. Envie de novo depois de resolver a causa, ou descarte; descartar mantém a alteração só neste celular.</string>
+    <string name="epigraph_core_blocked_book_file_missing">O arquivo ou a capa deste livro não está neste celular. Importe o livro de novo ou descarte esta alteração.</string>
     <string name="epigraph_core_blocked_retry">Enviar de novo</string>
     <string name="epigraph_core_blocked_retry_all">Enviar todas de novo</string>
     <string name="epigraph_core_blocked_discard">Descartar</string>

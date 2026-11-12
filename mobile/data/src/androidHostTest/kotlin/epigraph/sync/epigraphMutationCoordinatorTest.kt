@@ -1,6 +1,8 @@
 package epigraph.sync
 
+import epigraph.contract.BookEntrySnapshot
 import epigraph.contract.ChapterStatePatch
+import epigraph.contract.ContentType
 import epigraph.contract.EpigraphEntityId
 import epigraph.contract.EpigraphSyncProtocol
 import epigraph.contract.ClientMutationId
@@ -25,6 +27,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import yokai.data.AndroidDatabaseHandler
 import yokai.data.Database
+
+private val BOOK_SHA = "a".repeat(64)
+private val COVER_SHA = "b".repeat(64)
 
 class EpigraphMutationCoordinatorTest {
     private val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also {
@@ -609,6 +614,245 @@ class EpigraphMutationCoordinatorTest {
                 state = state,
             ),
         )
+
+    @Test
+    fun `a book entry waits for its file and its cover to reach the Core`() = runTest {
+        val bookId = bookEntityId(BOOK_SHA)
+        queueBookEntry("entry", BOOK_SHA)
+        linkBookAsset(bookId, BOOK_SHA, "PUBLICATION", state = "PENDING_UPLOAD", localUri = "file:///book.pdf")
+        linkBookAsset(bookId, COVER_SHA, "COVER", state = "PENDING_UPLOAD", localUri = "file:///cover.jpg")
+
+        assertTrue(coordinator.claimReady(100, 1_000, 10).isEmpty())
+        assertTrue(coordinator.claimReadyForScopes(100, 1_000, 10, setOf("books:global")).isEmpty())
+        assertEquals(1, coordinator.pendingCount())
+
+        setBookAsset(BOOK_SHA, state = "AVAILABLE", localUri = "file:///book.pdf", remoteAvailable = true)
+        assertTrue(coordinator.claimReady(100, 1_000, 10).isEmpty())
+
+        setBookAsset(COVER_SHA, state = "AVAILABLE", localUri = "file:///cover.jpg", remoteAvailable = true)
+        assertEquals(listOf("entry"), coordinator.claimReady(100, 1_000, 10).map { it.client_mutation_id })
+    }
+
+    @Test
+    fun `a book entry whose upload cannot run is not held back`() = runTest {
+        val bookId = bookEntityId(BOOK_SHA)
+        queueBookEntry("entry", BOOK_SHA)
+        insertLocalBook(bookId, BOOK_SHA)
+        linkBookAsset(bookId, BOOK_SHA, "PUBLICATION", state = "ERROR", localUri = null)
+
+        assertEquals(1, coordinator.claimReadyForScopes(100, 1_000, 10, setOf("books:global")).size)
+    }
+
+    @Test
+    fun `a parked book entry sends its file again and then goes out under a new id`() = runTest {
+        val bookId = bookEntityId(BOOK_SHA)
+        parkBookEntry("refused", BOOK_SHA, "blocked:BOOK_ASSET_NOT_AVAILABLE_FOR_SCOPE")
+        insertLocalBook(bookId, BOOK_SHA)
+        linkBookAsset(bookId, BOOK_SHA, "PUBLICATION", state = "ERROR", localUri = "file:///book.pdf")
+        linkBookAsset(bookId, COVER_SHA, "COVER", state = "AVAILABLE", localUri = "file:///cover.jpg", remoteAvailable = true)
+
+        assertEquals(1, coordinator.retryBookEntriesMissingAssets(200) { ClientMutationId("repaired") })
+
+        val publication = database.aethon_syncQueries.selectAssetManifest(BOOK_SHA).executeAsOne()
+        assertEquals("PENDING_UPLOAD", publication.state)
+        assertFalse(publication.remote_available)
+        assertEquals("AVAILABLE", database.aethon_syncQueries.selectAssetManifest(COVER_SHA).executeAsOne().state)
+        assertEquals(0, coordinator.blockedCount())
+        assertTrue(coordinator.claimReady(200, 1_000, 10).isEmpty())
+
+        setBookAsset(BOOK_SHA, state = "AVAILABLE", localUri = "file:///book.pdf", remoteAvailable = true)
+        val row = coordinator.claimReady(200, 1_000, 10).single()
+        assertEquals("repaired", row.client_mutation_id)
+        assertEquals(ClientMutationId("repaired"), decode(row.payload_json).clientMutationId)
+    }
+
+    @Test
+    fun `a parked book entry only repairs the asset the Core refused`() = runTest {
+        val bookId = bookEntityId(BOOK_SHA)
+        parkBookEntry("refused", BOOK_SHA, "blocked:BOOK_COVER_ASSET_NOT_AVAILABLE_FOR_SCOPE")
+        insertLocalBook(bookId, BOOK_SHA)
+        linkBookAsset(bookId, BOOK_SHA, "PUBLICATION", state = "AVAILABLE", localUri = "file:///book.pdf", remoteAvailable = true)
+        linkBookAsset(bookId, COVER_SHA, "COVER", state = "AVAILABLE", localUri = "file:///cover.jpg", remoteAvailable = true)
+
+        assertEquals(1, coordinator.retryBookEntriesMissingAssets(200) { ClientMutationId("repaired") })
+
+        assertEquals("AVAILABLE", database.aethon_syncQueries.selectAssetManifest(BOOK_SHA).executeAsOne().state)
+        assertEquals("PENDING_UPLOAD", database.aethon_syncQueries.selectAssetManifest(COVER_SHA).executeAsOne().state)
+    }
+
+    @Test
+    fun `the automatic book repair stops once the Core keeps refusing`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        val bookId = bookEntityId(BOOK_SHA)
+        queueBookEntry("try-0", BOOK_SHA)
+        insertLocalBook(bookId, BOOK_SHA)
+        linkBookAsset(bookId, BOOK_SHA, "PUBLICATION", state = "AVAILABLE", localUri = "file:///book.pdf", remoteAvailable = true)
+        var repairs = 0
+        var current = "try-0"
+
+        repeat(10) { round ->
+            val now = 200L + round
+            setBookAsset(BOOK_SHA, state = "AVAILABLE", localUri = "file:///book.pdf", remoteAvailable = true)
+            if (coordinator.claimReady(now, 1_000, 10).isEmpty()) return@repeat
+            coordinator.markFailed(deviceId, ClientMutationId(current), "blocked:BOOK_ASSET_NOT_AVAILABLE_FOR_SCOPE", Long.MAX_VALUE)
+            val next = "try-${round + 1}"
+            if (coordinator.retryBookEntriesMissingAssets(now) { ClientMutationId(next) } == 1) {
+                repairs++
+                current = next
+            }
+        }
+
+        assertEquals(3, repairs)
+        assertEquals(1, coordinator.blockedCount())
+    }
+
+    @Test
+    fun `a parked book entry whose file left the phone stays parked for the user`() = runTest {
+        val bookId = bookEntityId(BOOK_SHA)
+        parkBookEntry("refused", BOOK_SHA, "blocked:BOOK_ASSET_NOT_AVAILABLE_FOR_SCOPE")
+        insertLocalBook(bookId, BOOK_SHA)
+        linkBookAsset(bookId, BOOK_SHA, "PUBLICATION", state = "ERROR", localUri = null)
+
+        assertEquals(0, coordinator.retryBookEntriesMissingAssets(200) { ClientMutationId("repaired") })
+
+        assertEquals(1, coordinator.blockedCount())
+        assertEquals("ERROR", database.aethon_syncQueries.selectAssetManifest(BOOK_SHA).executeAsOne().state)
+    }
+
+    @Test
+    fun `entries of removed books that could never publish are dropped`() = runTest {
+        val parked = bookEntityId(BOOK_SHA)
+        parkBookEntry("parked", BOOK_SHA, "blocked:BOOK_ASSET_NOT_AVAILABLE_FOR_SCOPE")
+        linkBookAsset(parked, BOOK_SHA, "PUBLICATION", state = "ERROR", localUri = null)
+        val queued = bookEntityId(COVER_SHA)
+        queueBookEntry("queued", COVER_SHA)
+        linkBookAsset(queued, COVER_SHA, "PUBLICATION", state = "PENDING_UPLOAD", localUri = "file:///gone.pdf")
+
+        assertEquals(0, coordinator.retryBookEntriesMissingAssets(200) { ClientMutationId("repaired") })
+
+        assertEquals(0, coordinator.blockedCount())
+        assertEquals(0, coordinator.pendingCount())
+    }
+
+    @Test
+    fun `removed books keep what the Core can still use`() = runTest {
+        val published = bookEntityId(BOOK_SHA)
+        queueBookEntry("published", BOOK_SHA)
+        linkBookAsset(published, BOOK_SHA, "PUBLICATION", state = "AVAILABLE", localUri = null, remoteAvailable = true)
+        val removal = bookEntityId(COVER_SHA)
+        coordinator.mutateLocal(
+            SyncCommandEnvelope(
+                protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
+                deviceId = DeviceId("phone-a"),
+                clientMutationId = ClientMutationId("tombstone"),
+                scopeId = SyncScopeId("books:global"),
+                entityType = SyncEntityType("book.entry"),
+                command = SyncCommand.DeleteEntity(EpigraphEntityId(removal)),
+            ),
+            100,
+        ) { Unit }
+        linkBookAsset(removal, COVER_SHA, "PUBLICATION", state = "ERROR", localUri = null)
+
+        coordinator.retryBookEntriesMissingAssets(200) { ClientMutationId("repaired") }
+
+        assertEquals(
+            setOf("published", "tombstone"),
+            coordinator.claimReady(200, 1_000, 10).map { it.client_mutation_id }.toSet(),
+        )
+    }
+
+    private suspend fun queueBookEntry(mutationId: String, sha256: String) {
+        val bookId = EpigraphEntityId(bookEntityId(sha256))
+        coordinator.mutateLocal(
+            SyncCommandEnvelope(
+                protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
+                deviceId = DeviceId("phone-a"),
+                clientMutationId = ClientMutationId(mutationId),
+                scopeId = SyncScopeId("books:global"),
+                entityType = SyncEntityType("book.entry"),
+                command = SyncCommand.UpsertBookEntry(
+                    bookId,
+                    BookEntrySnapshot(
+                        bookId = bookId,
+                        contentType = ContentType.PDF,
+                        sha256 = sha256,
+                        title = "Example",
+                        mimeType = "application/pdf",
+                        byteSize = 10,
+                        createdAtEpochMillis = 100,
+                        updatedAtEpochMillis = 100,
+                    ),
+                ),
+            ),
+            100,
+        ) { Unit }
+    }
+
+    private suspend fun parkBookEntry(mutationId: String, sha256: String, error: String) {
+        queueBookEntry(mutationId, sha256)
+        coordinator.claimReady(100, 1_000, 10)
+        coordinator.markFailed(DeviceId("phone-a"), ClientMutationId(mutationId), error, Long.MAX_VALUE)
+    }
+
+    private fun linkBookAsset(
+        entityId: String,
+        sha256: String,
+        role: String,
+        state: String,
+        localUri: String?,
+        remoteAvailable: Boolean = false,
+    ) {
+        database.aethon_syncQueries.upsertIdentity(entityId, "PDF", entityId, 100, 100)
+        database.aethon_syncQueries.insertAssetManifest(
+            sha256 = sha256,
+            contentType = if (role == "COVER") "BOOK_COVER" else "PDF",
+            byteSize = 10,
+            mimeType = if (role == "COVER") "image/jpeg" else "application/pdf",
+            localUri = localUri,
+            remoteAvailable = remoteAvailable,
+            state = state,
+            updatedAt = 100,
+        )
+        database.aethon_syncQueries.linkEntityAsset(entityId, sha256, role, "", 0)
+    }
+
+    private fun setBookAsset(sha256: String, state: String, localUri: String?, remoteAvailable: Boolean) {
+        val asset = database.aethon_syncQueries.selectAssetManifest(sha256).executeAsOne()
+        database.aethon_syncQueries.updateAssetMaterialization(
+            localUri = localUri,
+            remoteAvailable = remoteAvailable,
+            state = state,
+            updatedAt = 100,
+            sha256 = sha256,
+            contentType = asset.content_type,
+            byteSize = asset.byte_size,
+            mimeType = asset.mime_type,
+        )
+    }
+
+    private fun insertLocalBook(bookId: String, sha256: String) {
+        database.local_booksQueries.insert(
+            bookId = bookId,
+            contentType = "PDF",
+            sha256 = sha256,
+            displayName = "Example",
+            author = null,
+            description = null,
+            coverPath = null,
+            coverAssetSha256 = null,
+            coverAssetByteSize = null,
+            coverAssetMimeType = null,
+            privatePath = "book.pdf",
+            mimeType = "application/pdf",
+            byteSize = 10,
+            chapterCount = null,
+            pageCount = null,
+            importedAt = 100,
+            updatedAt = 100,
+        )
+    }
+
+    private fun bookEntityId(sha256: String) = "pdf:sha256:$sha256"
 
     private fun insertManga(url: String): Long {
         database.mangasQueries.insert(

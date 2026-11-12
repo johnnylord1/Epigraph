@@ -17,6 +17,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import yokai.data.AndroidDatabaseHandler
 import yokai.data.Database
@@ -92,6 +93,11 @@ class EpigraphBookMutationRouterTest {
         assertEquals(BOOK_HASH, assetLink.sha256)
         assertEquals("PUBLICATION", assetLink.role)
 
+        assertEquals(6, coordinator.pendingCount())
+        val waiting = database.aethon_syncQueries.selectReadyMutations(2_000, 20).executeAsList()
+        assertEquals(5, waiting.size)
+        assertTrue(waiting.none { it.entity_type == "book.entry" })
+        markPublicationUploaded()
         val rows = database.aethon_syncQueries.selectReadyMutations(2_000, 20).executeAsList()
         assertEquals(6, rows.size)
         assertEquals(
@@ -264,6 +270,40 @@ class EpigraphBookMutationRouterTest {
     }
 
     @Test
+    fun `editing the title and author writes the book and its sync command together`() = runTest {
+        router.publish(snapshot(), "/private/$BOOK_HASH.epub", coverPath = null)
+        router.saveStructure(BOOK_ID.value, chapterCount = 29, pageCount = null)
+
+        router.saveTitleAndAuthor(BOOK_ID.value, title = "New name", author = "New author")
+
+        val book = database.local_booksQueries.findById(BOOK_ID.value).executeAsOne()
+        assertEquals("New name", book.display_name)
+        assertEquals("New author", book.author)
+        assertEquals(29L, book.chapter_count)
+        assertEquals(1, coordinator.pendingCount())
+        markPublicationUploaded()
+        val row = database.aethon_syncQueries.selectReadyMutations(Long.MAX_VALUE, 20)
+            .executeAsList()
+            .last()
+        val envelope = json.decodeFromString<SyncCommandEnvelope>(row.payload_json)
+        val command = assertInstanceOf(SyncCommand.UpsertBookEntry::class.java, envelope.command)
+        assertEquals("New name", command.entry.title)
+        assertEquals("New author", command.entry.author)
+        assertEquals(29, command.entry.chapterCount)
+    }
+
+    @Test
+    fun `saving the same title and author enqueues nothing`() = runTest {
+        router.publish(snapshot(), "/private/$BOOK_HASH.epub", coverPath = null)
+        router.saveTitleAndAuthor(BOOK_ID.value, title = "New name", author = null)
+        val pending = coordinator.pendingCount()
+
+        router.saveTitleAndAuthor(BOOK_ID.value, title = "New name", author = null)
+
+        assertEquals(pending, coordinator.pendingCount())
+    }
+
+    @Test
     fun `unchanged book structure does not enqueue duplicate metadata`() = runTest {
         router.publish(snapshot(), "/private/$BOOK_HASH.epub", coverPath = null)
         router.saveStructure(BOOK_ID.value, chapterCount = 29, pageCount = null)
@@ -297,10 +337,24 @@ class EpigraphBookMutationRouterTest {
         router.saveStructure(BOOK_ID.value, chapterCount = 29, pageCount = null)
 
         assertEquals(1, coordinator.pendingCount())
+        markPublicationUploaded()
         val row = database.aethon_syncQueries.selectReadyMutations(2_000, 20).executeAsOne()
         val envelope = json.decodeFromString<SyncCommandEnvelope>(row.payload_json)
         val command = assertInstanceOf(SyncCommand.UpsertBookEntry::class.java, envelope.command)
         assertEquals(29, command.entry.chapterCount)
+    }
+
+    private fun markPublicationUploaded() {
+        database.aethon_syncQueries.updateAssetMaterialization(
+            localUri = "/private/$BOOK_HASH.epub",
+            remoteAvailable = true,
+            state = "AVAILABLE",
+            updatedAt = 1_500,
+            sha256 = BOOK_HASH,
+            contentType = ContentType.EPUB.name,
+            byteSize = 123,
+            mimeType = "application/epub+zip",
+        )
     }
 
     private fun insertCategory(name: String, sort: Long): Long {

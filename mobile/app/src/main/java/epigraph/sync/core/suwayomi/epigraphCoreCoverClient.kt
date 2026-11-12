@@ -7,6 +7,7 @@ import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.session.CoreEndpointResolver
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -24,6 +25,8 @@ class EpigraphCoreCoverClient(
     private val endpointMutex = Mutex()
     @Volatile
     private var cachedEndpoint: CachedEndpoint? = null
+    @Volatile
+    private var lastResolveFailure: ResolveFailure? = null
 
     override suspend fun fetch(reference: String): CoreHttpResult<ByteArray> {
         val parsed = SuwayomiCoreThumbnailReference.parse(reference)
@@ -80,19 +83,37 @@ class EpigraphCoreCoverClient(
                 it.profileId == session.profileId &&
                 it.expiresAtMs > now
         }?.let { return it.origin }
+        // Every cover in line here holds its image request, and through it the screen that asked.
+        // An unreachable desktop takes seconds per attempt, so covers already in line share the
+        // failure that ended the wait instead of each trying again. A later fetch retries at once.
+        val failureBeforeWaiting = lastResolveFailure
         return endpointMutex.withLock {
             val lockedNow = System.currentTimeMillis()
             cachedEndpoint?.takeIf {
                 it.serverId == session.serverId &&
                     it.profileId == session.profileId &&
                     it.expiresAtMs > lockedNow
-            }?.origin ?: endpoints.resolve(session).origin.also { origin ->
-                cachedEndpoint = CachedEndpoint(
-                    serverId = session.serverId,
-                    profileId = session.profileId,
-                    origin = origin,
-                    expiresAtMs = lockedNow + ENDPOINT_CACHE_MS,
-                )
+            }?.let { return@withLock it.origin }
+            lastResolveFailure?.takeIf {
+                it !== failureBeforeWaiting &&
+                    it.serverId == session.serverId &&
+                    it.profileId == session.profileId
+            }?.let { throw it.cause }
+            try {
+                endpoints.resolve(session).origin.also { origin ->
+                    cachedEndpoint = CachedEndpoint(
+                        serverId = session.serverId,
+                        profileId = session.profileId,
+                        origin = origin,
+                        expiresAtMs = lockedNow + ENDPOINT_CACHE_MS,
+                    )
+                    lastResolveFailure = null
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                lastResolveFailure = ResolveFailure(session.serverId, session.profileId, failure)
+                throw failure
             }
         }
     }
@@ -102,6 +123,12 @@ class EpigraphCoreCoverClient(
         val profileId: String,
         val origin: String,
         val expiresAtMs: Long,
+    )
+
+    private class ResolveFailure(
+        val serverId: String,
+        val profileId: String,
+        val cause: Exception,
     )
 
     private companion object {

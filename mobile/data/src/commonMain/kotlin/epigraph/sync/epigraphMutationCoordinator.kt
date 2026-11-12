@@ -394,6 +394,40 @@ class EpigraphMutationCoordinator(
         }
     }
 
+    /**
+     * Settles the book entries the Core refused because it lacked the file or cover they name. An
+     * entry whose book left this phone is dropped: nothing can publish it any more. The rest send
+     * their file again and then go out under a new ID; the claim holds them until the upload lands.
+     * Attempts keep counting, so a row the Core keeps refusing ends up parked for the user. A row
+     * whose file is gone from this phone stays parked too.
+     */
+    suspend fun retryBookEntriesMissingAssets(nowEpochMillis: Long, newClientMutationId: () -> ClientMutationId): Int {
+        require(nowEpochMillis >= 0) { "retry timestamp must be epoch milliseconds" }
+        return databaseHandler.await(inTransaction = true) {
+            aethon_syncQueries.discardBookEntriesOfRemovedBooks()
+            aethon_syncQueries.selectParkedBookEntriesMissingAsset().executeAsList().count { row ->
+                if (row.attempt_count >= MAX_BOOK_ASSET_ATTEMPTS) return@count false
+                val role = if (row.last_error == BLOCKED_PREFIX + BOOK_COVER_NOT_AVAILABLE) "COVER" else "PUBLICATION"
+                val assets = aethon_syncQueries.selectEntityAssets(row.entity_id).executeAsList().filter { it.role == role }
+                if (assets.isEmpty() || assets.any { it.local_uri == null }) return@count false
+                assets.forEach { asset ->
+                    aethon_syncQueries.updateAssetMaterialization(
+                        localUri = asset.local_uri,
+                        remoteAvailable = false,
+                        state = "PENDING_UPLOAD",
+                        updatedAt = nowEpochMillis,
+                        sha256 = asset.sha256,
+                        contentType = asset.content_type,
+                        byteSize = asset.byte_size,
+                        mimeType = asset.mime_type,
+                    )
+                }
+                retryParked(row.sequence, newClientMutationId(), nowEpochMillis, keepAttempts = true) { it }
+                true
+            }
+        }
+    }
+
     /** The scoped Suwayomi id of the Core-served manga that holds [comicId] here, or null. */
     private fun Database.coreServedScopedComicId(comicId: String): String? {
         val identity = aethon_syncQueries.selectIdentityByEntityId(comicId).executeAsOneOrNull()
@@ -408,12 +442,14 @@ class EpigraphMutationCoordinator(
      * The Core keys a receipt by the ID inside the stored envelope, and the drainer refuses a row
      * whose column and envelope IDs differ, so both carry the new ID. [repair] returns null to leave
      * the row parked. [rekey] also moves the row to the entity the repaired command names.
+     * [keepAttempts] keeps the attempt count of a retry nobody asked for.
      */
     private fun Database.retryParked(
         sequence: Long,
         newClientMutationId: ClientMutationId,
         nowEpochMillis: Long,
         rekey: Boolean = false,
+        keepAttempts: Boolean = false,
         repair: (SyncCommand) -> SyncCommand?,
     ) {
         val payloadJson = aethon_syncQueries.selectBlockedMutationPayload(sequence).executeAsOneOrNull() ?: return
@@ -426,6 +462,15 @@ class EpigraphMutationCoordinator(
             val command = repair(envelope.command) ?: return
             if (rekey) aethon_syncQueries.rekeyBlockedMutation(entityId = command.entityId.value, sequence = sequence)
             json.encodeToString(envelope.copy(clientMutationId = newClientMutationId, command = command))
+        }
+        if (keepAttempts) {
+            aethon_syncQueries.requeueBlockedMutation(
+                newClientMutationId = newClientMutationId.value,
+                payloadJson = retried,
+                now = nowEpochMillis,
+                sequence = sequence,
+            )
+            return
         }
         aethon_syncQueries.retryBlockedMutation(
             newClientMutationId = newClientMutationId.value,
@@ -573,6 +618,8 @@ data class BlockedMutation(
 
 private const val BLOCKED_PREFIX = "blocked:"
 private const val INVALID_PAGE_COUNT = "INVALID_PAGE_COUNT"
+private const val BOOK_COVER_NOT_AVAILABLE = "BOOK_COVER_ASSET_NOT_AVAILABLE_FOR_SCOPE"
+private const val MAX_BOOK_ASSET_ATTEMPTS = 4L
 
 private fun SyncCommand.withPageCountCoveringPageIndex(): SyncCommand? = when (this) {
     is SyncCommand.SetProgress -> locator.withPageCountCoveringPageIndex()?.let { copy(locator = it) }

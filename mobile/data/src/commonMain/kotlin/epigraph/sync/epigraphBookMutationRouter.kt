@@ -189,6 +189,11 @@ class EpigraphBookMutationRouter(
                     progression = progression,
                     updatedAt = now,
                 )
+                // Remembered so that a later position in another chapter can be told apart as foreign.
+                local_booksQueries.updateReadingLocator(
+                    localLocatorJson = json.encodeToString(ReaderLocator.serializer(), locator),
+                    bookId = bookId,
+                )
                 // Intermediate reader positions that have never left this device are replaceable.
                 // Attempted rows remain immutable so acknowledgements still match their payload.
                 aethon_syncQueries.deleteUnattemptedMutationForEntity(
@@ -200,6 +205,54 @@ class EpigraphBookMutationRouter(
                 val command = SyncCommand.SetProgress(EpigraphEntityId(bookId), locator)
                 LocalMutationResult(Unit, listOf(envelope(BOOK_PROGRESS, command)))
             }
+        }
+    }
+
+    suspend fun saveTitleAndAuthor(bookId: String, title: String, author: String?) {
+        require(title.isNotBlank()) { "A local book needs a title" }
+        val now = timestamp()
+        coordinator.mutateLocalBatch(now) {
+            val existing = local_booksQueries.findById(bookId).executeAsOneOrNull()
+                ?: return@mutateLocalBatch LocalMutationResult(Unit, emptyList())
+            if (existing.display_name == title && existing.author == author) {
+                return@mutateLocalBatch LocalMutationResult(Unit, emptyList())
+            }
+            local_booksQueries.updateMetadata(
+                displayName = title,
+                author = author,
+                description = existing.description,
+                coverPath = existing.cover_path,
+                updatedAt = now,
+                bookId = bookId,
+            )
+            val snapshot = BookEntrySnapshot(
+                bookId = EpigraphEntityId(existing.book_id),
+                contentType = ContentType.valueOf(existing.content_type),
+                sha256 = existing.sha256,
+                title = title,
+                author = author,
+                description = existing.description,
+                mimeType = existing.mime_type,
+                byteSize = existing.byte_size,
+                coverAssetSha256 = existing.cover_asset_sha256,
+                coverAssetByteSize = existing.cover_asset_byte_size,
+                coverAssetMimeType = existing.cover_asset_mime_type,
+                chapterCount = existing.chapter_count?.toInt(),
+                pageCount = existing.page_count?.toInt(),
+                createdAtEpochMillis = existing.imported_at,
+                updatedAtEpochMillis = now,
+            )
+            // Only the newest name has to reach the Core if it was edited twice before sending.
+            aethon_syncQueries.deleteUnattemptedMutationForEntity(
+                deviceId = deviceId.value,
+                scopeId = BOOKS_SCOPE.value,
+                entityType = BOOK_ENTRY.value,
+                entityId = bookId,
+            )
+            LocalMutationResult(
+                Unit,
+                listOf(envelope(BOOK_ENTRY, SyncCommand.UpsertBookEntry(snapshot.bookId, snapshot))),
+            )
         }
     }
 

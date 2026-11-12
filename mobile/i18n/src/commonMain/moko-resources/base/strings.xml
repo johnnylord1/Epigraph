@@ -2380,6 +2380,7 @@
     <string name="epigraph_core_blocked_retry">Send again</string>
     <string name="epigraph_core_blocked_retry_all">Send all again</string>
     <string name="epigraph_core_blocked_discard">Discard</string>
+    <string name="epigraph_core_blocked_book_file_missing">The file or cover of this book is not on this phone. Import the book again or discard this change.</string>
     <string name="epigraph_core_blocked_close">Close</string>
     <string name="epigraph_core_blocked_kind_comic">Comic</string>
     <string name="epigraph_core_blocked_kind_novel">Novel</string>

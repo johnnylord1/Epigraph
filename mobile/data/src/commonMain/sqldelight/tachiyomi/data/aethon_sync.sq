@@ -1253,18 +1253,44 @@ WHERE (
     (status IN ('PENDING', 'ERROR') AND next_attempt_at <= :now)
     OR (status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now)
 )
+  AND (
+    entity_type <> 'book.entry'
+    OR operation <> 'upsert_book_entry'
+    OR NOT EXISTS (
+        SELECT 1 FROM aethon_entity_asset
+        JOIN aethon_asset_manifest USING(sha256)
+        WHERE aethon_entity_asset.entity_id = aethon_sync_outbox.entity_id
+            AND aethon_asset_manifest.state = 'PENDING_UPLOAD'
+            AND aethon_asset_manifest.local_uri IS NOT NULL
+            AND aethon_asset_manifest.remote_available = 0
+    )
+  )
 ORDER BY sequence ASC
 LIMIT :limit;
 
 -- Library rows (entries, folders, assignments, chapters, plugins) leave before reading state, so a
 -- first pairing shows the library while years of progress are still uploading. Each entity keeps
 -- its own order: all its rows share one entity type, and the drain re-sorts a claim by sequence.
+-- A book entry waits for its file and cover: the Core refuses for good an entry that names a file it
+-- does not have yet, and only a few files go up per batch.
 selectReadyMutationsForScopes:
 SELECT * FROM aethon_sync_outbox
 WHERE scope_id IN :scopeIds
   AND (
     (status IN ('PENDING', 'ERROR') AND next_attempt_at <= :now)
     OR (status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now)
+  )
+  AND (
+    entity_type <> 'book.entry'
+    OR operation <> 'upsert_book_entry'
+    OR NOT EXISTS (
+        SELECT 1 FROM aethon_entity_asset
+        JOIN aethon_asset_manifest USING(sha256)
+        WHERE aethon_entity_asset.entity_id = aethon_sync_outbox.entity_id
+            AND aethon_asset_manifest.state = 'PENDING_UPLOAD'
+            AND aethon_asset_manifest.local_uri IS NOT NULL
+            AND aethon_asset_manifest.remote_available = 0
+    )
   )
 ORDER BY entity_type IN (
     'comic.chapter_state', 'comic.history', 'comic.page_bookmark',
@@ -1364,6 +1390,47 @@ WHERE sequence = :sequence AND status = 'ERROR' AND last_error LIKE 'blocked:%';
 discardBlockedMutation:
 DELETE FROM aethon_sync_outbox
 WHERE sequence = :sequence AND status = 'ERROR' AND last_error LIKE 'blocked:%';
+
+-- Book entries the Core refused because it lacked the file or cover the entry names.
+selectParkedBookEntriesMissingAsset:
+SELECT sequence, entity_id, last_error, attempt_count FROM aethon_sync_outbox
+WHERE entity_type = 'book.entry'
+  AND status = 'ERROR'
+  AND last_error IN ('blocked:BOOK_ASSET_NOT_AVAILABLE_FOR_SCOPE', 'blocked:BOOK_COVER_ASSET_NOT_AVAILABLE_FOR_SCOPE')
+ORDER BY sequence;
+
+-- Like retryBlockedMutation, but the attempts keep counting so an automatic repair cannot loop.
+requeueBlockedMutation:
+UPDATE aethon_sync_outbox
+SET client_mutation_id = :newClientMutationId,
+    payload_json = :payloadJson,
+    status = 'PENDING',
+    next_attempt_at = :now,
+    last_error = NULL,
+    in_flight_at = NULL,
+    lease_until = NULL
+WHERE sequence = :sequence AND status = 'ERROR' AND last_error LIKE 'blocked:%';
+
+-- The book left this phone before its file reached the Core, so nothing can ever publish this entry.
+discardBookEntriesOfRemovedBooks:
+DELETE FROM aethon_sync_outbox
+WHERE entity_type = 'book.entry'
+  AND operation = 'upsert_book_entry'
+  AND status IN ('PENDING', 'ERROR')
+  AND NOT EXISTS (SELECT 1 FROM local_books WHERE local_books.book_id = aethon_sync_outbox.entity_id)
+  AND (
+    last_error IN ('blocked:BOOK_ASSET_NOT_AVAILABLE_FOR_SCOPE', 'blocked:BOOK_COVER_ASSET_NOT_AVAILABLE_FOR_SCOPE')
+    OR (
+        (last_error IS NULL OR last_error NOT LIKE 'blocked:%')
+        AND EXISTS (
+            SELECT 1 FROM aethon_entity_asset
+            JOIN aethon_asset_manifest USING(sha256)
+            WHERE aethon_entity_asset.entity_id = aethon_sync_outbox.entity_id
+                AND aethon_entity_asset.role = 'PUBLICATION'
+                AND aethon_asset_manifest.remote_available = 0
+        )
+    )
+  );
 
 releaseMutationBackoff:
 UPDATE aethon_sync_outbox

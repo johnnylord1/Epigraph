@@ -291,9 +291,7 @@ class EpigraphCoreDomainProjection(
             "novel.category_assignment" -> previous?.let { projectNovelAssignment(database, it, false) }
             "book.category_assignment" -> previous?.let { projectBookCategoryAssignment(database, it, false) }
             "novel.progress" -> {
-                database.aethon_syncQueries.deleteReaderProgress(
-                    canonicalNovelProgressId(tombstone.key.entityId),
-                )
+                deleteNovelProgress(database, tombstone.key.entityId, tombstone.serverVersion)
             }
             "book.progress" -> {
                 removeBookProgress(database, tombstone.key.entityId)
@@ -339,7 +337,7 @@ class EpigraphCoreDomainProjection(
             "novel.category_assignment" -> previous?.let { projectNovelAssignment(database, it, false) }
             "book.category_assignment" -> previous?.let { projectBookCategoryAssignment(database, it, false) }
             "novel.progress" -> {
-                database.aethon_syncQueries.deleteReaderProgress(canonicalNovelProgressId(stale.entityId))
+                deleteNovelProgress(database, stale.entityId)
             }
             "book.progress" -> {
                 removeBookProgress(database, stale.entityId)
@@ -409,7 +407,7 @@ class EpigraphCoreDomainProjection(
             ?.localReference?.toLongOrNull()?.takeIf { it > 0 }
         val mangaId = portableLocalId
             ?: if (key.entityType == "novel.tracking") {
-                localMangaId(database, workId)
+                novelLocalMangaId(database, workId)
             } else {
                 coreServedComicId(database, binding?.ref)
             }
@@ -1361,11 +1359,41 @@ class EpigraphCoreDomainProjection(
         val novelId = record.string("novelId") ?: entityId
         val title = record.string("title")?.takeIf { it.isNotBlank() } ?: return
         val url = record.string("path") ?: record.string("identityKey") ?: novelId
-        val source = novelPluginSourceId(record) ?: stableSourceId(record)
+        // The provider identity does not depend on language metadata. Replica and manifest
+        // hydration must share a row even when the entry arrived before its plugin descriptor.
+        val pluginId = (record["source"] as? JsonObject)?.string("pluginId")?.takeIf { it.isNotBlank() }
+        val portableRef = pluginId?.let {
+            runCatching { PortableWorkRef.Novel(it, ProviderOwnedKey(url)) }.getOrNull()
+        }
+        val portableStore = SqlDelightPortableBindingStore(database)
+        val portableBinding = portableRef?.let(portableStore::work)
+        val boundRow = portableBinding?.localReference?.toLongOrNull()
+            ?.let { database.mangasQueries.findById(it).executeAsOneOrNull() }
+            ?.takeIf { it.url == url }
+        val source = boundRow?.takeIf { portableBinding?.resolution?.state == PortableResolutionState.BOUND }?.source
+            ?: novelPluginSourceId(record) ?: stableSourceId(record)
+        val portableId = portableRef?.let(PortableIdentityV3::workId)
+        val nativeOwner = boundRow?.takeIf { portableBinding?.resolution?.state == PortableResolutionState.BOUND }
+            ?.let { database.aethon_syncQueries.selectIdentityByLocalReference("NOVEL", it._id.toString()).executeAsOneOrNull() }
+            ?.takeIf { it.entity_id == portableId && it.entity_id != novelId }
+        val projectedId = nativeOwner?.entity_id ?: novelId
+        if (nativeOwner != null) {
+            val previousId = localMangaId(database, novelId)
+            if (previousId != null && previousId != boundRow?._id) {
+                // The exact portable ref proves this legacy placeholder and its owned native
+                // row are the same work. Transfer categories without taking another work's row.
+                val adopted = adoptNovelTwin(database, previousId, url, source, nativeOwner.entity_id)
+                if (adopted != boundRow?._id) return
+            }
+            // Keep the legacy identity and its FK-owned progress/chapter bindings as compatibility
+            // state. Deleting it here would cascade user reading state before replay could rebind it.
+            preserveNovelAliasProgress(database, novelId, nativeOwner.entity_id)
+            database.aethon_syncQueries.upsertEntityAlias(novelId, nativeOwner.entity_id, now(record))
+        }
         rememberNovelSource(source, novelSourceName(record))
         val localId = ensureManga(
             database = database,
-            entityId = novelId,
+            entityId = projectedId,
             contentType = "NOVEL",
             source = source,
             url = url,
@@ -1376,14 +1404,31 @@ class EpigraphCoreDomainProjection(
             thumbnailUrl = record.string("coverUrl"),
             dateAdded = record.long("addedAtMs") ?: now(record),
             lastUpdate = record.long("updatedAtMs") ?: now(record),
+            preferredLocalId = localMangaId(database, projectedId) ?: boundRow?._id,
         ) ?: return
         database.aethon_syncQueries.upsertIdentity(
-            entityId = novelId,
+            entityId = projectedId,
             contentType = "NOVEL",
             localReference = localId.toString(),
             createdAt = now(record),
             updatedAt = now(record),
         )
+        if (portableRef != null) {
+            portableStore.upsertWork(
+                portableBinding?.copy(localReference = localId.toString(), updatedAt = now(record))
+                    ?: PortableWorkBindingRecord(
+                        portableId = PortableIdentityV3.workId(portableRef),
+                        ref = portableRef,
+                        dependencyKey = portableRef.pluginId,
+                        localReference = localId.toString(),
+                        resolution = PortableResolution(PortableResolutionState.PENDING_PROVIDER),
+                        titleHint = title,
+                        providerLabelHint = novelSourceName(record),
+                        attemptCount = 0,
+                        updatedAt = now(record),
+                    ),
+            )
+        }
     }
 
     private fun projectBookEntry(database: Database, entityId: String, record: JsonObject) {
@@ -1474,8 +1519,8 @@ class EpigraphCoreDomainProjection(
         } else {
             database.local_booksQueries.updateMetadata(
                 displayName = title,
-                author = record.string("author") ?: existing.author,
-                description = record.string("description") ?: existing.description,
+                author = if (record.containsKey("author")) record.string("author") else existing.author,
+                description = if (record.containsKey("description")) record.string("description") else existing.description,
                 coverPath = coverPath,
                 updatedAt = updatedAt,
                 bookId = existing.book_id,
@@ -1622,7 +1667,7 @@ class EpigraphCoreDomainProjection(
     private fun projectNovelAssignment(database: Database, record: JsonObject, assigned: Boolean) {
         val novelId = record.string("novelId") ?: return
         val categoryId = record.string("categoryId") ?: return
-        val mangaId = localMangaId(database, novelId) ?: return
+        val mangaId = novelLocalMangaId(database, novelId) ?: return
         // A Books category may still be bound only in the book library; it is the same folder.
         val category = sequenceOf("NOVEL", "BOOK")
             .firstNotNullOfOrNull {
@@ -1664,7 +1709,7 @@ class EpigraphCoreDomainProjection(
 
     private fun projectNovelChapter(database: Database, entityId: String, record: JsonObject) {
         val novelId = record.string("novelId") ?: return
-        val mangaId = localMangaId(database, novelId) ?: return
+        val mangaId = novelLocalMangaId(database, novelId) ?: return
         val path = record.string("path") ?: return
         val title = record.string("title")?.takeIf { it.isNotBlank() } ?: path
         val ordinal = record.double("chapterOrderKey") ?: 0.0
@@ -1729,7 +1774,7 @@ class EpigraphCoreDomainProjection(
             database.aethon_syncQueries
                 .selectChapterBindingByLocalChapterId(localChapterId)
                 .executeAsList()
-                .any { it.work_entity_id == novelId && it.chapter_entity_id != entityId }
+                .any { it.chapter_entity_id != entityId }
         if (!boundToAnother) {
             database.aethon_syncQueries.upsertChapterBinding(
                 chapterEntityId = entityId,
@@ -1784,11 +1829,11 @@ class EpigraphCoreDomainProjection(
                 .executeAsOneOrNull()
                 ?.entity_id
         }
-        val novelId = if (validPortableRefs) {
+        val novelId = resolveNovelIdentity(database, if (validPortableRefs) {
             requireNotNull(portableWorkId)
         } else {
             localNovelEntityId ?: record.string("novelId") ?: canonicalNovelProgressId(recordKey.key.entityId)
-        }
+        })
         val chapterId = record.string("chapterId")
         val binding = chapterId?.takeUnless { validPortableRefs }?.let {
             database.aethon_syncQueries.selectChapterBindingByEntityId(it).executeAsOneOrNull()
@@ -1811,12 +1856,16 @@ class EpigraphCoreDomainProjection(
         } else {
             null
         }
+        val resolvedChapterId = novelLocalChapterId(database, novelId, binding?.local_chapter_id ?: portableChapterBinding?.localReference?.toLongOrNull())
+        val resolvedBinding = resolvedChapterId?.let { database.aethon_syncQueries.selectChapterBindingByLocalChapterId(it).executeAsList() }
+            ?.firstOrNull { it.work_entity_id == novelId } ?: binding
         val progression = (record.double("progressPercent") ?: 0.0).coerceIn(0.0, 1.0)
         val locatorPosition = parseNovelLocator(record.string("locator"))
         val typedLocator = ReaderLocator.Novel(
             entityId = EpigraphEntityId(novelId),
-            chapterId = record.string("chapterId")
-                ?: binding?.chapter_entity_id
+            chapterId = portableChapterId?.takeIf { validPortableRefs }
+                ?: resolvedBinding?.chapter_entity_id
+                ?: record.string("chapterId")
                 ?: portableChapterId
                 ?: return,
             blockIndex = locatorPosition.first,
@@ -1842,14 +1891,14 @@ class EpigraphCoreDomainProjection(
         }
         database.aethon_syncQueries.upsertRemoteReaderProgress(
             entityId = novelId,
-            chapterEntityId = binding?.chapter_entity_id,
+            chapterEntityId = resolvedBinding?.chapter_entity_id,
             locatorJson = json.encodeToString(ReaderLocator.serializer(), typedLocator),
             chapterOrdinal = record.double("chapterOrderKey"),
             progression = progression,
             serverRevision = recordKey.serverVersion,
             updatedAt = updatedAt,
         )
-        val localChapterId = binding?.local_chapter_id ?: portableChapterBinding?.localReference?.toLongOrNull()
+        val localChapterId = resolvedChapterId
         localChapterId?.let { chapterLocalId ->
             val lastPage = (progression * 100.0).toInt().coerceIn(0, 100)
             database.chaptersQueries.update(
@@ -1881,9 +1930,8 @@ class EpigraphCoreDomainProjection(
             ?.takeIf { it.work_entity_id == novelId }
         val portableBinding = SqlDelightPortableBindingStore(database).chapter(chapterId)
             ?.takeIf { it.portableWorkId == novelId }
-        val localChapterId = legacyBinding?.local_chapter_id
-            ?: portableBinding?.localReference?.toLongOrNull()
-            ?: return
+        val localChapterId = novelLocalChapterId(database, novelId, legacyBinding?.local_chapter_id
+            ?: portableBinding?.localReference?.toLongOrNull()) ?: return
         if (database.chaptersQueries.getChaptersById(localChapterId).executeAsOneOrNull() == null) return
         database.chaptersQueries.update(
             chapterId = localChapterId,
@@ -1913,7 +1961,7 @@ class EpigraphCoreDomainProjection(
         val mangaId = SqlDelightPortableBindingStore(database).work(novelId)
             ?.takeIf { it.resolution.state == PortableResolutionState.BOUND }
             ?.localReference?.toLongOrNull()?.takeIf { it > 0 }
-            ?: localMangaId(database, novelId)
+            ?: novelLocalMangaId(database, novelId)
             ?: return
         val chapterId = database.chaptersQueries
             .getChaptersByUrlAndMangaId(chapterKey, mangaId, 0)
@@ -2268,13 +2316,13 @@ class EpigraphCoreDomainProjection(
      * LNReader hydration already created for the same novel: move the identity onto that row and
      * hide the placeholder as a replica repair, never as a user-authored removal.
      */
-    private fun adoptNovelTwin(database: Database, localId: Long, url: String, source: Long): Long {
+    private fun adoptNovelTwin(database: Database, localId: Long, url: String, source: Long, compatibleOwner: String? = null): Long {
         val current = database.mangasQueries.findById(localId).executeAsOneOrNull() ?: return localId
-        if (current.url == url && current.source == source) return localId
+        if (current.url == url && current.source == source && compatibleOwner == null) return localId
         val twin = database.mangasQueries.findByUrlAndSource(url, source).executeAsList().firstOrNull { row ->
             row._id != localId &&
                 database.aethon_syncQueries.selectIdentityByLocalReference("NOVEL", row._id.toString())
-                    .executeAsOneOrNull() == null
+                    .executeAsOneOrNull().let { it == null || it.entity_id == compatibleOwner }
         } ?: return localId
         val assigned = database.categoriesQueries.findAllByMangaId(twin._id).executeAsList().mapTo(HashSet()) { it._id }
         database.categoriesQueries.findAllByMangaId(localId).executeAsList().forEach { category ->
@@ -2406,6 +2454,60 @@ class EpigraphCoreDomainProjection(
         database.aethon_syncQueries.selectIdentityByEntityId(entityId).executeAsOneOrNull()
             ?.local_reference?.toLongOrNull()?.takeIf { it > 0 }
 
+    private fun resolveNovelIdentity(database: Database, entityId: String): String {
+        var current = entityId
+        val visited = HashSet<String>()
+        repeat(16) {
+            if (!visited.add(current)) return entityId
+            val next = database.aethon_syncQueries.selectCanonicalEntityId(current).executeAsOneOrNull()
+                ?: return current
+            if (next == current) return current
+            current = next
+        }
+        return entityId
+    }
+
+    private fun novelLocalMangaId(database: Database, entityId: String): Long? =
+        localMangaId(database, resolveNovelIdentity(database, entityId)) ?: localMangaId(database, entityId)
+
+    private fun novelLocalChapterId(database: Database, novelId: String, boundId: Long?): Long? {
+        val chapter = boundId?.let { database.chaptersQueries.getChaptersById(it).executeAsOneOrNull() } ?: return null
+        val mangaId = novelLocalMangaId(database, novelId) ?: return boundId
+        if (chapter.manga_id == mangaId) return boundId
+        return database.chaptersQueries.getChaptersByUrlAndMangaId(chapter.url, mangaId, 0)
+            .executeAsList().minByOrNull { it._id }?._id ?: boundId
+    }
+
+    private fun preserveNovelAliasProgress(database: Database, legacyId: String, canonicalId: String) {
+        val old = database.aethon_syncQueries.selectReaderProgress(legacyId).executeAsOneOrNull() ?: return
+        val current = database.aethon_syncQueries.selectReaderProgress(canonicalId).executeAsOneOrNull()
+        if (current != null && current.updated_at >= old.updated_at) return
+        val oldBinding = old.chapter_entity_id?.let { database.aethon_syncQueries.selectChapterBindingByEntityId(it).executeAsOneOrNull() }
+        val nativeChapter = novelLocalChapterId(database, canonicalId, oldBinding?.local_chapter_id)
+        val binding = nativeChapter?.let { database.aethon_syncQueries.selectChapterBindingByLocalChapterId(it).executeAsList() }
+            ?.firstOrNull { it.work_entity_id == canonicalId } ?: oldBinding
+        val locator = runCatching { json.decodeFromString<ReaderLocator>(old.locator_json) }.getOrNull()
+        val locatorJson = if (locator is ReaderLocator.Novel) json.encodeToString(
+            ReaderLocator.serializer(), locator.copy(entityId = EpigraphEntityId(canonicalId), chapterId = locator.portableChapter?.let(PortableIdentityV3::chapterId) ?: binding?.chapter_entity_id ?: locator.chapterId),
+        ) else old.locator_json
+        if (current == null) {
+            database.aethon_syncQueries.upsertRemoteReaderProgress(canonicalId, binding?.chapter_entity_id, locatorJson, old.chapter_ordinal, old.progression, old.server_revision, old.updated_at)
+        } else {
+            database.aethon_syncQueries.upsertLocalReaderProgress(canonicalId, binding?.chapter_entity_id, locatorJson, old.chapter_ordinal, old.progression, old.updated_at)
+        }
+    }
+
+    private fun deleteNovelProgress(database: Database, entityId: String, throughVersion: Long = Long.MAX_VALUE) {
+        val rawId = canonicalNovelProgressId(entityId)
+        val canonicalId = resolveNovelIdentity(database, rawId)
+        for (id in setOf(rawId, canonicalId)) {
+            val progress = database.aethon_syncQueries.selectReaderProgress(id).executeAsOneOrNull()
+            if (progress != null && progress.server_revision <= throughVersion) {
+                database.aethon_syncQueries.deleteReaderProgress(id)
+            }
+        }
+    }
+
     /** The row a comic entry reaches, directly or through the identity that owns its work's row. */
     private fun comicLocalMangaId(database: Database, entityId: String): Long? =
         localMangaId(database, entityId)
@@ -2413,7 +2515,7 @@ class EpigraphCoreDomainProjection(
                 ?.let { localMangaId(database, it) }
 
     private fun demoteEntry(database: Database, entityId: String) {
-        val localId = localMangaId(database, entityId) ?: return
+        val localId = novelLocalMangaId(database, entityId) ?: return
         demoteManga(database, localId)
     }
 

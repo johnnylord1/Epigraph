@@ -553,7 +553,13 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = "${item.errorCode} · ${relativeTimeSpanString(item.createdAtEpochMillis)}",
+                                text = "${
+                                    if (item.errorCode in BOOK_FILE_MISSING_CODES) {
+                                        stringResource(MR.strings.epigraph_core_blocked_book_file_missing)
+                                    } else {
+                                        item.errorCode
+                                    }
+                                } · ${relativeTimeSpanString(item.createdAtEpochMillis)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -937,6 +943,11 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             }
         }
     }
+
+    private val BOOK_FILE_MISSING_CODES = setOf(
+        "BOOK_ASSET_NOT_AVAILABLE_FOR_SCOPE",
+        "BOOK_COVER_ASSET_NOT_AVAILABLE_FOR_SCOPE",
+    )
 
     private fun blockedKindLabel(entityType: String): StringResource = when (entityType.substringBefore('.')) {
         "comic" -> MR.strings.epigraph_core_blocked_kind_comic
