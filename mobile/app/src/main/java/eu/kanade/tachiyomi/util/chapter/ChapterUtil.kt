@@ -56,8 +56,10 @@ class ChapterUtil {
             }
         }
 
-        private fun setBookmark(textView: TextView, chapter: Chapter) {
-            if (chapter.bookmark) {
+        private fun setBookmark(textView: TextView, chapter: Chapter) = setBookmark(textView, chapter.bookmark)
+
+        fun setBookmark(textView: TextView, bookmarked: Boolean) {
+            if (bookmarked) {
                 val context = textView.context
                 val drawable = VectorDrawableCompat.create(
                     textView.resources,

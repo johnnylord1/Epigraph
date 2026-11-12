@@ -18,11 +18,11 @@ import android.view.ViewGroup
 import androidx.annotation.FloatRange
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
-import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePaddingRelative
 import androidx.core.widget.TextViewCompat
+import androidx.core.widget.doAfterTextChanged
 import androidx.palette.graphics.Palette
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -44,6 +44,7 @@ import com.google.android.material.R as materialR
 import epigraph.ui.color.CoverPalette
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.databinding.ChaptersItemBinding
+import eu.kanade.tachiyomi.databinding.DialogBookEditBinding
 import eu.kanade.tachiyomi.databinding.MangaDetailsControllerBinding
 import eu.kanade.tachiyomi.databinding.MangaHeaderItemBinding
 import eu.kanade.tachiyomi.ui.base.SmallToolbarInterface
@@ -52,6 +53,8 @@ import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.ui.manga.CoverVeil
 import eu.kanade.tachiyomi.ui.manga.DetailsCoverPlaceholder
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsDivider
+import eu.kanade.tachiyomi.ui.manga.MangaReadingButtonState
+import eu.kanade.tachiyomi.ui.manga.getReadingButtonText
 import eu.kanade.tachiyomi.data.coil.getBestColor
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.contextCompatColor
@@ -70,6 +73,7 @@ import eu.kanade.tachiyomi.util.view.toolbarHeight
 import eu.kanade.tachiyomi.util.view.setOnQueryTextChangeListener
 import eu.kanade.tachiyomi.widget.LinearLayoutManagerAccurateOffset
 import epigraph.books.local.LocalBook
+import epigraph.books.local.LocalBookChapterState
 import epigraph.books.local.LocalBookImportService
 import epigraph.books.local.LocalBookRepository
 import epigraph.books.reader.BookChapterMetrics
@@ -83,6 +87,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.core.component.inject
 import java.io.File
+import java.text.DecimalFormat
 import kotlin.math.max
 import kotlin.math.roundToInt
 import co.touchlab.kermit.Logger
@@ -91,6 +96,38 @@ import yokai.i18n.MR
 import yokai.presentation.theme.ReducedMotion
 import yokai.util.coil.CropBottomTransformation
 import yokai.util.lang.getString
+import android.content.Context
+import android.graphics.Canvas
+import android.view.inputmethod.InputMethodManager
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.view.ActionMode
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.forEach
+import androidx.recyclerview.widget.ItemTouchHelper
+import com.google.android.material.snackbar.Snackbar
+import epigraph.books.reader.BookChapterProgress
+import epigraph.books.reader.reconcileChapterState
+import eu.kanade.tachiyomi.domain.manga.models.Manga
+import eu.kanade.tachiyomi.ui.base.MaterialMenuSheet
+import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.ui.main.SearchActivity
+import eu.kanade.tachiyomi.ui.manga.chapter.ChapterActionBarHandlers
+import eu.kanade.tachiyomi.ui.manga.chapter.ChapterActionBarState
+import eu.kanade.tachiyomi.ui.manga.chapter.MangaChapterActionBar
+import eu.kanade.tachiyomi.ui.manga.shouldAnimateMangaDetailsPredictiveBack
+import eu.kanade.tachiyomi.util.chapter.ChapterUtil
+import eu.kanade.tachiyomi.util.view.setAction
+import eu.kanade.tachiyomi.util.view.snack
+import kotlin.math.min
+import yokai.presentation.theme.YokaiTheme
 import android.R as AR
 
 /**
@@ -102,7 +139,8 @@ import android.R as AR
  */
 class LocalBookDetailsController(bundle: Bundle? = null) :
     BaseLegacyController<MangaDetailsControllerBinding>(bundle),
-    SmallToolbarInterface {
+    SmallToolbarInterface,
+    ActionMode.Callback {
 
     constructor(bookId: String) : this(
         Bundle().apply { putString(BOOK_ID_KEY, bookId) },
@@ -127,8 +165,26 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
     private var headerColor: Int? = null
     private var detailsAdapter: LocalBookDetailsAdapter? = null
     private var tabletDetailsAdapter: LocalBookDetailsAdapter? = null
+    private val settings by lazy { BookChapterListSettings(bookId, preferences) }
+    private var chapterProgress: BookChapterProgress? = null
+    private var chapterState = LocalBookChapterState()
+    private var query = ""
+    private var accentColor: Int? = null
+    private var snack: Snackbar? = null
+    private var chapterSwipeHelper: ItemTouchHelper? = null
+    private var isSelectionMode = false
+    private var selectedChapters: Set<Int> = emptySet()
+    private var lastSelectionChapter: Int? = null
+    private var rangeMode: ChapterRangeMode? = null
+    private var rangeStartChapter: Int? = null
+    private var actionMode: ActionMode? = null
+    private var actionBarState by mutableStateOf(ChapterActionBarState())
+    private var chapterActionBarBottomInsetPx by mutableIntStateOf(0)
 
-    override fun getTitle(): String? = book?.displayName ?: view?.context?.getString(MR.strings.local_book_fallback_title)
+    override fun getTitle(): String? {
+        if (isSelectionMode && selectedChapters.isNotEmpty()) return selectedChapters.size.toString()
+        return book?.displayName ?: view?.context?.getString(MR.strings.local_book_fallback_title)
+    }
 
     override fun createBinding(inflater: LayoutInflater): MangaDetailsControllerBinding =
         MangaDetailsControllerBinding.inflate(inflater)
@@ -138,9 +194,13 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         binding.swipeRefresh.isEnabled = false
         structureInspector = BookStructureInspector(view.context)
         setupDetailsChrome(view)
+        setupChapterActionBar()
 
         viewScope.launch {
-            val loaded = withContext(Dispatchers.IO) { repository.find(bookId) }
+            val loaded = withContext(Dispatchers.IO) {
+                repository.ensurePdfOutline(bookId)
+                repository.find(bookId)
+            }
             if (loaded == null) {
                 router.popController(this@LocalBookDetailsController)
                 return@launch
@@ -152,27 +212,28 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
             }
             // Preserve the richer synchronized TOC count when PdfRenderer can only report pages.
             structure = BookChapterMetrics.resolve(loaded, inspected)
+            val helper = BookChapterProgress(loaded, structure)
+            chapterProgress = helper
+            chapterState = withContext(Dispatchers.IO) {
+                repository.reconcileChapterState(helper, bookId, progress)
+            }
             // Core snapshots may not carry publication structure yet. Once the private asset is
             // available, persist the inspected counts locally so the shared Library/detail
-            // chapter badge and catalog use the real EPUB/PDF structure on the next render.
+            // chapter badge and catalog use the real EPUB/PDF structure on the next render. The
+            // inspected count goes as is: sections read from a PDF's outline stay on this device,
+            // and the router keeps a higher count the Core confirmed.
             inspected?.let { inspectedStructure ->
                 withContext(Dispatchers.IO) {
                     repository.saveStructure(
                         bookId = loaded.bookId,
-                        chapterCount = structure?.chapterCount ?: inspectedStructure.chapterCount,
+                        chapterCount = inspectedStructure.chapterCount,
                         pageCount = inspectedStructure.pageCount,
                     )
                 }
             }
-            detailsAdapter = createAdapter(loaded)
-            binding.recycler.adapter = detailsAdapter
-            if (isTablet) {
-                tabletDetailsAdapter = createAdapter(loaded)
-                binding.tabletRecycler.adapter = tabletDetailsAdapter
-            }
-            binding.recycler.post { applyHeaderHeight() }
+            installAdapters(loaded)
             binding.fab.isVisible = true
-            binding.fab.setOnClickListener { openReader() }
+            binding.fab.setOnClickListener { readNextChapter() }
             updateFab()
             activity?.invalidateOptionsMenu()
             setTitle()
@@ -181,27 +242,69 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
 
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
         inflater.inflate(R.menu.book_details, menu)
+        updateMenuVisibility(menu)
         val searchItem = menu.findItem(R.id.action_search)
         val searchView = searchItem.actionView as? SearchView
         searchView?.queryHint = activity?.getString(MR.strings.search_chapters)
-        setOnQueryTextChangeListener(searchView) { query ->
-            val context = view?.context ?: return@setOnQueryTextChangeListener true
-            detailsAdapter?.setFilter(context, query.orEmpty())
-            tabletDetailsAdapter?.setFilter(context, query.orEmpty())
+        if (query.isNotEmpty() && (!searchItem.isActionViewExpanded || searchView?.query?.toString() != query)) {
+            searchItem.expandActionView()
+            setSearchViewListener(searchView)
+            searchView?.setQuery(query, true)
+            searchView?.clearFocus()
+        } else {
+            setSearchViewListener(searchView)
+        }
+        searchItem.fixExpand(onExpand = { invalidateMenuOnExpand() })
+    }
+
+    private fun setSearchViewListener(searchView: SearchView?) {
+        setOnQueryTextChangeListener(searchView) {
+            query = it.orEmpty()
+            refreshList()
             true
         }
-        searchItem.fixExpand(onExpand = {
-            activity?.invalidateOptionsMenu()
-            true
-        })
+    }
+
+    private fun updateMenuVisibility(menu: Menu) {
+        if (isSelectionMode && selectedChapters.isNotEmpty()) {
+            menu.forEach { it.isVisible = it.itemId == R.id.action_select_all || it.itemId == R.id.action_select_inverse }
+            return
+        }
+        val helper = chapterProgress
+        menu.findItem(R.id.action_mark_all_as_read)?.isVisible = helper != null && helper.unreadCount(chapterState) > 0
+        menu.findItem(R.id.action_mark_all_as_unread)?.isVisible = helper != null && helper.anyRead(chapterState)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == R.id.action_file_info) {
-            showFileInfo()
-            return true
+        when (item.itemId) {
+            R.id.action_edit -> showEditDialog()
+            R.id.action_file_info -> showFileInfo()
+            R.id.action_select_all -> selectAllChapters()
+            R.id.action_select_inverse -> invertChapterSelection()
+            R.id.action_mark_all_as_read -> confirmMarkAll(read = true)
+            R.id.action_mark_all_as_unread -> confirmMarkAll(read = false)
+            else -> return super.onOptionsItemSelected(item)
         }
-        return super.onOptionsItemSelected(item)
+        return true
+    }
+
+    private fun confirmMarkAll(read: Boolean) {
+        val context = activity ?: return
+        val helper = chapterProgress ?: return
+        context.materialAlertDialog()
+            .setMessage(
+                context.getString(
+                    if (read) MR.strings.mark_all_chapters_as_read else MR.strings.mark_all_chapters_as_unread,
+                ),
+            )
+            .setPositiveButton(context.getString(if (read) MR.strings.mark_as_read else MR.strings.mark_as_unread)) { _, _ ->
+                mutate {
+                    repository.resetChaptersRead(bookId, if (read) helper.chapterCount else 0)
+                    repository.saveProgress(bookId, if (read) helper.end() else helper.startOf(0))
+                }
+            }
+            .setNegativeButton(AR.string.cancel, null)
+            .show()
     }
 
     /**
@@ -229,6 +332,9 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         // a visibly different drag response when the user starts at the top of the page.
         binding.swipeRefresh.setDistanceToTriggerSync(70.dpToPx)
         binding.recycler.addItemDecoration(MangaDetailsDivider(view.context))
+        chapterSwipeHelper = ItemTouchHelper(ChapterSwipeCallback()).also {
+            it.attachToRecyclerView(binding.recycler)
+        }
         if (isTablet) {
             binding.tabletRecycler.layoutManager = LinearLayoutManager(view.context)
             binding.tabletRecycler.setHasFixedSize(true)
@@ -285,16 +391,34 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
 
     private fun createAdapter(loaded: LocalBook): LocalBookDetailsAdapter = LocalBookDetailsAdapter(
         book = loaded,
-        progress = progress,
         structure = structure,
+        chapterProgress = checkNotNull(chapterProgress),
+        titleOf = ::chapterTitle,
+        initialState = chapterListState(),
         onLibrary = ::showLibraryPopup,
-        onChapter = ::openReader,
+        onChapterClick = ::onChapterClick,
+        onChapterLongClick = ::onChapterLongClick,
+        onFilter = ::showFilters,
         onBookmarks = ::showBookmarks,
         onHighlights = ::showHighlights,
         onFileInfo = ::showFileInfo,
         // DESIGN.md §2: the global `themeMangaDetails` toggle decides (a book has no per-title override).
         onPalette = if (preferences.themeMangaDetails().get()) ::applyCoverPalette else null,
     )
+
+    /** Rebuilds the list for a changed book file, keeping the scroll position. */
+    private fun installAdapters(loaded: LocalBook) {
+        val scrollState = binding.recycler.layoutManager?.onSaveInstanceState()
+        detailsAdapter = createAdapter(loaded)
+        binding.recycler.adapter = detailsAdapter
+        if (isTablet) {
+            tabletDetailsAdapter = createAdapter(loaded)
+            binding.tabletRecycler.adapter = tabletDetailsAdapter
+        }
+        scrollState?.let { binding.recycler.layoutManager?.onRestoreInstanceState(it) }
+        binding.recycler.post { applyHeaderHeight() }
+        updateFab()
+    }
 
     /**
      * Books use the same cover-derived chrome as Comics. The local file has no Manga row from
@@ -305,6 +429,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
     private fun applyCoverPalette(color: Int) {
         val currentActivity = activity ?: return
         val accent = readerAccentForTheme(currentActivity, color)
+        accentColor = accent
         val background = currentActivity.getResourceColor(android.R.attr.colorBackground)
         val luminance = ColorUtils.calculateLuminance(color)
         val wrongForTheme = if (currentActivity.resources.configuration.uiMode and
@@ -335,6 +460,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         val fabForeground = readerReadableForeground(currentActivity, accent)
         binding.fab.setTextColor(ColorStateList.valueOf(fabForeground))
         binding.fab.iconTint = ColorStateList.valueOf(fabForeground)
+        refreshList()
     }
 
     private fun setInsets(
@@ -343,6 +469,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         offset: Int,
     ) {
         val systemInsets = insets.ignoredSystemInsets
+        chapterActionBarBottomInsetPx = systemInsets.bottom
         val fabPadding = 72.dpToPx
         binding.recycler.updatePaddingRelative(bottom = systemInsets.bottom + fabPadding)
         binding.tabletRecycler.updatePaddingRelative(bottom = systemInsets.bottom)
@@ -384,6 +511,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         val currentActivity = activity ?: return
         toolbarIsColored = isColor
         if (isControllerVisible) setTitle()
+        if (actionMode != null || isSelectionMode) return
         val scrollingColor = headerColor
             ?: currentActivity.getResourceColor(materialR.attr.colorPrimaryVariant)
         val topColor = ColorUtils.setAlphaComponent(scrollingColor, 0)
@@ -420,10 +548,11 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         val scrollingColor = headerColor
             ?: currentActivity.getResourceColor(materialR.attr.colorPrimaryVariant)
         val scrollingStatusColor = ColorUtils.setAlphaComponent(scrollingColor, (0.87f * 255).roundToInt())
+        val forceColored = isSelectionMode || toolbarIsColored
         currentActivity.window?.statusBarTint =
-            if (toolbarIsColored) scrollingStatusColor else Color.TRANSPARENT
+            if (forceColored) scrollingStatusColor else Color.TRANSPARENT
         activityBinding?.appBar?.setBackgroundColor(
-            if (toolbarIsColored) scrollingColor else Color.TRANSPARENT,
+            if (forceColored) scrollingColor else Color.TRANSPARENT,
         )
     }
 
@@ -439,6 +568,11 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
     ) {
         if ((!isControllerVisible && alpha == null) || isScrollingDown) return
         val toolbarTextView = activityBinding?.toolbar?.toolbarTitle ?: return
+        if (isSelectionMode) {
+            toolbarTextView.setTextColorAlpha(255)
+            toolbarTextView.translationY = 0f
+            return
+        }
         if (isTablet) {
             toolbarTextView.setTextColorAlpha(0)
             toolbarTextView.translationY = 0f
@@ -483,25 +617,28 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         // The reader is a separate activity, so returning from it resumes this controller with
         // its view intact. Reload the saved position or the header keeps the pre-reading page.
         if (book == null || detailsAdapter == null) return
-        viewScope.launch { refreshProgress() }
+        viewScope.launch { reloadChapterState() }
     }
 
-    private suspend fun refreshProgress() {
-        val loaded = book ?: return
-        val currentProgress = withContext(Dispatchers.IO) { repository.getProgress(bookId) }
-        if (currentProgress == progress || detailsAdapter == null) return
-        progress = currentProgress
-        detailsAdapter = createAdapter(loaded)
-        binding.recycler.adapter = detailsAdapter
-        if (isTablet) {
-            tabletDetailsAdapter = createAdapter(loaded)
-            binding.tabletRecycler.adapter = tabletDetailsAdapter
+    private suspend fun reloadChapterState() {
+        val helper = chapterProgress ?: return
+        val (currentProgress, currentState) = withContext(Dispatchers.IO) {
+            val position = repository.getProgress(bookId)
+            position to repository.reconcileChapterState(helper, bookId, position)
         }
-        binding.recycler.post { applyHeaderHeight() }
-        updateFab()
+        if (detailsAdapter == null) return
+        if (currentProgress == progress && currentState == chapterState) return
+        progress = currentProgress
+        chapterState = currentState
+        refreshList()
+        activity?.invalidateOptionsMenu()
     }
 
     override fun onDestroyView(view: View) {
+        if (isSelectionMode || actionMode != null) destroyActionModeIfNeeded()
+        snack?.dismiss()
+        snack = null
+        chapterSwipeHelper = null
         colorAnimator?.cancel()
         colorAnimator = null
         detailsAdapter = null
@@ -511,6 +648,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
 
     private fun openReader(locator: ReaderLocator? = null) {
         val context = activity ?: return
+        if (isSelectionMode || actionMode != null) destroyActionModeIfNeeded()
         val loaded = book ?: return
         viewScope.launch {
             val fileAvailable = withContext(Dispatchers.IO) {
@@ -576,7 +714,10 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
     }
 
     private suspend fun refreshBookSnapshot() {
-        val refreshed = withContext(Dispatchers.IO) { repository.find(bookId) } ?: return
+        val refreshed = withContext(Dispatchers.IO) {
+            repository.ensurePdfOutline(bookId)
+            repository.find(bookId)
+        } ?: return
         val inspected = withContext(Dispatchers.IO) {
             structureInspector.inspect(refreshed.document())
         }
@@ -585,40 +726,49 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
             withContext(Dispatchers.IO) {
                 repository.saveStructure(
                     bookId = refreshed.bookId,
-                    chapterCount = resolvedStructure.chapterCount,
+                    chapterCount = it.chapterCount,
                     pageCount = it.pageCount,
                 )
             }
         }
         val currentProgress = withContext(Dispatchers.IO) { repository.getProgress(bookId) }
+        val helper = BookChapterProgress(refreshed, resolvedStructure)
+        val currentState = withContext(Dispatchers.IO) {
+            repository.reconcileChapterState(helper, bookId, currentProgress)
+        }
         book = refreshed
         progress = currentProgress
+        chapterState = currentState
         structure = resolvedStructure
+        chapterProgress = helper
         if (detailsAdapter == null) return
-        detailsAdapter = createAdapter(refreshed)
-        binding.recycler.adapter = detailsAdapter
-        if (isTablet) {
-            tabletDetailsAdapter = createAdapter(refreshed)
-            binding.tabletRecycler.adapter = tabletDetailsAdapter
-        }
-        binding.recycler.post { applyHeaderHeight() }
-        updateFab()
+        installAdapters(refreshed)
+        activity?.invalidateOptionsMenu()
         setTitle()
     }
 
-    /** Same labels as the Comics FAB: start, or continue at the chapter the saved position is in. */
+    /** The Comics FAB: opens the next unread chapter, and leaves once every chapter is read. */
     private fun updateFab() {
         val context = view?.context ?: return
-        val loaded = book ?: return
-        val current = progress?.takeUnless { it.isAtStart() }
-        val chapter = current?.let { currentChapterIndex(loaded, structure, it) }
-        val singleChapter = (structure?.chapterCount ?: loaded.chapterCount ?: 1) <= 1
-        binding.fab.text = when {
-            current == null && singleChapter -> context.getString(MR.strings.start_reading)
-            current == null -> context.getString(MR.strings.start_reading_chapter_, "1")
-            chapter == null || singleChapter -> context.getString(MR.strings.continue_reading)
-            else -> context.getString(MR.strings.continue_reading_chapter_, (chapter + 1).toString())
+        val helper = chapterProgress ?: return
+        val next = helper.nextChapter(chapterState, progress)
+        binding.fab.isEnabled = next != null
+        if (next != null) {
+            binding.fab.text = context.getReadingButtonText(
+                MangaReadingButtonState(
+                    chapterNumber = if (helper.chapterCount <= 1) 0.0 else next + 1.0,
+                    hasProgress = next == helper.resumableChapter(chapterState, progress),
+                ),
+                DecimalFormat("#"),
+            )
         }
+        if (!isSelectionMode && next != null) binding.fab.show() else if (binding.fab.isVisible) binding.fab.hide()
+    }
+
+    private fun readNextChapter() {
+        val helper = chapterProgress ?: return
+        val next = helper.nextChapter(chapterState, progress) ?: return
+        openReader(if (next == helper.resumableChapter(chapterState, progress)) null else helper.startOf(next))
     }
 
     /**
@@ -649,7 +799,10 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
                     runCatching {
                         withContext(Dispatchers.IO) { repository.remove(loaded.bookId, removeFile = true) }
                     }
-                        .onSuccess { router.popController(this@LocalBookDetailsController) }
+                        .onSuccess {
+                            settings.clear()
+                            router.popController(this@LocalBookDetailsController)
+                        }
                         .onFailure { error -> view?.context?.toast(error.message) }
                 }
             }
@@ -700,6 +853,38 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         }
     }
 
+    /** The name and author shown for this book; the file itself and its identity stay as they are. */
+    private fun showEditDialog() {
+        val context = activity ?: return
+        val loaded = book ?: return
+        val builder = context.materialAlertDialog()
+        val fields = DialogBookEditBinding.inflate(LayoutInflater.from(builder.context)).apply {
+            title.setText(loaded.displayName)
+            author.setText(loaded.author.orEmpty())
+        }
+        val dialog = builder
+            .setTitle(context.getString(MR.strings.edit))
+            .setView(fields.root)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val title = fields.title.text?.toString().orEmpty().trim()
+                val author = fields.author.text?.toString().orEmpty().trim()
+                viewScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            repository.saveTitleAndAuthor(bookId, title, author.ifEmpty { null })
+                        }
+                        refreshBookSnapshot()
+                    }.onFailure { error -> view?.context?.toast(error.message) }
+                }
+            }
+            .show()
+        // A book cannot go without a name, so saving waits until it has one.
+        val save = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        save.isEnabled = loaded.displayName.isNotBlank()
+        fields.title.doAfterTextChanged { save.isEnabled = !it.isNullOrBlank() }
+    }
+
     private fun showFileInfo() {
         val context = activity ?: return
         val loaded = book ?: return
@@ -725,6 +910,470 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
             .show()
     }
 
+
+    private fun chapterLabel(index: Int): String =
+        view?.context?.getString(MR.strings.chapter_, (index + 1).toString()).orEmpty()
+
+    private fun catalogTitle(index: Int): String =
+        structure?.chapterTitles?.getOrNull(index)?.takeIf(String::isNotBlank) ?: chapterLabel(index)
+
+    private fun chapterTitle(index: Int): String =
+        if (settings.hideTitles) chapterLabel(index) else catalogTitle(index)
+
+    private fun chapterListState(): ChapterListState {
+        return ChapterListState(
+            progress = progress,
+            chapterState = chapterState,
+            selectedChapters = selectedChapters,
+            readFilter = settings.readFilter,
+            bookmarkFilter = settings.bookmarkFilter,
+            descending = settings.descending,
+            hideTitles = settings.hideTitles,
+            query = query,
+            accent = accentColor,
+        )
+    }
+
+    private fun refreshList() {
+        val state = chapterListState()
+        detailsAdapter?.submit(state)
+        tabletDetailsAdapter?.submit(state)
+        updateFab()
+        refreshActionBar()
+    }
+
+    private fun showFilters() {
+        val currentActivity = activity ?: return
+        if (isSelectionMode || rangeMode != null) return
+        BookChaptersSortBottomSheet(currentActivity, settings) { refreshList() }.show()
+    }
+
+    private fun mutate(action: suspend () -> Unit) {
+        viewScope.launch {
+            runCatching { withContext(Dispatchers.IO) { action() } }
+                .onFailure { error ->
+                    Logger.w(error) { "Book chapter change failed: $bookId" }
+                    view?.context?.toast(error.message)
+                }
+            reloadChapterState()
+        }
+    }
+
+    private fun markChapters(chapters: Collection<Int>, read: Boolean) {
+        val helper = chapterProgress ?: return
+        if (chapters.isEmpty()) return
+        val marked = chapterState.copy(readOverrides = chapterState.readOverrides + chapters.associateWith { read })
+        val target = helper.positionAfterMarking(chapters, read, marked, progress)
+        mutate {
+            repository.setChaptersRead(bookId, chapters.associateWith { read })
+            target?.let { repository.saveProgress(bookId, it) }
+        }
+    }
+
+    private fun setChapterBookmarks(chapters: Collection<Int>, bookmarked: Boolean) {
+        mutate { repository.setChaptersBookmarked(bookId, chapters, bookmarked) }
+    }
+
+    private fun toggleChapterBookmark(index: Int) {
+        val bookmarked = index !in chapterState.bookmarks
+        setChapterBookmarks(listOf(index), bookmarked)
+        snack?.dismiss()
+        snack = view?.snack(
+            if (bookmarked) MR.strings.bookmarked else MR.strings.removed_bookmark,
+            Snackbar.LENGTH_INDEFINITE,
+        ) {
+            setAction(MR.strings.undo) { setChapterBookmarks(listOf(index), !bookmarked) }
+        }
+        (activity as? MainActivity)?.setUndoSnackBar(snack)
+    }
+
+    private fun toggleChapterRead(index: Int) {
+        val helper = chapterProgress ?: return
+        val previous = progress
+        val previousChoice = chapterState.readOverrides[index]
+        val wasRead = helper.isRead(index, chapterState)
+        markChapters(listOf(index), read = !wasRead)
+        snack?.dismiss()
+        snack = view?.snack(
+            if (wasRead) MR.strings.marked_as_unread else MR.strings.marked_as_read,
+            Snackbar.LENGTH_INDEFINITE,
+        ) {
+            setAction(MR.strings.undo) {
+                val moved = progress != previous
+                mutate {
+                    repository.setChaptersRead(bookId, mapOf(index to previousChoice))
+                    if (moved) repository.saveProgress(bookId, previous ?: helper.startOf(0))
+                }
+            }
+        }
+        (activity as? MainActivity)?.setUndoSnackBar(snack)
+    }
+
+    private fun onChapterClick(index: Int) {
+        val mode = rangeMode
+        when {
+            isSelectionMode || (mode == null && selectedChapters.isNotEmpty()) -> toggleChapterSelection(index)
+            mode != null -> {
+                val start = rangeStartChapter
+                if (start == null) {
+                    selectedChapters = setOf(index)
+                    rangeStartChapter = index
+                    refreshList()
+                    actionMode?.invalidate()
+                } else {
+                    val range = chaptersBetween(start, index)
+                    rangeMode = null
+                    rangeStartChapter = null
+                    destroyActionModeIfNeeded()
+                    markChapters(range, read = mode == ChapterRangeMode.MarkRead)
+                }
+            }
+            else -> {
+                val helper = chapterProgress ?: return
+                val resumes = helper.resumableChapter(chapterState, progress) == index
+                openReader(if (resumes) null else helper.startOf(index))
+            }
+        }
+    }
+
+    private fun onChapterLongClick(index: Int) {
+        // A long-press during a multi-select range-selects from the previous anchor.
+        if (isSelectionMode) {
+            enterSelectionMode(index)
+            return
+        }
+        if (rangeMode != null) return
+        showChapterActions(index)
+    }
+
+    /** The J2K long-press sheet: labeled chapter actions, with multi-select as its last row. */
+    private fun showChapterActions(index: Int) {
+        val currentActivity = activity ?: return
+        val previousChaptersBelow = settings.descending
+        val items = listOf(
+            MaterialMenuSheet.MenuSheetItem(
+                R.id.action_mark_previous_as_read,
+                if (previousChaptersBelow) R.drawable.ic_eye_down_24dp else R.drawable.ic_eye_up_24dp,
+                MR.strings.mark_previous_as_read,
+            ),
+            MaterialMenuSheet.MenuSheetItem(
+                R.id.action_mark_previous_as_unread,
+                if (previousChaptersBelow) R.drawable.ic_eye_off_down_24dp else R.drawable.ic_eye_off_up_24dp,
+                MR.strings.mark_previous_as_unread,
+            ),
+            MaterialMenuSheet.MenuSheetItem(
+                R.id.action_mark_range_as_read,
+                R.drawable.ic_eye_range_24dp,
+                MR.strings.mark_range_as_read,
+            ),
+            MaterialMenuSheet.MenuSheetItem(
+                R.id.action_mark_range_as_unread,
+                R.drawable.ic_eye_off_range_24dp,
+                MR.strings.mark_range_as_unread,
+            ),
+            MaterialMenuSheet.MenuSheetItem(
+                R.id.action_select_chapters,
+                R.drawable.ic_select_all_24dp,
+                MR.strings.select_chapters,
+            ),
+        )
+        MaterialMenuSheet(currentActivity, items, chapterTitle(index)) { _, id ->
+            when (id) {
+                R.id.action_mark_previous_as_read -> markChapters((0 until index).toList(), read = true)
+                R.id.action_mark_previous_as_unread -> markChapters((0 until index).toList(), read = false)
+                R.id.action_mark_range_as_read -> startMarkRange(index, ChapterRangeMode.MarkRead)
+                R.id.action_mark_range_as_unread -> startMarkRange(index, ChapterRangeMode.MarkUnread)
+                R.id.action_select_chapters -> enterSelectionMode(index)
+            }
+            true
+        }.show()
+    }
+
+    /** Uses the long-pressed chapter as the range start; the next tap picks the end. */
+    private fun startMarkRange(index: Int, mode: ChapterRangeMode) {
+        createActionModeIfNeeded()
+        rangeMode = mode
+        onChapterClick(index)
+    }
+
+    private fun chaptersBetween(first: Int, last: Int): List<Int> {
+        val visible = detailsAdapter?.visibleChapters.orEmpty()
+        val from = visible.indexOf(first)
+        val to = visible.indexOf(last)
+        if (from < 0 || to < 0) return listOf(last)
+        return visible.subList(min(from, to), max(from, to) + 1).toList()
+    }
+
+    private fun enterSelectionMode(index: Int) {
+        val firstEntry = !isSelectionMode
+        if (firstEntry) {
+            rangeStartChapter = null
+            rangeMode = null
+        }
+        isSelectionMode = true
+        if (firstEntry) collapseSearchForSelection()
+        val anchor = lastSelectionChapter
+        selectedChapters = if (anchor == null || anchor == index) {
+            selectedChapters + index
+        } else {
+            selectedChapters + chaptersBetween(anchor, index)
+        }
+        lastSelectionChapter = index
+        refreshList()
+        updateSelectionChrome()
+    }
+
+    private fun toggleChapterSelection(index: Int) {
+        val nowSelected = index !in selectedChapters
+        selectedChapters = if (nowSelected) selectedChapters + index else selectedChapters - index
+        lastSelectionChapter = if (nowSelected) index else null
+        if (selectedChapters.isEmpty()) {
+            destroyActionModeIfNeeded()
+        } else {
+            refreshList()
+            updateSelectionChrome()
+        }
+    }
+
+    private fun selectAllChapters() {
+        selectedChapters = selectedChapters + detailsAdapter?.visibleChapters.orEmpty()
+        refreshList()
+        updateSelectionChrome()
+    }
+
+    private fun invertChapterSelection() {
+        selectedChapters = detailsAdapter?.visibleChapters.orEmpty().toSet() - selectedChapters
+        lastSelectionChapter = null
+        if (selectedChapters.isEmpty()) {
+            destroyActionModeIfNeeded()
+        } else {
+            refreshList()
+            updateSelectionChrome()
+        }
+    }
+
+    private fun createActionModeIfNeeded() {
+        if (actionMode == null) {
+            actionMode = (activity as AppCompatActivity).startSupportActionMode(this)
+            activityBinding?.root?.requestApplyInsets()
+            val view = activity?.window?.currentFocus ?: return
+            val imm = activity?.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+            imm.hideSoftInputFromWindow(view.windowToken, 0)
+        }
+    }
+
+    private fun destroyActionModeIfNeeded() {
+        if (isSelectionMode) {
+            clearChapterSelectionMode()
+            return
+        }
+        actionMode?.finish()
+    }
+
+    private fun clearChapterSelectionMode() {
+        isSelectionMode = false
+        lastSelectionChapter = null
+        selectedChapters = emptySet()
+        refreshList()
+        updateSelectionChrome()
+    }
+
+    private fun updateSelectionChrome() {
+        if (view == null) return
+        setStatusBarAndToolbar()
+        if (isControllerVisible) setTitle()
+        updateToolbarTitleAlpha()
+        updateSelectionNavigationIcon(isSelectionMode)
+        updateFab()
+        activity?.invalidateOptionsMenu()
+    }
+
+    private fun updateSelectionNavigationIcon(isSelecting: Boolean) {
+        val context = view?.context ?: return
+        val toolbar = activityBinding?.toolbar
+        val searchToolbar = activityBinding?.searchToolbar
+        val tint = context.getResourceColor(R.attr.actionBarTintColor)
+        fun icon(resId: Int) = ContextCompat.getDrawable(context, resId)?.mutate()?.apply { setTint(tint) }
+        if (isSelecting) {
+            toolbar?.navigationIcon = icon(R.drawable.ic_close_24dp)
+            searchToolbar?.navigationIcon = icon(R.drawable.ic_close_24dp)
+            return
+        }
+        val onRoot = router.backstackSize == 1 && activity !is SearchActivity
+        toolbar?.navigationIcon = if (onRoot) null else icon(R.drawable.ic_arrow_back_24dp)
+        searchToolbar?.navigationIcon = when {
+            activityBinding?.appBar?.useLargeToolbar == true || onRoot -> icon(R.drawable.ic_search_24dp)
+            else -> icon(R.drawable.ic_arrow_back_24dp)
+        }
+    }
+
+    private fun collapseSearchForSelection() {
+        activityBinding?.toolbar?.menu?.findItem(R.id.action_search)?.collapseActionView()
+        activityBinding?.searchToolbar?.menu?.findItem(R.id.action_search)?.collapseActionView()
+    }
+
+    private fun setupChapterActionBar() {
+        val handlers = ChapterActionBarHandlers(
+            onBookmark = { applyToSelection { setChapterBookmarks(it, bookmarked = true) } },
+            onRemoveBookmark = { applyToSelection { setChapterBookmarks(it, bookmarked = false) } },
+            onMarkRead = { applyToSelection { markChapters(it, read = true) } },
+            onMarkUnread = { applyToSelection { markChapters(it, read = false) } },
+            onMarkPreviousRead = {
+                applyToSelection { chapters ->
+                    chapters.singleOrNull()?.let { markChapters((0 until it).toList(), read = true) }
+                }
+            },
+            onDownload = {},
+            onDelete = {},
+        )
+        ViewCompat.setOnApplyWindowInsetsListener(binding.actionBarCompose) { _, _ -> WindowInsetsCompat.CONSUMED }
+        binding.actionBarCompose.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        binding.actionBarCompose.setContent {
+            YokaiTheme {
+                val bottomInset = with(LocalDensity.current) { chapterActionBarBottomInsetPx.toDp() }
+                val context = binding.actionBarCompose.context
+                MangaChapterActionBar(
+                    state = actionBarState,
+                    handlers = handlers,
+                    bottomInset = bottomInset,
+                    containerColor = androidx.compose.ui.graphics.Color(
+                        headerColor ?: context.getResourceColor(materialR.attr.colorPrimaryVariant),
+                    ),
+                    contentColor = androidx.compose.ui.graphics.Color(
+                        context.getResourceColor(R.attr.actionBarTintColor),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun applyToSelection(action: (Set<Int>) -> Unit) {
+        val chapters = selectedChapters
+        destroyActionModeIfNeeded()
+        action(chapters)
+    }
+
+    private fun refreshActionBar() {
+        val helper = chapterProgress
+        if (helper == null || !isSelectionMode || selectedChapters.isEmpty()) {
+            actionBarState = ChapterActionBarState(visible = false)
+            return
+        }
+        val bookmarked = chapterState.bookmarks
+        actionBarState = ChapterActionBarState(
+            visible = true,
+            showBookmark = selectedChapters.any { it !in bookmarked },
+            showRemoveBookmark = selectedChapters.any { it in bookmarked },
+            showMarkAsRead = selectedChapters.any { !helper.isRead(it, chapterState) },
+            showMarkAsUnread = selectedChapters.any { helper.isRead(it, chapterState) },
+            showMarkPreviousAsRead = selectedChapters.size == 1,
+        )
+    }
+
+    override fun shouldAnimatePredictiveBack(): Boolean =
+        // This back action clears selection instead of popping the controller.
+        shouldAnimateMangaDetailsPredictiveBack(isSelectionMode, selectedChapters.size)
+
+    override fun handleBack(): Boolean {
+        if (isSelectionMode && selectedChapters.isNotEmpty()) {
+            destroyActionModeIfNeeded()
+            return true
+        }
+        return super.handleBack()
+    }
+
+    override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean = false
+
+    // Multi-select uses the normal app toolbar; only the range prompt is a contextual bar.
+    override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean = !isSelectionMode
+
+    override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean {
+        mode?.title = view?.context?.getString(
+            if (rangeStartChapter == null) MR.strings.select_starting_chapter else MR.strings.select_ending_chapter,
+        )
+        return false
+    }
+
+    override fun onDestroyActionMode(mode: ActionMode?) {
+        actionMode = null
+        rangeMode = null
+        rangeStartChapter = null
+        clearChapterSelectionMode()
+    }
+
+    /** The Comics row swipe: toward the end bookmarks, toward the start toggles read. */
+    private inner class ChapterSwipeCallback : ItemTouchHelper.Callback() {
+
+        private val rtl get() = binding.recycler.layoutDirection == View.LAYOUT_DIRECTION_RTL
+
+        override fun getMovementFlags(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder): Int {
+            if (viewHolder !is LocalBookDetailsAdapter.ChapterHolder || isSelectionMode || rangeMode != null) return 0
+            return makeMovementFlags(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT)
+        }
+
+        override fun onMove(
+            recyclerView: RecyclerView,
+            viewHolder: RecyclerView.ViewHolder,
+            target: RecyclerView.ViewHolder,
+        ): Boolean = false
+
+        override fun isLongPressDragEnabled(): Boolean = false
+
+        override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
+            val holder = viewHolder as? LocalBookDetailsAdapter.ChapterHolder ?: return
+            val index = holder.chapterIndex
+            val position = holder.bindingAdapterPosition
+            val bookmarkSide = (direction == ItemTouchHelper.RIGHT) != rtl
+            // The helper keeps a swiped-out row until it is detached; this row stays in the list.
+            chapterSwipeHelper?.let {
+                it.attachToRecyclerView(null)
+                it.attachToRecyclerView(binding.recycler)
+            }
+            binding.recycler.adapter?.notifyItemChanged(position)
+            if (bookmarkSide) toggleChapterBookmark(index) else toggleChapterRead(index)
+        }
+
+        override fun onChildDraw(
+            c: Canvas,
+            recyclerView: RecyclerView,
+            viewHolder: RecyclerView.ViewHolder,
+            dX: Float,
+            dY: Float,
+            actionState: Int,
+            isCurrentlyActive: Boolean,
+        ) {
+            val holder = viewHolder as? LocalBookDetailsAdapter.ChapterHolder ?: return
+            val bookmarkSide = (dX > 0) != rtl
+            holder.binding.startView.isVisible = bookmarkSide && dX != 0f
+            holder.binding.endView.isVisible = !bookmarkSide && dX != 0f
+            getDefaultUIUtil().onDraw(c, recyclerView, holder.binding.frontView, dX, dY, actionState, isCurrentlyActive)
+        }
+
+        override fun onChildDrawOver(
+            c: Canvas,
+            recyclerView: RecyclerView,
+            viewHolder: RecyclerView.ViewHolder?,
+            dX: Float,
+            dY: Float,
+            actionState: Int,
+            isCurrentlyActive: Boolean,
+        ) {
+            val holder = viewHolder as? LocalBookDetailsAdapter.ChapterHolder ?: return
+            getDefaultUIUtil().onDrawOver(c, recyclerView, holder.binding.frontView, dX, dY, actionState, isCurrentlyActive)
+        }
+
+        override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
+            val holder = viewHolder as? LocalBookDetailsAdapter.ChapterHolder ?: return
+            getDefaultUIUtil().clearView(holder.binding.frontView)
+            holder.binding.startView.isVisible = false
+            holder.binding.endView.isVisible = false
+        }
+
+        override fun onSelectedChanged(viewHolder: RecyclerView.ViewHolder?, actionState: Int) {
+            val holder = viewHolder as? LocalBookDetailsAdapter.ChapterHolder ?: return
+            getDefaultUIUtil().onSelected(holder.binding.frontView)
+        }
+    }
 
     private companion object {
         const val BOOK_ID_KEY = "epigraph.book.id"
@@ -811,65 +1460,79 @@ private fun bookProgressLabel(
     else -> context.getString(MR.strings.local_book_count_unavailable)
 }
 
-/**
- * A position still on the first page is where a fresh book opens, so like an unstarted comic it
- * offers "Start reading" and marks nothing as read.
- */
-private fun ReaderLocator.isAtStart(): Boolean = when (this) {
-    is ReaderLocator.Epub -> (progression * 100).roundToInt() == 0
-    is ReaderLocator.Pdf -> pageIndex == 0
-    else -> false
-}
+private enum class ChapterRangeMode { MarkRead, MarkUnread }
 
-/**
- * The chapter the saved position falls in, resolved exactly as the reader does, so the FAB label,
- * the dimmed rows and the resume note agree with where the reader will open.
- */
-private fun currentChapterIndex(book: LocalBook, structure: BookStructure?, progress: ReaderLocator): Int? {
-    val chapterCount = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-    return when (progress) {
-        is ReaderLocator.Epub -> BookChapterMetrics.epubChapterIndex(
-            progress,
-            chapterCount,
-            structure?.chapterPaths.orEmpty(),
-        )
-
-        is ReaderLocator.Pdf -> {
-            val totalPages = (structure?.pageCount ?: book.pageCount ?: progress.totalPages ?: 1).coerceAtLeast(1)
-            BookChapterMetrics.chapterIndexForPage(
-                progress.pageIndex,
-                totalPages,
-                chapterCount,
-                structure?.chapterStartPages.orEmpty(),
-            )
-        }
-
-        else -> null
-    }
-}
+/** What the chapter rows and the header's chapter bar show. */
+private data class ChapterListState(
+    val progress: ReaderLocator?,
+    val chapterState: LocalBookChapterState,
+    val selectedChapters: Set<Int>,
+    val readFilter: Int,
+    val bookmarkFilter: Int,
+    val descending: Boolean,
+    val hideTitles: Boolean,
+    val query: String,
+    val accent: Int?,
+)
 
 private class LocalBookDetailsAdapter(
     private val book: LocalBook,
-    private val progress: ReaderLocator?,
     private val structure: BookStructure?,
+    private val chapterProgress: BookChapterProgress,
+    private val titleOf: (Int) -> String,
+    initialState: ChapterListState,
     private val onLibrary: (View) -> Unit,
-    private val onChapter: (ReaderLocator) -> Unit,
+    private val onChapterClick: (Int) -> Unit,
+    private val onChapterLongClick: (Int) -> Unit,
+    private val onFilter: () -> Unit,
     private val onBookmarks: () -> Unit,
     private val onHighlights: () -> Unit,
     private val onFileInfo: () -> Unit,
     private val onPalette: ((Int) -> Unit)?,
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
-    private val currentIndex: Int? = progress
-        ?.takeUnless { it.isAtStart() }
-        ?.let { currentChapterIndex(book, structure, it) }
+    private var state = initialState
 
-    /** Catalog titles, or null entries for chapters without one (labelled per locale on bind). */
-    private val catalogTitles: List<String?> = structure?.chapterTitles.orEmpty().ifEmpty {
-        val count = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-        List(count) { null }
+    var visibleChapters: List<Int> = computeVisible(initialState)
+        private set
+
+    private fun computeVisible(state: ChapterListState): List<Int> {
+        val normalized = state.query.trim()
+        val chapters = (0 until chapterProgress.chapterCount).filter { index ->
+            val isRead = chapterProgress.isRead(index, state.chapterState)
+            val isBookmarked = index in state.chapterState.bookmarks
+            val readMatches = when (state.readFilter) {
+                Manga.CHAPTER_SHOW_READ -> isRead
+                Manga.CHAPTER_SHOW_UNREAD -> !isRead
+                else -> true
+            }
+            val bookmarkMatches = when (state.bookmarkFilter) {
+                Manga.CHAPTER_SHOW_BOOKMARKED -> isBookmarked
+                Manga.CHAPTER_SHOW_NOT_BOOKMARKED -> !isBookmarked
+                else -> true
+            }
+            readMatches && bookmarkMatches &&
+                (normalized.isEmpty() || titleOf(index).contains(normalized, ignoreCase = true))
+        }
+        return if (state.descending) chapters.reversed() else chapters
     }
-    private var visibleChapterIndexes: List<Int> = catalogTitles.indices.toList()
+
+    fun submit(newState: ChapterListState) {
+        if (newState == state) return
+        val oldCount = visibleChapters.size
+        state = newState
+        visibleChapters = computeVisible(newState)
+        val newCount = visibleChapters.size
+        // By payload, as a full header bind would reload the cover.
+        notifyItemChanged(0, PAYLOAD_LIST)
+        val common = min(oldCount, newCount)
+        if (common > 0) notifyItemRangeChanged(1, common)
+        if (newCount > oldCount) {
+            notifyItemRangeInserted(oldCount + 1, newCount - oldCount)
+        } else if (newCount < oldCount) {
+            notifyItemRangeRemoved(newCount + 1, oldCount - newCount)
+        }
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder = when (viewType) {
         VIEW_TYPE_HEADER -> Holder(
@@ -878,6 +1541,7 @@ private class LocalBookDetailsAdapter(
             onBookmarks,
             onHighlights,
             onFileInfo,
+            onFilter,
             onPalette,
         )
 
@@ -885,43 +1549,32 @@ private class LocalBookDetailsAdapter(
             ChaptersItemBinding.inflate(LayoutInflater.from(parent.context), parent, false),
             book = book,
             structure = structure,
-            progress = progress,
-            currentIndex = currentIndex,
-            onChapter = onChapter,
+            onClick = onChapterClick,
+            onLongClick = onChapterLongClick,
         )
+    }
+
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int, payloads: MutableList<Any>) {
+        if (position == 0 && payloads.isNotEmpty()) {
+            (holder as Holder).bindListState(book, structure, state, visibleChapters.size)
+        } else {
+            onBindViewHolder(holder, position)
+        }
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         if (position == 0) {
-            (holder as Holder).bind(book, progress, structure, catalogTitles.size)
+            (holder as Holder).bind(book, structure, state, visibleChapters.size)
         } else {
-            val chapterIndex = visibleChapterIndexes[position - 1]
-            (holder as ChapterHolder).bind(
-                index = chapterIndex,
-                title = titleFor(holder.itemView.context, chapterIndex),
-            )
+            val chapterIndex = visibleChapters[position - 1]
+            (holder as ChapterHolder).bind(chapterIndex, titleOf(chapterIndex), state, chapterProgress)
         }
     }
-
-    private fun titleFor(context: android.content.Context, index: Int): String =
-        catalogTitles[index] ?: context.getString(MR.strings.chapter_, (index + 1).toString())
 
     override fun getItemViewType(position: Int): Int =
         if (position == 0) VIEW_TYPE_HEADER else VIEW_TYPE_CHAPTER
 
-    override fun getItemCount(): Int = visibleChapterIndexes.size + 1
-
-    fun setFilter(context: android.content.Context, query: String) {
-        val normalized = query.trim()
-        visibleChapterIndexes = if (normalized.isEmpty()) {
-            catalogTitles.indices.toList()
-        } else {
-            catalogTitles.indices.filter { index ->
-                titleFor(context, index).contains(normalized, ignoreCase = true)
-            }
-        }
-        notifyDataSetChanged()
-    }
+    override fun getItemCount(): Int = visibleChapters.size + 1
 
     class Holder(
         private val binding: MangaHeaderItemBinding,
@@ -929,12 +1582,14 @@ private class LocalBookDetailsAdapter(
         private val onBookmarks: () -> Unit,
         private val onHighlights: () -> Unit,
         private val onFileInfo: () -> Unit,
+        private val onFilter: () -> Unit,
         private val onPalette: ((Int) -> Unit)?,
     ) : RecyclerView.ViewHolder(binding.root) {
 
         /** The same veil Comics and Novels use (DESIGN.md §6). */
         private val veil = CoverVeil(binding.backdrop)
         private var accentColor: Int? = null
+        private var searching = false
 
         fun onVeilScrolled(scrolled: Int) = veil.onScrolled(scrolled)
 
@@ -946,9 +1601,9 @@ private class LocalBookDetailsAdapter(
 
         fun bind(
             book: LocalBook,
-            progress: ReaderLocator?,
             structure: BookStructure?,
-            chapterCount: Int,
+            state: ChapterListState,
+            visibleCount: Int,
         ) = with(binding) {
             val context = root.context
             val cover = book.coverPath?.let(::File)?.takeIf(File::isFile)
@@ -999,11 +1654,6 @@ private class LocalBookDetailsAdapter(
             title.text = book.displayName
             mangaAuthor.text = book.author?.takeIf(String::isNotBlank) ?: context.getString(MR.strings.local_book_unknown_author)
             mangaAuthor.isVisible = true
-            mangaStatus.text = buildString {
-                append(book.contentType.name)
-                append(" • ")
-                append(bookProgressLabel(context, book, progress, structure))
-            }
             mangaSource.text = context.getString(
                 when {
                     book.isAvailable -> MR.strings.local_book_local_file
@@ -1023,7 +1673,7 @@ private class LocalBookDetailsAdapter(
             moreButtonGroup.isVisible = false
             lessButton.isVisible = false
             mangaSummary.post {
-                if (mangaSummary.lineCount > 3) {
+                if (!searching && mangaSummary.lineCount > 3) {
                     moreButtonGroup.isVisible = true
                 }
             }
@@ -1072,17 +1722,54 @@ private class LocalBookDetailsAdapter(
             mangaGenresTags.isVisible = false
             buttonGroupCompose.isVisible = false
             pagePreviewCompose.isVisible = false
-            chapterLayout.isVisible = chapterCount > 0
-            chaptersTitle.text = context.getString(
-                MR.plurals.chapters_plural,
-                chapterCount,
-                chapterCount,
-            )
-            // INVISIBLE, not GONE: the title/filters chain would otherwise center the count label.
-            filtersText.text = null
-            filtersText.isInvisible = true
-            filterButton.isVisible = false
-            chapterLayout.setOnClickListener(null)
+            bindListState(book, structure, state, visibleCount)
+        }
+
+        fun bindListState(
+            book: LocalBook,
+            structure: BookStructure?,
+            state: ChapterListState,
+            visibleCount: Int,
+        ) = with(binding) {
+            val context = root.context
+            // MangaHeaderHolder.collapse()/expand(): results take the room of the description and
+            // chips while searching, except on a tablet, where the header has its own pane.
+            val nowSearching = state.query.isNotBlank() && !(context.isTablet() && context.isLandscape())
+            if (nowSearching != searching) {
+                searching = nowSearching
+                subItemGroup.isVisible = !nowSearching
+                moreButtonGroup.isVisible = false
+                lessButton.isVisible = !nowSearching && mangaSummary.maxLines == Int.MAX_VALUE
+                if (!nowSearching) {
+                    mangaSummary.post {
+                        moreButtonGroup.isVisible = !searching &&
+                            mangaSummary.maxLines != Int.MAX_VALUE &&
+                            mangaSummary.lineCount > 3
+                    }
+                }
+            }
+            mangaStatus.text = buildString {
+                append(book.contentType.name)
+                append(" • ")
+                append(bookProgressLabel(context, book, state.progress, structure))
+            }
+            chapterLayout.isVisible = true
+            chaptersTitle.text = context.getString(MR.plurals.chapters_plural, visibleCount, visibleCount)
+            filtersText.text = listOfNotNull(
+                when (state.readFilter) {
+                    Manga.CHAPTER_SHOW_READ -> context.getString(MR.strings.read)
+                    Manga.CHAPTER_SHOW_UNREAD -> context.getString(MR.strings.unread)
+                    else -> null
+                },
+                when (state.bookmarkFilter) {
+                    Manga.CHAPTER_SHOW_BOOKMARKED -> context.getString(MR.strings.bookmarked)
+                    Manga.CHAPTER_SHOW_NOT_BOOKMARKED -> context.getString(MR.strings.not_bookmarked)
+                    else -> null
+                },
+            ).joinToString(", ")
+            filterButton.isVisible = true
+            filterButton.setOnClickListener { onFilter() }
+            chapterLayout.setOnClickListener { onFilter() }
         }
 
         /** MangaHeaderHolder's checked favorite: a tonal fill from the accent and no outline. */
@@ -1107,6 +1794,7 @@ private class LocalBookDetailsAdapter(
             binding.webviewButton.imageTintList = defaultTint
             binding.shareButton.imageTintList = defaultTint
             binding.recsButton.imageTintList = defaultTint
+            binding.filterButton.imageTintList = defaultTint
             binding.favoriteButton.iconTint = defaultTint
             binding.favoriteButton.checked()
             TextViewCompat.setCompoundDrawableTintList(binding.moreButton, defaultTint)
@@ -1135,6 +1823,7 @@ private class LocalBookDetailsAdapter(
             binding.webviewButton.imageTintList = accent
             binding.shareButton.imageTintList = accent
             binding.recsButton.imageTintList = accent
+            binding.filterButton.imageTintList = accent
             binding.favoriteButton.iconTint = accent
             binding.favoriteButton.checked()
             TextViewCompat.setCompoundDrawableTintList(binding.moreButton, accent)
@@ -1144,45 +1833,72 @@ private class LocalBookDetailsAdapter(
         }
     }
 
-    private class ChapterHolder(
-        private val binding: ChaptersItemBinding,
+    class ChapterHolder(
+        val binding: ChaptersItemBinding,
         private val book: LocalBook,
         private val structure: BookStructure?,
-        private val progress: ReaderLocator?,
-        private val currentIndex: Int?,
-        private val onChapter: (ReaderLocator) -> Unit,
+        onClick: (Int) -> Unit,
+        onLongClick: (Int) -> Unit,
     ) : RecyclerView.ViewHolder(binding.root) {
 
-        fun bind(index: Int, title: String) = with(binding) {
+        var chapterIndex = -1
+            private set
+
+        init {
+            binding.root.setOnClickListener { onClick(chapterIndex) }
+            binding.root.setOnLongClickListener {
+                onLongClick(chapterIndex)
+                true
+            }
+        }
+
+        fun bind(
+            index: Int,
+            title: String,
+            state: ChapterListState,
+            chapterProgress: BookChapterProgress,
+        ) = with(binding) {
+            chapterIndex = index
             val context = root.context
-            // Comics dims read chapters; a book has one position, so everything before the
-            // chapter it sits in reads as read, and that chapter carries the resume note.
-            val read = currentIndex != null && index < currentIndex
+            val isRead = chapterProgress.isRead(index, state.chapterState)
+            val isBookmarked = index in state.chapterState.bookmarks
+            val isCurrent = index == chapterProgress.resumableChapter(state.chapterState, state.progress)
             val readColor = context.contextCompatColor(R.color.read_chapter)
             val unreadColor = context.getResourceColor(materialR.attr.colorOnSurface)
             chapterTitle.text = title
-            chapterTitle.setTextColor(if (read) readColor else unreadColor)
-            chapterScanlator.setTextColor(if (read) readColor else ColorUtils.setAlphaComponent(unreadColor, 198))
+            chapterTitle.setTextColor(if (isRead) readColor else unreadColor)
+            chapterScanlator.setTextColor(if (isRead) readColor else ColorUtils.setAlphaComponent(unreadColor, 198))
+            ChapterUtil.setBookmark(chapterTitle, isBookmarked)
+            val accent = state.accent
+            if (isBookmarked && accent != null) {
+                TextViewCompat.setCompoundDrawableTintList(chapterTitle, ColorStateList.valueOf(accent))
+            }
             val statuses = listOfNotNull(
                 chapterSummary(context, index),
-                resumeNote(context).takeIf { index == currentIndex },
+                resumeNote(context, state.progress).takeIf { isCurrent },
             )
             chapterScanlator.text = statuses.joinToString(" • ")
+            read.setImageResource(if (isRead) R.drawable.ic_eye_off_24dp else R.drawable.ic_eye_24dp)
+            bookmark.setImageResource(if (isBookmarked) R.drawable.ic_bookmark_off_24dp else R.drawable.ic_bookmark_24dp)
+            startView.backgroundTintList = ColorStateList.valueOf(
+                accent ?: context.getResourceColor(materialR.attr.colorSecondary),
+            )
+            bookmark.imageTintList = ColorStateList.valueOf(context.getResourceColor(AR.attr.textColorPrimaryInverse))
+            frontView.translationX = 0f
+            startView.isVisible = false
+            endView.isVisible = false
             translationButton.isVisible = false
             downloadButton.root.isVisible = false
             root.contentDescription = title
-            root.setOnClickListener { onChapter(locatorFor(index)) }
-            root.isActivated = false
+            root.isActivated = index in state.selectedChapters
         }
 
-        private fun chapterSummary(context: android.content.Context, index: Int): String {
+        /** Only a PDF section has something to add here: its page range. Otherwise a row is its title, as in novels. */
+        private fun chapterSummary(context: android.content.Context, index: Int): String? {
+            if (book.contentType != ContentType.PDF) return null
             val chapterCount = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-            if (book.contentType != ContentType.PDF) {
-                return context.getString(MR.strings.chapter_x_of_y, index + 1, chapterCount)
-            }
-            val totalPages = (structure?.pageCount ?: book.pageCount)?.coerceAtLeast(1)
-                ?: return context.getString(MR.strings.chapter_x_of_y, index + 1, chapterCount)
-            if (chapterCount == 1) return context.getString(MR.plurals.pages_plural, totalPages, totalPages)
+            val totalPages = (structure?.pageCount ?: book.pageCount)?.coerceAtLeast(1) ?: return null
+            if (chapterCount == 1) return null
             val anchors = structure?.chapterStartPages.orEmpty()
             val firstPage = BookChapterMetrics.pageIndexForChapter(index, totalPages, chapterCount, anchors) + 1
             val nextPage = if (index + 1 < chapterCount) {
@@ -1190,64 +1906,34 @@ private class LocalBookDetailsAdapter(
             } else {
                 totalPages
             }
-            return context.getString(
-                MR.strings.local_book_page_range,
-                firstPage,
-                nextPage.coerceAtLeast(firstPage),
-                totalPages,
-            )
+            val lastPage = nextPage.coerceAtLeast(firstPage)
+            if (lastPage == firstPage) return context.getString(MR.strings.page_x_of_y, firstPage, totalPages)
+            return context.getString(MR.strings.local_book_page_range, firstPage, lastPage, totalPages)
         }
 
         /**
-         * Comics' in-progress note: the page for a PDF, and for an EPUB the share of the whole
-         * book, the only progress its locator records.
+         * Comics' in-progress note: the page for a PDF, and for an EPUB the share of the chapter.
+         * A position set from this list starts its chapter, so it has no note.
          */
-        private fun resumeNote(context: android.content.Context): String? = when (val current = progress) {
+        private fun resumeNote(context: android.content.Context, progress: ReaderLocator?): String? = when (val current = progress) {
             is ReaderLocator.Pdf -> {
                 val totalPages = (structure?.pageCount ?: book.pageCount ?: current.totalPages)?.coerceAtLeast(1)
                 totalPages?.let { context.getString(MR.strings.page_x_of_y, current.pageIndex + 1, it) }
             }
 
-            is ReaderLocator.Epub -> context.getString(
-                MR.strings.local_book_progress_percent,
-                (current.progression * 100).roundToInt().coerceIn(0, 100),
-            )
+            is ReaderLocator.Epub -> BookChapterMetrics.epubChapterProgression(current.cfi)
+                ?.let { (it * 100).roundToInt().coerceIn(0, 100) }
+                ?.takeIf { it > 0 }
+                ?.let { context.getString(MR.strings.local_book_progress_percent, it) }
 
             else -> null
         }
 
-        private fun locatorFor(index: Int): ReaderLocator = when (book.contentType) {
-            ContentType.EPUB -> {
-                val total = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-                val progression = if (total <= 1) 0.0 else index.toDouble() / (total - 1).toDouble()
-                ReaderLocator.Epub(book.document().entityId, progression = progression)
-            }
-
-            ContentType.PDF -> {
-                val totalPages = (structure?.pageCount ?: book.pageCount)?.coerceAtLeast(1) ?: 1
-                val chapterCount = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-                val pageIndex = BookChapterMetrics.pageIndexForChapter(
-                    index,
-                    totalPages,
-                    chapterCount,
-                    structure?.chapterStartPages.orEmpty(),
-                )
-                ReaderLocator.Pdf(
-                    entityId = book.document().entityId,
-                    pageIndex = pageIndex,
-                    totalPages = totalPages,
-                    documentProgression = if (totalPages <= 1) 0.0 else {
-                        pageIndex.toDouble() / (totalPages - 1).toDouble()
-                    },
-                )
-            }
-
-            else -> error("Unsupported local chapter content")
-        }
     }
 
     private companion object {
         const val VIEW_TYPE_HEADER = 0
         const val VIEW_TYPE_CHAPTER = 1
+        const val PAYLOAD_LIST = "list"
     }
 }

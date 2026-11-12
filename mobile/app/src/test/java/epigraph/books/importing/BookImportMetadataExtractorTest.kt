@@ -67,6 +67,43 @@ class BookImportMetadataExtractorTest {
     }
 
     @Test
+    fun `a bookmark title is not the title of the book`() {
+        val pdf = File(directory, "my_book.pdf")
+        Files.write(
+            pdf.toPath(),
+            """
+            %PDF-1.4
+            1 0 obj << /Type /Catalog /Outlines 2 0 R >> endobj
+            3 0 obj << /Title (Part One) /Parent 2 0 R >> endobj
+            trailer << /Root 1 0 R >>
+            """.trimIndent().toByteArray(),
+        )
+
+        assertEquals("my book", BookImportMetadataExtractor.extract(pdf, ContentType.PDF, pdf.name).title)
+    }
+
+    @Test
+    fun `reads the info dictionary the trailer names, past the bookmarks`() {
+        val pdf = File(directory, "my_book.pdf")
+        Files.write(
+            pdf.toPath(),
+            """
+            %PDF-1.4
+            1 0 obj << /Type /Catalog /Outlines 2 0 R >> endobj
+            3 0 obj << /Title (Part One) /Parent 2 0 R >> endobj
+            13 0 obj << /Title (Other object) >> endobj
+            3 0 obj << /Title (Book title) /Author (Book author) >> endobj
+            trailer << /Root 1 0 R /Info 3 0 R >>
+            """.trimIndent().toByteArray(),
+        )
+
+        val metadata = BookImportMetadataExtractor.extract(pdf, ContentType.PDF, pdf.name)
+
+        assertEquals("Book title", metadata.title)
+        assertEquals("Book author", metadata.author)
+    }
+
+    @Test
     fun `decodes utf-16 literal titles written with a byte order mark`() {
         val pdf = File(directory, "scan.pdf")
         val title = byteArrayOf(0xfe.toByte(), 0xff.toByte()) + "Livro Ç".toByteArray(Charsets.UTF_16BE)

@@ -9,6 +9,7 @@ import epigraph.books.local.LocalBookImportService
 import epigraph.books.local.LocalBookRepository
 import epigraph.books.local.LocalBookRepositoryImpl
 import epigraph.books.reader.BookStructureInspector
+import epigraph.books.pdf.PdfiumPdfOutlineReader
 import epigraph.books.pdf.PdfiumPdfReaderAdapter
 import epigraph.books.reader.PdfReaderAdapter
 import epigraph.books.reader.EpubReaderAdapter
@@ -223,6 +224,7 @@ fun appModule(app: Application) = module {
             mutations = get(),
             privateStorageDirectory = File(app.filesDir, "books"),
             structureInspector = BookStructureInspector(app),
+            pdfOutlineReader = PdfiumPdfOutlineReader(app),
         )
     }
     single { LocalBookImportService(app.contentResolver, get(), get(), get(), get()) }

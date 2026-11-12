@@ -1,6 +1,7 @@
 package epigraph.books.ui
 
 import android.content.Context
+import epigraph.books.local.LocalBookChapterState
 import epigraph.books.local.LocalBookRepository
 import epigraph.books.reader.BookChapterMetrics
 import epigraph.contract.ReaderLocator
@@ -110,6 +111,7 @@ class UnifiedLibraryBooksView(
     private var booksFilterStates: Map<Char, Int> = emptyMap()
     private var bookProgress: Map<String, Double> = emptyMap()
     private var bookLocators: Map<String, ReaderLocator?> = emptyMap()
+    private var bookChapterStates: Map<String, LocalBookChapterState> = emptyMap()
     private var bookmarkedBooks: Set<String> = emptySet()
     private var novelDownloadCounts: Map<Long, Int> = emptyMap()
 
@@ -215,8 +217,9 @@ class UnifiedLibraryBooksView(
                 }
                 bookProgress = snapshots.associate { it.book.bookId to it.progress.progressionOrZero() }
                 bookLocators = snapshots.associate { it.book.bookId to it.progress }
+                bookChapterStates = snapshots.associate { it.book.bookId to it.chapterState }
                 bookmarkedBooks = snapshots
-                    .filter { it.bookmarks.isNotEmpty() }
+                    .filter { it.bookmarks.isNotEmpty() || it.chapterState.bookmarks.isNotEmpty() }
                     .map { it.book.bookId }
                     .toSet()
                 novelDownloadCounts = withContext(Dispatchers.IO) {
@@ -433,7 +436,11 @@ class UnifiedLibraryBooksView(
                             book,
                             header,
                             context,
-                            BookChapterMetrics.unreadChapterCount(book, bookLocators[book.bookId]),
+                            BookChapterMetrics.unreadChapterCount(
+                                book,
+                                bookLocators[book.bookId],
+                                bookChapterStates[book.bookId] ?: LocalBookChapterState(),
+                            ),
                             unreadType,
                         )
                         if (matchesFilters(item, trackerFilterId)) add(item)

@@ -17,7 +17,15 @@ import com.ahmer.pdfium.PdfDocument
 import com.ahmer.pdfium.PdfPasswordException
 import com.ahmer.pdfium.PdfTextPage
 import com.ahmer.pdfium.PdfiumCore
+import eu.kanade.tachiyomi.util.system.launchIO
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import yokai.i18n.MR
+import yokai.util.lang.getString
+
+private const val DEFAULT_PAGE_ASPECT = 1.414f
+private const val MAX_CONTENTS_INDENT = 6
 
 /** Opens verified private PDF blobs through AhmerPdfium. */
 class PdfiumPdfReaderAdapter(
@@ -64,7 +72,9 @@ class PdfiumPdfReaderAdapter(
         }
         return try {
             val opened = core.newDocument(descriptor, password?.concatToString().orEmpty())
-            PdfiumReaderSession(document, core, opened, initialLocator)
+            PdfiumReaderSession(document, core, opened, initialLocator) { page ->
+                context.getString(MR.strings.page_, page)
+            }
         } catch (failure: Throwable) {
             descriptor.close()
             core.close()
@@ -80,6 +90,7 @@ private class PdfiumReaderSession(
     private val core: PdfiumCore,
     private val pdf: PdfDocument,
     initialLocator: ReaderLocator.Pdf?,
+    private val pageLabel: (Int) -> String,
 ) : PdfReaderSession, PdfPageBitmapRenderer {
     private var closed = false
     private var locator = ReaderLocator.Pdf(
@@ -90,13 +101,34 @@ private class PdfiumReaderSession(
     ).withDocumentMetrics(pdf.totalPages.coerceAtLeast(1))
     private var highlights: List<ReaderHighlight<ReaderLocator.Pdf>> = emptyList()
 
+    /**
+     * Pdfium and its page cache are not concurrent, and the continuous column renders several pages
+     * while text is read for speech, selection or search: every native call goes through this.
+     */
+    private val renderLock = Mutex()
+
     override val pageCount: Int get() = pdf.totalPages
 
-    override suspend fun renderPageBitmap(pageIndex: Int, maxDimension: Int): Bitmap? {
+    override suspend fun pageAspects(): FloatArray = renderLock.withLock {
+        ensureOpen()
+        FloatArray(pageCount) { page ->
+            runCatching {
+                val size = core.getPageSize(page)
+                size.height.toFloat() / size.width.coerceAtLeast(1)
+            }.getOrDefault(DEFAULT_PAGE_ASPECT).takeIf { it > 0f } ?: DEFAULT_PAGE_ASPECT
+        }
+    }
+
+    override suspend fun pagePixelWidth(pageIndex: Int): Int = renderLock.withLock {
+        ensureOpen()
+        core.getPageSize(pageIndex).width.coerceAtLeast(1)
+    }
+
+    override suspend fun renderPageBitmap(pageIndex: Int, maxDimension: Int): Bitmap? = renderLock.withLock {
         ensureOpen()
         require(pageIndex in 0 until pageCount) { "The PDF page is outside the document" }
         var bitmap: Bitmap? = null
-        return runCatching {
+        runCatching {
             // AhmerPdfium's width/height calls dereference the native page cache. Materialize the
             // page first so spread rendering cannot ask Pdfium for dimensions through a null page
             // pointer (which otherwise terminates the process with SIGSEGV).
@@ -143,17 +175,19 @@ private class PdfiumReaderSession(
         this.locator = locator.withDocumentMetrics(pageCount)
     }
 
+    /** The sections the chapter list shows, flat so that no outline is too deep to list. */
     override suspend fun tableOfContents(): List<ReaderTocEntry<ReaderLocator.Pdf>> {
         ensureOpen()
-        fun convert(bookmark: PdfDocument.Bookmark): ReaderTocEntry<ReaderLocator.Pdf> =
+        val entries = renderLock.withLock {
+            ensureOpen()
+            pdf.readOutlineEntries()
+        }
+        return pdfOutlineSections(entries, pageCount, pageLabel).map { section ->
             ReaderTocEntry(
-                title = bookmark.title?.ifBlank { "Page ${bookmark.pageIndex + 1}" }
-                    ?: "Page ${bookmark.pageIndex + 1}",
-                locator = ReaderLocator.Pdf(document.entityId, bookmark.pageIndex.toInt())
-                    .withDocumentMetrics(pageCount),
-                children = bookmark.children.orEmpty().map(::convert),
+                title = "  ".repeat(section.depth.coerceAtMost(MAX_CONTENTS_INDENT)) + section.title,
+                locator = ReaderLocator.Pdf(document.entityId, section.pageIndex).withDocumentMetrics(pageCount),
             )
-        return pdf.bookmarks.orEmpty().map(::convert)
+        }
     }
 
     override suspend fun search(query: String): List<ReaderSearchResult<ReaderLocator.Pdf>> {
@@ -162,7 +196,7 @@ private class PdfiumReaderSession(
         if (normalized.isEmpty()) return emptyList()
         return buildList {
             for (page in 0 until pageCount) {
-                val text = readPageText(page) ?: continue
+                val text = lockedPageText(page) ?: continue
                 if (text.contains(normalized, ignoreCase = true)) {
                     add(
                         ReaderSearchResult(
@@ -182,7 +216,7 @@ private class PdfiumReaderSession(
         validate(range.end)
         return buildString {
             for (page in range.start.pageIndex..range.end.pageIndex) {
-                readPageText(page)?.let { text ->
+                lockedPageText(page)?.let { text ->
                     if (isNotEmpty()) append('\n')
                     append(text)
                 }
@@ -206,8 +240,14 @@ private class PdfiumReaderSession(
         // closing the document itself. Calling PdfDocument.close() first leaves those
         // page handles alive against a freed document and can terminate the process
         // with SIGSEGV during Activity.onDestroy(). The core also closes the descriptor
-        // retained by PdfDocument, so it must be the sole native teardown path.
-        runCatching { core.close() }
+        // retained by PdfDocument, so it must be the sole native teardown path. A page still being
+        // rendered cannot be interrupted, so the teardown waits for it off the main thread.
+        launchIO { renderLock.withLock { runCatching { core.close() } } }
+    }
+
+    private suspend fun lockedPageText(page: Int): String? = renderLock.withLock {
+        ensureOpen()
+        readPageText(page)
     }
 
     private fun readPageText(page: Int): String? {

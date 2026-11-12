@@ -178,7 +178,9 @@ fun ReaderActivityBinding.applyReaderTheme(colors: ReaderThemeColors) {
         trackInactiveTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(colors.foreground, 72))
         haloTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(colors.accent, 64))
     }
-    chaptersSheet.root.tintImageButtons(colors.foreground)
+    // The settings panel mounted in this sheet keeps the app's surface, so its icons stay as they are.
+    chaptersSheet.topbarLayout.tintImageButtons(colors.foreground)
+    chaptersSheet.root.binding.chapterRecycler.tintImageButtons(colors.foreground)
 }
 
 private fun View.tintImageButtons(@ColorInt foreground: Int) {

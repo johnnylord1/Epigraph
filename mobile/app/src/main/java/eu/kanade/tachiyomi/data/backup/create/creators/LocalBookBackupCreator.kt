@@ -4,7 +4,9 @@ import epigraph.books.local.LocalBookRepository
 import epigraph.contract.ReaderLocator
 import eu.kanade.tachiyomi.data.backup.models.BackupLocalBook
 import eu.kanade.tachiyomi.data.backup.models.BackupLocalBookBookmark
+import eu.kanade.tachiyomi.data.backup.models.BackupLocalBookChapterState
 import eu.kanade.tachiyomi.data.backup.models.BackupLocalBookHighlight
+import eu.kanade.tachiyomi.data.backup.models.BackupLocalBookPdfSection
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import yokai.domain.category.interactor.GetCategories
@@ -25,6 +27,8 @@ class LocalBookBackupCreator(
         }
 
         return repository.snapshotForBackup().map { snapshot ->
+            val chapters = snapshot.chapterState
+            val hasChapterFlags = chapters.readOverrides.isNotEmpty() || chapters.bookmarks.isNotEmpty()
             BackupLocalBook(
                 bookId = snapshot.book.bookId,
                 contentType = snapshot.book.contentType.name,
@@ -62,6 +66,18 @@ class LocalBookBackupCreator(
                 categoryNames = snapshot.categoryIds.mapNotNull(categories::get).distinct(),
                 chapterCount = snapshot.book.chapterCount,
                 pageCount = snapshot.book.pageCount,
+                chapterReadThrough = chapters.readThrough.takeIf { chapters.recorded || hasChapterFlags },
+                chapterLocalLocatorJson = chapters.localLocator?.let { encodeLocator(it) },
+                chapterStates = (chapters.readOverrides.keys + chapters.bookmarks).sorted().map { chapter ->
+                    BackupLocalBookChapterState(
+                        chapterIndex = chapter,
+                        read = chapters.readOverrides[chapter],
+                        bookmark = chapter in chapters.bookmarks,
+                    )
+                },
+                pdfSections = snapshot.book.pdfSections.map { section ->
+                    BackupLocalBookPdfSection(section.title, section.pageIndex, section.depth)
+                },
             )
         }
     }

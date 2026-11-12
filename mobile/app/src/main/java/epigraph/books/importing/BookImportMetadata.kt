@@ -87,11 +87,21 @@ object BookImportMetadataExtractor {
             input.readFully(tail)
             tail.toString(StandardCharsets.ISO_8859_1) + "\n" + head.toString(StandardCharsets.ISO_8859_1)
         }
+        // Every bookmark has a /Title too, and they usually come before the Info dictionary.
+        val info = pdfInfoObject(source) ?: source.takeUnless { "/Outlines" in it }.orEmpty()
         return BookImportMetadata(
-            title = extractPdfValue(source, "Title")?.let(::cleanText) ?: fallbackTitle(fallbackDisplayName),
-            author = extractPdfValue(source, "Author")?.let(::cleanText),
-            description = extractPdfValue(source, "Subject")?.let(::cleanDescription),
+            title = extractPdfValue(info, "Title")?.let(::cleanText) ?: fallbackTitle(fallbackDisplayName),
+            author = extractPdfValue(info, "Author")?.let(::cleanText),
+            description = extractPdfValue(info, "Subject")?.let(::cleanDescription),
         )
+    }
+
+    /** The body of the object the trailer names as /Info; the last one wins after incremental saves. */
+    private fun pdfInfoObject(source: String): String? {
+        val (number, generation) = PDF_INFO_REFERENCE.findAll(source).lastOrNull()?.destructured ?: return null
+        val start = Regex("(?<!\\d)$number\\s+$generation\\s+obj\\b").findAll(source).lastOrNull() ?: return null
+        val end = source.indexOf("endobj", start.range.last).takeIf { it >= 0 } ?: source.length
+        return source.substring(start.range.last + 1, end)
     }
 
     private fun extractPdfValue(source: String, key: String): String? {
@@ -213,4 +223,5 @@ object BookImportMetadataExtractor {
     private const val MAX_TEXT_LENGTH = 500
     private const val MAX_DESCRIPTION_LENGTH = 20_000
     private val WHITESPACE = Regex("\\s+")
+    private val PDF_INFO_REFERENCE = Regex("/Info\\s+(\\d+)\\s+(\\d+)\\s+R")
 }

@@ -1,0 +1,9 @@
+-- A PDF imported on this device gets its chapters from its own outline. They stay on this device
+-- and leave local_books.chapter_count alone, so the sync contract sees the same structure as before
+-- and sections the Core confirms for the book still win. No row is seeded here because reading the
+-- outline needs the file: each book is read the next time the app checks it.
+CREATE TABLE IF NOT EXISTS local_book_pdf_outline(
+    book_id TEXT NOT NULL PRIMARY KEY,
+    sections_json TEXT NOT NULL,
+    FOREIGN KEY(book_id) REFERENCES local_books(book_id) ON DELETE CASCADE
+);

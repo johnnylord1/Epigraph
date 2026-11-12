@@ -333,10 +333,13 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginHorizontal="8dp"
-                    android:layout_weight="2"
+                    android:layout_weight="2.5"
+                    android:maxLines="1"
+                    android:paddingHorizontal="8dp"
                     android:text="@string/novel_tts_read_aloud"
                     app:icon="@drawable/ic_play_arrow_24dp"
-                    app:iconGravity="textStart" />
+                    app:iconGravity="textStart"
+                    app:iconPadding="4dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/tts_stop"

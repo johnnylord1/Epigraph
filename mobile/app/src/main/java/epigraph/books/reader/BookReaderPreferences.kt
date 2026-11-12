@@ -133,17 +133,31 @@ class BookReaderPreferences(private val store: PreferenceStore) {
 }
 
 /**
- * Readium page-margin factor for the "Content width" setting, which every settings surface edits
- * as a 0-100 percentage of the screen used by the text column.
+ * The margin on each side that leaves the text column the "Content width" percentage of
+ * [viewportWidth], in the same unit.
  *
- * `0` (the default) keeps Readium's own margins. Values above 100 come from an older pixel-based
+ * `0` (the default) keeps the reader's own margins. Values above 100 come from an older pixel-based
  * setting and are treated as automatic as well, instead of being read as a percentage.
  */
-fun epubPageMarginsForContentWidth(contentWidthPercent: Int): Double? {
+fun contentWidthSideMargin(contentWidthPercent: Int, viewportWidth: Int): Double? {
     if (contentWidthPercent !in 1..100) return null
-    // 100% uses the full width, 75% matches Readium's default factor (1.0), narrower columns grow
-    // the margins up to the 3.0 cap.
-    return ((100 - contentWidthPercent) / 25.0).coerceIn(0.0, 3.0)
+    return viewportWidth * (100 - contentWidthPercent) / 200.0
+}
+
+/**
+ * Readium page-margin factor for the "Content width" setting. Readium multiplies it by the page
+ * gutter of its stylesheet. That stylesheet also caps the body at 40rem, so on a tablet the
+ * percentage is reached only until the cap.
+ */
+fun epubPageMarginsForContentWidth(contentWidthPercent: Int, viewportWidthDp: Int): Double? =
+    contentWidthSideMargin(contentWidthPercent, viewportWidthDp)?.let { it / readiumPageGutter(viewportWidthDp) }
+
+/** `--RS__pageGutter` in ReadiumCSS-after.css, by its media queries. */
+private fun readiumPageGutter(viewportWidthDp: Int): Int = when {
+    viewportWidthDp >= 1200 -> 50
+    viewportWidthDp >= 720 -> 40
+    viewportWidthDp >= 560 -> 30
+    else -> 20
 }
 
 interface LegacyBookReaderPreferences {

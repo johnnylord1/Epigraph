@@ -4,7 +4,9 @@ import epigraph.books.local.BookBookmark
 import epigraph.books.importing.LocalBookStreamSource
 import epigraph.books.local.BookHighlight
 import epigraph.books.local.LocalBook
+import epigraph.books.local.LocalBookChapterState
 import epigraph.books.local.LocalBookImportService
+import epigraph.books.local.LocalBookPdfSection
 import epigraph.books.local.LocalBookRepository
 import epigraph.books.local.LocalBookRestoreEntry
 import epigraph.contract.ContentType
@@ -96,6 +98,20 @@ class LocalBookBackupRestorer(
                 bookmarks = bookmarks,
                 highlights = highlights,
                 categoryIds = backup.categoryNames.mapNotNull(categoryIds::get).distinct(),
+                chapterState = backup.chapterReadThrough?.let { readThrough ->
+                    LocalBookChapterState(
+                        readThrough = readThrough,
+                        localLocator = backup.chapterLocalLocatorJson?.let { decodeLocator(it) },
+                        readOverrides = backup.chapterStates
+                            .mapNotNull { state -> state.read?.let { state.chapterIndex to it } }
+                            .toMap(),
+                        bookmarks = backup.chapterStates.filter { it.bookmark }.map { it.chapterIndex }.toSet(),
+                        recorded = true,
+                    )
+                },
+                pdfSections = backup.pdfSections
+                    .filter { it.title.isNotBlank() && it.pageIndex >= 0 && it.depth >= 0 }
+                    .map { LocalBookPdfSection(it.title, it.pageIndex, it.depth) },
             ),
         )
         if (storedFile == null || restored.isAvailable) return restored

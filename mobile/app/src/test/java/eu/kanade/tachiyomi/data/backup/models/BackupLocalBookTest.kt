@@ -31,6 +31,17 @@ class BackupLocalBookTest {
                     updatedAt = 11,
                     progressLocatorJson = "{\"type\":\"epub\"}",
                     categoryNames = listOf("Reading"),
+                    chapterReadThrough = 3,
+                    chapterLocalLocatorJson = "{\"type\":\"epub\"}",
+                    chapterStates = listOf(
+                        BackupLocalBookChapterState(chapterIndex = 1, read = false),
+                        BackupLocalBookChapterState(chapterIndex = 5, read = true, bookmark = true),
+                        BackupLocalBookChapterState(chapterIndex = 6, bookmark = true),
+                    ),
+                    pdfSections = listOf(
+                        BackupLocalBookPdfSection(title = "Part I", pageIndex = 0),
+                        BackupLocalBookPdfSection(title = "Chapter 1", pageIndex = 2, depth = 1),
+                    ),
                 ),
             ),
         )

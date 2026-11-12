@@ -29,6 +29,26 @@ data class BackupLocalBook(
     @ProtoNumber(14) val categoryNames: List<String> = emptyList(),
     @ProtoNumber(15) val chapterCount: Int? = null,
     @ProtoNumber(16) val pageCount: Int? = null,
+    /** Null in a backup made before per-chapter flags: the restored position then implies them. */
+    @ProtoNumber(17) val chapterReadThrough: Int? = null,
+    @ProtoNumber(18) val chapterLocalLocatorJson: String? = null,
+    @ProtoNumber(19) val chapterStates: List<BackupLocalBookChapterState> = emptyList(),
+    /** Sections read from a PDF's own outline, which [chapterStates] count in. */
+    @ProtoNumber(20) val pdfSections: List<BackupLocalBookPdfSection> = emptyList(),
+)
+
+@Serializable
+data class BackupLocalBookPdfSection(
+    @ProtoNumber(1) val title: String,
+    @ProtoNumber(2) val pageIndex: Int,
+    @ProtoNumber(3) val depth: Int = 0,
+)
+
+@Serializable
+data class BackupLocalBookChapterState(
+    @ProtoNumber(1) val chapterIndex: Int,
+    @ProtoNumber(2) val read: Boolean? = null,
+    @ProtoNumber(3) val bookmark: Boolean = false,
 )
 
 @Serializable

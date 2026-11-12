@@ -58,7 +58,6 @@ class BookStructureInspector(private val context: Context) {
                 // without opening AhmerPdfium. The latter is reserved for the interactive reader
                 // and has a native teardown path that must not run during library inspection.
                 chapterCount = 1,
-                chapterTitles = listOf("Document"),
                 pageCount = renderer.pageCount.coerceAtLeast(1),
             )
         } finally {

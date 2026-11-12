@@ -1,10 +1,12 @@
 package epigraph.books.reader
 
 import epigraph.books.local.LocalBook
+import epigraph.books.local.LocalBookChapterState
 import epigraph.contract.ContentType
 import epigraph.contract.ReaderLocator
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.URLDecoder
@@ -22,10 +24,11 @@ internal object BookChapterMetrics {
         )
         val confirmedSections = book.pdfSections
             .takeIf { book.contentType == ContentType.PDF && it.size == chapterCount }
+        // No titles means none are known: the screen names those chapters in the user's language.
         val titles = confirmedSections?.map { it.title }
             ?: inspected?.chapterTitles.orEmpty()
-            .takeIf { it.size == chapterCount }
-            ?: List(chapterCount) { index -> "Chapter ${index + 1}" }
+                .takeIf { it.size == chapterCount }
+                .orEmpty()
         return BookStructure(
             chapterCount = chapterCount,
             pageCount = inspected?.pageCount ?: book.pageCount,
@@ -82,37 +85,25 @@ internal object BookChapterMetrics {
         }.getOrNull()
     }
 
+    /** Share of its chapter read at a persisted Readium locator, or null for progress-only positions. */
+    fun epubChapterProgression(cfi: String?): Double? = cfi?.let { encoded ->
+        runCatching {
+            Json.parseToJsonElement(encoded).jsonObject["locations"]
+                ?.jsonObject?.get("progression")?.jsonPrimitive?.doubleOrNull
+        }.getOrNull()
+    }
+
     /**
-     * Chapters still to read at a saved position, for the Library unread badge. The current
-     * chapter counts as unread, as in the details list: every chapter at the start and none
-     * once the position reaches the end.
+     * Chapters still to read, for the Library unread badge, by the same rules as the details list.
+     * With no recorded [state] the position alone implies them, as for a book not opened yet.
      */
-    fun unreadChapterCount(book: LocalBook, progress: ReaderLocator?): Int {
-        val chapterCount = effectiveChapterCount(book.contentType, book.chapterCount, inspected = null)
-        val current = when (progress) {
-            is ReaderLocator.Epub -> when {
-                progress.progression >= 1.0 -> return 0
-                (progress.progression * 100).roundToInt() == 0 -> return chapterCount
-                else -> epubChapterIndex(progress, chapterCount)
-            }
-
-            is ReaderLocator.Pdf -> {
-                val totalPages = (book.pageCount ?: progress.totalPages ?: 1).coerceAtLeast(1)
-                when {
-                    (progress.documentProgression ?: 0.0) >= 1.0 -> return 0
-                    progress.pageIndex == 0 -> return chapterCount
-                    else -> chapterIndexForPage(
-                        progress.pageIndex,
-                        totalPages,
-                        chapterCount,
-                        book.pdfSections.map { it.pageIndex },
-                    )
-                }
-            }
-
-            else -> return chapterCount
-        }
-        return (chapterCount - current).coerceIn(0, chapterCount)
+    fun unreadChapterCount(
+        book: LocalBook,
+        progress: ReaderLocator?,
+        state: LocalBookChapterState = LocalBookChapterState(),
+    ): Int {
+        val chapters = BookChapterProgress(book, resolve(book, inspected = null))
+        return chapters.unreadCount(chapters.reconcile(state, progress))
     }
 
     /** A synchronized PDF TOC is richer than PdfRenderer's one-document fallback. */
@@ -158,6 +149,22 @@ internal object BookChapterMetrics {
         return ((chapterIndex.coerceIn(0, lastChapter).toDouble() / lastChapter) * lastPage)
             .roundToInt()
             .coerceIn(0, lastPage)
+    }
+
+    /**
+     * [chapter] and the sections that start on the same page before it. A page belongs to the last
+     * section starting on it, so "Part I" right above "Chapter 1" has no pages of its own and is
+     * finished when "Chapter 1" is.
+     */
+    fun chaptersFinishedWith(
+        chapter: Int,
+        totalPages: Int,
+        chapterCount: Int,
+        chapterStartPages: List<Int> = emptyList(),
+    ): List<Int> {
+        val anchors = validAnchors(chapterStartPages, chapterCount, totalPages) ?: return listOf(chapter)
+        val start = anchors.getOrNull(chapter) ?: return listOf(chapter)
+        return (0..chapter).filter { anchors[it] == start }
     }
 
     /** Words for [pdfLabel]. English by default so the metrics stay locale-free; the UI passes its strings. */

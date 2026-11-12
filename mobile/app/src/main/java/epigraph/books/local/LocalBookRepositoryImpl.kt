@@ -5,20 +5,32 @@ import epigraph.contract.BookEntrySnapshot
 import epigraph.contract.ReaderLocator
 import epigraph.books.importing.BookCoverMaterializer
 import epigraph.books.importing.BookImportMetadataExtractor
+import epigraph.books.pdf.PdfOutlineReader
+import epigraph.books.reader.BookChapterMetrics
+import epigraph.books.reader.BookChapterProgress
 import epigraph.books.reader.BookStructureInspector
 import epigraph.sync.EpigraphBookMutationRouter
 import epigraph.sync.BookBookmarkMutation
 import epigraph.sync.BookHighlightMutation
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
+import yokai.data.Database
 import yokai.data.DatabaseHandler
 
 class LocalBookRepositoryImpl(
@@ -30,15 +42,20 @@ class LocalBookRepositoryImpl(
     },
     private val privateStorageDirectory: File? = null,
     private val structureInspector: BookStructureInspector? = null,
+    private val pdfOutlineReader: PdfOutlineReader? = null,
 ) : LocalBookRepository {
     private val coverMaterializer: BookCoverMaterializer? = privateStorageDirectory?.let(::BookCoverMaterializer)
+    private val outlineLock = Mutex()
+
     override fun observeBooks(): Flow<List<LocalBook>> =
-        handler.subscribeToList { local_booksQueries.findAll(::mapBook) }.withRemoteAvailability()
+        handler.subscribeToList { local_booksQueries.findAll(::mapBook) }
+            .withLocalOutlines()
+            .withRemoteAvailability()
 
     override fun observeBooks(contentType: ContentType): Flow<List<LocalBook>> =
         handler.subscribeToList {
             local_booksQueries.findAllByType(contentType.name, ::mapBook)
-        }.withRemoteAvailability()
+        }.withLocalOutlines().withRemoteAvailability()
 
     private fun Flow<List<LocalBook>>.withRemoteAvailability(): Flow<List<LocalBook>> =
         combine(handler.subscribeToList { aethon_syncQueries.selectRemoteAvailableBookShas() }) { books, remote ->
@@ -46,19 +63,31 @@ class LocalBookRepositoryImpl(
             books.map { book -> if (book.sha256 in remoteShas) book.copy(remoteAvailable = true) else book }
         }
 
+    private fun Flow<List<LocalBook>>.withLocalOutlines(): Flow<List<LocalBook>> =
+        combine(
+            handler.subscribeToList { local_booksQueries.findPdfOutlineSections() }
+                .map { rows -> rows.associate { it.book_id to decodeOutline(it.sections_json) } },
+        ) { books, outlines ->
+            books.map { book -> book.withLocalOutline(outlines[book.bookId].orEmpty()) }
+        }
+
+    /**
+     * The sections read from the file, unless the Core has its own: a persisted count above one
+     * came from the Core, since the local count is never persisted and so never reaches it.
+     */
+    private fun LocalBook.withLocalOutline(local: List<LocalBookPdfSection>): LocalBook =
+        if (local.isEmpty() || pdfSections.isNotEmpty() || (chapterCount ?: 1) > 1) {
+            this
+        } else {
+            copy(pdfSections = local, chapterCount = local.size)
+        }
+
     override suspend fun find(bookId: String): LocalBook? = handler.await(inTransaction = true) {
         val current = local_booksQueries.findById(bookId).executeAsOneOrNull() ?: return@await null
         // A reader inspection must never erase a richer TOC received from the confirmed Core
         // replica. Repair devices that opened a synchronized PDF with the old one-document
         // fallback before returning the book to details/reader code.
-        val confirmed = aethon_syncQueries.selectCoreReplicaRecord(
-            scopeId = BOOK_SCOPE,
-            entityType = BOOK_ENTRY_TYPE,
-            entityId = bookId,
-        ).executeAsOneOrNull()
-        val payload = confirmed?.record_json?.let { encoded ->
-            runCatching { json.parseToJsonElement(encoded) as? JsonObject }.getOrNull()
-        }
+        val payload = coreReplicaPayload(bookId)
         val confirmedChapters = payload.structureCount("tocCount", "spineCount", "sectionCount")
         val confirmedPages = payload.structureCount("pageCount")
         val chapterCount = maxOf(current.chapter_count ?: 0L, confirmedChapters ?: 0L).takeIf { it > 0 }
@@ -76,7 +105,80 @@ class LocalBookRepositoryImpl(
         local_booksQueries.findById(bookId, ::mapBook).executeAsOne().copy(
             pdfSections = payload?.pdfSections().orEmpty(),
             remoteAvailable = remoteAvailable,
+        ).withLocalOutline(
+            local_booksQueries.findPdfOutline(bookId).executeAsOneOrNull()?.let(::decodeOutline).orEmpty(),
         )
+    }
+
+    private fun Database.coreReplicaPayload(bookId: String): JsonObject? =
+        aethon_syncQueries.selectCoreReplicaRecord(
+            scopeId = BOOK_SCOPE,
+            entityType = BOOK_ENTRY_TYPE,
+            entityId = bookId,
+        ).executeAsOneOrNull()?.record_json?.let { encoded ->
+            runCatching { json.parseToJsonElement(encoded) as? JsonObject }.getOrNull()
+        }
+
+    override suspend fun ensurePdfOutline(bookId: String) {
+        val reader = pdfOutlineReader ?: return
+        outlineLock.withLock {
+            val book = handler.awaitOneOrNull { local_booksQueries.findById(bookId, ::mapBook) } ?: return
+            if (book.contentType != ContentType.PDF) return
+            // No row without the file, so the outline is read when the file arrives.
+            val file = File(book.privatePath)
+            if (!file.isFile || !file.canRead()) return
+            if (handler.awaitOneOrNull { local_booksQueries.findPdfOutline(bookId) } != null) return
+
+            // Written before the read: a malformed PDF that takes the process down with it is not
+            // read again at every start. A file that cannot be read stays as one chapter.
+            handler.await { local_booksQueries.upsertPdfOutline(bookId, encodeOutline(emptyList())) }
+            val read = withContext(Dispatchers.IO) { reader.read(file) } ?: return
+            // A row past the cursor window cannot be read back and would stop the library from
+            // loading at every start, so an outline this large leaves the book as one chapter.
+            val outline = read.takeIf { encodeOutline(it.sections).encodeToByteArray().size <= MAX_OUTLINE_BYTES }
+                ?: read.copy(sections = emptyList())
+
+            val state = getChapterState(bookId)
+            val progress = runCatching { getProgress(bookId) }.getOrNull()
+            handler.await(inTransaction = true) {
+                val current = local_booksQueries.findById(bookId, ::mapBook).executeAsOneOrNull() ?: return@await
+                local_booksQueries.upsertPdfOutline(bookId, encodeOutline(outline.sections))
+                if (current.pageCount != outline.pageCount) {
+                    local_booksQueries.updateStructure(
+                        chapterCount = current.chapterCount?.toLong(),
+                        pageCount = outline.pageCount.toLong(),
+                        updatedAt = current.updatedAt,
+                        bookId = bookId,
+                    )
+                }
+                if (outline.sections.isEmpty()) return@await
+
+                // State kept while the book was one chapter now counts in sections, unless the
+                // Core has sections of its own, in which case it already counts in those.
+                val payload = coreReplicaPayload(bookId)
+                val confirmedChapters = payload.structureCount("tocCount", "spineCount", "sectionCount") ?: 0L
+                val oneChapter = maxOf(current.chapterCount?.toLong() ?: 0L, confirmedChapters) <= 1L
+                if (!oneChapter || payload?.pdfSections().orEmpty().isNotEmpty()) return@await
+                val sectioned = current.copy(
+                    pdfSections = outline.sections,
+                    chapterCount = outline.sections.size,
+                    pageCount = outline.pageCount,
+                )
+                val converted = BookChapterProgress(sectioned, BookChapterMetrics.resolve(sectioned, null))
+                    .fromWholeDocument(state, progress)
+                if (converted == state) return@await
+                local_booksQueries.upsertReadingState(
+                    bookId = bookId,
+                    readThrough = converted.readThrough.toLong(),
+                    localLocatorJson = converted.localLocator?.let { json.encodeToString(ReaderLocator.serializer(), it) },
+                )
+                local_booksQueries.deleteChapterStates(bookId)
+                val now = System.currentTimeMillis()
+                converted.bookmarks.forEach { chapter ->
+                    local_booksQueries.upsertChapterBookmark(bookId, chapter.toLong(), true, now)
+                }
+            }
+        }
     }
 
     override suspend fun findBySha256(sha256: String): LocalBook? =
@@ -84,13 +186,19 @@ class LocalBookRepositoryImpl(
 
     override suspend fun snapshotForBackup(): List<LocalBookBackupSnapshot> {
         val books = handler.awaitList { local_booksQueries.findAll(::mapBook) }
+        val outlines = handler.awaitList { local_booksQueries.findPdfOutlineSections() }
+            .associate { it.book_id to decodeOutline(it.sections_json) }
         return books.map { book ->
             LocalBookBackupSnapshot(
-                book = book,
+                // Only the sections, with the persisted count: a restore must not send them on.
+                book = book.copy(
+                    pdfSections = outlines[book.bookId].orEmpty().takeIf { (book.chapterCount ?: 1) <= 1 }.orEmpty(),
+                ),
                 progress = getProgress(book.bookId),
                 bookmarks = getBookmarks(book.bookId),
                 highlights = getHighlights(book.bookId),
                 categoryIds = getCategoryIds(book.bookId),
+                chapterState = getChapterState(book.bookId),
             )
         }
     }
@@ -100,7 +208,7 @@ class LocalBookRepositoryImpl(
             ?: error("Local-book backup restore requires an app-private storage directory")
         val privatePath = expectedPrivatePath(root, entry.contentType, entry.sha256)
 
-        return handler.await(inTransaction = true) {
+        val restored = handler.await(inTransaction = true) {
             val existing = local_booksQueries.findBySha256(entry.sha256, ::mapBook).executeAsOneOrNull()
             val bookId = existing?.bookId ?: entry.bookId
             require(existing == null || existing.bookId == entry.bookId) {
@@ -164,6 +272,27 @@ class LocalBookRepositoryImpl(
                     updatedAt = entry.updatedAt,
                 )
             }
+            entry.chapterState?.let { state ->
+                local_booksQueries.upsertReadingState(
+                    bookId = bookId,
+                    readThrough = state.readThrough.toLong(),
+                    localLocatorJson = state.localLocator?.let { json.encodeToString(ReaderLocator.serializer(), it) },
+                )
+                local_booksQueries.deleteChapterStates(bookId)
+                state.readOverrides.forEach { (chapter, read) ->
+                    local_booksQueries.upsertChapterRead(bookId, chapter.toLong(), read, entry.updatedAt)
+                }
+                state.bookmarks.forEach { chapter ->
+                    local_booksQueries.upsertChapterBookmark(bookId, chapter.toLong(), true, entry.updatedAt)
+                }
+            }
+            // The sections go with the state that counts in them. A state without any counts the
+            // book as one chapter, so the outline is read again and converts it.
+            if (entry.pdfSections.isNotEmpty()) {
+                local_booksQueries.upsertPdfOutline(bookId, encodeOutline(entry.pdfSections))
+            } else if (entry.chapterState != null) {
+                local_booksQueries.deletePdfOutline(bookId)
+            }
             entry.bookmarks.forEach { bookmark ->
                 local_booksQueries.upsertBookmark(
                     bookmarkId = bookmark.bookmarkId,
@@ -191,6 +320,8 @@ class LocalBookRepositoryImpl(
 
             local_booksQueries.findById(bookId, ::mapBook).executeAsOne()
         }
+        ensurePdfOutline(restored.bookId)
+        return restored
     }
 
     override suspend fun publish(imported: ImportedBook): LocalBook {
@@ -218,11 +349,12 @@ class LocalBookRepositoryImpl(
             privatePath = imported.privateResult.privateFile.absolutePath,
             coverPath = cover?.file?.absolutePath,
         )
+        ensurePdfOutline(bookId)
         return find(bookId) ?: error("Published local book was not materialized")
     }
 
-    override suspend fun relink(bookId: String, imported: ImportedBook): LocalBook =
-        handler.await(inTransaction = true) {
+    override suspend fun relink(bookId: String, imported: ImportedBook): LocalBook {
+        val relinked = handler.await(inTransaction = true) {
             val manifest = imported.privateResult.manifest
             val existing = local_booksQueries.findById(bookId, ::mapBook).executeAsOneOrNull()
                 ?: error("Unknown local book: $bookId")
@@ -262,6 +394,9 @@ class LocalBookRepositoryImpl(
             }
             local_booksQueries.findById(bookId, ::mapBook).executeAsOne()
         }
+        ensurePdfOutline(bookId)
+        return relinked
+    }
 
     override suspend fun remove(bookId: String, removeFile: Boolean) {
         val book = find(bookId) ?: return
@@ -287,6 +422,10 @@ class LocalBookRepositoryImpl(
         mutations.saveProgress(bookId, locator)
     }
 
+    override suspend fun saveTitleAndAuthor(bookId: String, title: String, author: String?) {
+        mutations.saveTitleAndAuthor(bookId, title, author)
+    }
+
     override suspend fun saveStructure(bookId: String, chapterCount: Int?, pageCount: Int?) {
         mutations.saveStructure(bookId, chapterCount, pageCount)
     }
@@ -296,6 +435,7 @@ class LocalBookRepositoryImpl(
     }
 
     private companion object {
+        const val MAX_OUTLINE_BYTES = 1_000_000
         const val BOOK_SCOPE = "books:global"
         const val BOOK_ENTRY_TYPE = "book.entry"
     }
@@ -303,6 +443,63 @@ class LocalBookRepositoryImpl(
     override suspend fun getProgress(bookId: String): ReaderLocator? =
         handler.awaitOneOrNull { local_booksQueries.findProgress(bookId) }
             ?.let { decodeLocator(it.locator_json, bookId) }
+
+    override suspend fun getChapterState(bookId: String): LocalBookChapterState =
+        handler.await(inTransaction = true) {
+            val reading = local_booksQueries.findReadingState(bookId).executeAsOneOrNull()
+            val chapters = local_booksQueries.findChapterStates(bookId).executeAsList()
+            LocalBookChapterState(
+                readThrough = reading?.read_through?.toInt() ?: 0,
+                localLocator = reading?.local_locator_json?.let { encoded ->
+                    runCatching { decodeLocator(encoded, bookId) }.getOrNull()
+                },
+                readOverrides = chapters.mapNotNull { row ->
+                    row.read_override?.let { row.chapter_index.toInt() to it }
+                }.toMap(),
+                bookmarks = chapters.filter { it.bookmark }.map { it.chapter_index.toInt() }.toSet(),
+                recorded = reading != null,
+            )
+        }
+
+    override suspend fun saveReadingState(bookId: String, readThrough: Int, localLocator: ReaderLocator?) {
+        handler.await {
+            local_booksQueries.upsertReadingState(
+                bookId = bookId,
+                readThrough = readThrough.toLong(),
+                localLocatorJson = localLocator?.let { json.encodeToString(ReaderLocator.serializer(), it) },
+            )
+        }
+    }
+
+    override suspend fun setChaptersRead(bookId: String, chapters: Map<Int, Boolean?>) {
+        val now = System.currentTimeMillis()
+        handler.await(inTransaction = true) {
+            chapters.forEach { (chapter, read) ->
+                local_booksQueries.upsertChapterRead(bookId, chapter.toLong(), read, now)
+            }
+            local_booksQueries.deleteEmptyChapterStates(bookId)
+        }
+    }
+
+    override suspend fun resetChaptersRead(bookId: String, readThrough: Int) {
+        val now = System.currentTimeMillis()
+        handler.await(inTransaction = true) {
+            val localLocatorJson = local_booksQueries.findReadingState(bookId).executeAsOneOrNull()?.local_locator_json
+            local_booksQueries.upsertReadingState(bookId, readThrough.toLong(), localLocatorJson)
+            local_booksQueries.clearChapterReadOverrides(now, bookId)
+            local_booksQueries.deleteEmptyChapterStates(bookId)
+        }
+    }
+
+    override suspend fun setChaptersBookmarked(bookId: String, chapters: Collection<Int>, bookmarked: Boolean) {
+        val now = System.currentTimeMillis()
+        handler.await(inTransaction = true) {
+            chapters.forEach { chapter ->
+                local_booksQueries.upsertChapterBookmark(bookId, chapter.toLong(), bookmarked, now)
+            }
+            local_booksQueries.deleteEmptyChapterStates(bookId)
+        }
+    }
 
     override suspend fun addBookmark(bookmark: BookBookmark) {
         mutations.upsertBookmark(
@@ -392,6 +589,7 @@ class LocalBookRepositoryImpl(
                 unavailable++
                 return@forEach
             }
+            ensurePdfOutline(book.bookId)
 
             val metadata = BookImportMetadataExtractor.extract(
                 file = privateFile,
@@ -428,8 +626,12 @@ class LocalBookRepositoryImpl(
             val metadataChanged = title != book.displayName ||
                 author != book.author ||
                 description != book.description
+            // The inspection sees one chapter in any PDF, which must not undo a count from the Core.
+            val chapterCount = structure?.let {
+                BookChapterMetrics.effectiveChapterCount(book.contentType, book.chapterCount, it.chapterCount)
+            }
             val structureChanged = structure != null && (
-                structure.chapterCount != book.chapterCount ||
+                chapterCount != book.chapterCount ||
                     structure.pageCount != book.pageCount
                 )
             if (metadataChanged) metadataUpdated++
@@ -459,7 +661,7 @@ class LocalBookRepositoryImpl(
                 }
                 if (structureChanged) {
                     local_booksQueries.updateStructure(
-                        chapterCount = structure.chapterCount?.toLong(),
+                        chapterCount = chapterCount?.toLong(),
                         pageCount = structure.pageCount?.toLong(),
                         updatedAt = System.currentTimeMillis(),
                         bookId = book.bookId,
@@ -530,9 +732,26 @@ class LocalBookRepositoryImpl(
         else -> error("Local book backup progress accepts only EPUB and PDF locators")
     }
 
-    private fun JsonObject.pdfSections(): List<LocalBookPdfSection> {
-        val entries = this["sectionsSummaryJson"] as? JsonArray ?: return emptyList()
-        return entries.mapNotNull { element ->
+    private fun JsonObject.pdfSections(): List<LocalBookPdfSection> =
+        (this["sectionsSummaryJson"] as? JsonArray)?.toPdfSections().orEmpty()
+
+    private fun decodeOutline(encoded: String): List<LocalBookPdfSection> =
+        runCatching { (json.parseToJsonElement(encoded) as? JsonArray)?.toPdfSections() }.getOrNull().orEmpty()
+
+    /** In the Core's own summary format, so one parser reads both. */
+    private fun encodeOutline(sections: List<LocalBookPdfSection>): String =
+        buildJsonArray {
+            sections.forEach { section ->
+                addJsonObject {
+                    put("label", section.title)
+                    put("href", "page:${section.pageIndex + 1}")
+                    put("depth", section.depth)
+                }
+            }
+        }.toString()
+
+    private fun JsonArray.toPdfSections(): List<LocalBookPdfSection> =
+        mapNotNull { element ->
             val section = element as? JsonObject ?: return@mapNotNull null
             val title = (section["label"] as? JsonPrimitive)
                 ?.contentOrNull
@@ -553,7 +772,6 @@ class LocalBookRepositoryImpl(
                 depth = depth,
             )
         }
-    }
 
     private fun expectedPrivatePath(root: File, contentType: ContentType, sha256: String): String {
         val directory = when (contentType) {

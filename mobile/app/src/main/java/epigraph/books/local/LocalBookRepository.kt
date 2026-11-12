@@ -10,6 +10,12 @@ interface LocalBookRepository {
 
     suspend fun find(bookId: String): LocalBook?
 
+    /**
+     * Reads the sections of a PDF from its own outline, once, as soon as its file is on this device.
+     * They stay on this device, and sections the Core confirms for the book win over them.
+     */
+    suspend fun ensurePdfOutline(bookId: String)
+
     suspend fun findBySha256(sha256: String): LocalBook?
 
     suspend fun snapshotForBackup(): List<LocalBookBackupSnapshot>
@@ -27,8 +33,22 @@ interface LocalBookRepository {
 
     /** Persists reader-derived structure metadata without creating a sync mutation. */
     suspend fun saveStructure(bookId: String, chapterCount: Int?, pageCount: Int?)
+    suspend fun saveTitleAndAuthor(bookId: String, title: String, author: String?)
 
     suspend fun getProgress(bookId: String): ReaderLocator?
+
+    suspend fun getChapterState(bookId: String): LocalBookChapterState
+
+    /** Records how far the position has read the book, and the position accounted for. */
+    suspend fun saveReadingState(bookId: String, readThrough: Int, localLocator: ReaderLocator?)
+
+    /** Sets chapters read or unread; null returns a chapter to what [saveReadingState] implies. */
+    suspend fun setChaptersRead(bookId: String, chapters: Map<Int, Boolean?>)
+
+    /** Marks the whole book read or unread, which drops every per-chapter choice. */
+    suspend fun resetChaptersRead(bookId: String, readThrough: Int)
+
+    suspend fun setChaptersBookmarked(bookId: String, chapters: Collection<Int>, bookmarked: Boolean)
 
     suspend fun addBookmark(bookmark: BookBookmark)
 

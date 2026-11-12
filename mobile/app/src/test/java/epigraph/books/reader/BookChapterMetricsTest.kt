@@ -43,6 +43,21 @@ class BookChapterMetricsTest {
     }
 
     @Test
+    fun `chapters without a known title are left for the screen to name`() {
+        val inspected = BookStructure(chapterCount = 1, pageCount = 8)
+
+        assertEquals(emptyList<String>(), BookChapterMetrics.resolve(book(ContentType.PDF, 1), inspected).chapterTitles)
+        assertEquals(emptyList<String>(), BookChapterMetrics.resolve(book(ContentType.EPUB, 3), null).chapterTitles)
+    }
+
+    @Test
+    fun `known titles stay when they match the chapters`() {
+        val inspected = BookStructure(chapterCount = 2, chapterTitles = listOf("One", "Two"))
+
+        assertEquals(listOf("One", "Two"), BookChapterMetrics.resolve(book(ContentType.EPUB, 2), inspected).chapterTitles)
+    }
+
+    @Test
     fun `two-page spreads label both pages and a lone last page stays singular`() {
         assertEquals("Chapter 1 / 1 • Pages 1-2 / 3", BookChapterMetrics.pdfLabel(0, 3, 1, pagesShown = 2))
         assertEquals("Chapter 1 / 1 • Page 3 / 3", BookChapterMetrics.pdfLabel(2, 3, 1, pagesShown = 2))
@@ -110,6 +125,21 @@ class BookChapterMetricsTest {
         )
         // A book the reader has not inspected yet still has one chapter to read.
         assertEquals(1, BookChapterMetrics.unreadChapterCount(book(ContentType.EPUB, chapterCount = null), null))
+    }
+
+    @Test
+    fun `a section finishes with the ones it shares a first page with`() {
+        val starts = listOf(0, 3, 3, 3, 6)
+
+        assertEquals(listOf(1, 2, 3), BookChapterMetrics.chaptersFinishedWith(3, 9, 5, starts))
+        assertEquals(listOf(4), BookChapterMetrics.chaptersFinishedWith(4, 9, 5, starts))
+        assertEquals(listOf(0), BookChapterMetrics.chaptersFinishedWith(0, 9, 5, starts))
+    }
+
+    @Test
+    fun `without valid sections only the chapter itself finishes`() {
+        assertEquals(listOf(2), BookChapterMetrics.chaptersFinishedWith(2, 9, 3))
+        assertEquals(listOf(2), BookChapterMetrics.chaptersFinishedWith(2, 9, 3, listOf(0, 0, 20)))
     }
 
     private fun book(

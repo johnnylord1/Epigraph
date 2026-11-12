@@ -2,6 +2,22 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <item
+        android:id="@+id/action_select_all"
+        android:icon="@drawable/ic_select_all_24dp"
+        android:title="@string/select_all"
+        android:visible="false"
+        app:iconTint="?attr/actionBarTintColor"
+        app:showAsAction="always" />
+
+    <item
+        android:id="@+id/action_select_inverse"
+        android:icon="@drawable/ic_flip_to_back_24dp"
+        android:title="@string/select_inverse"
+        android:visible="false"
+        app:iconTint="?attr/actionBarTintColor"
+        app:showAsAction="always" />
+
     <!-- Keep the same expandable chapter-search affordance as MangaDetailsController. -->
     <item
         android:id="@+id/action_search"
@@ -9,6 +25,22 @@
         android:title="@string/search"
         app:actionViewClass="eu.kanade.tachiyomi.ui.base.MiniSearchView"
         app:showAsAction="collapseActionView|ifRoom" />
+
+    <item
+        android:id="@+id/action_mark_all_as_read"
+        android:icon="@drawable/ic_done_all_24dp"
+        android:title="@string/mark_all_as_read"
+        app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_mark_all_as_unread"
+        android:title="@string/mark_all_as_unread"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_edit"
+        android:title="@string/edit"
+        app:showAsAction="never" />
 
     <!-- Domain-specific actions stay in the canonical overflow surface. -->
     <item

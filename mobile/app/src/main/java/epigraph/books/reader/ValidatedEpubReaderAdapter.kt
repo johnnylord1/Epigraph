@@ -145,7 +145,14 @@ class ReadiumEpubReaderSession(
         val base = publication.locatorFromLink(readingOrder[index])
             ?: error("The EPUB spine link has no locator")
         val last = (readingOrder.size - 1).coerceAtLeast(1)
-        val localProgression = (locator.progression * last - index).coerceIn(0.0, 1.0)
+        // A finished book reopens at the end of its last chapter. A spine target at 1.0 is instead the
+        // start of that chapter, where every chapter's spine target points.
+        val spineTarget = locator.cfi?.startsWith("aethon-spine:") == true
+        val localProgression = if (locator.progression >= 1.0 && !spineTarget) {
+            1.0
+        } else {
+            (locator.progression * last - index).coerceIn(0.0, 1.0)
+        }
         return base.copyWithLocations(
             progression = localProgression,
             totalProgression = locator.progression.coerceIn(0.0, 1.0),
@@ -248,7 +255,11 @@ class ReadiumEpubReaderSession(
     }
 
     private fun toReaderLocatorInternal(locator: Locator): ReaderLocator.Epub {
-        val progression = locator.locations.totalProgression
+        // In a single-resource EPUB, Readium can keep totalProgression at its first estimated
+        // position. The chapter progression covers the whole publication in that case.
+        val singleChapterProgression = locator.locations.progression
+            ?.takeIf { readingOrder.size == 1 }
+        val progression = singleChapterProgression ?: locator.locations.totalProgression
             ?: run {
                 val index = chapterIndexForHref(locator.href.toString()).coerceAtLeast(0)
                 val local = locator.locations.progression ?: 0.0

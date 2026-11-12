@@ -30,6 +30,8 @@
 -keep,allowoptimization class com.google.gson.** { public protected *; }
 -keep,allowoptimization class com.dokar.quickjs.** { public protected *; }
 -keep,allowoptimization class com.ahmer.pdfium.** { public protected *; }
+# epigraph.books.pdf.PdfOutline reads the outline through these by name.
+-keepclassmembers class com.ahmer.pdfium.PdfDocument { public static *** access$nativeGet*Bookmark*(...); }
 -keep,allowoptimization class org.readium.r2.** { public protected *; }
 # Extension-facing JS engine. The `app.cash.quickjs.QuickJs` shim in this app
 # (see app/src/main/java/app/cash/quickjs/) is loaded reflectively by extensions

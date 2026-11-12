@@ -25,7 +25,10 @@ data class LocalBook(
     val pageCount: Int? = null,
     val importedAt: Long,
     val updatedAt: Long,
-    /** Confirmed PDF outline entries projected by Epigraph Core; not synthetic page buckets. */
+    /**
+     * PDF outline entries, not synthetic page buckets: those projected by Epigraph Core, otherwise
+     * those read from the file on this device.
+     */
     val pdfSections: List<LocalBookPdfSection> = emptyList(),
     /** The file is on Epigraph Core, so a missing local copy downloads when the book is opened. */
     val remoteAvailable: Boolean = false,
@@ -117,6 +120,20 @@ data class ImportedBook(
     val coverPath: String? = privateResult.coverFile?.absolutePath,
 )
 
+/**
+ * Read and bookmark flags of a book's chapters, kept on this device.
+ *
+ * A chapter is read when its [readOverrides] entry says so, otherwise when it is below [readThrough].
+ * [localLocator] is the last position this device saved, and [recorded] says the state has a row.
+ */
+data class LocalBookChapterState(
+    val readThrough: Int = 0,
+    val localLocator: ReaderLocator? = null,
+    val readOverrides: Map<Int, Boolean> = emptyMap(),
+    val bookmarks: Set<Int> = emptySet(),
+    val recorded: Boolean = false,
+)
+
 /** A complete local-book state used by the app backup, without private file bytes. */
 data class LocalBookBackupSnapshot(
     val book: LocalBook,
@@ -124,6 +141,7 @@ data class LocalBookBackupSnapshot(
     val bookmarks: List<BookBookmark>,
     val highlights: List<BookHighlight>,
     val categoryIds: List<Long>,
+    val chapterState: LocalBookChapterState = LocalBookChapterState(),
 )
 
 /** Metadata restored from a backup before the user relinks or imports the private file. */
@@ -144,6 +162,10 @@ data class LocalBookRestoreEntry(
     val bookmarks: List<BookBookmark>,
     val highlights: List<BookHighlight>,
     val categoryIds: List<Long>,
+    /** Null for a backup made before per-chapter flags: [progress] implies them on first open. */
+    val chapterState: LocalBookChapterState? = null,
+    /** The sections [chapterState] counts in; empty when the backup did not read any from the file. */
+    val pdfSections: List<LocalBookPdfSection> = emptyList(),
 ) {
     init {
         require(contentType == ContentType.EPUB || contentType == ContentType.PDF) {
@@ -160,6 +182,11 @@ data class LocalBookRestoreEntry(
         progress?.let {
             require(it.entityId.value == bookId) { "Restored progress belongs to another book" }
             require(it.contentType == contentType) { "Restored progress has a different content type" }
+        }
+        chapterState?.localLocator?.let {
+            require(it.entityId.value == bookId && it.contentType == contentType) {
+                "Restored chapter state does not belong to this book"
+            }
         }
         require(bookmarks.all { it.bookId == bookId }) { "Restored bookmarks belong to another book" }
         require(highlights.all { it.bookId == bookId }) { "Restored highlights belong to another book" }
