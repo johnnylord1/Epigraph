@@ -21,8 +21,8 @@
 - Test all Vitest projects: `pnpm test`
 - Focused unit/jsdom tests: `pnpm test:unit -- <files>`
 - Browser component tests: `pnpm test:browser`
-- Tauri build: `pnpm tauri -- build --config src-tauri/tauri.conf.json`
-- Automation build: `pnpm tauri -- build --no-bundle --config src-tauri/tauri.automation.conf.json`
+- Tauri build: `pnpm tauri build --config src-tauri/tauri.conf.json`
+- Automation build: `pnpm tauri build --no-bundle --config src-tauri/tauri.automation.conf.json`
 - Whitespace check before finalizing edits: `git diff --check`
 - There is no dedicated npm lint or typecheck script. Use focused Vitest coverage and `pnpm build`; run `npx svelte-check` only when useful for touched Svelte/TS areas and call out any pre-existing global noise.
 
