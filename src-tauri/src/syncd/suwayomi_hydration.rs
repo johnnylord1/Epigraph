@@ -30,6 +30,7 @@ const BASE_RETRY: Duration = Duration::from_secs(60);
 const MAX_RETRY: Duration = Duration::from_secs(30 * 60);
 const WORK_PAGE_SIZE: i64 = 500;
 const MAX_WORK_PAGES: usize = 40;
+const PENDING_WORK_BATCH_SIZE: usize = 100;
 const CHAPTER_PAGE_SIZE: i64 = 250;
 const MAX_CHAPTER_PAGES: usize = 80;
 
@@ -38,6 +39,14 @@ const UNHYDRATED_COMICS_QUERY: &str = r#"
     mangas(condition: { inLibrary: true, initialized: false }, first: $first, offset: $offset) {
       pageInfo { hasNextPage }
       nodes { id sourceId }
+    }
+  }
+"#;
+
+const PENDING_CHAPTER_HYDRATION_QUERY: &str = r#"
+  query EpigraphPendingChapterHydration($ids: [Int!]!, $first: Int!) {
+    mangas(filter: { id: { in: $ids } }, first: $first) {
+      nodes { id sourceId url inLibrary chapters { totalCount } }
     }
   }
 "#;
@@ -109,6 +118,7 @@ pub fn spawn_hydration_task(
 struct UnhydratedWork {
     manga_id: i64,
     source_id: String,
+    needs_chapters: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,11 +213,12 @@ async fn save_retries(state: &SharedAppState, retries: &mut RetryBook) {
 async fn hydrate_queue(
     state: &SharedAppState,
     session: &AuthenticatedSession,
-    queue: Vec<i64>,
+    queue: Vec<UnhydratedWork>,
 ) -> Vec<(i64, Outcome)> {
     let mut outcomes = Vec::with_capacity(queue.len());
-    for manga_id in queue {
-        let outcome = match hydrate_work(state, session, manga_id).await {
+    for work in queue {
+        let manga_id = work.manga_id;
+        let outcome = match hydrate_work(state, session, manga_id, work.needs_chapters).await {
             Ok(()) => {
                 PENDING.fetch_sub(1, Ordering::Relaxed);
                 Outcome::Hydrated
@@ -226,12 +237,27 @@ async fn hydrate_work(
     state: &SharedAppState,
     session: &AuthenticatedSession,
     manga_id: i64,
+    needs_chapters: bool,
 ) -> Result<(), AppError> {
     let stand_ins = chapters_with_progress(state, session, manga_id).await?;
-    let fetched =
-        suwayomi_catalog::execute_source_fetch(state, session, FETCH_CHAPTERS_MUTATION, json!({ "mangaId": manga_id }))
-            .await?;
+    let fetched = suwayomi_catalog::execute_source_fetch(
+        state,
+        session,
+        FETCH_CHAPTERS_MUTATION,
+        json!({ "mangaId": manga_id }),
+    )
+    .await?;
     let listed = listed_chapter_urls(fetched.pointer("/fetchChapters/chapters"));
+    if needs_chapters && listed.is_empty() {
+        return Err(AppError::service_unavailable(
+            "SUWAYOMI_HYDRATION_CHAPTERS_EMPTY",
+            "The source has not provided the chapters required by synchronized progress.",
+            true,
+        ));
+    }
+    if !listed.is_empty() {
+        rearm_chapter_retries(state, &session.profile_id, manga_id).await?;
+    }
     let replaced: BTreeSet<String> = stand_ins.difference(&listed).cloned().collect();
     if !replaced.is_empty() {
         match carry_progress(state, &session.profile_id, manga_id, &replaced).await {
@@ -242,10 +268,18 @@ async fn hydrate_work(
                 queued,
                 "projecting progress again onto chapters the source replaced"
             ),
-            Err(error) => tracing::warn!(error = %error, manga_id, "failed to carry progress to replaced chapters"),
+            Err(error) => {
+                tracing::warn!(error = %error, manga_id, "failed to carry progress to replaced chapters")
+            }
         }
     }
-    suwayomi_catalog::execute_source_fetch(state, session, FETCH_MANGA_MUTATION, json!({ "id": manga_id })).await?;
+    suwayomi_catalog::execute_source_fetch(
+        state,
+        session,
+        FETCH_MANGA_MUTATION,
+        json!({ "id": manga_id }),
+    )
+    .await?;
     // Only a work that is now complete changed the catalog the devices apply: a work whose source
     // keeps failing is fetched again on every retry and must not keep the revisions hidden.
     catalog_revision::invalidate(&session.profile_id);
@@ -288,7 +322,7 @@ async fn list_unhydrated(
     state: &SharedAppState,
     session: &AuthenticatedSession,
 ) -> Result<Vec<UnhydratedWork>, AppError> {
-    let mut works = Vec::new();
+    let mut works = BTreeMap::new();
     for page in 0..MAX_WORK_PAGES {
         let data = suwayomi_catalog::execute_graphql_document(
             state,
@@ -298,12 +332,151 @@ async fn list_unhydrated(
             false,
         )
         .await?;
-        works.extend(parse_unhydrated(data.pointer("/mangas/nodes")));
-        if data.pointer("/mangas/pageInfo/hasNextPage").and_then(Value::as_bool) != Some(true) {
+        for work in parse_unhydrated(data.pointer("/mangas/nodes")) {
+            works.insert(work.manga_id, work);
+        }
+        if data
+            .pointer("/mangas/pageInfo/hasNextPage")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
             break;
         }
     }
-    Ok(works)
+    // A work's details may already be initialized while its chapter list was never loaded.
+    // Look only at exact bound identities with pending progress, not at the whole library.
+    let bindings: Vec<PortableWorkBindingRow> = sqlx::query_as(
+        r#"
+        WITH pending AS (
+            SELECT profile_id, variables_json FROM suwayomi_projection_outbox
+            WHERE profile_id = ? AND operation_name = 'UpdateChaptersProgress'
+              AND status IN ('pending', 'retry')
+        )
+        SELECT DISTINCT b.* FROM portable_work_bindings b
+        JOIN pending p ON p.profile_id = b.profile_id
+          AND json_extract(p.variables_json, '$.portableWorkRef.type') = 'comic'
+          AND CAST(json_extract(p.variables_json, '$.portableWorkRef.sourceId') AS TEXT) = b.source_id
+          AND json_extract(p.variables_json, '$.portableWorkRef.mangaKey') = b.provider_key
+        WHERE b.ecosystem = 'SUWAYOMI' AND b.resolution_state = 'BOUND'
+        ORDER BY b.local_reference, b.portable_id
+        LIMIT ?
+        "#,
+    )
+    .bind(&session.profile_id)
+    .bind(MAX_WORK_PAGES as i64 * WORK_PAGE_SIZE)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|_| AppError::Internal("Failed to list comics awaiting chapter hydration.".into()))?;
+    let mut expected = BTreeMap::<i64, Vec<(String, String)>>::new();
+    for binding in bindings {
+        let Some(local) = binding.local_reference.as_deref() else {
+            continue;
+        };
+        let Some(id) = local
+            .parse::<i64>()
+            .ok()
+            .filter(|id| *id > 0 && *id <= i32::MAX as i64)
+        else {
+            continue;
+        };
+        if local != id.to_string() {
+            continue;
+        }
+        let Ok(super::models::PortableWorkRefV3::Comic {
+            source_id,
+            manga_key,
+        }) = binding.portable_ref()
+        else {
+            continue;
+        };
+        expected.entry(id).or_default().push((source_id, manga_key));
+    }
+    let ids: Vec<i64> = expected.keys().copied().collect();
+    for batch in ids.chunks(PENDING_WORK_BATCH_SIZE) {
+        let data = suwayomi_catalog::execute_graphql_document(
+            state,
+            session,
+            PENDING_CHAPTER_HYDRATION_QUERY,
+            json!({ "ids": batch, "first": batch.len() }),
+            false,
+        )
+        .await?;
+        for node in data
+            .pointer("/mangas/nodes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(id) = node.get("id").and_then(Value::as_i64) else {
+                continue;
+            };
+            let Some(references) = expected.get(&id) else {
+                continue;
+            };
+            if node.get("inLibrary").and_then(Value::as_bool) != Some(true)
+                || node.pointer("/chapters/totalCount").and_then(Value::as_i64) != Some(0)
+            {
+                continue;
+            }
+            let source_id = match node.get("sourceId") {
+                Some(Value::String(value)) => value.clone(),
+                Some(Value::Number(value)) => value.to_string(),
+                _ => continue,
+            };
+            let Some(key) = node.get("url").and_then(Value::as_str) else {
+                continue;
+            };
+            if references
+                .iter()
+                .any(|(source, provider_key)| source == &source_id && provider_key == key)
+            {
+                works.insert(
+                    id,
+                    UnhydratedWork {
+                        manga_id: id,
+                        source_id,
+                        needs_chapters: true,
+                    },
+                );
+            }
+        }
+    }
+    Ok(works.into_values().collect())
+}
+
+/// Chapters just became available. Keep the payload and attempts, and advance only the matching
+/// profile/work's missing-chapter retries so a successful fetch does not leave them waiting hours.
+async fn rearm_chapter_retries(
+    state: &SharedAppState,
+    profile_id: &str,
+    manga_id: i64,
+) -> Result<(), AppError> {
+    let now = db::now_ms();
+    let _writer_guard = state.mutation_gate.lock().await;
+    let result = sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox AS p
+        SET next_attempt_at_ms = ?, updated_at_ms = ?
+        WHERE p.profile_id = ? AND p.operation_name = 'UpdateChaptersProgress'
+          AND p.status = 'retry' AND p.last_error = 'portable_chapter_not_resolved'
+          AND p.next_attempt_at_ms > ?
+          AND json_extract(p.variables_json, '$.portableWorkRef.type') = 'comic'
+          AND EXISTS (
+            SELECT 1 FROM portable_work_bindings b
+            WHERE b.profile_id = p.profile_id AND b.ecosystem = 'SUWAYOMI'
+              AND b.resolution_state = 'BOUND' AND b.local_reference = ?
+              AND b.source_id = CAST(json_extract(p.variables_json, '$.portableWorkRef.sourceId') AS TEXT)
+              AND b.provider_key = json_extract(p.variables_json, '$.portableWorkRef.mangaKey')
+          )
+        "#,
+    )
+    .bind(now).bind(now).bind(profile_id).bind(now).bind(manga_id.to_string())
+    .execute(&state.pool).await
+    .map_err(|_| AppError::Internal("Failed to resume projections after chapter hydration.".into()))?;
+    if result.rows_affected() > 0 {
+        suwayomi_projection::wake_projection();
+    }
+    Ok(())
 }
 
 /// URLs of the work's chapters that hold any progress.
@@ -381,6 +554,7 @@ fn parse_unhydrated(nodes: Option<&Value>) -> Vec<UnhydratedWork> {
             Some(UnhydratedWork {
                 manga_id,
                 source_id,
+                needs_chapters: false,
             })
         })
         .collect()
@@ -415,13 +589,13 @@ fn listed_chapter_urls(chapters: Option<&Value>) -> BTreeSet<String> {
 fn due_queues_by_source(
     works: &[UnhydratedWork],
     is_due: impl Fn(i64) -> bool,
-) -> Vec<Vec<i64>> {
-    let mut queues = BTreeMap::<&str, Vec<i64>>::new();
+) -> Vec<Vec<UnhydratedWork>> {
+    let mut queues = BTreeMap::<&str, Vec<UnhydratedWork>>::new();
     for work in works.iter().filter(|work| is_due(work.manga_id)) {
         queues
             .entry(work.source_id.as_str())
             .or_default()
-            .push(work.manga_id);
+            .push(work.clone());
     }
     queues.into_values().collect()
 }
@@ -525,10 +699,171 @@ mod tests {
     use super::*;
     use crate::syncd::models::PortableWorkRefV3;
 
+    async fn pending_chapter_fixture(
+        empty_fetch: bool,
+        uninitialized: bool,
+    ) -> (
+        tempfile::TempDir,
+        SharedAppState,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use crate::syncd::config::{SyncdAdvertisedEndpointResolver, SyncdConfig};
+        use crate::syncd::discovery::*;
+        use crate::syncd::models::{
+            canonical_portable_work_id, AppState, PortableResolutionStateV3,
+        };
+        use std::sync::{atomic::AtomicUsize, Arc};
+        use tokio::sync::{broadcast, Mutex, RwLock};
+
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let counted = fetches.clone();
+        let router = axum::Router::new().route("/api/graphql", axum::routing::post(
+            move |axum::Json(body): axum::Json<Value>| {
+                let counted = counted.clone();
+                async move {
+                    let query = body["query"].as_str().unwrap();
+                    let data = if query.contains("EpigraphUnhydratedComics") {
+                        json!({"mangas":{"nodes":if uninitialized {json!([{"id":7,"sourceId":"10"}])} else {json!([])},"pageInfo":{"hasNextPage":false}}})
+                    } else if query.contains("EpigraphPendingChapterHydration") {
+                        assert_eq!(body["variables"]["ids"], json!([7,8,9,10,11,12]));
+                        json!({"mangas":{"nodes":[
+                            {"id":7,"sourceId":"10","url":"/manga/7","inLibrary":true,"chapters":{"totalCount":0}},
+                            {"id":8,"sourceId":"10","url":"/manga/8","inLibrary":true,"chapters":{"totalCount":2}},
+                            {"id":9,"sourceId":"10","url":"/manga/9","inLibrary":false,"chapters":{"totalCount":0}},
+                            {"id":10,"sourceId":"99","url":"/manga/10","inLibrary":true,"chapters":{"totalCount":0}},
+                            {"id":11,"sourceId":"10","url":"/other/11","inLibrary":true,"chapters":{"totalCount":0}},
+                            {"id":12,"sourceId":"10","url":"/manga/12","inLibrary":true}
+                        ],"pageInfo":{"hasNextPage":false}}})
+                    } else if query.contains("EpigraphStandInChapters") {
+                        json!({"chapters":{"nodes":[],"pageInfo":{"hasNextPage":false}}})
+                    } else if query.contains("EpigraphHydrateChapters") {
+                        assert_eq!(body["variables"]["mangaId"], 7);
+                        counted.fetch_add(1, Ordering::Relaxed);
+                        json!({"fetchChapters":{"chapters":if empty_fetch {json!([])} else {json!([{"url":"/chapter/1"}])}}})
+                    } else if query.contains("EpigraphHydrateManga") {
+                        json!({"fetchManga":{"manga":{"id":7}}})
+                    } else {
+                        panic!("unexpected hydration query: {query}");
+                    };
+                    axum::Json(json!({"data":data}))
+                }
+            }
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        config.set_suwayomi_proxy_test_upstream("main", &endpoint);
+        let pool = db::connect(&config).await.unwrap();
+        let advertised_endpoint_resolver =
+            SyncdAdvertisedEndpointResolver::from_config(&config).unwrap();
+        let discovery_provider_manager =
+            SyncdDiscoveryProviderManager::from_config(&config).unwrap();
+        let initial_status =
+            discovery_provider_manager.initial_status(&config, &advertised_endpoint_resolver);
+        let state = Arc::new(AppState {
+            config,
+            advertised_endpoint_resolver,
+            discovery_provider_manager,
+            discovery_descriptor_provider: SyncdDiscoveryDescriptorProvider::default(),
+            client_discovery_contract_provider: SyncdClientDiscoveryContractProvider::default(),
+            client_discovery_guidance_provider: SyncdClientDiscoveryGuidanceProvider::default(),
+            discovery_provider_state: Arc::new(RwLock::new(initial_status)),
+            discovery_provider_runtime: Arc::new(Mutex::new(None)),
+            pool,
+            change_sender: broadcast::channel(128).0,
+            pairing_status_sender: broadcast::channel(128).0,
+            mutation_gate: Arc::new(Mutex::new(())),
+            tls_cert_sha256: "test".to_string(),
+            device_presence: Default::default(),
+        });
+        for id in 7..=13 {
+            let reference = PortableWorkRefV3::Comic {
+                source_id: "10".into(),
+                manga_key: format!("/manga/{id}"),
+            };
+            db::upsert_portable_work_binding(
+                &state.pool,
+                "main",
+                &canonical_portable_work_id(&reference),
+                &reference,
+                None,
+                Some(&id.to_string()),
+                PortableResolutionStateV3::Bound,
+                None,
+                None,
+                None,
+                1,
+                1,
+            )
+            .await
+            .unwrap();
+            let variables = json!({"portableWorkRef":reference,"portableChapterRef":{"type":"comic","work":reference,"chapterKey":"/chapter/1"},"isRead":true,"lastPageRead":9});
+            sqlx::query("INSERT INTO suwayomi_projection_outbox (operation_id,profile_id,operation_name,variables_json,entity_type,entity_id,source_server_version,status,attempt_count,next_attempt_at_ms,last_error,created_at_ms,updated_at_ms) VALUES (?,'main','UpdateChaptersProgress',?,'comic.chapter_state',?,1,'retry',75,?,'portable_chapter_not_resolved',1,1)")
+                .bind(format!("pending-{id}")).bind(variables.to_string()).bind(format!("chapter-{id}")).bind(db::now_ms()+21_600_000).execute(&state.pool).await.unwrap();
+        }
+        sqlx::query("UPDATE portable_work_bindings SET local_reference='not-a-number' WHERE provider_key='/manga/13'").execute(&state.pool).await.unwrap();
+        for (id, profile, status, variables) in [
+            ("in-flight", "main", "in_flight", None),
+            ("other-profile", "other", "retry", None),
+            ("malformed", "main", "retry", Some("{}")),
+        ] {
+            sqlx::query("INSERT INTO suwayomi_projection_outbox (operation_id,profile_id,operation_name,variables_json,entity_type,entity_id,source_server_version,status,attempt_count,next_attempt_at_ms,last_error,created_at_ms,updated_at_ms) SELECT ?,?,operation_name,COALESCE(?,variables_json),entity_type,entity_id,source_server_version,?,attempt_count,next_attempt_at_ms,last_error,created_at_ms,updated_at_ms FROM suwayomi_projection_outbox WHERE operation_id='pending-7'")
+                .bind(id).bind(profile).bind(variables).bind(status).execute(&state.pool).await.unwrap();
+        }
+        (temp, state, fetches, server)
+    }
+
+    #[tokio::test]
+    async fn initialized_work_with_pending_chapters_is_hydrated_and_retries_wake() {
+        let (_temp, state, fetches, server) = pending_chapter_fixture(false, false).await;
+        let original: String = sqlx::query_scalar(
+            "SELECT variables_json FROM suwayomi_projection_outbox WHERE operation_id='pending-7'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        let mut retries = RetryBook::default();
+        hydrate_profiles(&state, &mut retries).await.unwrap();
+        server.abort();
+        assert_eq!(
+            fetches.load(Ordering::Relaxed),
+            1,
+            "initialized works with pending progress still need their chapters"
+        );
+        let (payload,attempts,due):(String,i64,i64)=sqlx::query_as("SELECT variables_json,attempt_count,next_attempt_at_ms FROM suwayomi_projection_outbox WHERE operation_id='pending-7'").fetch_one(&state.pool).await.unwrap();
+        assert_eq!((payload, attempts), (original, 75));
+        assert!(due <= db::now_ms());
+        let others:Vec<i64>=sqlx::query_scalar("SELECT next_attempt_at_ms FROM suwayomi_projection_outbox WHERE operation_id<>'pending-7'").fetch_all(&state.pool).await.unwrap();
+        assert!(others.iter().all(|due| *due > db::now_ms()));
+    }
+
+    #[tokio::test]
+    async fn initialized_work_with_empty_chapter_fetch_keeps_durable_backoff() {
+        let (_temp, state, fetches, server) = pending_chapter_fixture(true, true).await;
+        let mut retries = RetryBook::default();
+        hydrate_profiles(&state, &mut retries).await.unwrap();
+        assert_eq!(fetches.load(Ordering::Relaxed), 1);
+        let mut restarted = RetryBook::load(&state.pool, db::now_ms()).await.unwrap();
+        assert!(!restarted.is_due("main", 7, db::now_ms()));
+        hydrate_profiles(&state, &mut restarted).await.unwrap();
+        server.abort();
+        assert_eq!(
+            fetches.load(Ordering::Relaxed),
+            1,
+            "empty responses must not restart fetching every tick"
+        );
+    }
+
     fn work(manga_id: i64, source_id: &str) -> UnhydratedWork {
         UnhydratedWork {
             manga_id,
             source_id: source_id.to_string(),
+            needs_chapters: false,
         }
     }
 
@@ -553,7 +888,7 @@ mod tests {
         let works = [work(1, "a"), work(2, "b"), work(3, "a"), work(4, "a")];
         assert_eq!(
             due_queues_by_source(&works, |id| id != 3),
-            [vec![1, 4], vec![2]]
+            [vec![work(1, "a"), work(4, "a")], vec![work(2, "b")]]
         );
         assert!(due_queues_by_source(&works, |_| false).is_empty());
     }

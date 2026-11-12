@@ -1197,6 +1197,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_status_keeps_unresolved_chapter_retries_unfinished() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "waiting-device",
+            "waiting-status",
+            &token_hash("waiting-token"),
+            &["comics:profile:waiting-status"],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO suwayomi_projection_outbox (
+              operation_id, profile_id, operation_name, variables_json,
+              entity_type, entity_id, source_server_version, status,
+              attempt_count, next_attempt_at_ms, last_error, created_at_ms, updated_at_ms
+            ) VALUES ('waiting-chapter-status', 'waiting-status', 'UpdateChaptersProgress', '{}',
+                      'comic.chapter_state', 'waiting-chapter', 1, 'retry', 74, ?,
+                      'portable_chapter_not_resolved', ?, ?)
+            "#,
+        )
+        .bind(db::now_ms() + 300_000)
+        .bind(db::now_ms())
+        .bind(db::now_ms())
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        let app = build_test_router(state.clone());
+
+        let (status, payload) = request_json(
+            &app,
+            Method::GET,
+            "/v1/sync/status?scopeId=comics%3Aprofile%3Awaiting-status",
+            Some("waiting-token"),
+            None,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["ready"], false);
+        assert_eq!(payload["suwayomiProjectionPending"], 0);
+        assert_eq!(payload["suwayomiProjectionBlocked"], 1);
+        assert_eq!(payload["suwayomiCatalogProjectionPending"], 0);
+        let stored: (String, i64) = sqlx::query_as(
+            "SELECT status, attempt_count FROM suwayomi_projection_outbox WHERE operation_id = 'waiting-chapter-status'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, ("retry".to_string(), 74));
+    }
+
+    #[tokio::test]
     async fn snapshot_returns_empty_authoritative_scope() {
         let (_temp, state) = build_state_for_http().await;
         ensure_test_token(

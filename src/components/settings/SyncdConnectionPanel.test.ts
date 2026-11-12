@@ -103,6 +103,7 @@ import { refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadines
 import {
   listenSyncdDesktopState,
   listenSyncdPairingStatus,
+  syncdDisconnectPersistedSession,
   syncdGetActiveHostPairing,
   syncdGetRuntimeIdentity,
   syncdGetReplicationState,
@@ -352,6 +353,37 @@ describe("SyncdConnectionPanel", () => {
     await act(async () => {});
     expect(onReadyChange).toHaveBeenLastCalledWith(false);
     expect(onReadyChange).not.toHaveBeenCalledWith(true);
+  });
+
+  test("offers Disconnect as the one way to remove the active session", async () => {
+    const replication = { localProfileId: "main", activeSessionKey: "remote", replicationStatus: "live" as const, paused: false, lastAppliedScopes: [] };
+    const session = {
+      sessionKey: "remote",
+      localProfileId: "main",
+      remoteServerId: "server-b",
+      remoteProfileId: "main",
+      canonicalOrigin: "https://desktop-b.invalid:4787",
+      fallbackOrigins: [],
+      tlsCertSha256: "abc",
+      accessToken: "test-only",
+      lastDiscoverySource: "manual-endpoint" as const,
+      lastKnownStatus: "connected" as const,
+      isActiveForSync: true,
+      actions: { canSetActive: false, canPause: true, canResume: false, canRevalidate: true, canDisconnect: true, canForget: false },
+    };
+    vi.mocked(syncdGetReplicationState).mockResolvedValue(replication);
+    vi.mocked(syncdGetSessionCatalog).mockResolvedValue({ localProfileId: "main", activeSessionKey: "remote", replication, sessions: [session] });
+    vi.mocked(syncdDisconnectPersistedSession).mockResolvedValue(undefined as never);
+    render(SyncdConnectionPanel, { profileId: "main", scopeLabel: "Settings" });
+
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
+    await waitFor(() => expect(within(dialog).getByTestId("syncd-persisted-session-item")).toBeTruthy());
+    await fireEvent.click(within(dialog).getByTestId("syncd-modal-details"));
+
+    // The backend refuses to forget the active session, so a Forget button here could only ever fail.
+    expect(within(dialog).queryByRole("button", { name: "Forget" })).toBeNull();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(syncdDisconnectPersistedSession).toHaveBeenCalledWith("remote"));
   });
 
   test("waits for library hydration and ignores detached results", async () => {

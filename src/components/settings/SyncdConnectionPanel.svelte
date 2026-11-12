@@ -4,7 +4,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadiness";
-  import { ArrowClockwise, CaretRight, Check, CircleNotch, Copy, Desktop, DeviceMobile, Devices, DownloadSimple, ImageSquare, Info, Plugs, QrCode, Trash, UploadSimple, Warning, X } from "phosphor-svelte";
+  import { ArrowClockwise, CaretRight, Check, CircleNotch, Copy, Desktop, DeviceMobile, Devices, DownloadSimple, ImageSquare, Info, Plugs, QrCode, UploadSimple, Warning, X } from "phosphor-svelte";
   import { glideHeight } from "../../lib/motion/motion";
   import { addToast, store } from "../../store/state.svelte";
   import { buildSyncdQrDataUrl, decodeSyncdQrDataUrl, decodeSyncdQrFile } from "../../lib/syncdQr";
@@ -23,13 +23,11 @@
     syncdGetSessionCatalog,
     syncdHostDecidePairing,
     syncdListPairedDevices,
-    syncdForgetPersistedSession,
     syncdListDiscoveryCandidates,
     syncdPauseReplication,
     syncdResumeReplication,
     syncdRevalidateSession,
     syncdRevalidatePersistedSyncSessions,
-    syncdSetActiveReplicationSession,
     syncdStartHostPairing,
     syncdUpdatePairedDeviceGrantedScopes,
     syncdRevokePairedDevice,
@@ -85,8 +83,6 @@
   let hostDecisionBusy = $state<PairingHostDecision | null>(null);
   let revalidateBusy = $state(false);
   let disconnectBusyKey = $state<string | null>(null);
-  let forgetBusyKey = $state<string | null>(null);
-  let activeSessionBusyKey = $state<string | null>(null);
   let singleRevalidateBusyKey = $state<string | null>(null);
   let replicationActionBusy = $state<"pause" | "resume" | "reconnect" | null>(null);
   let persistedSessionsRefreshInFlight = false;
@@ -934,25 +930,6 @@
     }
   }
 
-  async function setActiveSession(sessionKey: string) {
-    if (!activeProfileId) return;
-    activeSessionBusyKey = sessionKey;
-    panelError = null;
-    try {
-      replicationSnapshot = await syncdSetActiveReplicationSession(activeProfileId, sessionKey);
-      void refreshPersistedSessions();
-      addToast({
-        kind: "success",
-        title: translate("ui_activeSyncSessionUpdated"),
-        body: translate("ui_replicationWillNowFollowTheSelectedDesktopSession"),
-      });
-    } catch (error) {
-      panelError = { cause: error, fallback: "ui_syncActionFailed" };
-    } finally {
-      activeSessionBusyKey = null;
-    }
-  }
-
   async function pauseReplication() {
     if (!activeProfileId) return;
     replicationActionBusy = "pause";
@@ -1010,25 +987,6 @@
       panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       singleRevalidateBusyKey = null;
-    }
-  }
-
-  async function forgetSession(sessionKey: string) {
-    if (!activeProfileId) return;
-    forgetBusyKey = sessionKey;
-    panelError = null;
-    try {
-      await syncdForgetPersistedSession(activeProfileId, sessionKey);
-      void refreshPersistedSessions();
-      addToast({
-        kind: "success",
-        title: translate("ui_syncSessionForgotten"),
-        body: translate("ui_theLocalCatalogNoLongerKeepsThatInactive"),
-      });
-    } catch (error) {
-      panelError = { cause: error, fallback: "ui_syncActionFailed" };
-    } finally {
-      forgetBusyKey = null;
     }
   }
 
@@ -1268,7 +1226,7 @@
                     <div class="syncd-disclosure__body">
                       <label class="syncd-field"><span class="syncd-field__label">{$_("ui_bootstrapBundle")}</span><span class="syncd-field__control"><textarea bind:this={bootstrapBundleTextarea} class="syncd-textarea" data-testid="syncd-bootstrap-bundle-input" bind:value={bootstrapBundleInput} placeholder={$_("ui_pasteTheHostBundleJsonHere")}></textarea></span></label>
                       <div class="syncd-row"><span>{$_("ui_discoveredPeers")}</span><button class="syncd-link" type="button" data-testid="syncd-connect-refresh-peers" onclick={refreshDiscoveryCandidates} disabled={loadingCandidates}>{#if loadingCandidates}<CircleNotch size={14} class="syncd-spinner" />{:else}<ArrowClockwise size={14} />{/if}{loadingCandidates ? $_("common_refreshing") : $_("ui_refreshPeers")}</button></div>
-                      {#if candidates.length > 0}<div class="syncd-list" data-testid="syncd-discovered-peers">{#each candidates as candidate}<div class="syncd-list__item" data-testid="syncd-peer-item"><span class="syncd-list__icon" aria-hidden="true"><Desktop size={18} /></span><div><strong>{candidate.deviceName || candidate.instanceName}</strong><small>{candidate.effectiveOrigin}</small></div><button class="syncd-link" type="button" data-testid="syncd-peer-use-origin" onclick={() => (manualOrigin = candidate.discoveryOrigin)}>{$_("ui_useOrigin")}</button></div>{/each}</div>{/if}
+                      {#if candidates.length > 0}<div class="syncd-list" data-testid="syncd-discovered-peers">{#each candidates as candidate (candidate.instanceName + "|" + candidate.discoveryOrigin)}<div class="syncd-list__item" data-testid="syncd-peer-item"><span class="syncd-list__icon" aria-hidden="true"><Desktop size={18} /></span><div><strong>{candidate.deviceName || candidate.instanceName}</strong><small>{candidate.effectiveOrigin}</small></div><button class="syncd-link" type="button" data-testid="syncd-peer-use-origin" onclick={() => (manualOrigin = candidate.discoveryOrigin)}>{$_("ui_useOrigin")}</button></div>{/each}</div>{/if}
                       <label class="syncd-field"><span class="syncd-field__label">{$_("ui_manualOriginFallback")}</span><span class="syncd-field__control"><input bind:this={manualOriginInput} class="syncd-input" data-testid="syncd-manual-origin" bind:value={manualOrigin} placeholder={$_("ui_https1921681254777")} spellcheck="false" /></span></label>
                     </div>
                   {/if}
@@ -1303,7 +1261,7 @@
             <div class="syncd-start-copy syncd-pane"><h3>{approvalTitle}</h3></div>
             <div class="syncd-request syncd-pane"><span class="syncd-list__icon" aria-hidden="true">{#if remoteDeviceKind === "phone"}<DeviceMobile size={20} />{:else}<Desktop size={20} />{/if}</span><div><strong>{remoteDeviceName}</strong><small>{remotePlatformLabel}</small></div></div>
             <div class="syncd-verification syncd-pane" data-testid="syncd-host-verification"><strong aria-label={$_("syncd_modal_verificationLabel")}>{hostVerificationCode}</strong><small>{approvalVerificationHint}</small></div>
-            <ul class="syncd-scope-list syncd-pane" data-testid="syncd-requested-scopes">{#each host.requestedScopes as scope}<li><Check size={14} weight="bold" />{permissionScopeLabel(scope)}</li>{/each}</ul>
+            <ul class="syncd-scope-list syncd-pane" data-testid="syncd-requested-scopes">{#each new Set(host.requestedScopes) as scope (scope)}<li><Check size={14} weight="bold" />{permissionScopeLabel(scope)}</li>{/each}</ul>
             {#if previousPairingsOfClaimant.length > 0}<label class="syncd-replace-previous syncd-pane" data-testid="syncd-replace-previous-pairings"><span>{$_("syncd_modal_replacePreviousPairings", { count: previousPairingsOfClaimant.length })}</span><input class="syncd-switch" type="checkbox" bind:checked={removePreviousPairings} disabled={hostDecisionBusy !== null} /></label>{/if}
             <span class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
           {:else}
@@ -1334,7 +1292,7 @@
             <div><dt>{$_("ui_advertisedOrigin")}</dt><dd class="is-mono">{activeSession?.canonicalOrigin ?? connect?.remoteOrigin ?? host?.advertisedBaseUrl ?? $_("syncd_status_waiting")}</dd></div>
             <div><dt>{$_("ui_lastConnected")}</dt><dd>{formatWhen(replicationSnapshot?.lastConnectedAtMs ?? activeSession?.lastValidatedAtMs)}</dd></div>
           </dl>
-          {#if permissionDevices.length > 0}<div class="syncd-permissions syncd-pane" data-testid="syncd-paired-device-permissions"><h3>{$_("ui_scope")}</h3>{#each permissionDevices as device}<div class="syncd-permission-device" data-testid="syncd-paired-device-permission">{#each allowedDeviceScopes(device) as scope}<label><strong>{permissionScopeLabel(scope)}</strong><input class="syncd-switch" type="checkbox" checked={device.grantedScopes.includes(scope)} disabled={pairedDeviceScopeBusy !== null} onchange={() => togglePairedDeviceScope(device, scope)} /></label>{/each}<button class="syncd-btn" type="button" data-testid="syncd-revoke-paired-device" disabled={pairedDeviceScopeBusy !== null} onclick={() => revokePairedDevice(device)}>{revokeArmedDeviceId === device.deviceId ? $_("syncd_action_revokeDeviceConfirm") : $_("syncd_action_revokeDevice")}</button></div>{/each}</div>{/if}
+          {#if permissionDevices.length > 0}<div class="syncd-permissions syncd-pane" data-testid="syncd-paired-device-permissions"><h3>{$_("ui_scope")}</h3>{#each permissionDevices as device (device.deviceId)}<div class="syncd-permission-device" data-testid="syncd-paired-device-permission">{#each allowedDeviceScopes(device) as scope (scope)}<label><strong>{permissionScopeLabel(scope)}</strong><input class="syncd-switch" type="checkbox" checked={device.grantedScopes.includes(scope)} disabled={pairedDeviceScopeBusy !== null} onchange={() => togglePairedDeviceScope(device, scope)} /></label>{/each}<button class="syncd-btn" type="button" data-testid="syncd-revoke-paired-device" disabled={pairedDeviceScopeBusy !== null} onclick={() => revokePairedDevice(device)}>{revokeArmedDeviceId === device.deviceId ? $_("syncd_action_revokeDeviceConfirm") : $_("syncd_action_revokeDevice")}</button></div>{/each}</div>{/if}
           {#if pairedDevices.length > 0}
             <div class="syncd-permissions syncd-pane" data-testid="syncd-paired-devices">
               <h3>{$_("syncd_modal_pairedDevices")}</h3>
@@ -1355,13 +1313,12 @@
               {/if}
             </div>
           {/if}
-          {#if persistedSessions.length > 0}<div class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-persisted-sessions">{#each persistedSessions as session}<span data-testid="syncd-persisted-session-item">{session.sessionKey}</span>{/each}</div>{/if}
+          {#if persistedSessions.length > 0}<div class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-persisted-sessions">{#each persistedSessions as session (session.sessionKey)}<span data-testid="syncd-persisted-session-item">{session.sessionKey}</span>{/each}</div>{/if}
         </section>
       </div>
 
       <footer class="syncd-modal__footer">
         {#if modalView === "details"}
-          <button class="syncd-btn syncd-btn--danger" type="button" disabled={!activeSession || forgetBusyKey !== null} onclick={() => activeSession && forgetSession(activeSession.sessionKey)}><Trash size={16} />{forgetBusyKey ? $_("syncd_action_forgetting") : $_("syncd_action_forget")}</button>
           <span class="syncd-spacer"></span>
           <button class="syncd-btn" type="button" disabled={!activeSession || disconnectBusyKey !== null} onclick={() => activeSession && disconnectSession(activeSession.sessionKey)}>{$_("syncd_action_disconnect")}</button>
           <button class="syncd-btn" type="button" data-testid="syncd-revalidate-sessions" onclick={revalidatePersisted} disabled={!hasProfile() || revalidateBusy}>{revalidateBusy ? $_("syncd_action_revalidating") : $_("syncd_action_revalidate")}</button>

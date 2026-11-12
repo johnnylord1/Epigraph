@@ -200,7 +200,7 @@ describe("server lifecycle notifications", () => {
   });
 
   it("does not put the server in standby while a restore holds it awake", async () => {
-    const invoke = vi.fn(async (command: string) => command === "probe_server_health" ? true : undefined);
+    const invoke = vi.fn(async () => true);
     vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
     vi.doMock("./manga/runtime/managed", () => ({ resetManagedSourceRuntime: () => {} }));
     const { holdServerAwake, maybeStandbyLocalServer } = await import("./serverLifecycle");
@@ -212,6 +212,20 @@ describe("server lifecycle notifications", () => {
     release();
     expect(await maybeStandbyLocalServer(input)).toBe(true);
     expect(invoke).toHaveBeenCalledWith("kill_server", { serverUrl: "http://127.0.0.1:4567" });
+  });
+
+  it("stops asking for standby once the server turns out to be kept by the Core", async () => {
+    const invoke = vi.fn(async (command: string) => command === "probe_server_health");
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    vi.doMock("./manga/runtime/managed", () => ({ resetManagedSourceRuntime: () => {} }));
+    const { maybeStandbyLocalServer } = await import("./serverLifecycle");
+    const input = { serverUrl: "http://127.0.0.1:4567", binary: "", updateIntensity: "balanced" as const, profileId: "main", profileLabel: "MAIN" };
+
+    expect(await maybeStandbyLocalServer(input)).toBe(false);
+    const callsAfterAnswer = invoke.mock.calls.length;
+    expect(await maybeStandbyLocalServer(input)).toBe(false);
+    expect(await maybeStandbyLocalServer(input)).toBe(false);
+    expect(invoke.mock.calls.length).toBe(callsAfterAnswer);
   });
 
   it("stops probing when cancelled or after giving up", async () => {

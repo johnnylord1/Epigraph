@@ -112,6 +112,7 @@ function normalizeBookmarkEntry(value: unknown): EpigraphNovelBookmarkEntry | nu
     locator: normalizeText(record.locator),
     label: normalizeText(record.label),
     savedAt: typeof record.savedAt === "number" ? record.savedAt : Date.now(),
+    ...(normalizeText(record.syncId) ? { syncId: normalizeText(record.syncId) } : {}),
   };
 }
 
@@ -127,6 +128,7 @@ function normalizeHistoryEntry(value: unknown): EpigraphNovelHistoryEntry | null
     chapterTitle: normalizeText(record.chapterTitle),
     locator: normalizeText(record.locator),
     readAt: typeof record.readAt === "number" ? record.readAt : Date.now(),
+    ...(normalizeText(record.historyId) ? { historyId: normalizeText(record.historyId) } : {}),
   };
 }
 

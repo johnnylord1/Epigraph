@@ -20,6 +20,7 @@ import {
   reloadNovelLibraryState,
   loadNovelLibraryStateForRestore,
   markNovelChapterRead,
+  normalizeNovelLibraryState,
   parseNovelScrollLocator,
   peekNovelLibraryState,
   resetNovelLibraryStateCacheForTests,
@@ -299,6 +300,26 @@ describe("novel library state storage", () => {
       progressPercent: 0.5,
     });
     expect(getNovelBookmarkEntries(enriched, novelId)).toHaveLength(1);
+  });
+
+  it("keeps the ids synced bookmarks and history have on the Core when normalized", () => {
+    const novelId = createNovelLibraryId("archiveofourown", "/works/1");
+    const normalized = normalizeNovelLibraryState({
+      ...createState(),
+      bookmarks: [
+        { novelId, chapterId: "chapter:1", savedAt: 1, syncId: "novel-bookmark:phone" },
+        { novelId, chapterId: "chapter:2", savedAt: 2 },
+      ],
+      history: [
+        { novelId, chapterId: "chapter:1", readAt: 1, historyId: "novel.history::phone" },
+        { novelId, chapterId: "chapter:2", readAt: 2 },
+      ],
+    }, SCOPE);
+
+    expect(normalized.bookmarks[0].syncId).toBe("novel-bookmark:phone");
+    expect(normalized.bookmarks[1]).not.toHaveProperty("syncId");
+    expect(normalized.history[0].historyId).toBe("novel.history::phone");
+    expect(normalized.history[1]).not.toHaveProperty("historyId");
   });
 
   it("toggles bookmarks and advances read state for a novel chapter", () => {

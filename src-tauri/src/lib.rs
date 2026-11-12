@@ -1821,6 +1821,34 @@ async fn get_cached_library_cover(
     Ok(find_cached_library_cover_path(&key).map(|path| path.to_string_lossy().into_owned()))
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedLibraryCoverLookup {
+    manga_id: i64,
+    thumbnail_url: String,
+}
+
+// The same lookup for many titles, answered in the order asked. A pass over the whole library would
+// otherwise cross the webview bridge once per title.
+#[tauri::command]
+async fn get_cached_library_covers(
+    profile_id: String,
+    server_url: String,
+    items: Vec<CachedLibraryCoverLookup>,
+) -> Result<Vec<Option<String>>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        items
+            .iter()
+            .map(|item| {
+                let key = library_cover_cache_key(&profile_id, &server_url, item.manga_id, &item.thumbnail_url);
+                find_cached_library_cover_path(&key).map(|path| path.to_string_lossy().into_owned())
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn cache_library_cover(
     profile_id: String,
@@ -5027,6 +5055,7 @@ fn write_novel_library_state(
         server_url.as_deref(),
     )?;
     let previous_contents = fs::read_to_string(&path).ok();
+    let contents = syncd_replication::heal_novel_state_contents(&contents).unwrap_or(contents);
     write_restore_library_snapshot(&path, &contents)?;
     let next_contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
     let notify_profile_id = profile_id.clone();
@@ -5195,9 +5224,13 @@ fn kill_tachidesk(app: &tauri::AppHandle, server_url: Option<&str>) -> Result<()
     kill_tachidesk_target(app, &target)
 }
 
+fn runtime_belongs_to_core(target: &LocalServerTarget) -> bool {
+    target.attach_only || managed_startup_owner(&target.profile_key, target.port) == ManagedStartupOwner::PersistentCore
+}
+
 pub(crate) fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServerTarget) -> Result<(), String> {
     use suwayomi_runtime::ownership::Ownership;
-    if target.attach_only || managed_startup_owner(&target.profile_key, target.port) == ManagedStartupOwner::PersistentCore {
+    if runtime_belongs_to_core(target) {
         return Err("Refusing desktop cleanup of an attached/persistent Core runtime".into());
     }
     let owner_path = server_owner_path(&target.root_dir);
@@ -5306,7 +5339,7 @@ const LOCAL_SERVER_JAVA_XMS: &str = "96m";
 const LOCAL_SERVER_JAVA_XMX: &str = "512m";
 const LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG: &str = "-noverify";
 const LOCAL_SERVER_JAVA_TOOL_OPTIONS: &str =
-    "-Djava.awt.headless=true -Xms96m -Xmx512m -XX:+UseG1GC";
+    "-Djava.awt.headless=true -Xms96m -Xmx512m -XX:+UseG1GC -XX:G1PeriodicGCInterval=120000";
 
 fn local_server_java_args(jar: &Path) -> Vec<String> {
     vec![
@@ -5314,6 +5347,7 @@ fn local_server_java_args(jar: &Path) -> Vec<String> {
         format!("-Xms{LOCAL_SERVER_JAVA_XMS}"),
         format!("-Xmx{LOCAL_SERVER_JAVA_XMX}"),
         "-XX:+UseG1GC".to_string(),
+        "-XX:G1PeriodicGCInterval=120000".to_string(),
         LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG.to_string(),
         "-jar".to_string(),
         jar.to_string_lossy().into_owned(),
@@ -6852,6 +6886,7 @@ fn reset_resolved_local_profile_data(
 pub(crate) fn stop_runtime_for_maintenance(app: &tauri::AppHandle, target: &LocalServerTarget) -> Result<(), String> {
     if target.attach_only { return Err("Attached runtime maintenance refused".into()); }
     if managed_startup_owner(&target.profile_key, target.port) != ManagedStartupOwner::PersistentCore {
+        std::thread::sleep(suwayomi_runtime::MAINTENANCE_WRITEBACK_GRACE);
         return kill_tachidesk_target(app, target);
     }
     // Only the Core holds the handle of the Java it spawned, so it stops it. The exclusive runtime
@@ -6866,11 +6901,20 @@ pub(crate) fn stop_runtime_for_maintenance(app: &tauri::AppHandle, target: &Loca
 }
 
 #[tauri::command]
-fn kill_server(server_url: Option<String>, app: tauri::AppHandle) -> Result<(), String> {
+fn kill_server(server_url: Option<String>, app: tauri::AppHandle) -> Result<bool, String> {
     let _lease = suwayomi_maintenance::try_acquire_shared_file_lease(
         &suwayomi_maintenance::default_runtime_root(),
     )?;
-    kill_tachidesk(&app, server_url.as_deref())
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let target = resolve_local_server_target(&launch_target, server_url.as_deref(), None, None)
+        .map_err(|_| "Cannot resolve cleanup scope; runtime preserved".to_string())?;
+    // Not a failure and not something a retry can change: the Core keeps this one running for paired
+    // devices. Saying so lets the app stop asking.
+    if runtime_belongs_to_core(&target) {
+        return Ok(false);
+    }
+    kill_tachidesk_target(&app, &target)?;
+    Ok(true)
 }
 
 // ── Update commands ───────────────────────────────────────────────────────────
@@ -7759,6 +7803,7 @@ pub fn run() {
             write_file_base64,
             compute_file_sha256,
             get_cached_library_cover,
+            get_cached_library_covers,
             cache_library_cover,
             copy_book_import,
             write_book_asset,

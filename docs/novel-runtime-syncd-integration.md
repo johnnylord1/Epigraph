@@ -20,6 +20,8 @@ Confirmed against:
 
 Under `novels:profile:<id>`:
 - library entries
+- categories and category assignments
+- chapter metadata and read/unread state
 - progress
 - bookmarks
 - history
@@ -30,7 +32,8 @@ Under `novels:profile:<id>`:
 
 ## What novels do not sync in v1
 
-- chapter HTML or text
+- bulk chapter HTML or text by default (optional verified chapter assets use the
+  separate capability-negotiated asset path)
 - downloaded chapter content
 - plugin artifact files
 - cookies
@@ -43,10 +46,16 @@ Under `novels:profile:<id>`:
 
 Under `books:global`:
 - library metadata
+- categories and category assignments
 - progress
 - bookmarks
+- history and highlights
+- the supported library UI preferences
 
-Books file assets remain outside sync v1.
+Books expose immutable SHA-256 assets through the authenticated Core asset
+protocol; clients fetch verified files and covers as needed. See
+[the asset protocol](aethon-core-assets-protocol.md). These bytes are not embedded
+in metadata snapshots or change envelopes.
 
 ## Snapshot whitelist rule
 
@@ -105,6 +114,12 @@ code with the real `globalThis`. It must never gain application-command access:
   data, never authority.
 
 ## Current status
+
+The original review below is historical. The
+[2026-11-10 reliability audit](syncd-audit-2026-11-10.md) records the current
+multi-device topology, pending-work review, reproduced defects and verification
+limits. Capability-negotiated novel chapter assets also exist; chapter content
+is not copied by the metadata replication path or by default.
 
 Reviewed on `2026-07-28`.
 

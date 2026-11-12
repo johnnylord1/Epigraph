@@ -80,8 +80,8 @@ const PORTABLE_WORK_NOT_FOUND: &str = "portable_work_not_found";
 const UNBOUND_WORK_CODES: [&str; 2] = ["portable_work_not_bound", "portable_chapter_not_resolved"];
 /// Chapter progress whose chapter this Suwayomi still lacks after [MAX_CONFIRMATION_ATTEMPTS]
 /// lookups. It keeps retrying on the slow backoff, since the chapter can appear on a later library
-/// update, but it stops counting as pending: a source whose chapter keys differ between devices
-/// would otherwise keep every device syncing forever.
+/// update. Status reports it as blocked so unfinished progress remains visible without holding
+/// catalog revisions back or changing the durable retry lifecycle.
 const WAITING_CHAPTER_CODE: &str = UNBOUND_WORK_CODES[1];
 /// A command Suwayomi answered with a non-retryable error (for example a category id it does not
 /// have). Its few remaining retries do not hold later rows: a rejection is not an outage, and each
@@ -411,11 +411,8 @@ async fn pending_projection_counts_in(
                COALESCE(SUM(operation_name <> 'UpdateChaptersProgress'), 0) AS catalog
         FROM suwayomi_projection_outbox
         WHERE status IN ('pending', 'in_flight', 'retry')
-          AND NOT (status = 'retry' AND last_error IS ? AND attempt_count >= ?)
         "#,
     )
-    .bind(WAITING_CHAPTER_CODE)
-    .bind(MAX_CONFIRMATION_ATTEMPTS)
     .fetch_one(pool)
     .await
     .context("failed to count pending Suwayomi projections")
@@ -425,6 +422,8 @@ async fn pending_projection_counts_in(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromRow)]
 pub struct ProjectionStatusCounts {
     pub pending: i64,
+    /// Persisted blocked rows and chapter retries waiting for a missing chapter after the
+    /// confirmation budget. The latter keep their durable retry state and slow backoff.
     pub blocked: i64,
     pub in_flight: i64,
     /// Rows other than chapter progress still to project, which hold the catalog revisions back.
@@ -443,7 +442,7 @@ pub async fn projection_status_counts(
         SELECT
             COALESCE(SUM(CASE WHEN status IN ('pending', 'retry') AND NOT waiting THEN 1 ELSE 0 END), 0)
                 AS pending,
-            COALESCE(SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), 0) AS blocked,
+            COALESCE(SUM(CASE WHEN status = 'blocked' OR waiting THEN 1 ELSE 0 END), 0) AS blocked,
             COALESCE(SUM(CASE WHEN status = 'in_flight' THEN 1 ELSE 0 END), 0) AS in_flight,
             COALESCE(SUM(CASE WHEN status IN ('pending', 'retry', 'in_flight') AND NOT waiting
                 AND operation_name <> 'UpdateChaptersProgress' THEN 1 ELSE 0 END), 0) AS catalog_pending,
@@ -451,7 +450,8 @@ pub async fn projection_status_counts(
                 AS catalog_blocked
         FROM (
             SELECT status, operation_name, last_error,
-                (status = 'retry' AND last_error IS ? AND attempt_count >= ?) AS waiting
+                (status = 'retry' AND operation_name = 'UpdateChaptersProgress'
+                    AND last_error IS ? AND attempt_count >= ?) AS waiting
             FROM suwayomi_projection_outbox
             WHERE profile_id = ?
         )
@@ -2945,7 +2945,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chapter_progress_still_waiting_for_its_chapter_stops_counting_as_pending() {
+    async fn unresolved_chapter_retries_remain_visible_without_holding_catalog() {
         let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
@@ -2981,18 +2981,18 @@ mod tests {
         assert_eq!(
             counts,
             ProjectionStatusCounts {
-                pending: 3,
-                blocked: 2,
+                pending: 4,
+                blocked: 3,
                 in_flight: 0,
-                catalog_pending: 1,
+                catalog_pending: 2,
                 catalog_blocked: 1,
             }
         );
         assert_eq!(projection_status_counts(&pool, "other").await.unwrap().pending, 0);
-        // The first run waits only on rows that can still land on their own.
+        // Progress remains unfinished, while the first-run catalog gate counts only library work.
         assert_eq!(
             pending_projection_counts_in(&pool).await.unwrap(),
-            PendingProjectionCounts { total: 3, catalog: 1 }
+            PendingProjectionCounts { total: 5, catalog: 2 }
         );
     }
 

@@ -992,6 +992,14 @@ Core de ser tratado como autoridade confirmada:
 - `GET /v1/sync/status` e profile-scoped, mede pending/retry, blocked e
   in-flight da fila de projecao e so retorna `ready` quando a fila autoritativa
   esta vazia;
+- retries de `UpdateChaptersProgress` com `portable_chapter_not_resolved`
+  apos cinco tentativas contam em `suwayomiProjectionBlocked`. Continuam em
+  `retry` no banco, com backoff, e nao impedem revisoes ou reconciliacao de
+  catalogo; nunca podem desaparecer de todos os contadores nem liberar `ready`;
+- obras inicializadas sem capitulos, mas com progresso pendente e binding
+  exato, tambem entram na hidratacao. O Core confirma identidade e biblioteca
+  por GraphQL em lotes limitados, mantem backoff quando a fonte retorna vazio
+  e antecipa somente os retries da mesma obra/perfil quando os capitulos chegam;
 - o Android consulta esse endpoint antes de emitir `OutboxDrained`; uma
   projecao pendente ou bloqueada permanece como retry/action-required;
 - o bootstrap mobile executa inventario de extensoes (somente leitura),

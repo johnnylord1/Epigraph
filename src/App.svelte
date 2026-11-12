@@ -570,6 +570,7 @@
   let libraryBootstrapInFlight: Promise<void> | null = null;
   let automaticLibraryUpdateInFlight: Promise<void> | null = null;
   let standbyInFlight = false;
+  let standbyRetryAt = 0;
   let staleLibraryUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
   let libraryUpdateRuntimePromise: Promise<typeof import("./lib/library/updateRuntime")> | null = null;
 
@@ -875,6 +876,7 @@
 
   async function maybeStandbyAfterIdle(reason: string) {
     if (standbyInFlight) return;
+    if (Date.now() < standbyRetryAt) return;
     if (!idle) return;
     if (!store.settings.localServerStandbyEnabled) return;
     const standbyIdleMin = Math.max(1, Number(store.settings.localServerStandbyIdleMin ?? 10));
@@ -886,9 +888,12 @@
 
     standbyInFlight = true;
     try {
-      await maybeStandbyLocalServer({ serverUrl: store.runtimeServerUrl });
-      console.info(`Suwayomi entered standby after ${reason}.`);
+      if (await maybeStandbyLocalServer({ serverUrl: store.runtimeServerUrl })) {
+        console.info(`Suwayomi entered standby after ${reason}.`);
+      }
     } catch (error) {
+      // Any change in the store runs this again, so a failure must not be retried on the next one.
+      standbyRetryAt = Date.now() + 5 * 60 * 1000;
       console.warn("Could not put Suwayomi in standby:", error);
     } finally {
       standbyInFlight = false;
@@ -1185,7 +1190,6 @@
       hostStartStage: string | null;
       hostError: string | null;
       panelError: string | null;
-      hostBundleLength: number;
       connectStatus: string | null;
       connectError: string | null;
       connectStateText: string | null;
@@ -1440,11 +1444,6 @@
       return node?.innerText?.trim() || node?.textContent?.trim() || null;
     };
 
-    const valueLengthByTestId = (testId: string): number => {
-      const node = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-testid="${testId}"]`);
-      return typeof node?.value === "string" ? node.value.trim().length : 0;
-    };
-
     return {
       panelReady: document.querySelector("[data-testid='syncd-panel-grid']")?.getAttribute("data-panel-ready") ?? null,
       hostStatus: textByTestId("syncd-host-status"),
@@ -1452,7 +1451,6 @@
       hostStartStage: textByTestId("syncd-host-start-stage"),
       hostError: textByTestId("syncd-host-error"),
       panelError: textByTestId("syncd-panel-error"),
-      hostBundleLength: valueLengthByTestId("syncd-bootstrap-bundle-host"),
       connectStatus: textByTestId("syncd-connect-status"),
       connectError: textByTestId("syncd-connect-error"),
       connectStateText: textByTestId("syncd-connect-state"),

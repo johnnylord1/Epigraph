@@ -190,13 +190,21 @@ export function holdServerAwake() {
   return () => { standbyHolds.delete(hold); };
 }
 
+// Servers the Core keeps running for paired devices. Who owns a server does not change while the app
+// runs, so one answer is enough.
+const serversKeptByCore = new Set<string>();
+
 export async function maybeStandbyLocalServer(input: ServerLifecycleInput) {
   if (standbyHolds.size) return false;
   const serverUrl = input.serverUrl ?? null;
   if (!serverUrl || !isLoopbackServerUrl(serverUrl)) return false;
+  if (serversKeptByCore.has(serverUrl)) return false;
   if (!(await probeServerHealth(serverUrl))) return false;
+  if (!(await invoke<boolean>("kill_server", { serverUrl }))) {
+    serversKeptByCore.add(serverUrl);
+    return false;
+  }
   serversKnownReady.delete(serverUrl);
-  await invoke<void>("kill_server", { serverUrl });
   await resetManagedSourceRuntimeCache();
   return true;
 }

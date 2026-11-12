@@ -47,7 +47,9 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(2_500);
 const SUPERVISOR_HEALTH_INTERVAL: Duration = Duration::from_secs(15);
 const SUPERVISOR_CONFIGURATION_INTERVAL: Duration = Duration::from_secs(1);
 const SUPERVISOR_RETRY_INTERVAL: Duration = Duration::from_secs(5);
-const JAVA_TOOL_OPTIONS: &str = "-Djava.awt.headless=true -Xms256m -Xmx1536m -XX:+UseG1GC";
+// G1 keeps the heap an update grew until a collection runs; the periodic one returns it when the server sits idle.
+const JAVA_TOOL_OPTIONS: &str =
+    "-Djava.awt.headless=true -Xms256m -Xmx1536m -XX:+UseG1GC -XX:G1PeriodicGCInterval=120000";
 const DEFAULT_SERVER_CONF: &str = r#"server.ip = "127.0.0.1"
 server.port = 4567
 server.webUIEnabled = false
@@ -212,6 +214,8 @@ async fn recover_abandoned_main_work(runtime_root: &Path) -> Result<(), String> 
 /// lease is what keeps the supervisor, and every other starter, from bringing the old runtime back in
 /// between, and it ends with that process even if it crashes. Returns the stopped Java PID, if any.
 pub async fn stop_main_for_maintenance() -> Result<Option<u32>, String> {
+    require_maintenance_elsewhere()?;
+    tokio::time::sleep(crate::suwayomi_runtime::MAINTENANCE_WRITEBACK_GRACE).await;
     require_maintenance_elsewhere()?;
     stop_main_instance().await
 }
@@ -742,6 +746,7 @@ fn spawn_hidden_runtime(root: &Path, invocation: &RuntimeInvocation) -> Result<C
         "-Xms256m",
         "-Xmx1536m",
         "-XX:+UseG1GC",
+        "-XX:G1PeriodicGCInterval=120000",
         "-noverify",
     ]);
     // Extension overlay (PR #1885 child-first classloader): our patched classes precede

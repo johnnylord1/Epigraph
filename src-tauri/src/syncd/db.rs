@@ -513,12 +513,36 @@ pub async fn load_scope_snapshot(
     pool: &sqlx::SqlitePool,
     scope_id: &str,
 ) -> anyhow::Result<SnapshotResponse> {
-    let (runtime, entities, tombstones) = load_scope_snapshot_parts(pool, scope_id).await?;
+    let (runtime, entities, tombstones) = load_scope_snapshot_parts(pool, scope_id, None).await?;
     snapshot_response(scope_id, &runtime, entities, tombstones, true)
 }
 
 /// Where the next snapshot page starts: the entity type and id of the last entity already sent.
 pub type SnapshotPageCursor = (String, String);
+
+struct SnapshotPageBounds<'a> {
+    after: Option<&'a SnapshotPageCursor>,
+    size: usize,
+}
+
+impl SnapshotPageBounds<'_> {
+    fn after_id(&self, entity_type: &str) -> &str {
+        self.after
+            .filter(|(kind, _)| kind == entity_type)
+            .map_or("", |(_, id)| id.as_str())
+    }
+
+    fn limit(&self, entity_type: &str) -> i64 {
+        if self
+            .after
+            .is_some_and(|(kind, _)| kind.as_str() > entity_type)
+        {
+            0
+        } else {
+            self.size.saturating_add(1).min(i64::MAX as usize) as i64
+        }
+    }
+}
 
 /// One page of [`load_scope_snapshot`] for clients that bound each response. Entities are ordered
 /// by type and id and taken after `after`; tombstones ride on the last page, the only one marked
@@ -530,7 +554,12 @@ pub async fn load_scope_snapshot_page(
     after: Option<&SnapshotPageCursor>,
     page_size: usize,
 ) -> anyhow::Result<(SnapshotResponse, Option<SnapshotPageCursor>)> {
-    let (runtime, mut entities, tombstones) = load_scope_snapshot_parts(pool, scope_id).await?;
+    let bounds = SnapshotPageBounds {
+        after,
+        size: page_size.max(1),
+    };
+    let (runtime, mut entities, tombstones) =
+        load_scope_snapshot_parts(pool, scope_id, Some(&bounds)).await?;
     entities.sort_by(|left, right| {
         (left.entity_type.as_str(), left.entity_id.as_str())
             .cmp(&(right.entity_type.as_str(), right.entity_id.as_str()))
@@ -549,13 +578,21 @@ pub async fn load_scope_snapshot_page(
     });
     let page = entities.drain(start..end).collect();
     let tombstones = if complete { tombstones } else { Vec::new() };
-    Ok((snapshot_response(scope_id, &runtime, page, tombstones, complete)?, next))
+    Ok((
+        snapshot_response(scope_id, &runtime, page, tombstones, complete)?,
+        next,
+    ))
 }
 
 async fn load_scope_snapshot_parts(
     pool: &sqlx::SqlitePool,
     scope_id: &str,
-) -> anyhow::Result<(ServerRuntimeRow, Vec<SnapshotEntity>, Vec<SnapshotTombstone>)> {
+    bounds: Option<&SnapshotPageBounds<'_>>,
+) -> anyhow::Result<(
+    ServerRuntimeRow,
+    Vec<SnapshotEntity>,
+    Vec<SnapshotTombstone>,
+)> {
     let mut tx = pool.begin().await?;
     let runtime = sqlx::query_as::<_, ServerRuntimeRow>(
         r#"
@@ -570,9 +607,11 @@ async fn load_scope_snapshot_parts(
     let mut entities = Vec::new();
     if scope_id == "books:global" {
         let rows = sqlx::query_as::<_, BookEntryRow>(
-            "SELECT * FROM book_library_entries WHERE scope_id = ? ORDER BY book_id",
+            "SELECT * FROM book_library_entries WHERE scope_id = ? AND book_id > ? ORDER BY book_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("book.entry")))
+        .bind(bounds.map_or(-1, |b| b.limit("book.entry")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -590,9 +629,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, BookCategoryRow>(
-            "SELECT * FROM book_categories WHERE scope_id = ? ORDER BY category_id",
+            "SELECT * FROM book_categories WHERE scope_id = ? AND category_id > ? ORDER BY category_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("book.category")))
+        .bind(bounds.map_or(-1, |b| b.limit("book.category")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -610,9 +651,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, BookCategoryAssignmentRow>(
-            "SELECT * FROM book_category_assignments WHERE scope_id = ? ORDER BY book_id",
+            "SELECT * FROM book_category_assignments WHERE scope_id = ? AND book_id > ? ORDER BY book_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("book.category_assignment")))
+        .bind(bounds.map_or(-1, |b| b.limit("book.category_assignment")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -630,9 +673,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, BookLibraryUiRow>(
-            "SELECT * FROM book_library_ui_state WHERE scope_id = ? ORDER BY ui_state_id",
+            "SELECT * FROM book_library_ui_state WHERE scope_id = ? AND ui_state_id > ? ORDER BY ui_state_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("book.library_ui")))
+        .bind(bounds.map_or(-1, |b| b.limit("book.library_ui")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -650,9 +695,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, BookProgressRow>(
-            "SELECT * FROM book_progress WHERE scope_id = ? ORDER BY book_id",
+            "SELECT * FROM book_progress WHERE scope_id = ? AND book_id > ? ORDER BY book_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("book.progress")))
+        .bind(bounds.map_or(-1, |b| b.limit("book.progress")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -670,9 +717,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, BookBookmarkRow>(
-            "SELECT * FROM book_bookmarks WHERE scope_id = ? ORDER BY bookmark_id",
+            "SELECT * FROM book_bookmarks WHERE scope_id = ? AND bookmark_id > ? ORDER BY bookmark_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("book.bookmark")))
+        .bind(bounds.map_or(-1, |b| b.limit("book.bookmark")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -690,9 +739,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, BookHighlightRow>(
-            "SELECT * FROM book_highlights WHERE scope_id = ? ORDER BY highlight_id",
+            "SELECT * FROM book_highlights WHERE scope_id = ? AND highlight_id > ? ORDER BY highlight_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("book.highlight")))
+        .bind(bounds.map_or(-1, |b| b.limit("book.highlight")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -710,9 +761,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, BookHistoryRow>(
-            "SELECT * FROM book_history WHERE scope_id = ? ORDER BY history_id",
+            "SELECT * FROM book_history WHERE scope_id = ? AND history_id > ? ORDER BY history_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("book.history")))
+        .bind(bounds.map_or(-1, |b| b.limit("book.history")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -730,9 +783,11 @@ async fn load_scope_snapshot_parts(
         }
     } else if scope_id.starts_with("novels:profile:") {
         let rows = sqlx::query_as::<_, NovelEntryRow>(
-            "SELECT * FROM novel_library_entries WHERE scope_id = ? ORDER BY novel_id",
+            "SELECT * FROM novel_library_entries WHERE scope_id = ? AND novel_id > ? ORDER BY novel_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.entry")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.entry")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -750,9 +805,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelChapterRow>(
-            "SELECT * FROM novel_chapters WHERE scope_id = ? ORDER BY chapter_id",
+            "SELECT * FROM novel_chapters WHERE scope_id = ? AND chapter_id > ? ORDER BY chapter_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.chapter")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.chapter")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -770,9 +827,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelChapterAssetRow>(
-            "SELECT * FROM novel_chapter_assets WHERE scope_id = ? ORDER BY chapter_asset_id",
+            "SELECT * FROM novel_chapter_assets WHERE scope_id = ? AND chapter_asset_id > ? ORDER BY chapter_asset_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.chapter_asset")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.chapter_asset")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -790,9 +849,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelProgressRow>(
-            "SELECT * FROM novel_progress WHERE scope_id = ? ORDER BY novel_id",
+            "SELECT * FROM novel_progress WHERE scope_id = ? AND novel_id > ? ORDER BY novel_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.progress")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.progress")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -821,9 +882,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelBookmarkRow>(
-            "SELECT * FROM novel_bookmarks WHERE scope_id = ? ORDER BY bookmark_id",
+            "SELECT * FROM novel_bookmarks WHERE scope_id = ? AND bookmark_id > ? ORDER BY bookmark_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.bookmark")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.bookmark")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -841,9 +904,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelHistoryRow>(
-            "SELECT * FROM novel_history WHERE scope_id = ? ORDER BY history_id",
+            "SELECT * FROM novel_history WHERE scope_id = ? AND history_id > ? ORDER BY history_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.history")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.history")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -861,9 +926,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelClassificationRow>(
-            "SELECT * FROM novel_source_classification_records WHERE scope_id = ? ORDER BY plugin_id",
+            "SELECT * FROM novel_source_classification_records WHERE scope_id = ? AND plugin_id > ? ORDER BY plugin_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.classification")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.classification")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -881,9 +948,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelRepositoryRow>(
-            "SELECT * FROM novel_repositories WHERE scope_id = ? ORDER BY repository_id",
+            "SELECT * FROM novel_repositories WHERE scope_id = ? AND repository_id > ? ORDER BY repository_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.repository")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.repository")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -901,9 +970,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelPluginRow>(
-            "SELECT * FROM novel_plugins WHERE scope_id = ? ORDER BY plugin_entity_id",
+            "SELECT * FROM novel_plugins WHERE scope_id = ? AND plugin_entity_id > ? ORDER BY plugin_entity_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.plugin")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.plugin")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -921,9 +992,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelCategoryRow>(
-            "SELECT * FROM novel_categories WHERE scope_id = ? ORDER BY category_id",
+            "SELECT * FROM novel_categories WHERE scope_id = ? AND category_id > ? ORDER BY category_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.category")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.category")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -941,9 +1014,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, NovelCategoryAssignmentRow>(
-            "SELECT * FROM novel_category_assignments WHERE scope_id = ? ORDER BY assignment_id",
+            "SELECT * FROM novel_category_assignments WHERE scope_id = ? AND assignment_id > ? ORDER BY assignment_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("novel.category_assignment")))
+        .bind(bounds.map_or(-1, |b| b.limit("novel.category_assignment")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -959,18 +1034,37 @@ async fn load_scope_snapshot_parts(
                 NovelCategoryAssignmentRecord::from(row),
             )?;
         }
-        push_tracking_snapshot_entities_in_tx(&mut tx, &mut entities, scope_id, "novel.tracking")
-            .await?;
+        push_tracking_snapshot_entities_in_tx(
+            &mut tx,
+            &mut entities,
+            scope_id,
+            "novel.tracking",
+            bounds,
+        )
+        .await?;
     } else if scope_id.starts_with("comics:profile:") {
         let rows = sqlx::query_as::<_, ComicSyncStateRow>(
             r#"
             SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
             FROM comic_sync_state
-            WHERE scope_id = ?
-            ORDER BY entity_type, entity_id
+            WHERE scope_id = ? AND (entity_type, entity_id) > (?, ?)
+            ORDER BY entity_type, entity_id LIMIT ?
             "#,
         )
         .bind(scope_id)
+        .bind(
+            bounds
+                .and_then(|b| b.after)
+                .map_or("", |(kind, _)| kind.as_str()),
+        )
+        .bind(
+            bounds
+                .and_then(|b| b.after)
+                .map_or("", |(_, id)| id.as_str()),
+        )
+        .bind(bounds.map_or(-1, |b| {
+            b.size.saturating_add(1).min(i64::MAX as usize) as i64
+        }))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -984,9 +1078,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, ComicHistoryRow>(
-            "SELECT * FROM comic_history WHERE scope_id = ? ORDER BY history_id",
+            "SELECT * FROM comic_history WHERE scope_id = ? AND history_id > ? ORDER BY history_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("comic.history")))
+        .bind(bounds.map_or(-1, |b| b.limit("comic.history")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -1004,9 +1100,11 @@ async fn load_scope_snapshot_parts(
         }
 
         let rows = sqlx::query_as::<_, ComicPageBookmarkRow>(
-            "SELECT * FROM comic_page_bookmarks WHERE scope_id = ? ORDER BY bookmark_id",
+            "SELECT * FROM comic_page_bookmarks WHERE scope_id = ? AND bookmark_id > ? ORDER BY bookmark_id LIMIT ?",
         )
         .bind(scope_id)
+        .bind(bounds.map_or("", |b| b.after_id("comic.page_bookmark")))
+        .bind(bounds.map_or(-1, |b| b.limit("comic.page_bookmark")))
         .fetch_all(&mut *tx)
         .await?;
         for row in rows {
@@ -1022,23 +1120,33 @@ async fn load_scope_snapshot_parts(
                 ComicPageBookmarkRecord::from(row),
             )?;
         }
-        push_tracking_snapshot_entities_in_tx(&mut tx, &mut entities, scope_id, "comic.tracking")
-            .await?;
+        push_tracking_snapshot_entities_in_tx(
+            &mut tx,
+            &mut entities,
+            scope_id,
+            "comic.tracking",
+            bounds,
+        )
+        .await?;
     } else {
         bail!("unsupported snapshot scope: {scope_id}");
     }
 
-    let tombstones = sqlx::query_as::<_, SnapshotTombstone>(
-        r#"
+    let tombstones = if bounds.is_none_or(|b| entities.len() <= b.size) {
+        sqlx::query_as::<_, SnapshotTombstone>(
+            r#"
         SELECT entity_type, entity_id, server_version, lamport, deleted_at_ms, reason_code
         FROM tombstones
         WHERE scope_id = ?
         ORDER BY server_version, entity_type, entity_id
         "#,
-    )
-    .bind(scope_id)
-    .fetch_all(&mut *tx)
-    .await?;
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?
+    } else {
+        Vec::new()
+    };
 
     tx.commit().await?;
     Ok((runtime, entities, tombstones))
@@ -6131,6 +6239,22 @@ async fn apply_comic_sync_state_mutation_inner(
         .as_ref()
         .map(|row| next_lamport(row.record_lamport, client_lamport))
         .unwrap_or(client_lamport);
+    // Chapter mutations are partial: null leaves that field unchanged. Persist the resulting
+    // state in both the log and the row, so replay, bootstrap and later hydration all agree.
+    let mut merged_record = record.clone();
+    if entity_type == "comic.chapter_state" {
+        if let Some(previous) = current.as_ref() {
+            let previous: Value = serde_json::from_str(&previous.record_json)?;
+            for field in ["read", "bookmarked", "lastPageRead", "lastReadAtMs"] {
+                if merged_record.get(field).is_none_or(Value::is_null) {
+                    if let Some(value) = previous.get(field).filter(|value| !value.is_null()) {
+                        merged_record[field] = value.clone();
+                    }
+                }
+            }
+        }
+    }
+    let record = &merged_record;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
         &mut tx,
         scope_id,
@@ -6833,18 +6957,21 @@ async fn push_tracking_snapshot_entities_in_tx(
     entities: &mut Vec<SnapshotEntity>,
     scope_id: &str,
     entity_type: &str,
+    bounds: Option<&SnapshotPageBounds<'_>>,
 ) -> anyhow::Result<()> {
     let rows = sqlx::query_as::<_, TrackingRecordRow>(
         r#"
         SELECT entity_type, entity_id, work_id, tracker_key, record_json,
                record_updated_by_device_id, record_lamport, record_server_version
         FROM tracking_records
-        WHERE scope_id = ? AND entity_type = ?
-        ORDER BY entity_id
+        WHERE scope_id = ? AND entity_type = ? AND entity_id > ?
+        ORDER BY entity_id LIMIT ?
         "#,
     )
     .bind(scope_id)
     .bind(entity_type)
+    .bind(bounds.map_or("", |b| b.after_id(entity_type)))
+    .bind(bounds.map_or(-1, |b| b.limit(entity_type)))
     .fetch_all(&mut **tx)
     .await?;
     for row in rows {
@@ -10263,6 +10390,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_pages_do_not_decode_records_beyond_the_page_boundary() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        // SQLite accepts this JSON number, while serde_json refuses its out-of-range value.
+        // A record on a distant page must not be decoded by a request for the first page.
+        for (id, record) in [("a", "{}"), ("b", "{}"), ("z", "{\"n\":1e999}")] {
+            sqlx::query(
+                "INSERT INTO comic_sync_state VALUES (?, 'comic.entry', ?, ?, 1, 'fixture', 1, 1)",
+            )
+            .bind("comics:profile:main")
+            .bind(id)
+            .bind(record)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let (page, next) = load_scope_snapshot_page(&pool, "comics:profile:main", None, 1)
+            .await
+            .unwrap();
+        assert_eq!(page.entities.len(), 1);
+        assert_eq!(page.entities[0].entity_id, "a");
+        assert_eq!(page.complete, Some(false));
+        assert_eq!(next, Some(("comic.entry".into(), "a".into())));
+    }
+
+    #[tokio::test]
     async fn comic_reader_snapshot_preserves_portable_refs_after_persistence() {
         let temp = tempdir().unwrap();
         let config = SyncdConfig::for_test(temp.path().to_path_buf());
@@ -11337,6 +11491,7 @@ mod tests {
                 "read": read,
                 "bookmarked": null,
                 "lastPageRead": last_page_read,
+                "lastReadAtMs": if at == 100 { json!(75) } else { Value::Null },
                 "updatedAtMs": at,
                 "explicitProgressReset": false
             })
@@ -11372,6 +11527,25 @@ mod tests {
         assert_eq!(variables["isRead"], true);
         assert_eq!(variables["lastPageRead"], 9);
         assert!(variables["isBookmarked"].is_null());
+
+        // A new peer bootstraps from confirmed state, not from the projection outbox.
+        let snapshot = load_scope_snapshot(&pool, "comics:profile:main")
+            .await
+            .unwrap();
+        let chapter = snapshot
+            .entities
+            .iter()
+            .find(|entity| entity.entity_id == entity_id)
+            .unwrap();
+        assert_eq!(chapter.record["read"], true);
+        assert_eq!(chapter.record["lastPageRead"], 9);
+        assert_eq!(chapter.record["lastReadAtMs"], 75);
+        let changes = fetch_replay_changes(&pool, 0, snapshot.snapshot_version)
+            .await
+            .unwrap();
+        let latest = ChangeEnvelope::try_from(changes.into_iter().last().unwrap()).unwrap();
+        assert_eq!(latest.patch.as_ref().unwrap()["read"], true);
+        assert_eq!(latest.patch.as_ref().unwrap()["lastReadAtMs"], 75);
     }
 
     #[tokio::test]

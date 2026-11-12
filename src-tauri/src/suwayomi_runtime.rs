@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 #[path = "process_ownership.rs"]
 pub mod ownership;
 
+// The bundled Suwayomi has no shutdown API and H2 buffers writes after a successful mutation.
+// Let its normal writeback run before a planned stop, while the maintenance lease blocks clients.
+pub(crate) const MAINTENANCE_WRITEBACK_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Suwayomi port of the built-in MAIN profile. A debug build moves it through `EPIGRAPH_LOCAL_SERVER_MAIN_PORT`
 /// so it never answers on, or attaches to, an installed release's server.
 pub fn main_server_port() -> u16 {

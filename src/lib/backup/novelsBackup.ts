@@ -75,6 +75,8 @@ export interface EpigraphNovelBookmarkEntry {
   locator?: string | null;
   label?: string | null;
   savedAt: number;
+  /** Its id on the Core when another device created it; devices name the same novel differently. */
+  syncId?: string | null;
 }
 
 export interface EpigraphNovelHistoryEntry {
@@ -83,6 +85,8 @@ export interface EpigraphNovelHistoryEntry {
   chapterTitle?: string | null;
   locator?: string | null;
   readAt: number;
+  /** Its id on the Core when another device created it. */
+  historyId?: string | null;
 }
 
 export interface EpigraphNovelChapterEntry {

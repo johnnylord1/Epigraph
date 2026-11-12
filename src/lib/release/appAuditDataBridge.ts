@@ -17,6 +17,7 @@ import {
 
 const AUDIT_SYNCD_BOOK_ID = "audit-sync-book";
 const AUDIT_SYNCD_NOVEL_SOURCE_ID = "audit-sync-source";
+const AUDIT_SYNCD_NOVEL_PLUGIN_ID = "audit-sync-plugin";
 const AUDIT_SYNCD_NOVEL_PATH = "/audit-sync-novel";
 const AUDIT_SYNCD_NOVEL_CHAPTER_PATH = "/chapter-1";
 
@@ -339,11 +340,18 @@ async function mutateSyncdAuditNovelFixture(input?: {
     ? Math.max(0, Math.min(1, input.progressPercent))
     : 1;
 
-  const novelId = createNovelLibraryId(AUDIT_SYNCD_NOVEL_SOURCE_ID, AUDIT_SYNCD_NOVEL_PATH);
-  const chapterId = createNovelChapterId(novelId, AUDIT_SYNCD_NOVEL_CHAPTER_PATH);
+  let state = await reloadNovelLibraryState(scope);
+  // A desktop that received this novel through sync keeps it under its own local id until the
+  // plugin is installed, so adopt that entry instead of adding a second copy of the same work.
+  const existing = state.entries.find((entry) => (
+    entry.source?.pluginId === AUDIT_SYNCD_NOVEL_PLUGIN_ID && entry.path === AUDIT_SYNCD_NOVEL_PATH
+  ));
+  const novelId = existing?.id ?? createNovelLibraryId(AUDIT_SYNCD_NOVEL_SOURCE_ID, AUDIT_SYNCD_NOVEL_PATH);
+  const chapterId = state.chapters.find((chapter) => (
+    chapter.novelId === novelId && chapter.path === AUDIT_SYNCD_NOVEL_CHAPTER_PATH
+  ))?.id ?? createNovelChapterId(novelId, AUDIT_SYNCD_NOVEL_CHAPTER_PATH);
   const chapterTitle = "Audit Chapter 1";
 
-  let state = await reloadNovelLibraryState(scope);
   state = upsertNovelInLibrary(state, {
     id: novelId,
     sourceId: AUDIT_SYNCD_NOVEL_SOURCE_ID,
@@ -369,7 +377,7 @@ async function mutateSyncdAuditNovelFixture(input?: {
     source: {
       repositoryUrl: "https://audit.invalid/repo",
       repositoryName: "Audit Repository",
-      pluginId: "audit-sync-plugin",
+      pluginId: AUDIT_SYNCD_NOVEL_PLUGIN_ID,
       pluginName: "Audit Sync Plugin",
       pluginVersion: "1.0.0",
       sourceId: AUDIT_SYNCD_NOVEL_SOURCE_ID,
