@@ -42,3 +42,20 @@
 - Remote novel HTML must be sanitized with an allowlist and rendered without a privileged JavaScript bridge.
 - Network access for novel plugins must go through an audited broker with host permissions, private-address blocking, deadlines, response limits, and cancellation.
 - Downloads and backups publish only after verified atomic finalization.
+
+## Shared development workflow
+
+These rules are copied from `CLAUDE.md` so agents using `AGENTS.md` receive the same development constraints.
+
+- Keep the existing stack: Koin for DI, Voyager for navigation, SQLDelight for the database. Never introduce Hilt, Navigation Compose, Navigation 3 or Room, even when a skill, sample or doc suggests them.
+- Compose uses BOM 2026.05 with Material3 alpha. Check APIs against current docs instead of memory; alpha APIs change between releases.
+- Run module-scoped Gradle tasks (for example `./gradlew :app:testDevDebugUnitTest`). Ask before a full local build; full builds run on CI.
+- The release keystore is local-only and has no other copy: `%USERPROFILE%\secrets\aethon-release.p12` and `aethon-keystore.properties`. Never read, move, delete or commit them, `*.jks`, `*.keystore`, `*.p12` or `local.properties`, and exclude `%USERPROFILE%\secrets\` from any cleanup.
+- Test on the emulator before pushing. Ask before any push, and push once per finished batch of work: a push that touches `mobile/` starts "Build Android" (about 40 minutes).
+- Release builds and publishing happen only when the user explicitly asks, after all gates pass.
+
+## Emulator validation
+
+- Validate mobile UI and lifecycle changes on an Android emulator using ADB or device automation (touch input, UI hierarchy, screenshots and logcat). Do not control the host computer's keyboard or mouse.
+- An empty `adb devices -l` means no device is currently connected. Enumerate the configured AVDs and start an appropriate emulator before concluding emulator validation is unavailable. Preserve existing AVD data; never wipe or recreate it without explicit authorization.
+- Follow the recorded emulator flows in `TASKS.md` section 8 and `docs/audit/READER_PARITY_VISUAL.md`. Unit/Robolectric tests complement emulator validation; report separately what each verified.
