@@ -86,9 +86,12 @@ android {
                 "roborazzi.test.record",
                 providers.gradleProperty("roborazzi.record").getOrElse("false"),
             )
-            // Roborazzi's native renderer needs Java 21; on older JVMs (CI runs Java 17) the screenshots are skipped.
+            // These tests need Java 21, so on older JVMs (CI runs Java 17) they are skipped and run only in the local gate.
+            // Roborazzi's native renderer needs Java 21. Robolectric registers every receiver in the merged
+            // debug manifest, and Chucker's receivers there are Java 21 class files.
             if (!org.gradle.api.JavaVersion.current().isCompatibleWith(org.gradle.api.JavaVersion.VERSION_21)) {
                 test.exclude("**/*ScreenshotTest*")
+                test.exclude("**/LibraryRecyclerViewTest*", "**/EpubReaderSyncProgressionTest*")
             }
         }
     }
