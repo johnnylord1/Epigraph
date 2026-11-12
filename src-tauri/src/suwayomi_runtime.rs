@@ -697,6 +697,14 @@ mod tests {
         assert!(!has_confirmed_stop(&path));
     }
 
+    /// The owner checks scan every process for a Java, and one whose command line cannot be read
+    /// yet counts as running for any root. The test that starts stand-in Javas would otherwise
+    /// make the checks that expect none fail whenever they run at the same time.
+    fn java_processes() -> std::sync::MutexGuard<'static, ()> {
+        static JAVA_PROCESSES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        JAVA_PROCESSES.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn receipts_of_earlier_owners_are_pruned() {
         let dir = tempfile::tempdir().unwrap();
@@ -746,6 +754,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn exited_owner_records_are_confirmed_while_live_or_changed_records_are_preserved() {
+        let _java = java_processes();
         use std::os::windows::process::CommandExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("server.owner.json");
@@ -799,6 +808,7 @@ mod tests {
 
     #[test]
     fn owner_whose_pid_now_belongs_to_another_program_is_reconciled() {
+        let _java = java_processes();
         // A legacy record has no birth, and after a restart its PID is often reused. This test
         // process stands in for the unrelated program: alive, not Java, not started for the root.
         let dir = tempfile::tempdir().unwrap();
@@ -812,6 +822,7 @@ mod tests {
 
     #[test]
     fn unreadable_owner_is_reconciled_when_no_server_runs_for_its_root() {
+        let _java = java_processes();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("server.owner.json");
         let torn = b"{\"profile_key\":\"main\",\"java_p";
@@ -825,6 +836,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn only_an_old_enough_java_started_for_the_root_is_ended() {
+        let _java = java_processes();
         use std::os::windows::process::CommandExt;
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("profile");
