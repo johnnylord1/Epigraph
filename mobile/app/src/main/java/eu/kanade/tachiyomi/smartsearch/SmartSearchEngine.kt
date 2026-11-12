@@ -5,7 +5,11 @@ import eu.kanade.tachiyomi.data.database.models.create
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.MangasPage
+import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.util.lang.toNormalized
+import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +18,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
 import yokai.util.koin.injectLazy
@@ -29,6 +36,9 @@ class SmartSearchEngine(
 
     private val getManga: GetManga by injectLazy()
     private val insertManga: InsertManga by injectLazy()
+
+    // A bulk run can query many titles, but extension state and rate limits belong to the catalogue.
+    private val sourceLocks = ConcurrentHashMap<Long, Mutex>()
 
     suspend fun smartSearch(source: CatalogueSource, title: String): SManga? {
         val cleanedTitle = cleanSmartSearchTitle(title)
@@ -76,6 +86,25 @@ class SmartSearchEngine(
         title: String,
         alternativeTitles: List<String> = emptyList(),
     ): SManga? {
+        val result = search(source, title, alternativeTitles)
+        if (result.match == null) result.failure?.let { throw it }
+        return result.match
+    }
+
+    /** Shared by automatic and manual migration: the accepted match leads the ranked candidates. */
+    suspend fun search(
+        source: CatalogueSource,
+        title: String,
+        alternativeTitles: List<String> = emptyList(),
+    ): SearchResult = sourceLocks.getOrPut(source.id) { Mutex() }.withLock {
+        searchCatalogue(source, title, alternativeTitles)
+    }
+
+    private suspend fun searchCatalogue(
+        source: CatalogueSource,
+        title: String,
+        alternativeTitles: List<String>,
+    ): SearchResult {
         val wanted = title.toNormalized()
         val otherNames = alternativeTitles
             .map { it.toNormalized() }
@@ -85,37 +114,70 @@ class SmartSearchEngine(
         val seen = LinkedHashMap<String, SManga>()
         var best: SearchEntry? = null
         var failure: Exception? = null
-        var answered = false
-        for (query in queries) {
-            val searchQuery = if (extraSearchParams != null) {
-                "$query ${extraSearchParams.trim()}"
-            } else {
-                query
+        val completed = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+            for (query in queries) {
+                // Broad keyword queries can discover candidates, but need stronger evidence to select
+                // automatically: "Trigger" alone is not sufficient to migrate "World Trigger".
+                val wholeTitleQuery = query.equals(wanted, ignoreCase = true) ||
+                    query.equals(TitleMatcher.normalize(wanted), ignoreCase = true)
+                val searchQuery = listOfNotNull(query, extraSearchParams?.trim()?.takeIf { it.isNotEmpty() })
+                    .joinToString(" ")
+                val queryUrls = HashSet<String>()
+                for (page in 1..MAX_SEARCH_PAGES) {
+                    val result = try {
+                        searchPage(source, page, searchQuery)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failure = e
+                        break
+                    }
+                    val hasNewResults = queryUrls.addAll(result.mangas.map { it.url })
+                    result.mangas.forEach { seen.putIfAbsent(it.url, it) }
+                    val match = result.mangas
+                        .mapNotNull { manga ->
+                            titleScore(wanted, otherNames, manga.title.toNormalized())
+                                ?.takeIf { wholeTitleQuery || it >= STRONG_MATCH_SCORE }
+                                ?.let { SearchEntry(manga, it) }
+                        }
+                        .maxByOrNull { it.dist }
+                    if (match != null && match.dist > (best?.dist ?: 0.0)) best = match
+                    if ((best?.dist ?: 0.0) >= STRONG_MATCH_SCORE || !result.hasNextPage || !hasNewResults) break
+                }
+                if ((best?.dist ?: 0.0) >= STRONG_MATCH_SCORE) break
             }
-            val results = try {
-                source.getSearchManga(1, searchQuery, source.getFilterList()).mangas
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                failure = e
-                continue
+            if ((best?.dist ?: 0.0) < STRONG_MATCH_SCORE) {
+                matchByListedNames(source, listOf(wanted) + otherNames, seen.values)
+                    ?.takeIf { it.dist > (best?.dist ?: 0.0) }
+                    ?.let { best = it }
             }
-            answered = true
-            results.forEach { seen.putIfAbsent(it.url, it) }
-            val match = results
-                .mapNotNull { manga -> titleScore(wanted, otherNames, manga.title.toNormalized())?.let { SearchEntry(manga, it) } }
-                .maxByOrNull { it.dist }
-            if (match != null && match.dist > (best?.dist ?: 0.0)) best = match
-            if ((best?.dist ?: 0.0) >= STRONG_MATCH_SCORE) break
+            true
         }
-        if (!answered) failure?.let { throw it }
-        if ((best?.dist ?: 0.0) < STRONG_MATCH_SCORE) {
-            matchByListedNames(source, listOf(wanted) + otherNames, seen.values)
-                ?.takeIf { it.dist > (best?.dist ?: 0.0) }
-                ?.let { best = it }
-        }
-        return best?.manga
+        if (completed == null) failure = IOException("Migration search timed out in ${source.name}")
+        // Keep manual candidates even when a later page fails or times out. An incomplete search
+        // needs a strong match before it can choose a title automatically.
+        val match = best?.takeIf { failure == null || it.dist >= STRONG_MATCH_SCORE }?.manga
+        val ranked = seen.values.sortedWith(
+            compareByDescending<SManga> { it.url == match?.url }
+                .thenByDescending { manga -> (listOf(wanted) + otherNames).maxOf { TitleMatcher.bestScore(it, manga.title) } },
+        )
+        return SearchResult(ranked, match, failure)
     }
+
+    private suspend fun searchPage(source: CatalogueSource, page: Int, query: String): MangasPage {
+        try {
+            return source.getSearchManga(page, query, source.getFilterList())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val transient = e is IOException || (e is HttpException && (e.code == 429 || e.code in 500..599))
+            if (!transient) throw e
+            delay(SEARCH_RETRY_DELAY_MS)
+            return source.getSearchManga(page, query, source.getFilterList())
+        }
+    }
+
+    data class SearchResult(val candidates: List<SManga>, val match: SManga?, val failure: Exception?)
 
     /**
      * How well a result named [candidate] matches: the title counts from [TitleMatcher.MIN_MATCH_SCORE],
@@ -285,6 +347,9 @@ class SmartSearchEngine(
         /** Results whose details are loaded to read the other names they list. */
         private const val MAX_DETAIL_LOOKUPS = 3
         private const val DETAILS_TIMEOUT_MS = 20_000L
+        private const val SEARCH_TIMEOUT_MS = 60_000L
+        private const val SEARCH_RETRY_DELAY_MS = 1_000L
+        private const val MAX_SEARCH_PAGES = 3
 
         private val titleRegex = Regex("[^a-zA-Z0-9- ]")
         private val consecutiveSpacesRegex = Regex(" +")

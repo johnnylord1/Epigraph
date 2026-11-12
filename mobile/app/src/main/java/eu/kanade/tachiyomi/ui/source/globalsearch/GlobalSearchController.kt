@@ -30,16 +30,13 @@ import eu.kanade.tachiyomi.ui.source.browse.BrowseSourceController
 import eu.kanade.tachiyomi.util.addOrRemoveToFavorites
 import eu.kanade.tachiyomi.util.system.extensionIntentForText
 import eu.kanade.tachiyomi.util.system.launchIO
-import eu.kanade.tachiyomi.util.system.rootWindowInsetsCompat
 import eu.kanade.tachiyomi.util.system.withUIContext
-import eu.kanade.tachiyomi.util.view.activityBinding
 import eu.kanade.tachiyomi.util.view.appBar
+import eu.kanade.tachiyomi.util.view.doOnApplyWindowInsetsCompat
 import eu.kanade.tachiyomi.util.view.isControllerVisible
 import eu.kanade.tachiyomi.util.view.searchToolbar
-import eu.kanade.tachiyomi.util.view.scrollViewWith
 import eu.kanade.tachiyomi.util.view.setOnQueryTextChangeListener
 import eu.kanade.tachiyomi.util.view.snack
-import eu.kanade.tachiyomi.util.view.toolbarHeight
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import yokai.util.koin.injectLazy
 import yokai.i18n.MR
@@ -61,6 +58,27 @@ open class GlobalSearchController(
     GlobalSearchAdapter.OnTitleClickListener,
     LocalAppBarOwner,
     GlobalSearchCardAdapter.OnMangaClickListener {
+
+    /**
+     * What Conductor calls after process death, with the args saved before it. The no-arg route
+     * fills args only after the presenter exists, which would bring the screen back with no query
+     * and no results.
+     */
+    @Suppress("unused")
+    constructor(bundle: Bundle) : this(
+        initialQuery = bundle.getString(ARG_QUERY),
+        extensionFilter = bundle.getString(ARG_EXTENSION_FILTER),
+        bundle = bundle,
+        browseType = bundle.getString(ARG_BROWSE_TYPE)?.let { name ->
+            BrowseSourceType.entries.firstOrNull { it.name == name }
+        },
+    )
+
+    init {
+        initialQuery?.let { args.putString(ARG_QUERY, it) }
+        extensionFilter?.let { args.putString(ARG_EXTENSION_FILTER, it) }
+        browseType?.let { args.putString(ARG_BROWSE_TYPE, it.name) }
+    }
 
     override val hostsOwnAppBar: Boolean = true
 
@@ -120,6 +138,7 @@ open class GlobalSearchController(
                 safeStartActivity(intent)
             }
             presenter.search(it ?: "")
+            args.putString(ARG_QUERY, presenter.query)
             setTitle()
             true
         }
@@ -280,15 +299,19 @@ open class GlobalSearchController(
         super.onViewCreated(view)
         adapter = GlobalSearchAdapter(this)
 
-        binding.recycler.updatePaddingRelative(
-            top = (toolbarHeight ?: 0) +
-                (activityBinding?.root?.rootWindowInsetsCompat?.getInsets(systemBars())?.top ?: 0),
-        )
+        // The window's insets aren't known yet when a rotation or process death recreates this view,
+        // so the list follows them instead of reading them once.
+        binding.recycler.doOnApplyWindowInsetsCompat { list, insets, _ ->
+            val systemBars = insets.getInsets(systemBars())
+            list.updatePaddingRelative(
+                top = systemBars.top + binding.appBar.attrToolbarHeight,
+                bottom = systemBars.bottom,
+            )
+        }
 
         // Create recycler and set adapter.
         binding.recycler.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(view.context)
         binding.recycler.adapter = adapter
-        scrollViewWith(binding.recycler, padBottom = true)
         if (extensionFilter != null) {
             customTitle = view.context?.getString(MR.strings.loading)
             setTitle()
@@ -370,5 +393,11 @@ open class GlobalSearchController(
      */
     fun onMangaInitialized(source: CatalogueSource, manga: Manga) {
         getHolder(source)?.setImage(manga)
+    }
+
+    private companion object {
+        const val ARG_QUERY = "epigraph_global_search_query"
+        const val ARG_EXTENSION_FILTER = "epigraph_global_search_extension_filter"
+        const val ARG_BROWSE_TYPE = "epigraph_global_search_browse_type"
     }
 }

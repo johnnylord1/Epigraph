@@ -9,6 +9,8 @@ import eu.kanade.tachiyomi.source.LocalSource
 import eu.kanade.tachiyomi.ui.base.holder.BaseFlexibleViewHolder
 import eu.kanade.tachiyomi.ui.migration.SearchController
 import eu.kanade.tachiyomi.util.system.LocaleHelper
+import yokai.i18n.MR
+import yokai.util.lang.getString
 
 /**
  * Holder that binds the [GlobalSearchItem] containing catalogue cards.
@@ -67,6 +69,9 @@ class GlobalSearchHolder(view: View, val adapter: GlobalSearchAdapter) :
             results.isEmpty() -> {
                 binding.progress.isVisible = false
                 binding.noResults.isVisible = true
+                binding.noResults.text = itemView.context.getString(
+                    if (item.searchFailed) MR.strings.migration_search_failed else MR.strings.no_results_found,
+                )
                 binding.sourceCard.isVisible = false
             }
             else -> {

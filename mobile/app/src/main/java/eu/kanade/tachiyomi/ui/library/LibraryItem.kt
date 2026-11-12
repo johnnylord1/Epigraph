@@ -16,8 +16,14 @@ import yokai.domain.ui.UiPreferences
 
 abstract class LibraryItem(
     header: LibraryHeaderItem,
-    internal var context: Context?,
+    context: Context?,
 ) : AbstractSectionableItem<LibraryHolder, LibraryHeaderItem>(header), IFilterable<String> {
+
+    /**
+     * Items outlive the view that built them, in the controller's pending update and in the
+     * presenter's static cache, so they never keep the Activity. Only filtering reads this.
+     */
+    internal val context: Context? = context?.applicationContext
 
     var filter = ""
 

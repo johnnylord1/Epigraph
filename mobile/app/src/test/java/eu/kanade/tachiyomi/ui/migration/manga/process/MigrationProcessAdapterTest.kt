@@ -63,6 +63,31 @@ class MigrationProcessAdapterTest {
         coVerify(exactly = 0) { repository.copy(any(), any()) }
     }
 
+    @Test
+    fun `migration keeps the catalogue title when the display title is customized`() = runTest {
+        val destination = manga(id = NEW_MANGA_ID, title = "My reading list title")
+        every { destination.ogTitle } returns "Bleach"
+        val updateManga = updateManga()
+
+        MigrationProcessAdapter.migrateMangaInternal(
+            flags = 0,
+            enhancedServices = emptyList(),
+            coverCache = mockk<CoverCache>(relaxed = true),
+            customMangaManager = mockk<CustomMangaManager>(relaxed = true),
+            prevSource = null,
+            source = mockk<Source>(relaxed = true),
+            prevManga = manga(id = OLD_MANGA_ID, title = "My reading list title"),
+            manga = destination,
+            replace = true,
+            seriesKnowledgeRepository = seriesKnowledgeRepository(),
+            updateManga = updateManga,
+        )
+
+        coVerify(exactly = 1) {
+            updateManga.await(match { it.id == NEW_MANGA_ID && it.title == "Bleach" })
+        }
+    }
+
     private fun seriesKnowledgeRepository(): SeriesKnowledgeRepository =
         mockk {
             coEvery { copy(any(), any()) } just Runs
@@ -78,6 +103,7 @@ class MigrationProcessAdapterTest {
         val manga = mockk<Manga>(relaxed = true)
         every { manga.id } returns id
         every { manga.title } returns title
+        every { manga.ogTitle } returns title
         every { manga.favorite } returns true
         every { manga.date_added } returns dateAdded
         return manga

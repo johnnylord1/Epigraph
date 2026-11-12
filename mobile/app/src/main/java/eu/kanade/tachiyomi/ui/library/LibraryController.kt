@@ -2059,7 +2059,21 @@ open class LibraryController(
         showAllCategoriesView?.let {
             (searchToolbar()?.searchView as? MiniSearchView)?.removeSearchModifierIcon(it)
         }
+        // The icon lives in this view's search bar; the next view needs its own.
+        showAllCategoriesView = null
         super.onDestroyView(view)
+    }
+
+    // A view recreation keeps the controller and this field. Process death keeps only this bundle,
+    // and without it seedSearchFromState would close the search the toolbar just reopened.
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_QUERY, query)
+    }
+
+    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+        super.onRestoreInstanceState(savedInstanceState)
+        query = savedInstanceState.getString(STATE_QUERY).orEmpty()
     }
 
     open fun onNextLibraryUpdate(mangaMap: List<LibraryItem>, freshStart: Boolean = false) {
@@ -3443,6 +3457,9 @@ open class LibraryController(
         }
     }
 
+    override val keepsCompactSearchBar: Boolean
+        get() = isBindingInitialized && binding.recyclerCover.isClickable
+
     override fun canStillGoBack(): Boolean {
         if (booksMode) return true
         return isBindingInitialized && (
@@ -3469,6 +3486,7 @@ open class LibraryController(
 
     private companion object {
         const val ARG_BOOKS_MODE = "aethon_library_books_mode"
+        const val STATE_QUERY = "epigraph_library_query"
     }
     //endregion
 

@@ -17,6 +17,7 @@ import com.bluelinelabs.conductor.RouterTransaction
 import com.bluelinelabs.conductor.changehandler.SimpleSwapChangeHandler
 import epigraph.recommendations.ui.DiscoverController
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.base.controller.BaseController
 import eu.kanade.tachiyomi.ui.library.LibraryController
 import eu.kanade.tachiyomi.ui.library.compose.LibraryComposeController
 import eu.kanade.tachiyomi.ui.recents.RecentsController
@@ -134,12 +135,19 @@ class RootTabsController : Controller() {
     override fun onChangeStarted(handler: ControllerChangeHandler, type: ControllerChangeType) {
         super.onChangeStarted(handler, type)
         val current = currentTabId.takeIf { it != -1 } ?: return
-        val top = childRouterFor(current)?.backstack?.lastOrNull()?.controller as? RootTabContent
         when (type) {
-            ControllerChangeType.POP_ENTER -> top?.onTabActivated()
-            ControllerChangeType.PUSH_EXIT -> top?.onTabDeactivated()
+            ControllerChangeType.POP_ENTER -> activateTopOf(current)
+            ControllerChangeType.PUSH_EXIT ->
+                (childRouterFor(current)?.backstack?.lastOrNull()?.controller as? RootTabContent)?.onTabDeactivated()
             else -> Unit
         }
+    }
+
+    /** Every way a tab becomes active goes through here, whether or not its controller was just rebound. */
+    private fun activateTopOf(tabId: Int) {
+        val top = childRouterFor(tabId)?.backstack?.lastOrNull()?.controller
+        (top as? BaseController)?.ensureLocalChrome()
+        (top as? RootTabContent)?.onTabActivated()
     }
 
     override fun onDestroyView(view: View) {
@@ -175,7 +183,7 @@ class RootTabsController : Controller() {
             // and no chrome until the user switches tabs or restarts the app.
             if (!visibleTabActivated) {
                 visibleTabActivated = true
-                (childRouterFor(tabId)?.backstack?.lastOrNull()?.controller as? RootTabContent)?.onTabActivated()
+                activateTopOf(tabId)
             }
             return
         }
@@ -191,9 +199,8 @@ class RootTabsController : Controller() {
         currentTabId = tabId
         ensureChildRoot(tabId)
 
-        val incoming = childRouterFor(tabId)?.backstack?.lastOrNull()?.controller
         visibleTabActivated = true
-        (incoming as? RootTabContent)?.onTabActivated()
+        activateTopOf(tabId)
 
         (activity as? MainActivity)?.onActiveTabChanged(prev, tabId)
         animateSwap(outgoingContainer, target)

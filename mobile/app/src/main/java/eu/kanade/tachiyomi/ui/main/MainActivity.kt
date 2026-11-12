@@ -93,6 +93,7 @@ import eu.kanade.tachiyomi.data.updater.AppUpdateResult
 import eu.kanade.tachiyomi.data.updater.RELEASE_URL
 import eu.kanade.tachiyomi.databinding.MainActivityBinding
 import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.ui.base.FloatingToolbar
 import eu.kanade.tachiyomi.ui.base.MaterialMenuSheet
 import eu.kanade.tachiyomi.ui.base.SmallToolbarInterface
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
@@ -406,7 +407,8 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                 val imeOwnsBack = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                     ViewCompat.getRootWindowInsets(window.decorView)
                         ?.isVisible(WindowInsetsCompat.Type.ime()) == true
-                val searchOwnsBack = binding.searchToolbar.hasExpandedActionView() &&
+                val searchOwnsBack = expandedRootTabSearch() != null ||
+                    binding.searchToolbar.hasExpandedActionView() &&
                     binding.cardFrame.isVisible && controller !is SearchControllerInterface
                 controllerHandlesBackPress = !imeOwnsBack &&
                     actionMode == null &&
@@ -603,6 +605,11 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                 }
             }
         }
+        // attachRouter rebinds the backstack before topRouter is assigned, so nothing counted as visible.
+        // selectTab above activated the tab roots; this is for what was pushed over them, on any router.
+        activeRootController
+            ?.takeUnless { it is RootTabsController || it is RootTabContent }
+            ?.let { (it as? BaseController)?.onRestoredOnTop() }
 
         nav.setOnItemSelectedListener { item ->
             val id = item.itemId
@@ -890,7 +897,17 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         val returnToStart = preferences.backReturnsToStart().get() && this !is SearchActivity
         backPressedCallback?.isEnabled = actionMode != null ||
             (binding.searchToolbar.hasExpandedActionView() && binding.cardFrame.isVisible) ||
+            expandedRootTabSearch() != null ||
             router.canStillGoBack() || (returnToStart && startingTab() != nav.selectedItemId)
+    }
+
+    /** The open search of the tab on screen. Tabs host their own pill, not [binding.searchToolbar]. */
+    private fun expandedRootTabSearch(): FloatingToolbar? {
+        val tab = activeRootController
+        if (tab !is RootSearchInterface) return null
+        return (tab as? eu.kanade.tachiyomi.ui.base.LocalAppBarOwner)?.localAppBar()
+            ?.takeIf { it.cardFrame?.isVisible == true }
+            ?.searchToolbar?.takeIf { it.isSearchExpanded }
     }
 
     override fun onTitleChanged(title: CharSequence?, color: Int) {
@@ -1193,6 +1210,18 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         }
     }
 
+    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+        super.onRestoreInstanceState(savedInstanceState)
+        // The window refocuses the saved view id and takes the first match, which can be a search
+        // field on a covered screen or a hidden tab. Typing would go to a field nobody can see.
+        val focused = currentFocus ?: return
+        val top = activeRootController?.view ?: return
+        if (generateSequence(focused.parent) { it.parent }.none { it === top }) {
+            focused.clearFocus()
+            top.findViewById<View>(focused.id)?.requestFocus()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         if (this !is SearchActivity && !isFinishing && isBindingInitialized && this::topRouter.isInitialized) {
@@ -1492,7 +1521,8 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         } else if (binding.searchToolbar.hasExpandedActionView() && binding.cardFrame.isVisible) {
             binding.searchToolbar.collapseActionView()
         } else {
-            backPress()
+            val tabSearch = expandedRootTabSearch()
+            if (tabSearch != null) tabSearch.collapseActionView() else backPress()
         }
     }
 

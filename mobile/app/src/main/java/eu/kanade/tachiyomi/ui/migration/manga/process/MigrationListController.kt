@@ -55,6 +55,7 @@ import eu.kanade.tachiyomi.util.view.setTextColorAlpha
 import eu.kanade.tachiyomi.util.view.setTitle
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -183,6 +184,7 @@ class MigrationListController(bundle: Bundle? = null) :
                             // prefetchChapters): sources that read them through a WebView or behind a captcha
                             // can take minutes, or fail, and that must not hide a title the search found.
                             var chaptersLoaded = false
+                            val searchFailed = AtomicBoolean(false)
                             val result: Manga? = try {
                                 CoroutineScope(manga.migrationJob).async {
                                     // The saved list holds comic and novel picks alike.
@@ -202,11 +204,12 @@ class MigrationListController(bundle: Bundle? = null) :
                                             async source@{
                                                 sourceSemaphore.withPermit {
                                                     val searchResult = try {
-                                                        smartSearchEngine.normalSearch(source, mangaObj.title, alternativeTitles)
+                                                        smartSearchEngine.normalSearch(source, mangaObj.originalTitle, alternativeTitles)
                                                     } catch (e: CancellationException) {
                                                         throw e
                                                     } catch (e: Exception) {
                                                         Logger.w(e) { "Migration search failed in ${source.name}" }
+                                                        searchFailed.set(true)
                                                         null
                                                     }
                                                     manga.progress.value = validSources.size to processedSources.incrementAndGet()
@@ -232,13 +235,14 @@ class MigrationListController(bundle: Bundle? = null) :
                                     } else {
                                         validSources.forEachIndexed { index, source ->
                                             val searchResult = try {
-                                                smartSearchEngine.normalSearch(source, mangaObj.title, alternativeTitles)
+                                                smartSearchEngine.normalSearch(source, mangaObj.originalTitle, alternativeTitles)
                                                     ?.let { smartSearchEngine.networkToLocalManga(it, source.id) }
                                             } catch (e: CancellationException) {
                                                 // Ignore cancellations
                                                 throw e
                                             } catch (e: Exception) {
                                                 Logger.w(e) { "Migration search failed in ${source.name}" }
+                                                searchFailed.set(true)
                                                 null
                                             }
 
@@ -262,7 +266,7 @@ class MigrationListController(bundle: Bundle? = null) :
                                     }
                                     result.copyFrom(newManga)
 
-                                    updateManga.await(result.toMangaUpdate())
+                                    updateManga.await(result.toSourceDetailsUpdate().copy(title = result.ogTitle))
                                 } catch (e: TimeoutCancellationException) {
                                     Logger.w { "Migration details timed out for ${result.title}" }
                                 } catch (e: CancellationException) {
@@ -272,8 +276,11 @@ class MigrationListController(bundle: Bundle? = null) :
                                 }
                             }
 
-                            manga.migrationStatus =
-                                if (result == null) MigrationStatus.MANGA_NOT_FOUND else MigrationStatus.MANGA_FOUND
+                            manga.migrationStatus = when {
+                                result != null -> MigrationStatus.MANGA_FOUND
+                                searchFailed.get() -> MigrationStatus.SEARCH_FAILED
+                                else -> MigrationStatus.MANGA_NOT_FOUND
+                            }
                             adapter?.sourceFinished()
                             manga.searchResult.initialize(result?.id)
                             if (result != null && !chaptersLoaded) {
@@ -417,7 +424,10 @@ class MigrationListController(bundle: Bundle? = null) :
                         sources.filter { it.id != manga.source }
                     }
                     // The manga is shared with the rest of the screen; only the query is normalized.
-                    val searchController = SearchController(manga.originalTitle.toNormalized(), manga.source, validSources)
+                    val searchController = SearchController(
+                        manga.originalTitle.toNormalized(), manga.source, validSources,
+                        config?.extraSearchParams, TitleMatcher.alternativeTitles(manga.originalDescription),
+                    )
                     searchController.targetController = this@MigrationListController
                     router.pushController(searchController.withFadeTransaction())
                 }
@@ -460,7 +470,7 @@ class MigrationListController(bundle: Bundle? = null) :
                     }
                     result.copyFrom(newManga)
 
-                    updateManga.await(result.toMangaUpdate())
+                    updateManga.await(result.toSourceDetailsUpdate().copy(title = result.ogTitle))
                 } catch (e: TimeoutCancellationException) {
                     Logger.w { "Migration details timed out for ${result.title}" }
                 } catch (e: CancellationException) {

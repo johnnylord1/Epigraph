@@ -1612,6 +1612,9 @@
     <string name="library_update_report_skipped">Ignorados</string>
     <string name="library_update_report_no_errors">Nenhum erro na última atualização.</string>
     <string name="library_update_report_no_skipped">Nenhum título foi ignorado na última atualização.</string>
+    <string name="library_update_report_migrate">Migrar obras desta lista</string>
+    <string name="library_update_report_migration_empty">Nenhuma obra desta lista continua na biblioteca.</string>
+    <string name="migration_search_failed">Falha na busca. Verifique a fonte e tente novamente.</string>
     <string name="library_update_report_empty">A biblioteca ainda não foi atualizada.</string>
     <string name="library_update_report_last_run">Última execução %1$s</string>
     <string name="action_view_details">Ver detalhes</string>

@@ -21,6 +21,8 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 class GlobalSearchItem(val source: CatalogueSource, val results: List<GlobalSearchMangaItem>?, val highlighted: Boolean = false) :
     AbstractFlexibleItem<GlobalSearchHolder>() {
 
+    var searchFailed: Boolean = false
+
     /**
      * Set view.
      *

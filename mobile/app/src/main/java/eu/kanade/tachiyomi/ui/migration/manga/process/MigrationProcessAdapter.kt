@@ -83,7 +83,7 @@ class MigrationProcessAdapter(
         )
 
     fun mangasSkipped() =
-        (items.count { it.manga.migrationStatus == MigrationStatus.MANGA_NOT_FOUND })
+        (items.count { it.manga.migrationStatus in setOf(MigrationStatus.MANGA_NOT_FOUND, MigrationStatus.SEARCH_FAILED) })
 
     /**
      * Migrates every matched series. Returns the rows kept back, with the reason, because the new
@@ -307,7 +307,7 @@ class MigrationProcessAdapter(
             updateManga.await(
                 MangaUpdate(
                     id = manga.id!!,
-                    title = manga.title,
+                    title = manga.ogTitle,
                     favorite = manga.favorite,
                     dateAdded = manga.date_added,
                 )

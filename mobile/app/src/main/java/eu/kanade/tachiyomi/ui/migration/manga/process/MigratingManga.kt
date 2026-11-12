@@ -53,5 +53,6 @@ class MigrationStatus {
         val RUNNUNG = 0
         val MANGA_FOUND = 1
         val MANGA_NOT_FOUND = 2
+        val SEARCH_FAILED = 3
     }
 }

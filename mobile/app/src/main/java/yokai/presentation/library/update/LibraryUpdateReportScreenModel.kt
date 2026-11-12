@@ -9,14 +9,26 @@ import eu.kanade.tachiyomi.data.library.LibraryUpdateReportEntry
 import eu.kanade.tachiyomi.data.library.LibraryUpdateReportStore
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import co.touchlab.kermit.Logger
+import eu.kanade.tachiyomi.util.system.toast
+import yokai.domain.manga.interactor.GetManga
+import yokai.util.koin.injectLazy
+import yokai.i18n.MR
 
 class LibraryUpdateReportScreenModel(
     private val context: Context,
 ) : StateScreenModel<LibraryUpdateReportScreenModel.State>(State.Loading) {
 
     private val store = LibraryUpdateReportStore(context)
+    private val getManga: GetManga by injectLazy()
+    private val _preparingMigration = MutableStateFlow(false)
+    val preparingMigration = _preparingMigration.asStateFlow()
 
     init {
         load()
@@ -31,6 +43,27 @@ class LibraryUpdateReportScreenModel(
                     errorGroups = report?.errors.orEmpty().groupedByMessage(),
                     skippedGroups = report?.skipped.orEmpty().groupedByMessage(),
                 )
+            }
+        }
+    }
+
+    fun prepareMigration(tab: ReportTab, onReady: (List<Long>) -> Unit) {
+        val report = (state.value as? State.Loaded)?.report ?: return
+        if (!_preparingMigration.compareAndSet(expect = false, update = true)) return
+        screenModelScope.launch {
+            try {
+                val ids = withContext(Dispatchers.IO) {
+                    report.migrationMangaIds(tab) { id -> getManga.awaitById(id)?.favorite == true }
+                }
+                if (ids.isEmpty()) context.toast(MR.strings.library_update_report_migration_empty)
+                else onReady(ids)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.w(e) { "Could not prepare migration from library update report" }
+                context.toast(MR.strings.unknown_error)
+            } finally {
+                _preparingMigration.value = false
             }
         }
     }

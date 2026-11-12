@@ -71,7 +71,12 @@ object TitleMatcher {
         val firstWords = plain.split(' ').let { words ->
             if (words.size > 4) words.take(4).joinToString(" ") else null
         }
-        return listOfNotNull(title.trim(), plain, main, firstWords)
+        val keywords = significantWords(title).toList()
+        return listOfNotNull(
+            title.trim(), plain, main, firstWords,
+            keywords.take(2).joinToString(" "),
+            keywords.maxByOrNull { it.length },
+        )
             .filter { it.isNotBlank() }
             .distinctBy { it.lowercase(Locale.ROOT) }
     }

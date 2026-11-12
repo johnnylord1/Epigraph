@@ -121,7 +121,13 @@ class MigrationProcessHolder(
                         binding.migrationMangaCardTo.coverThumbnail.setImageDrawable(null)
                         binding.migrationMangaCardTo.progress.isVisible = false
                         binding.migrationMangaCardTo.title.text =
-                            view.context.getString(MR.strings.no_alternatives_found)
+                            view.context.getString(
+                                if (item.manga.migrationStatus == MigrationStatus.SEARCH_FAILED) {
+                                    MR.strings.migration_search_failed
+                                } else {
+                                    MR.strings.no_alternatives_found
+                                },
+                            )
                     }
                     binding.migrationMenu.isVisible = true
                     binding.skipManga.isVisible = false

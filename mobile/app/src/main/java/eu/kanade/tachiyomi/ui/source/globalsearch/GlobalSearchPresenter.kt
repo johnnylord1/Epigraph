@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.util.system.withUIContext
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -149,6 +150,9 @@ open class GlobalSearchPresenter(
         return GlobalSearchItem(source, results)
     }
 
+    protected open suspend fun searchManga(source: CatalogueSource, query: String): MangasPage =
+        source.getSearchManga(1, query, source.getFilterList())
+
     fun confirmDeletion(manga: Manga) {
         manga.removeCover(coverCache)
         val downloadManager: DownloadManager = get()
@@ -187,9 +191,13 @@ open class GlobalSearchPresenter(
                         if (this@GlobalSearchPresenter.items.find { it.source == source }?.results != null) {
                             return@mainLaunch
                         }
+                        var searchFailed = false
                         val mangas = try {
-                            source.getSearchManga(1, query, source.getFilterList())
+                            searchManga(source, query)
+                        } catch (error: CancellationException) {
+                            throw error
                         } catch (error: Exception) {
+                            searchFailed = true
                             MangasPage(emptyList(), false)
                         }
                             .mangas.take(10)
@@ -208,6 +216,7 @@ open class GlobalSearchPresenter(
                                 )
                             },
                         )
+                        result.searchFailed = searchFailed
                         items = items
                             .map { item -> if (item.source == result.source) result else item }
                             .sortedWith(

@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.util.view.BackHandlerControllerInterface
 import eu.kanade.tachiyomi.util.view.isControllerVisible
+import eu.kanade.tachiyomi.util.view.mainRecyclerView
 import eu.kanade.tachiyomi.util.view.removeQueryListener
 import eu.kanade.tachiyomi.util.view.searchToolbar
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +54,9 @@ abstract class BaseController(bundle: Bundle? = null) :
     lateinit var viewScope: CoroutineScope
     var isDragging = false
 
+    // True once the local appBar of the current view has its listeners and defaults.
+    private var localChromeWired = false
+
     init {
         addLifecycleListener(
             object : LifecycleListener() {
@@ -61,6 +65,7 @@ abstract class BaseController(bundle: Bundle? = null) :
                 }
 
                 override fun preCreateView(controller: Controller) {
+                    localChromeWired = false
                     viewScope = MainScope()
                     Logger.v { "Create view for ${controller.instance()}" }
                 }
@@ -126,6 +131,32 @@ abstract class BaseController(bundle: Bundle? = null) :
     }
 
     /**
+     * Wires the local appBar of a controller that becomes visible without having been wired.
+     *
+     * A restore (rotation, process death) rebinds controllers while [Conductor.attachRouter] is
+     * still running, so [isControllerVisible] is false in [onChangeStarted] and the search pill and
+     * back arrow keep no listeners. The same goes for tabs rebound while hidden. Wiring happens
+     * once per view because it resets the appBar's position and title.
+     */
+    internal fun ensureLocalChrome() {
+        if (!hostsOwnAppBar || localChromeWired) return
+        wireDefaultLocalChrome()
+        // Tab roots run their own setup from RootTabContent.onTabActivated, right after this.
+        if (this !is eu.kanade.tachiyomi.ui.main.RootTabContent) onSetupLocalChrome()
+    }
+
+    /**
+     * Applies what [onChangeStarted] skipped for the controller a restore left on top of the tabs:
+     * it was not visible yet, so it went dark and lost its menu.
+     */
+    internal fun onRestoredOnTop() {
+        view?.alpha = 1f
+        setHasOptionsMenu(!hostsOwnAppBar)
+        ensureLocalChrome()
+        (activity as? MainActivity)?.syncActivityAppBarVisibility(this)
+    }
+
+    /**
      * Defaults applied to a `hostsOwnAppBar` controller's local appBar before its own
      * [onSetupLocalChrome] runs:
      *  - **Back arrow + click**: shown when this controller is not the router root, or
@@ -151,6 +182,7 @@ abstract class BaseController(bundle: Bundle? = null) :
         val appBar = (this as? eu.kanade.tachiyomi.ui.base.LocalAppBarOwner)
             ?.localAppBar() ?: return
         val toolbar = appBar.mainToolbar ?: return
+        localChromeWired = true
 
         // Defensive reset: the local appBar may have been left scrolled-off or invisible
         // by a previous tab activation. Snap back to fully-visible baseline so the
@@ -193,7 +225,7 @@ abstract class BaseController(bundle: Bundle? = null) :
                     ?.getSearchTitle()
                     ?: act.searchTitle
                     ?: act.title
-                wireLocalSearchToolbar(pill, act)
+                wireLocalSearchToolbar(pill, appBar, act)
             }
         }
 
@@ -219,6 +251,7 @@ abstract class BaseController(bundle: Bundle? = null) :
      */
     private fun wireLocalSearchToolbar(
         pill: eu.kanade.tachiyomi.ui.base.FloatingToolbar,
+        appBar: eu.kanade.tachiyomi.ui.base.ExpandedAppBarLayout,
         act: MainActivity,
     ) {
         // Tap anywhere on the pill body → expand the SearchView action.
@@ -265,11 +298,51 @@ abstract class BaseController(bundle: Bundle? = null) :
         // *after* this method during onSetupLocalChrome). We deliberately don't wire
         // a placeholder listener here — it'd just be overwritten anyway.
 
-        // Pill action-item visibility is owned by [ExpandedAppBarLayout.useSearchToolbarForMenu]
-        // (it lifts items from the main toolbar when the bar collapses to compact mode
-        // and hides them otherwise). No per-item expand listener needed here — when the
-        // SearchView expands, AppCompat handles the layout reshape automatically.
+        // Mirrors the activity-global pill's listener in [MainActivity.onCreate]. Controllers with
+        // their own behaviour replace it in [onSetupLocalChrome]. The item reports itself expanded
+        // or collapsed only after these callbacks return, so what reads that state is posted.
+        pill.searchItem?.setOnActionExpandListener(
+            object : MenuItem.OnActionExpandListener {
+                override fun onMenuItemActionExpand(item: MenuItem): Boolean {
+                    // The window doesn't move for the keyboard, so on a short screen the field
+                    // has to go up to the top to stay above it.
+                    if (!appBar.compactSearchMode && appBar.useLargeToolbar &&
+                        act.resources.configuration.screenHeightDp < 600
+                    ) {
+                        appBar.compactSearchMode = true
+                        mainRecyclerView?.requestApplyInsets()
+                        appBar.y = 0f
+                        appBar.updateAppBarAfterY(mainRecyclerView)
+                    }
+                    pill.post {
+                        // Icons lifted next to the field would take its width.
+                        appBar.dropLiftedPillMenu()
+                        act.reEnableBackPressedCallBack()
+                    }
+                    return true
+                }
+
+                override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
+                    val leavesCompactMode = appBar.compactSearchMode && !keepsCompactSearchBar
+                    if (leavesCompactMode) appBar.compactSearchMode = false
+                    pill.post {
+                        if (view == null) return@post
+                        if (leavesCompactMode) {
+                            mainRecyclerView?.requestApplyInsets()
+                            appBar.updateAppBarAfterY(mainRecyclerView)
+                        }
+                        appBar.refreshLiftedPillMenu()
+                        act.reEnableBackPressedCallBack()
+                    }
+                    return true
+                }
+            },
+        )
     }
+
+    /** True while something other than the open search needs the bar in compact mode. */
+    protected open val keepsCompactSearchBar: Boolean
+        get() = false
 
     open fun canStillGoBack(): Boolean { return false }
 

@@ -804,6 +804,8 @@ class ExpandedAppBarLayout@JvmOverloads constructor(context: Context, attrs: Att
      * this repeatedly during scroll won't churn the menu state.
      */
     private fun liftMenuToPill() {
+        // The open field keeps the pill's whole width; closing the search lifts them again.
+        if (searchToolbar?.isSearchExpanded == true) return
         val source = mainToolbar?.menu ?: return
         val dest = searchToolbar?.menu ?: return
         var i = 0

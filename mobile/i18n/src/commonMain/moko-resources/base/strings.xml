@@ -247,6 +247,9 @@
     <string name="library_update_report_skipped">Skipped</string>
     <string name="library_update_report_no_errors">No update errors from the last run.</string>
     <string name="library_update_report_no_skipped">No titles were skipped during the last run.</string>
+    <string name="library_update_report_migrate">Migrate titles in this list</string>
+    <string name="library_update_report_migration_empty">No titles in this list are still in your library.</string>
+    <string name="migration_search_failed">Search failed. Check the source and try again.</string>
     <string name="library_update_report_empty">No library update has run yet.</string>
     <string name="library_update_report_last_run">Last run %1$s</string>
     <string name="action_view_details">View details</string>
@@ -2377,10 +2380,10 @@
     <string name="epigraph_core_blocked_title">Changes that did not sync</string>
     <string name="epigraph_core_blocked_summary">%1$d waiting for a decision</string>
     <string name="epigraph_core_blocked_dialog_body">The desktop refused these changes. Send them again after fixing the cause, or discard them; discarding keeps the change on this phone only.</string>
+    <string name="epigraph_core_blocked_book_file_missing">The file or cover of this book is not on this phone. Import the book again or discard this change.</string>
     <string name="epigraph_core_blocked_retry">Send again</string>
     <string name="epigraph_core_blocked_retry_all">Send all again</string>
     <string name="epigraph_core_blocked_discard">Discard</string>
-    <string name="epigraph_core_blocked_book_file_missing">The file or cover of this book is not on this phone. Import the book again or discard this change.</string>
     <string name="epigraph_core_blocked_close">Close</string>
     <string name="epigraph_core_blocked_kind_comic">Comic</string>
     <string name="epigraph_core_blocked_kind_novel">Novel</string>

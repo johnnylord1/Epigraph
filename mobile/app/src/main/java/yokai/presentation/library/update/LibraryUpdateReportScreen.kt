@@ -31,6 +31,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -49,7 +50,9 @@ import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.data.library.LibraryUpdateReportEntry
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
+import eu.kanade.tachiyomi.ui.migration.manga.design.PreMigrationController
 import eu.kanade.tachiyomi.util.compose.LocalBackPress
 import eu.kanade.tachiyomi.util.compose.LocalRouter
 import eu.kanade.tachiyomi.util.compose.currentOrThrow
@@ -74,6 +77,7 @@ import yokai.presentation.component.ToolTipButton
 import yokai.presentation.manga.components.MangaCover as MangaCoverImage
 import yokai.presentation.manga.components.MangaCoverRatio
 import yokai.util.Screen
+import yokai.util.koin.get
 import yokai.util.secondaryItemAlpha
 
 class LibraryUpdateReportScreen(
@@ -88,6 +92,7 @@ class LibraryUpdateReportScreen(
         val router = LocalRouter.current
         val screenModel = rememberScreenModel { LibraryUpdateReportScreenModel(context) }
         val state by screenModel.state.collectAsState()
+        val preparingMigration by screenModel.preparingMigration.collectAsState()
 
         val pagerState = rememberPagerState(
             initialPage = if (initialTab == LibraryUpdateReportScreenModel.ReportTab.SKIPPED) 1 else 0,
@@ -166,6 +171,31 @@ class LibraryUpdateReportScreen(
                             .fillMaxWidth()
                             .padding(horizontal = Size.medium, vertical = Size.small),
                     )
+                }
+
+                val report = (state as? LibraryUpdateReportScreenModel.State.Loaded)?.report
+                val currentTab = tabAt(pagerState.currentPage)
+                val entries = when (currentTab) {
+                    LibraryUpdateReportScreenModel.ReportTab.ERRORS -> report?.errors
+                    LibraryUpdateReportScreenModel.ReportTab.SKIPPED -> report?.skipped
+                }.orEmpty()
+                if (entries.any { it.mangaId > 0L }) {
+                    TextButton(
+                        onClick = {
+                            val migrationRouter = router ?: return@TextButton
+                            screenModel.prepareMigration(currentTab) { ids ->
+                                PreMigrationController.navigateToMigration(
+                                    skipPre = get<PreferencesHelper>().skipPreMigration().get(),
+                                    router = migrationRouter,
+                                    mangaIds = ids,
+                                )
+                            }
+                        },
+                        enabled = !preparingMigration && router != null,
+                        modifier = Modifier.padding(horizontal = Size.small),
+                    ) {
+                        Text(stringResource(MR.strings.library_update_report_migrate))
+                    }
                 }
 
                 HorizontalPager(

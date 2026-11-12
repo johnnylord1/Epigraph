@@ -21,12 +21,16 @@ class SearchController(
     private val originalTitle: String? = null,
     private val originalSource: Long = NO_SOURCE,
     private var sources: List<CatalogueSource>? = null,
+    private val extraSearchParams: String? = null,
+    private val alternativeTitles: List<String> = emptyList(),
 ) : GlobalSearchController(
     originalTitle,
     bundle = bundleOf(
         ORIGINAL_TITLE to originalTitle,
         ORIGINAL_SOURCE to originalSource,
         SOURCES to sources?.map { it.id }?.toLongArray(),
+        EXTRA_SEARCH_PARAMS to extraSearchParams,
+        ALTERNATIVE_TITLES to alternativeTitles.toTypedArray(),
     ),
 ),
     BottomNavBarInterface {
@@ -50,9 +54,11 @@ class SearchController(
         originalTitle = bundle.getString(ORIGINAL_TITLE),
         originalSource = bundle.getLong(ORIGINAL_SOURCE, NO_SOURCE),
         sources = restoreSources(bundle.getLongArray(SOURCES)),
+        extraSearchParams = bundle.getString(EXTRA_SEARCH_PARAMS),
+        alternativeTitles = bundle.getStringArray(ALTERNATIVE_TITLES)?.toList().orEmpty(),
     )
 
-    override val presenter = SearchPresenter(initialQuery, originalSource, sources = sources)
+    override val presenter = SearchPresenter(initialQuery, originalSource, sources, extraSearchParams, alternativeTitles)
 
     override fun onMangaClick(manga: Manga) {
         if (targetController is MigrationListController) {
@@ -99,6 +105,8 @@ class SearchController(
         private const val ORIGINAL_TITLE = "original_title"
         private const val ORIGINAL_SOURCE = "original_source"
         const val SOURCES = "sources"
+        private const val EXTRA_SEARCH_PARAMS = "extra_search_params"
+        private const val ALTERNATIVE_TITLES = "alternative_titles"
         private const val NO_SOURCE = -1L
     }
 }
