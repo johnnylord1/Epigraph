@@ -1,7 +1,7 @@
-import { cacheLibraryCoverFromServer, getCachedLibraryCoverUrl } from "./coverCache";
+import { cacheLibraryCoverFromServer, findUncachedLibraryCovers } from "./coverCache";
 import type { Manga } from "../types";
 
-type CoverCacheScope = Parameters<typeof getCachedLibraryCoverUrl>[0];
+type CoverCacheScope = Parameters<typeof findUncachedLibraryCovers>[0];
 
 const WORKERS = 2;
 const PAUSE_MS = 150;
@@ -16,13 +16,12 @@ export async function warmAllLibraryCovers(scope: CoverCacheScope, mangas: reado
   const scopeKey = `${scope.profileId ?? ""}::${scope.serverUrl ?? ""}::${scope.coverCacheGeneration ?? ""}`;
   if (warmedScopes.has(scopeKey)) return 0;
   warmedScopes.add(scopeKey);
-  const queue = mangas.filter((manga) => manga.thumbnailUrl);
+  const queue = await findUncachedLibraryCovers(scope, mangas);
   let next = 0;
   let fetched = 0;
   const worker = async () => {
     while (next < queue.length) {
       const manga = queue[next++];
-      if (await getCachedLibraryCoverUrl(scope, manga)) continue;
       if (await cacheLibraryCoverFromServer(scope, manga)) fetched += 1;
       await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
     }

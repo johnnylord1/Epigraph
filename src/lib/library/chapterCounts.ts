@@ -33,9 +33,10 @@ export function isMangaChapterCountRegression(manga: Manga, counts: MangaChapter
   return counts.chapterCount < toFiniteCount(manga.chapterCount);
 }
 
+/** Returns the same object when the counts did not change, which tells callers to leave the library alone. */
 export function mergeMangaCountsFromChapters(manga: Manga, chapters: Chapter[]): Manga {
   const counts = deriveMangaCountsFromChapters(chapters);
-  if (isMangaChapterCountRegression(manga, counts)) return manga;
+  if (!countsChanged(manga, counts)) return manga;
   return {
     ...manga,
     ...counts,

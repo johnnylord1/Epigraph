@@ -10,6 +10,7 @@ import type { Category, Chapter, Manga } from "../types";
 import type { LibraryUpdateIssueErrorType, LibraryUpdateIssueKind } from "../../store/state.svelte";
 import { classifySourceAccessError, isConfirmedAntibotChallengeMessage, sourceAccessErrorMessage, type SourceAccessClassification } from "../sourceAccess";
 import { mergeMangaCountsFromChapters } from "./chapterCounts";
+import { hasUnrecordedChapters, loadComicsChapterSnapshot } from "./comicsChapterSnapshot";
 import { translate } from "../i18n/runtime";
 import { withSuwayomiOperationLease } from "../suwayomiUpdateLock.svelte";
 
@@ -167,9 +168,16 @@ export function formatLibraryUpdateWaiting() {
   return translate("libraryUpdate.waitingProgress");
 }
 
+// Nobody is waiting on an automatic update, so it leaves room for whatever the user is doing on the PC.
+const AUTOMATIC_UPDATE_TITLE_PAUSE_MS = 800;
+
+function titlePauseMs(reason: SharedLibraryUpdateRunOptions["reason"]) {
+  return reason === "auto-library-update" ? AUTOMATIC_UPDATE_TITLE_PAUSE_MS : 0;
+}
+
 function sourceParallelism(reason: SharedLibraryUpdateRunOptions["reason"]) {
   if (reason === "auto-library-update") return 1;
-  const intensity = store.settings.libraryUpdateIntensity ?? "fast";
+  const intensity = store.settings.libraryUpdateIntensity ?? "balanced";
   if (intensity === "eco") return 1;
   if (intensity === "balanced") return 2;
   return 4;
@@ -177,7 +185,7 @@ function sourceParallelism(reason: SharedLibraryUpdateRunOptions["reason"]) {
 
 function perTitleTimeoutMs(reason: SharedLibraryUpdateRunOptions["reason"]) {
   if (reason === "auto-library-update") return 75_000;
-  const intensity = store.settings.libraryUpdateIntensity ?? "fast";
+  const intensity = store.settings.libraryUpdateIntensity ?? "balanced";
   if (intensity === "eco") return 75_000;
   if (intensity === "balanced") return 60_000;
   return 45_000;
@@ -299,8 +307,11 @@ async function runComicsSourceQueueUpdate(
   const changedMangaIds = new Set<number>();
   const groups = new Map<string, Manga[]>();
   let finishedJobs = 0;
-  let workingSnapshot = store.libraryMangaSnapshot;
-  let pendingSnapshotCommit: Manga[] | null = null;
+  const pendingCountChanges = new Map<number, Chapter[]>();
+  const chapterRecords = loadComicsChapterSnapshot({
+    profileId: store.runtimeResolvedLocalProfileId,
+    serverUrl: store.runtimeServerUrl,
+  })?.mangas ?? {};
   let snapshotCommitTimer: ReturnType<typeof setTimeout> | null = null;
   let lastSnapshotCommitAt = 0;
   let lastProgressPublishAt = 0;
@@ -324,15 +335,19 @@ async function runComicsSourceQueueUpdate(
       clearTimeout(snapshotCommitTimer);
       snapshotCommitTimer = null;
     }
-    if (!pendingSnapshotCommit) return;
-    setLibraryMangaSnapshot(pendingSnapshotCommit);
-    cache.set(CACHE_KEYS.LIBRARY, pendingSnapshotCommit, CACHE_GROUPS.LIBRARY);
-    pendingSnapshotCommit = null;
+    if (pendingCountChanges.size === 0) return;
+    // Applied to the current list: a work that sync added or removed during the update stays as sync left it.
+    const nextSnapshot = store.libraryMangaSnapshot.map((entry) => {
+      const chapters = pendingCountChanges.get(entry.id);
+      return chapters ? mergeMangaCountsFromChapters(entry, chapters) : entry;
+    });
+    pendingCountChanges.clear();
+    setLibraryMangaSnapshot(nextSnapshot);
+    cache.set(CACHE_KEYS.LIBRARY, nextSnapshot, CACHE_GROUPS.LIBRARY);
     lastSnapshotCommitAt = Date.now();
   };
 
-  const scheduleSnapshotCommit = (nextSnapshot: Manga[]) => {
-    pendingSnapshotCommit = nextSnapshot;
+  const scheduleSnapshotCommit = () => {
     const elapsed = Date.now() - lastSnapshotCommitAt;
     if (elapsed >= 900) {
       commitSnapshotNow();
@@ -380,6 +395,7 @@ async function runComicsSourceQueueUpdate(
   const workerCount = Math.max(1, Math.min(sourceParallelism(options.reason), sourceEntries.length || 1));
   const timeoutMs = perTitleTimeoutMs(options.reason);
   const breakerLimit = sourceCircuitBreakerLimit(options.reason);
+  const pauseMs = titlePauseMs(options.reason);
 
   await Promise.all(Array.from({ length: workerCount }, async () => {
     while (cursor < sourceEntries.length && !isLibraryUpdateStopRequested()) {
@@ -391,19 +407,17 @@ async function runComicsSourceQueueUpdate(
         publishProgress(manga.title, group.sourceName);
         try {
           const chapters = await fetchChaptersForUpdate(manga, timeoutMs);
-          preloadedChapters.set(manga.id, chapters);
           consecutiveFailures = 0;
-          let changed = false;
-          const nextSnapshot = workingSnapshot.map((entry) => {
-            if (entry.id !== manga.id) return entry;
-            const next = mergeMangaCountsFromChapters(entry, chapters);
-            changed = next !== entry;
-            return next;
-          });
+          const entry = store.libraryMangaSnapshot.find((candidate) => candidate.id === manga.id);
+          const changed = Boolean(entry) && mergeMangaCountsFromChapters(entry!, chapters) !== entry;
+          // A large library has far too many chapters to hold for a whole run; most titles have nothing to record.
+          if (changed || hasUnrecordedChapters(chapterRecords[String(manga.id)], chapters)) {
+            preloadedChapters.set(manga.id, chapters);
+          }
           if (changed) {
             changedMangaIds.add(manga.id);
-            workingSnapshot = nextSnapshot;
-            scheduleSnapshotCommit(nextSnapshot);
+            pendingCountChanges.set(manga.id, chapters);
+            scheduleSnapshotCommit();
           }
         } catch (error) {
           consecutiveFailures += 1;
@@ -479,6 +493,9 @@ async function runComicsSourceQueueUpdate(
             });
           }
           publishProgress();
+        }
+        if (pauseMs > 0 && finishedJobs < total && !isLibraryUpdateStopRequested()) {
+          await new Promise((resolve) => setTimeout(resolve, pauseMs));
         }
       }
     }

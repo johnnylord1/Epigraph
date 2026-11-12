@@ -173,6 +173,34 @@ describe("comics chapter snapshot", () => {
     ]);
   });
 
+  it("records a first-seen title kept by the queue, so its next new chapter notifies", async () => {
+    const scope = { profileId: "main", serverUrl: "http://127.0.0.1:4567" };
+    const fetchChapters = vi.fn(async () => []);
+
+    const first = await reconcileComicsChapterSnapshot({
+      scope,
+      beforeMangas: [manga],
+      afterMangas: [manga],
+      candidateMangaIds: [],
+      preloadedChapters: new Map([[7, [chapter(1, "Chapter 1")]]]),
+      fetchChapters,
+      createdAt: 100,
+    });
+    const second = await reconcileComicsChapterSnapshot({
+      scope,
+      beforeMangas: [manga],
+      afterMangas: [{ ...manga, chapterCount: 2 }],
+      candidateMangaIds: [7],
+      preloadedChapters: new Map([[7, [chapter(1, "Chapter 1"), chapter(2, "Chapter 2")]]]),
+      fetchChapters,
+      createdAt: 200,
+    });
+
+    expect(first.notifications).toEqual([]);
+    expect(second.notifications).toMatchObject([{ mangaId: 7, chapterTitles: ["Chapter 2"] }]);
+    expect(fetchChapters).not.toHaveBeenCalled();
+  });
+
   it("falls back to chapterCount notifications when fetching candidate chapters fails", async () => {
     const result = await reconcileComicsChapterSnapshot({
       scope: { profileId: "main", serverUrl: "http://127.0.0.1:4567" },

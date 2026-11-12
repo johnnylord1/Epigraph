@@ -11,6 +11,7 @@ type CoverCacheScope = {
 };
 
 const LIBRARY_COVER_CACHE_VARIANT = "thumb-v2-edge420";
+const COVER_LOOKUP_BATCH = 200;
 
 const stableCoverUrls = new Map<string, string>();
 const sessionCoverUrls = new Map<string, string>();
@@ -69,6 +70,31 @@ export async function getCachedLibraryCoverUrl(
   const url = coverPathAsUrl(path);
   sessionCoverUrls.set(lookupKey, url);
   return url;
+}
+
+/** Finds the titles whose cover is not on disk yet, with one native call per batch of titles. */
+export async function findUncachedLibraryCovers(
+  scope: CoverCacheScope,
+  mangas: readonly Manga[],
+): Promise<Manga[]> {
+  const pending = mangas.filter((manga) => (
+    manga.thumbnailUrl && !sessionCoverUrls.has(cacheLookupKey(scope, manga))
+  ));
+  const uncached: Manga[] = [];
+  for (let start = 0; start < pending.length; start += COVER_LOOKUP_BATCH) {
+    const batch = pending.slice(start, start + COVER_LOOKUP_BATCH);
+    const paths = await invoke<(string | null)[]>("get_cached_library_covers", {
+      profileId: scopeProfileId(scope),
+      serverUrl: scopeServerUrl(scope),
+      items: batch.map((manga) => ({ mangaId: manga.id, thumbnailUrl: cacheThumbnailUrl(scope, manga) })),
+    }).catch(() => null);
+    batch.forEach((manga, index) => {
+      const path = paths?.[index];
+      if (path) sessionCoverUrls.set(cacheLookupKey(scope, manga), coverPathAsUrl(path));
+      else uncached.push(manga);
+    });
+  }
+  return uncached;
 }
 
 export async function cacheLibraryCoverFromServer(

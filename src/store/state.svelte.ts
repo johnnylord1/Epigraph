@@ -708,7 +708,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoStartServer:        true,
   autoLibraryUpdatesEnabled: true,
   libraryUpdateIntervalHours: 12,
-  libraryUpdateIntensity: "fast",
+  libraryUpdateIntensity: "balanced",
   downloadNewNovelChapters: false,
   onlyUpdateOngoingNovels: false,
   localServerStandbyEnabled: true,

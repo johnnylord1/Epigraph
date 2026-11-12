@@ -234,6 +234,16 @@ export function diffComicsChapterEntries(
   return next.filter((entry) => !previousKeys.has(chapterKey(entry)));
 }
 
+/** Whether a title has chapters the snapshot has not recorded yet, or has no record at all. */
+export function hasUnrecordedChapters(
+  record: PersistedComicsMangaChapterSnapshot | null | undefined,
+  chapters: Chapter[],
+) {
+  if (!record) return true;
+  const recorded = new Set(record.chapters.map((entry) => entry.id));
+  return chapters.some((chapter) => !recorded.has(Number(chapter.id)));
+}
+
 function toChapterEntry(chapter: Chapter, seenAt: number): PersistedComicsChapterEntry | null {
   const id = normalizeNumber(chapter.id);
   if (id === null) return null;
@@ -304,15 +314,6 @@ export async function reconcileComicsChapterSnapshot(
   const nextSnapshotMap: Record<string, PersistedComicsMangaChapterSnapshot> = { ...(snapshot?.mangas ?? {}) };
   const beforeById = new Map(options.beforeMangas.map((manga) => [manga.id, manga]));
   const afterById = new Map(options.afterMangas.map((manga) => [manga.id, manga]));
-  const candidates = buildComicsUpdateCandidateIds(
-    options.beforeMangas,
-    options.afterMangas,
-    options.candidateMangaIds,
-  ).filter((mangaId) => afterById.has(mangaId));
-  const patches = new Map<number, MangaChapterCounts>();
-  const notifications: ComicsUpdateNotificationInput[] = [];
-  const failedIds: number[] = [];
-  const touchedIds = new Set<number>();
   const preloadedChapters = options.preloadedChapters instanceof Map
     ? options.preloadedChapters
     : new Map(
@@ -320,6 +321,16 @@ export async function reconcileComicsChapterSnapshot(
           .map(([mangaId, chapters]) => [Number(mangaId), chapters] as const)
           .filter(([mangaId, chapters]) => Number.isFinite(mangaId) && Array.isArray(chapters)),
       );
+  // The update queue only keeps the chapters of titles with something to record, even when no count moved.
+  const candidates = buildComicsUpdateCandidateIds(
+    options.beforeMangas,
+    options.afterMangas,
+    [...(options.candidateMangaIds ?? []), ...preloadedChapters.keys()],
+  ).filter((mangaId) => afterById.has(mangaId));
+  const patches = new Map<number, MangaChapterCounts>();
+  const notifications: ComicsUpdateNotificationInput[] = [];
+  const failedIds: number[] = [];
+  const touchedIds = new Set<number>();
 
   if (!candidates.length) {
     return {
