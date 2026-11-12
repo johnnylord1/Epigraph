@@ -264,6 +264,8 @@
     <string name="start_reading">Comece a ler</string>
     <string name="start_reading_chapter_">Começar a ler Capítulo %1$s</string>
     <string name="continue_reading_chapter_">Continuar a ler o capítulo %1$s</string>
+    <string name="start_reading_titled_">Começar a ler %1$s</string>
+    <string name="continue_reading_titled_">Continuar a ler %1$s</string>
     <string name="continue_reading">Continuar lendo</string>
     <string name="chapters_">Capítulos %1$s</string>
     <string name="volume_">Volume %1$d</string>

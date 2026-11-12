@@ -8,6 +8,7 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.BitmapDrawable
 import android.os.Bundle
+import android.text.TextUtils
 import android.text.format.Formatter
 import android.view.LayoutInflater
 import android.view.Menu
@@ -372,6 +373,10 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         )
 
         binding.fab.transitionName = "details start reading transition"
+        // A section's own name can be long; it ends in an ellipsis rather than spanning the screen.
+        binding.fab.maxLines = 1
+        binding.fab.ellipsize = TextUtils.TruncateAt.END
+        binding.fab.maxWidth = (binding.root.resources.displayMetrics.widthPixels * 0.75f).toInt()
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.fab) { fab, insets ->
             val systemBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
             fab.updateLayoutParams {
@@ -758,6 +763,8 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
                 MangaReadingButtonState(
                     chapterNumber = if (helper.chapterCount <= 1) 0.0 else next + 1.0,
                     hasProgress = next == helper.resumableChapter(chapterState, progress),
+                    chapterTitle = structure?.chapterTitles?.getOrNull(next)
+                        ?.takeIf { it.isNotBlank() && helper.chapterCount > 1 && !settings.hideTitles },
                 ),
                 DecimalFormat("#"),
             )

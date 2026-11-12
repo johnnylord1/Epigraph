@@ -15,6 +15,8 @@ internal enum class MangaReadingButtonLabel {
 internal data class MangaReadingButtonState(
     val chapterNumber: Double,
     val hasProgress: Boolean,
+    /** The chapter's own name, such as a PDF outline entry, shown in place of its number. */
+    val chapterTitle: String? = null,
 ) {
     val label: MangaReadingButtonLabel
         get() = when {
@@ -42,12 +44,10 @@ internal fun Context.getReadingButtonText(
 ): String = when (state.label) {
     MangaReadingButtonLabel.START -> getString(MR.strings.start_reading)
     MangaReadingButtonLabel.CONTINUE -> getString(MR.strings.continue_reading)
-    MangaReadingButtonLabel.START_CHAPTER -> getString(
-        MR.strings.start_reading_chapter_,
-        decimalFormat.format(state.chapterNumber),
-    )
-    MangaReadingButtonLabel.CONTINUE_CHAPTER -> getString(
-        MR.strings.continue_reading_chapter_,
-        decimalFormat.format(state.chapterNumber),
-    )
+    MangaReadingButtonLabel.START_CHAPTER -> state.chapterTitle
+        ?.let { getString(MR.strings.start_reading_titled_, it) }
+        ?: getString(MR.strings.start_reading_chapter_, decimalFormat.format(state.chapterNumber))
+    MangaReadingButtonLabel.CONTINUE_CHAPTER -> state.chapterTitle
+        ?.let { getString(MR.strings.continue_reading_titled_, it) }
+        ?: getString(MR.strings.continue_reading_chapter_, decimalFormat.format(state.chapterNumber))
 }
