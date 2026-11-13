@@ -582,6 +582,20 @@
     }
   }
 
+  /* A phone that forgets this computer is revoked here; the list drops it without a reload. */
+  let pairedDevicesRefreshing = false;
+  async function refreshPairedDevicesQuietly() {
+    if (pairedDevicesRefreshing || loadingPairedDevices) return;
+    pairedDevicesRefreshing = true;
+    try {
+      pairedDevices = (await syncdListPairedDevices()) ?? [];
+    } catch {
+      // The next tick tries again; the last list stays meanwhile.
+    } finally {
+      pairedDevicesRefreshing = false;
+    }
+  }
+
   function allowedDeviceScopes(device: SyncdPairedDeviceView): string[] {
     return [
       `comics:profile:${device.profileId}`,
@@ -1105,6 +1119,7 @@
       void refreshReplicationSnapshot();
     }
 
+    let pollTick = 0;
     const replicationPoll = window.setInterval(() => {
       // A minimized window has no one to show the status to; the next visible tick refreshes it.
       if (document.hidden) return;
@@ -1112,6 +1127,8 @@
         void refreshReplicationSnapshot();
       }
       void refreshRuntimeIdentity();
+      pollTick += 1;
+      if (pollTick % 2 === 0) void refreshPairedDevicesQuietly();
     }, 2000);
 
     const handleAutomationQrImport = (event: Event) => {

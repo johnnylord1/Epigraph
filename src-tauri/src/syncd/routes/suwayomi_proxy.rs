@@ -144,7 +144,10 @@ async fn proxy_http(
     }
 
     let upstream_response = match upstream_request.send().await {
-        Ok(response) => response,
+        Ok(response) => {
+            suwayomi_process::note_suwayomi_answer(response.url());
+            response
+        }
         Err(error) => {
             tracing::warn!(
                 profile = session.profile_id,

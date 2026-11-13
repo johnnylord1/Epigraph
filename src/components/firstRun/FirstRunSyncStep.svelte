@@ -4,7 +4,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { arrive, enterElements, findByData, motionFade, motionFly, pulse, prefersReducedMotion, spring } from "../../lib/motion/firstRunMotion";
   import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadiness";
-  import { startFirstRunBackgroundSync } from "../../lib/setup/firstRunBackgroundSync.svelte";
+  import { cancelPeerSync, pairedPeerPresent, startFirstRunBackgroundSync } from "../../lib/setup/firstRunBackgroundSync.svelte";
   import {
     listenSyncdPairingStatus,
     listenSyncdReplicationState,
@@ -39,6 +39,9 @@
   const PIN_LENGTH = 6;
   const SCAN_INTERVAL_MS = 4000;
   const PROGRESS_INTERVAL_MS = 2000;
+  const PEER_INTERVAL_MS = 3000;
+  /* Reads in a row without the peer before it counts as gone, so a Core restart does not end the sync. */
+  const PEER_MISSES_TO_LEAVE = 2;
 
   let stage = $state<Stage>("scan");
   let candidates = $state<SyncdDesktopDiscoveryCandidate[]>([]);
@@ -69,7 +72,11 @@
   let continuedInBackground = $state(false);
   /* A phone or computer that paired with this computer's Core. Both sides then publish their
      libraries and Core merges them, so nothing here waits for a remote bootstrap. */
-  let hostPeer = $state<{ name: string; platform: string } | null>(null);
+  let hostPeer = $state<{ name: string; platform: string; deviceId: string | null } | null>(null);
+  /* Why the step is back at choosing a device: the peer forgot this computer, or the user cancelled. */
+  let notice = $state<string | null>(null);
+  let cancelling = $state(false);
+  let cancelError = $state(false);
 
   const targetName = $derived(target?.deviceName ?? target?.instanceName ?? connectState?.remoteDeviceName ?? hostPeer?.name ?? $_("firstRun.sync.otherComputer"));
   const peerIsPhone = $derived(hostPeer?.platform === "android");
@@ -153,7 +160,7 @@
         try {
           const paired = (await syncdListPairedDevicesIfRunning()) ?? [];
           const peer = paired.find((device) => device.profileId === profileId && !device.inactive);
-          if (!cancelled && peer && stage === "scan") adoptHostPeer(peer.deviceName, peer.platform);
+          if (!cancelled && peer && stage === "scan") adoptHostPeer(peer.deviceName, peer.platform, peer.deviceId);
         } catch {}
       }
       if (!cancelled) {
@@ -177,7 +184,7 @@
         try {
           const paired = (await syncdListPairedDevicesIfRunning()) ?? [];
           const peer = paired.find((device) => device.profileId === profileId && !device.inactive);
-          if (!disposed && peer) adoptHostPeer(peer.deviceName, peer.platform);
+          if (!disposed && peer) adoptHostPeer(peer.deviceName, peer.platform, peer.deviceId);
         } catch {}
       }
       try {
@@ -211,14 +218,33 @@
 
   function applyHostStatus(state: SyncdHostPairingState) {
     if (!profileId || state.profileId !== profileId || state.status !== "approved") return;
-    adoptHostPeer(state.claimedDeviceName?.trim() || $_("firstRun.sync.otherComputer"), state.claimedPlatform ?? "unknown");
+    adoptHostPeer(state.claimedDeviceName?.trim() || $_("firstRun.sync.otherComputer"), state.claimedPlatform ?? "unknown", state.claimedDeviceId ?? null);
     if (otherWaysOpen) closeOtherWays();
   }
 
-  function adoptHostPeer(name: string, platform: string) {
+  function adoptHostPeer(name: string, platform: string, deviceId: string | null) {
     if (connectState) return;
-    hostPeer = { name, platform: platform.toLowerCase() };
+    hostPeer = { name, platform: platform.toLowerCase(), deviceId };
+    notice = null;
+    cancelError = false;
     if (stage !== "done") stage = "syncing";
+  }
+
+  /* Back to choosing a device. What already arrived stays in the library. */
+  function returnToScan(message: string | null) {
+    hostPeer = null;
+    connectState = null;
+    target = null;
+    snapshot = null;
+    progress = null;
+    progressChecked = false;
+    libraryRead = false;
+    libraryError = false;
+    ready = false;
+    backgroundPrompt = false;
+    cancelError = false;
+    notice = message;
+    stage = "scan";
   }
 
   function applyConnectStatus(state: SyncdConnectState) {
@@ -285,6 +311,60 @@
     void poll();
     return () => { cancelled = true; clearTimeout(timer); };
   });
+
+  /* A phone that forgets this computer is revoked here and leaves the paired devices, so nothing
+     more will come from it. Only a peer once seen in the list can leave it: a phone that has just
+     paired may not be listed yet, and the list reads empty while Core is not running. */
+  $effect(() => {
+    const peer = hostPeer;
+    const currentProfile = profileId;
+    if (!peer || !currentProfile || continuedInBackground || (stage !== "syncing" && stage !== "done")) return;
+    let cancelled = false;
+    let seen = false;
+    let misses = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      try {
+        if (await syncdGetSyncProgressIfRunning()) {
+          const paired = (await syncdListPairedDevicesIfRunning()) ?? [];
+          if (cancelled) return;
+          if (pairedPeerPresent(paired, currentProfile, peer.deviceId)) {
+            seen = true;
+            misses = 0;
+          } else if (seen) misses += 1;
+        }
+      } catch {}
+      if (cancelled) return;
+      if (misses >= PEER_MISSES_TO_LEAVE) {
+        returnToScan($_("firstRun.sync.peerLeft", { name: peer.name }));
+        return;
+      }
+      timer = setTimeout(check, PEER_INTERVAL_MS);
+    };
+    void check();
+    return () => { cancelled = true; clearTimeout(timer); };
+  });
+
+  /* Stops syncing with the other device: a phone is unpaired here, another computer disconnected. */
+  async function cancelSync() {
+    if (cancelling || !profileId) return;
+    cancelling = true;
+    cancelError = false;
+    try {
+      let peerDeviceId = hostPeer?.deviceId ?? null;
+      if (hostPeer && !peerDeviceId) {
+        const paired = (await syncdListPairedDevicesIfRunning()) ?? [];
+        peerDeviceId = paired.find((device) => device.profileId === profileId && !device.inactive)?.deviceId ?? null;
+      }
+      await cancelPeerSync({ peerDeviceId, sessionKey: hostPeer ? null : snapshot?.activeSessionKey ?? null });
+      returnToScan($_("firstRun.sync.cancelledNotice"));
+    } catch (error) {
+      console.warn("First-run sync could not stop syncing with the other device.", error);
+      cancelError = true;
+    } finally {
+      cancelling = false;
+    }
+  }
 
   $effect(() => {
     if (ready || !libraryRead || !applied) return;
@@ -395,7 +475,13 @@
 
   function followInBackground() {
     if (!profileId) return;
-    startFirstRunBackgroundSync({ profileId, waitForUploads: peerIsPhone, waitForReplication: !hostPeer });
+    startFirstRunBackgroundSync({
+      profileId,
+      waitForUploads: peerIsPhone,
+      waitForReplication: !hostPeer,
+      peerDeviceId: hostPeer?.deviceId ?? null,
+      sessionKey: hostPeer ? null : snapshot?.activeSessionKey ?? null,
+    });
   }
 
   function continueSetup() {
@@ -465,6 +551,7 @@
     {#key stage}
     <div class="sync-stage" in:arrive>
       {#if stage === "scan"}
+        {#if notice}<p class="help notice" role="status">{notice}</p>{/if}
         <div class="fr-section-label">{$_("firstRun.sync.networkLabel")}</div>
         <div class="peers" aria-live="polite">
           {#if !scanned}
@@ -541,6 +628,14 @@
         {#if libraryError}
           <div class="fr-error" role="alert"><WarningCircle size={18} /><span>{$_("firstRun.sync.libraryError")}</span><button class="fr-link" type="button" onclick={() => (libraryRetry += 1)}>{$_("firstRun.sync.tryAgain")}</button></div>
         {/if}
+        {#if cancelError}
+          <div class="fr-error" role="alert"><WarningCircle size={18} /><span>{$_("firstRun.sync.cancelFailedBody")}</span></div>
+        {/if}
+        {#if stage === "syncing"}
+          <div class="stage-actions">
+            <button class="fr-link fr-link--quiet fr-sync-cancel" type="button" disabled={cancelling} onclick={cancelSync}><X size={13} />{$_("firstRun.sync.cancelSync")}</button>
+          </div>
+        {/if}
       {/if}
       {#if backgroundPrompt && (stage === "syncing" || stage === "approval")}
         <div class="state-card background-card" role="alert" in:arrive>
@@ -598,6 +693,7 @@
   .sync-stage { grid-area: 1 / 1; min-width: 0; display: grid; align-content: start; gap: 4px; }
   .stage-title { color: var(--text-primary); font-size: 15px; font-weight: 700; }
   .help { margin: 6px 4px 8px 0; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
+  .notice { margin-top: 0; color: var(--text-secondary); }
   .peers { display: grid; min-height: 110px; }
   .searching { display: flex; align-items: center; gap: 12px; padding: 18px 8px; color: var(--text-muted); font-size: 12.5px; }
   .other-ways { justify-self: start; margin-left: -4px; }

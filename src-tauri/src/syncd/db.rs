@@ -158,7 +158,8 @@ pub enum MutationReceiptLookup {
 }
 
 #[derive(Debug, Clone, FromRow)]
-struct MutationReceiptRow {
+pub struct MutationReceiptRow {
+    client_mutation_id: String,
     mutation_hash: String,
     mutation_json: String,
     result_json: String,
@@ -182,7 +183,7 @@ pub async fn lookup_mutation_receipt(
 ) -> anyhow::Result<MutationReceiptLookup> {
     let row = sqlx::query_as::<_, MutationReceiptRow>(
         r#"
-        SELECT mutation_hash, mutation_json, result_json
+        SELECT client_mutation_id, mutation_hash, mutation_json, result_json
         FROM mutation_receipts
         WHERE device_id = ? AND client_mutation_id = ?
         "#,
@@ -191,10 +192,47 @@ pub async fn lookup_mutation_receipt(
     .bind(client_mutation_id)
     .fetch_optional(pool)
     .await?;
+    match row {
+        Some(row) => match_mutation_receipt(row, mutation_hash, mutation_json),
+        None => Ok(MutationReceiptLookup::Missing),
+    }
+}
 
-    let Some(row) = row else {
-        return Ok(MutationReceiptLookup::Missing);
-    };
+/// The receipts a device already holds for any of `client_mutation_ids`, read in a few queries
+/// instead of one per mutation. Read them while holding the mutation gate, so none can be written
+/// meanwhile by another request.
+pub async fn load_mutation_receipts(
+    pool: &sqlx::SqlitePool,
+    device_id: &str,
+    client_mutation_ids: &[&str],
+) -> anyhow::Result<std::collections::HashMap<String, MutationReceiptRow>> {
+    let mut receipts = std::collections::HashMap::new();
+    for chunk in client_mutation_ids.chunks(500) {
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT client_mutation_id, mutation_hash, mutation_json, result_json \
+             FROM mutation_receipts WHERE device_id = ",
+        );
+        query.push_bind(device_id).push(" AND client_mutation_id IN (");
+        let mut ids = query.separated(", ");
+        for id in chunk {
+            ids.push_bind(*id);
+        }
+        query.push(")");
+        let rows = query
+            .build_query_as::<MutationReceiptRow>()
+            .fetch_all(pool)
+            .await?;
+        receipts.extend(rows.into_iter().map(|row| (row.client_mutation_id.clone(), row)));
+    }
+    Ok(receipts)
+}
+
+/// What a stored receipt means for an incoming mutation with the same client mutation id.
+pub fn match_mutation_receipt(
+    row: MutationReceiptRow,
+    mutation_hash: &str,
+    mutation_json: &str,
+) -> anyhow::Result<MutationReceiptLookup> {
     if row.mutation_hash != mutation_hash
         && !mutation_receipts_are_semantically_equivalent(&row.mutation_json, mutation_json)?
     {
@@ -6121,6 +6159,7 @@ pub async fn delete_book_history_mutation(
     })
 }
 
+#[cfg(test)]
 pub async fn apply_comic_sync_state_mutation(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,
@@ -6187,6 +6226,69 @@ async fn apply_comic_sync_state_mutation_inner(
     enqueue_projection: bool,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = begin_write(pool).await?;
+    let outcome = apply_comic_sync_state_mutation_in_tx(
+        &mut tx,
+        session,
+        scope_id,
+        entity_type,
+        entity_id,
+        record,
+        client_lamport,
+        event_clock,
+        retention_window,
+        enqueue_projection,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(outcome)
+}
+
+/// Applies a client comic state merge inside a write transaction the caller already holds.
+/// A savepoint isolates this mutation, so a rejected one rolls back without touching the
+/// others of the batch. The caller commits the batch, then broadcasts its envelopes.
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_comic_sync_state_mutation_in_batch(
+    batch: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    record: &Value,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    let mut savepoint = sqlx::Acquire::begin(&mut **batch).await?;
+    let outcome = apply_comic_sync_state_mutation_in_tx(
+        &mut savepoint,
+        session,
+        scope_id,
+        entity_type,
+        entity_id,
+        record,
+        client_lamport,
+        event_clock,
+        retention_window,
+        true,
+    )
+    .await?;
+    savepoint.commit().await?;
+    Ok(outcome)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_comic_sync_state_mutation_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    record: &Value,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+    enqueue_projection: bool,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let current = sqlx::query_as::<_, ComicSyncStateRow>(
         r#"
         SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
@@ -6197,10 +6299,10 @@ async fn apply_comic_sync_state_mutation_inner(
     .bind(scope_id)
     .bind(entity_type)
     .bind(entity_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if let Some(winning_clock) = superseding_event_clock_in_tx(
-        &mut tx,
+        tx,
         scope_id,
         entity_type,
         entity_id,
@@ -6210,7 +6312,7 @@ async fn apply_comic_sync_state_mutation_inner(
     .await?
     {
         let server_version = superseded_server_version_in_tx(
-            &mut tx,
+            tx,
             current.as_ref().map(|row| row.record_server_version),
         )
         .await?;
@@ -6223,7 +6325,6 @@ async fn apply_comic_sync_state_mutation_inner(
             .as_ref()
             .map(|row| row.record_lamport)
             .unwrap_or_default();
-        tx.commit().await?;
         return Ok(CausalMutationWriteOutcome::Superseded {
             record,
             winning_clock,
@@ -6231,7 +6332,7 @@ async fn apply_comic_sync_state_mutation_inner(
             applied_lamport,
         });
     }
-    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+    let tombstone = load_tombstone_in_tx(tx, scope_id, entity_type, entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
@@ -6256,7 +6357,7 @@ async fn apply_comic_sync_state_mutation_inner(
     }
     let record = &merged_record;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx,
+        tx,
         scope_id,
         Some(session.profile_id.as_str()),
         entity_type,
@@ -6290,11 +6391,11 @@ async fn apply_comic_sync_state_mutation_inner(
     .bind(&session.device_id)
     .bind(applied_lamport)
     .bind(server_version)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     if enqueue_projection {
         enqueue_comic_state_projection_in_tx(
-            &mut tx,
+            tx,
             scope_id,
             entity_type,
             entity_id,
@@ -6307,7 +6408,7 @@ async fn apply_comic_sync_state_mutation_inner(
     }
     if let Some(clock) = event_clock {
         upsert_event_clock_in_tx(
-            &mut tx,
+            tx,
             scope_id,
             entity_type,
             entity_id,
@@ -6318,9 +6419,8 @@ async fn apply_comic_sync_state_mutation_inner(
         .await?;
     }
     if tombstone.is_some() {
-        delete_tombstone_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+        delete_tombstone_in_tx(tx, scope_id, entity_type, entity_id).await?;
     }
-    tx.commit().await?;
     Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
         envelope: ChangeEnvelope {
             server_version,
@@ -7364,6 +7464,7 @@ pub async fn reproject_comic_chapter_states(
     Ok(queued)
 }
 
+#[cfg(test)]
 pub async fn apply_comic_history_mutation(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,
@@ -7416,6 +7517,7 @@ pub async fn apply_mirrored_comic_history_mutation(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 async fn apply_comic_history_mutation_inner(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,
@@ -7428,6 +7530,64 @@ async fn apply_comic_history_mutation_inner(
     project_to_suwayomi: bool,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = begin_write(pool).await?;
+    let outcome = apply_comic_history_mutation_in_tx(
+        &mut tx,
+        session,
+        scope_id,
+        entity_id,
+        patch,
+        client_lamport,
+        event_clock,
+        retention_window,
+        project_to_suwayomi,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(outcome)
+}
+
+/// Applies a client comic history merge inside a write transaction the caller already holds,
+/// like [`apply_comic_sync_state_mutation_in_batch`]: a savepoint isolates it, and the caller
+/// commits the batch, then broadcasts its envelopes.
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_comic_history_mutation_in_batch(
+    batch: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicHistoryPatch,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    let mut savepoint = sqlx::Acquire::begin(&mut **batch).await?;
+    let outcome = apply_comic_history_mutation_in_tx(
+        &mut savepoint,
+        session,
+        scope_id,
+        entity_id,
+        patch,
+        client_lamport,
+        event_clock,
+        retention_window,
+        true,
+    )
+    .await?;
+    savepoint.commit().await?;
+    Ok(outcome)
+}
+
+async fn apply_comic_history_mutation_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicHistoryPatch,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+    project_to_suwayomi: bool,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let current = sqlx::query_as::<_, ComicHistoryRow>(
         r#"
         SELECT
@@ -7441,10 +7601,10 @@ async fn apply_comic_history_mutation_inner(
     )
     .bind(scope_id)
     .bind(entity_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if let Some(winning_clock) = superseding_event_clock_in_tx(
-        &mut tx,
+        tx,
         scope_id,
         "comic.history",
         entity_id,
@@ -7454,7 +7614,7 @@ async fn apply_comic_history_mutation_inner(
     .await?
     {
         let server_version = superseded_server_version_in_tx(
-            &mut tx,
+            tx,
             current.as_ref().map(|row| row.record_server_version),
         )
         .await?;
@@ -7468,7 +7628,6 @@ async fn apply_comic_history_mutation_inner(
             .as_ref()
             .map(|row| row.record_lamport)
             .unwrap_or_default();
-        tx.commit().await?;
         return Ok(CausalMutationWriteOutcome::Superseded {
             record,
             winning_clock,
@@ -7476,7 +7635,7 @@ async fn apply_comic_history_mutation_inner(
             applied_lamport,
         });
     }
-    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "comic.history", entity_id).await?;
+    let tombstone = load_tombstone_in_tx(tx, scope_id, "comic.history", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
@@ -7484,7 +7643,7 @@ async fn apply_comic_history_mutation_inner(
     let merged = merge_comic_history(current.map(Into::into), entity_id, patch, client_lamport)?;
     let record = serde_json::to_value(&merged)?;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx,
+        tx,
         scope_id,
         Some(session.profile_id.as_str()),
         "comic.history",
@@ -7544,12 +7703,12 @@ async fn apply_comic_history_mutation_inner(
     .bind(&session.device_id)
     .bind(merged.record_lamport)
     .bind(server_version)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     if project_to_suwayomi {
         enqueue_comic_history_projection_in_tx(
-            &mut tx,
+            tx,
             scope_id,
             entity_id,
             &merged,
@@ -7562,7 +7721,7 @@ async fn apply_comic_history_mutation_inner(
 
     if let Some(clock) = event_clock {
         upsert_event_clock_in_tx(
-            &mut tx,
+            tx,
             scope_id,
             "comic.history",
             entity_id,
@@ -7574,9 +7733,8 @@ async fn apply_comic_history_mutation_inner(
     }
 
     if tombstone.is_some() {
-        delete_tombstone_in_tx(&mut tx, scope_id, "comic.history", entity_id).await?;
+        delete_tombstone_in_tx(tx, scope_id, "comic.history", entity_id).await?;
     }
-    tx.commit().await?;
 
     Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
         envelope: ChangeEnvelope {
@@ -9816,6 +9974,116 @@ async fn requeue_blocked_portable_projections(
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// Portable id → local reference of every comic bound in a profile, read in one query.
+pub async fn load_bound_comic_references(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+) -> anyhow::Result<std::collections::HashMap<String, String>> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT portable_id, local_reference FROM portable_work_bindings
+        WHERE profile_id = ? AND ecosystem = 'SUWAYOMI' AND resolution_state = 'BOUND'
+          AND local_reference IS NOT NULL
+        "#,
+    )
+    .bind(profile_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// A chapter of a bound work that the projection found in the local Suwayomi.
+pub struct BoundPortableChapter<'a> {
+    pub reference: &'a PortableChapterRefV3,
+    pub portable_work_id: &'a str,
+    pub local_reference: String,
+}
+
+/// Binds many chapters of bound works in one transaction with one requeue pass. Writing them one
+/// transaction each cost about 3 ms a chapter, minutes for a first sync's tens of thousands.
+/// Chapters whose reference does not validate are skipped; the per-row path binds them.
+pub async fn upsert_bound_portable_chapters(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    chapters: &[BoundPortableChapter<'_>],
+    updated_at_ms: i64,
+) -> anyhow::Result<()> {
+    if chapters.is_empty() {
+        return Ok(());
+    }
+    validate_portable_persistence_input(profile_id, "profile ID")?;
+    let mut tx = begin_write(pool).await?;
+    for chapter in chapters {
+        let PortableChapterRefV3::Comic { work, chapter_key } = chapter.reference else {
+            continue;
+        };
+        if chapter.reference.validate().is_err()
+            || canonical_portable_work_id(work) != chapter.portable_work_id
+            || validate_portable_persistence_input(&chapter.local_reference, "local chapter reference")
+                .is_err()
+        {
+            continue;
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO portable_chapter_bindings (
+              profile_id, portable_chapter_id, portable_work_id, provider_key, local_reference,
+              resolution_state, resolution_reason, record_lamport, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?)
+            ON CONFLICT(profile_id, portable_chapter_id) DO UPDATE SET
+              local_reference = excluded.local_reference,
+              resolution_state = excluded.resolution_state,
+              resolution_reason = NULL,
+              record_lamport = excluded.record_lamport,
+              updated_at_ms = excluded.updated_at_ms
+            WHERE excluded.record_lamport >= portable_chapter_bindings.record_lamport
+            "#,
+        )
+        .bind(profile_id)
+        .bind(canonical_portable_chapter_id(chapter.reference))
+        .bind(chapter.portable_work_id)
+        .bind(chapter_key)
+        .bind(&chapter.local_reference)
+        .bind(portable_resolution_state_wire(PortableResolutionStateV3::Bound))
+        .bind(updated_at_ms)
+        .execute(&mut *tx)
+        .await?;
+    }
+    requeue_blocked_portable_projections(&mut tx, profile_id).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Makes the given waiting projections due now with fresh attempts, in one write. For rows whose
+/// work was just bound: their backoff was earned while it was missing.
+pub async fn rearm_projection_operations(
+    pool: &sqlx::SqlitePool,
+    operation_ids: &[&str],
+) -> anyhow::Result<u64> {
+    if operation_ids.is_empty() {
+        return Ok(0);
+    }
+    let now = now_ms();
+    let ids = serde_json::to_string(operation_ids)?;
+    let mut tx = begin_write(pool).await?;
+    let result = sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET status = 'retry', attempt_count = 0, next_attempt_at_ms = ?, lease_until_ms = NULL,
+            updated_at_ms = ?
+        WHERE status IN ('retry', 'blocked')
+          AND operation_id IN (SELECT value FROM json_each(?))
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .bind(ids)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(result.rows_affected())
 }
 
 pub async fn load_portable_chapter_binding(

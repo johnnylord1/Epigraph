@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   progress: vi.fn(),
   replication: vi.fn(),
+  paired: vi.fn(),
+  revoke: vi.fn(),
+  disconnect: vi.fn(),
   refresh: vi.fn(),
   notify: vi.fn(),
   showToast: vi.fn(),
@@ -27,6 +30,9 @@ vi.hoisted(() => {
 vi.mock("../syncdDesktop", () => ({
   syncdGetSyncProgressIfRunning: mocks.progress,
   syncdGetReplicationState: mocks.replication,
+  syncdListPairedDevicesIfRunning: mocks.paired,
+  syncdRevokePairedDevice: mocks.revoke,
+  syncdDisconnectPersistedSession: mocks.disconnect,
 }));
 vi.mock("./firstRunSyncReadiness", async (importOriginal) => ({
   ...await importOriginal<typeof import("./firstRunSyncReadiness")>(),
@@ -41,6 +47,7 @@ vi.mock("../../store/state.svelte", () => ({
 
 import { applyAppLanguage } from "../i18n/runtime";
 import {
+  cancelFirstRunBackgroundSync,
   firstRunBackgroundSync,
   firstRunSyncRemaining,
   resumeFirstRunBackgroundSync,
@@ -50,6 +57,7 @@ import {
 
 const MARKER_KEY = "epigraph.firstRunBackgroundSync";
 const idle = { pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0 };
+const phone = { deviceId: "phone-1", deviceName: "Pixel", platform: "android", profileId: "main", grantedScopes: [], lastSeenAtMs: 0, inactive: false };
 const live = { localProfileId: "main", activeSessionKey: "session-1", replicationStatus: "live", remoteBootstrapGeneration: 1, paused: false, lastError: null };
 
 beforeEach(() => {
@@ -60,6 +68,9 @@ beforeEach(() => {
   mocks.refresh.mockResolvedValue(undefined);
   mocks.notify.mockResolvedValue(true);
   mocks.replication.mockResolvedValue({ localProfileId: "main", replicationStatus: "idle", paused: false });
+  mocks.paired.mockResolvedValue([phone]);
+  mocks.revoke.mockResolvedValue(undefined);
+  mocks.disconnect.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -169,5 +180,71 @@ describe("first-run background sync", () => {
     resumeFirstRunBackgroundSync();
     expect(firstRunBackgroundSync.running).toBe(false);
     expect(localStorage.getItem(MARKER_KEY)).toBeNull();
+  });
+
+  it("ends the run when the phone forgets this computer", async () => {
+    mocks.progress.mockResolvedValue({ ...idle, pendingUploads: 40 });
+    startFirstRunBackgroundSync({ profileId: "main", waitForUploads: true, waitForReplication: false, peerDeviceId: "phone-1" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(firstRunBackgroundSync.running).toBe(true);
+
+    // One read without the phone, as during a Core restart, does not end the run.
+    mocks.paired.mockResolvedValueOnce([]);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(firstRunBackgroundSync.running).toBe(true);
+
+    mocks.paired.mockResolvedValue([]);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(mocks.finishToast).toHaveBeenCalledWith("first-run-sync", expect.objectContaining({ kind: "info", title: "The other device stopped syncing" }));
+    expect(mocks.addNotification).toHaveBeenLastCalledWith(expect.objectContaining({ id: "first-run-sync", kind: "info", title: "The other device stopped syncing" }));
+    expect(firstRunBackgroundSync.running).toBe(false);
+    expect(localStorage.getItem(MARKER_KEY)).toBeNull();
+  });
+
+  it("does not read the phone as gone while Core is not running", async () => {
+    mocks.progress.mockResolvedValue(null);
+    mocks.paired.mockResolvedValue([]);
+    startFirstRunBackgroundSync({ profileId: "main", waitForUploads: true, waitForReplication: false, peerDeviceId: "phone-1" });
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(mocks.paired).not.toHaveBeenCalled();
+    expect(firstRunBackgroundSync.running).toBe(true);
+  });
+
+  it("cancels from the toast: unpairs the phone and ends the run", async () => {
+    mocks.progress.mockResolvedValue({ ...idle, pendingUploads: 40 });
+    startFirstRunBackgroundSync({ profileId: "main", waitForUploads: true, waitForReplication: false, peerDeviceId: "phone-1" });
+    await vi.advanceTimersByTimeAsync(0);
+    const [, toast] = mocks.showToast.mock.lastCall ?? [];
+    expect(toast.actions).toEqual([expect.objectContaining({ label: "Cancel sync" })]);
+
+    toast.actions[0].run();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.revoke).toHaveBeenCalledWith("phone-1");
+    expect(mocks.disconnect).not.toHaveBeenCalled();
+    expect(mocks.finishToast).toHaveBeenLastCalledWith("first-run-sync", expect.objectContaining({ kind: "info", title: "Sync cancelled" }));
+    expect(firstRunBackgroundSync.running).toBe(false);
+    expect(localStorage.getItem(MARKER_KEY)).toBeNull();
+    mocks.showToast.mockClear();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it("cancels a sync with another computer by disconnecting its session, and says when that fails", async () => {
+    mocks.progress.mockResolvedValue({ ...idle, pendingProjections: 5 });
+    mocks.disconnect.mockRejectedValueOnce(new Error("offline"));
+    startFirstRunBackgroundSync({ profileId: "main", waitForUploads: false, waitForReplication: true, sessionKey: "session-1" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await cancelFirstRunBackgroundSync();
+    expect(mocks.disconnect).toHaveBeenCalledWith("session-1");
+    expect(mocks.revoke).not.toHaveBeenCalled();
+    expect(mocks.finishToast).toHaveBeenLastCalledWith("first-run-sync", expect.objectContaining({ kind: "error", title: "Couldn't stop the sync" }));
+  });
+
+  it("offers no cancel for a run without a known peer", async () => {
+    mocks.progress.mockResolvedValue({ ...idle, pendingDetails: 3 });
+    startFirstRunBackgroundSync({ profileId: "main", waitForUploads: false, waitForReplication: false });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.showToast).toHaveBeenLastCalledWith("first-run-sync", expect.objectContaining({ actions: undefined }));
   });
 });

@@ -26,6 +26,11 @@ use crate::syncd::routes::assets::{validate_asset_reference, AssetReferenceError
 use crate::syncd::{suwayomi_tracking_mirror, tracking};
 
 const MAX_COMIC_TITLE_HINT_CHARS: usize = 512;
+/// Upper bound on comic state merges applied under one write lock before committing, so a
+/// large request never holds the database long enough to stall other writers.
+const MAX_BATCHED_COMIC_STATE_MUTATIONS: usize = 250;
+
+type MutationBatch = Option<sqlx::Transaction<'static, sqlx::Sqlite>>;
 
 pub async fn post_mutations(
     State(state): State<SharedAppState>,
@@ -69,9 +74,50 @@ pub async fn post_mutations(
         .map_err(|_| AppError::Internal("Failed to load syncd runtime state.".to_string()))?
         .current_server_version;
 
+    // Consecutive comic state and history merges share one write transaction: one lock and one
+    // commit per run instead of per mutation. Their change envelopes are broadcast only after it
+    // commits.
+    let mut batch: MutationBatch = None;
+    let mut batched = 0_usize;
+    let mut pending_broadcasts = Vec::new();
+    // Receipts stored before this request, read at once under the gate. A client mutation id
+    // repeated within the request is looked up again, after its first copy's batch commits.
+    let mut stored_receipts = {
+        let client_mutation_ids: Vec<&str> = request
+            .mutations
+            .iter()
+            .map(|mutation| mutation.base().client_mutation_id.as_str())
+            .collect();
+        db::load_mutation_receipts(&state.pool, &session.device_id, &client_mutation_ids)
+            .await
+            .map_err(|error| {
+                AppError::Internal(format!("Failed to load mutation receipts: {error}"))
+            })?
+    };
+
     for mutation in request.mutations {
         let entity_type = mutation.entity_type();
         let base = mutation.base();
+        let batchable = matches!(
+            &mutation,
+            MutationInput::ComicEntry { base, .. }
+                | MutationInput::ComicCategory { base, .. }
+                | MutationInput::ComicCategoryAssignment { base, .. }
+                | MutationInput::ComicChapterState { base, .. }
+                | MutationInput::ComicHistory { base, .. }
+                if base.op == MutationOperation::Merge
+        );
+        // A repeated clientMutationId must see the receipt its first copy wrote.
+        if !batchable
+            || batched >= MAX_BATCHED_COMIC_STATE_MUTATIONS
+            || receipt_contexts.contains_key(&base.client_mutation_id)
+        {
+            flush_mutation_batch(&state, &mut batch, &mut pending_broadcasts).await?;
+            batched = 0;
+        }
+        if batchable {
+            batched += 1;
+        }
         if base.client_mutation_id.trim().is_empty() {
             return Err(AppError::BadRequest(
                 "Mutation clientMutationId must not be empty.".to_string(),
@@ -91,24 +137,38 @@ pub async fn post_mutations(
             op: base.op,
             event_clock: base.event_clock.clone(),
         };
-        if let Some(previous) = receipt_contexts.get(&base.client_mutation_id) {
+        let repeated = if let Some(previous) = receipt_contexts.get(&base.client_mutation_id) {
             if previous.mutation_hash != receipt_context.mutation_hash {
                 return Err(receipt_conflict_error(previous, &receipt_context));
             }
+            true
         } else {
             receipt_contexts.insert(base.client_mutation_id.clone(), receipt_context.clone());
-        }
+            false
+        };
 
-        match db::lookup_mutation_receipt(
-            &state.pool,
-            &session.device_id,
-            &base.client_mutation_id,
-            &receipt_context.mutation_hash,
-            &receipt_context.mutation_json,
-        )
-        .await
-        .map_err(|error| AppError::Internal(format!("Failed to load mutation receipt: {error}")))?
-        {
+        let receipt = if repeated {
+            db::lookup_mutation_receipt(
+                &state.pool,
+                &session.device_id,
+                &base.client_mutation_id,
+                &receipt_context.mutation_hash,
+                &receipt_context.mutation_json,
+            )
+            .await
+        } else {
+            match stored_receipts.remove(&base.client_mutation_id) {
+                Some(row) => db::match_mutation_receipt(
+                    row,
+                    &receipt_context.mutation_hash,
+                    &receipt_context.mutation_json,
+                ),
+                None => Ok(db::MutationReceiptLookup::Missing),
+            }
+        };
+        match receipt.map_err(|error| {
+            AppError::Internal(format!("Failed to load mutation receipt: {error}"))
+        })? {
             db::MutationReceiptLookup::Missing => {}
             db::MutationReceiptLookup::Match(result) => {
                 if let Some(version) = result.applied_server_version {
@@ -1710,6 +1770,7 @@ pub async fn post_mutations(
                 });
                 match persist_comic_sync_state(
                     &state,
+                    &mut batch,
                     &session,
                     &mutation,
                     base,
@@ -1734,6 +1795,7 @@ pub async fn post_mutations(
                 });
                 match persist_comic_sync_state(
                     &state,
+                    &mut batch,
                     &session,
                     &mutation,
                     base,
@@ -1758,6 +1820,7 @@ pub async fn post_mutations(
                 });
                 match persist_comic_sync_state(
                     &state,
+                    &mut batch,
                     &session,
                     &mutation,
                     base,
@@ -1782,6 +1845,7 @@ pub async fn post_mutations(
                 });
                 match persist_comic_sync_state(
                     &state,
+                    &mut batch,
                     &session,
                     &mutation,
                     base,
@@ -1817,8 +1881,16 @@ pub async fn post_mutations(
                         results.push(rejected_result(&mutation, error));
                         continue;
                     }
-                    match db::apply_comic_history_mutation(
-                        &state.pool,
+                    if batch.is_none() {
+                        batch = Some(db::begin_write(&state.pool).await.map_err(|error| {
+                            AppError::Internal(format!(
+                                "Failed to start comic state mutations: {error}"
+                            ))
+                        })?);
+                    }
+                    let tx = batch.as_mut().expect("batch transaction was just opened");
+                    match db::apply_comic_history_mutation_in_batch(
+                        tx,
                         &session,
                         &base.scope_id,
                         &base.entity_id,
@@ -1986,7 +2058,11 @@ pub async fn post_mutations(
         };
 
         current_server_version = outcome.envelope.server_version;
-        let _ = state.change_sender.send(outcome.envelope.clone());
+        if batch.is_some() {
+            pending_broadcasts.push(outcome.envelope.clone());
+        } else {
+            let _ = state.change_sender.send(outcome.envelope.clone());
+        }
         results.push(MutationResult {
             client_mutation_id: base.client_mutation_id.clone(),
             entity_type,
@@ -2003,6 +2079,8 @@ pub async fn post_mutations(
             error: None,
         });
     }
+
+    flush_mutation_batch(&state, &mut batch, &mut pending_broadcasts).await?;
 
     for result in &mut results {
         if result.status == MutationResultStatus::Applied || is_transient_rejection(result) {
@@ -2072,8 +2150,25 @@ enum ComicSyncRouteOutcome {
     Result(MutationResult),
 }
 
+async fn flush_mutation_batch(
+    state: &SharedAppState,
+    batch: &mut MutationBatch,
+    pending_broadcasts: &mut Vec<crate::syncd::models::ChangeEnvelope>,
+) -> Result<(), AppError> {
+    if let Some(tx) = batch.take() {
+        tx.commit().await.map_err(|error| {
+            AppError::Internal(format!("Failed to commit comic state mutations: {error}"))
+        })?;
+    }
+    for envelope in pending_broadcasts.drain(..) {
+        let _ = state.change_sender.send(envelope);
+    }
+    Ok(())
+}
+
 async fn persist_comic_sync_state<T: Serialize>(
     state: &SharedAppState,
+    batch: &mut MutationBatch,
     session: &AuthenticatedSession,
     mutation: &MutationInput,
     base: &MutationBase,
@@ -2100,8 +2195,14 @@ async fn persist_comic_sync_state<T: Serialize>(
             let record = serde_json::to_value(patch).map_err(|error| {
                 AppError::Internal(format!("Failed to encode comic state mutation: {error}"))
             })?;
-            db::apply_comic_sync_state_mutation(
-                &state.pool,
+            if batch.is_none() {
+                *batch = Some(db::begin_write(&state.pool).await.map_err(|error| {
+                    AppError::Internal(format!("Failed to start comic state mutations: {error}"))
+                })?);
+            }
+            let tx = batch.as_mut().expect("batch transaction was just opened");
+            db::apply_comic_sync_state_mutation_in_batch(
+                tx,
                 session,
                 &base.scope_id,
                 mutation.entity_type().as_str(),
@@ -8562,5 +8663,297 @@ mod tests {
         let snapshot = json_body(snapshot).await;
         assert!(snapshot["entities"].as_array().unwrap().is_empty());
         assert_eq!(snapshot["tombstones"][0]["entityType"], "comic.tracking");
+    }
+
+    #[tokio::test]
+    async fn comic_state_merges_share_one_commit_and_broadcast_after_it() {
+        let (_temp, state) = build_state().await;
+        sqlx::query("UPDATE server_identity SET server_id = 'desktop-a' WHERE singleton_id = 1")
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        let mut events = state.change_sender.subscribe();
+        let app = build_test_router(state.clone());
+        let comic_id = "suwayomi:server:desktop-a:profile:main:manga:42";
+        let chapter_state = |n: i64, client_mutation_id: &str| {
+            let chapter_id = format!("suwayomi:server:desktop-a:profile:main:chapter:{n}");
+            let chapter_state_id = format!("comic.chapter_state::{comic_id}::{chapter_id}");
+            json!({
+                "entityType": "comic.chapter_state",
+                "clientMutationId": client_mutation_id,
+                "scopeId": "comics:profile:main",
+                "entityId": chapter_state_id,
+                "lamport": n,
+                "eventClock": { "physicalMs": 100 + n, "logical": 1, "deviceGenerationId": "mobile-a" },
+                "patch": {
+                    "chapterStateId": chapter_state_id,
+                    "comicId": comic_id,
+                    "chapterId": chapter_id,
+                    "read": true,
+                    "bookmarked": false,
+                    "lastPageRead": 8,
+                    "lastReadAtMs": 100 + n,
+                    "updatedAtMs": 100 + n,
+                    "explicitProgressReset": false
+                }
+            })
+        };
+        let mut mismatched = chapter_state(3, "chapter-3");
+        mismatched["patch"]["comicId"] = json!("suwayomi:server:desktop-a:profile:main:manga:7");
+
+        let response = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "batched-chapter-states",
+                    "mutations": [
+                        chapter_state(1, "chapter-1"),
+                        chapter_state(2, "chapter-2"),
+                        // A repeat in the same request must replay the first copy's receipt.
+                        chapter_state(1, "chapter-1"),
+                        mismatched,
+                        chapter_state(4, "chapter-4"),
+                    ]
+                }),
+            ))
+            .await
+            .unwrap();
+        let status = response.status();
+        let payload = json_body(response).await;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        let statuses: Vec<_> = payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|result| result["status"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(statuses, ["applied", "applied", "applied", "rejected", "applied"]);
+        assert_eq!(
+            payload["results"][0]["appliedServerVersion"],
+            payload["results"][2]["appliedServerVersion"]
+        );
+
+        let stored: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM comic_sync_state WHERE entity_type = 'comic.chapter_state'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, 3);
+        let receipts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mutation_receipts")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        assert_eq!(receipts, 4);
+
+        let mut broadcast = Vec::new();
+        while let Ok(envelope) = events.try_recv() {
+            broadcast.push(envelope.server_version);
+        }
+        assert_eq!(broadcast.len(), 3);
+        assert!(broadcast.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(payload["currentServerVersion"], json!(broadcast[2]));
+    }
+
+    #[tokio::test]
+    async fn comic_history_merges_join_the_comic_state_batch() {
+        let (_temp, state) = build_state().await;
+        sqlx::query("UPDATE server_identity SET server_id = 'desktop-a' WHERE singleton_id = 1")
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        let mut events = state.change_sender.subscribe();
+        let app = build_test_router(state.clone());
+        let comic_id = "suwayomi:server:desktop-a:profile:main:manga:42";
+        let chapter_id = |n: i64| format!("suwayomi:server:desktop-a:profile:main:chapter:{n}");
+        let chapter_state = |n: i64| {
+            let chapter_state_id = format!("comic.chapter_state::{comic_id}::{}", chapter_id(n));
+            json!({
+                "entityType": "comic.chapter_state",
+                "clientMutationId": format!("chapter-{n}"),
+                "scopeId": "comics:profile:main",
+                "entityId": chapter_state_id,
+                "lamport": n,
+                "eventClock": { "physicalMs": 100 + n, "logical": 1, "deviceGenerationId": "mobile-a" },
+                "patch": {
+                    "chapterStateId": chapter_state_id,
+                    "comicId": comic_id,
+                    "chapterId": chapter_id(n),
+                    "read": true,
+                    "bookmarked": false,
+                    "lastPageRead": 8,
+                    "lastReadAtMs": 100 + n,
+                    "updatedAtMs": 100 + n,
+                    "explicitProgressReset": false
+                }
+            })
+        };
+        let history_id = format!("comic.history::{comic_id}");
+        let history = |n: i64, physical_ms: i64| {
+            json!({
+                "entityType": "comic.history",
+                "clientMutationId": format!("history-{n}"),
+                "scopeId": "comics:profile:main",
+                "entityId": history_id,
+                "lamport": n,
+                "eventClock": { "physicalMs": physical_ms, "logical": 1, "deviceGenerationId": "mobile-a" },
+                "patch": {
+                    "historyId": history_id,
+                    "comicId": comic_id,
+                    "chapterId": chapter_id(n),
+                    "pageIndex": 3,
+                    "pageCount": 20,
+                    "progressPercent": 0.15,
+                    "readAtMs": physical_ms
+                }
+            })
+        };
+
+        let response = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "batched-history",
+                    "mutations": [
+                        chapter_state(1),
+                        history(2, 500),
+                        chapter_state(3),
+                        // Older than the history just merged in the same uncommitted batch.
+                        history(4, 400),
+                        chapter_state(5),
+                    ]
+                }),
+            ))
+            .await
+            .unwrap();
+        let status = response.status();
+        let payload = json_body(response).await;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        let statuses: Vec<_> = payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|result| result["status"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(statuses, ["applied", "applied", "applied", "superseded", "applied"]);
+
+        let stored_chapter: String =
+            sqlx::query_scalar("SELECT chapter_id FROM comic_history WHERE history_id = ?")
+                .bind(&history_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(stored_chapter, chapter_id(2));
+
+        let mut broadcast = Vec::new();
+        while let Ok(envelope) = events.try_recv() {
+            broadcast.push(envelope.server_version);
+        }
+        assert_eq!(broadcast.len(), 4);
+        assert!(broadcast.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(payload["currentServerVersion"], json!(broadcast[3]));
+    }
+
+    /// A first sync's upload as the phone sends it: per work, its chapters' states then its
+    /// history, in requests of 250. Run with `--ignored --nocapture` to see the rate.
+    #[tokio::test]
+    #[ignore]
+    async fn bench_first_sync_upload_ingest() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let mut mutations = Vec::new();
+        let mut n = 0_i64;
+        for work_index in 0..100 {
+            let work = PortableWorkRefV3::comic("10002", &format!("/series/{work_index}"));
+            let comic_id = canonical_portable_work_id(&work);
+            for chapter_index in 0..20 {
+                n += 1;
+                let chapter = PortableChapterRefV3::Comic {
+                    work: work.clone(),
+                    chapter_key: format!("/series/{work_index}/{chapter_index}"),
+                };
+                let chapter_id = canonical_portable_chapter_id(&chapter);
+                let entity_id = format!("comic.chapter_state::{comic_id}::{chapter_id}");
+                mutations.push(json!({
+                    "entityType": "comic.chapter_state",
+                    "clientMutationId": format!("state-{n}"),
+                    "scopeId": "comics:profile:main",
+                    "entityId": entity_id,
+                    "lamport": n,
+                    "eventClock": { "physicalMs": 100 + n, "logical": 1, "deviceGenerationId": "mobile-a" },
+                    "patch": {
+                        "chapterStateId": entity_id,
+                        "comicId": comic_id,
+                        "chapterId": chapter_id,
+                        "portableWorkRef": work,
+                        "portableChapterRef": chapter,
+                        "read": true,
+                        "bookmarked": false,
+                        "lastPageRead": 8,
+                        "lastReadAtMs": 100 + n,
+                        "updatedAtMs": 100 + n,
+                        "explicitProgressReset": false
+                    }
+                }));
+            }
+            n += 1;
+            let chapter = PortableChapterRefV3::Comic {
+                work: work.clone(),
+                chapter_key: format!("/series/{work_index}/19"),
+            };
+            let history_id = format!("comic.history::{comic_id}");
+            mutations.push(json!({
+                "entityType": "comic.history",
+                "clientMutationId": format!("history-{n}"),
+                "scopeId": "comics:profile:main",
+                "entityId": history_id,
+                "lamport": n,
+                "eventClock": { "physicalMs": 100 + n, "logical": 1, "deviceGenerationId": "mobile-a" },
+                "patch": {
+                    "historyId": history_id,
+                    "comicId": comic_id,
+                    "chapterId": canonical_portable_chapter_id(&chapter),
+                    "portableWorkRef": work,
+                    "portableChapterRef": chapter,
+                    "pageIndex": 3,
+                    "pageCount": 20,
+                    "progressPercent": 0.15,
+                    "readAtMs": 100 + n
+                }
+            }));
+        }
+        let total = mutations.len();
+        let started = std::time::Instant::now();
+        for (index, chunk) in mutations.chunks(250).enumerate() {
+            let chunk_started = std::time::Instant::now();
+            let response = app
+                .clone()
+                .oneshot(request_with_json(
+                    "/v1/mutations",
+                    "main-token",
+                    json!({ "requestId": format!("bench-{index}"), "mutations": chunk }),
+                ))
+                .await
+                .unwrap();
+            let status = response.status();
+            let payload = json_body(response).await;
+            assert_eq!(status, StatusCode::OK, "{payload}");
+            let rejected: Vec<&Value> = payload["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|result| result["status"] != "applied")
+                .collect();
+            assert!(rejected.is_empty(), "{:?}", rejected.first());
+            println!("request {index}: {:?}", chunk_started.elapsed());
+        }
+        let elapsed = started.elapsed();
+        println!(
+            "ingested {total} mutations in {:?}: {:.0} per second",
+            elapsed,
+            total as f64 / elapsed.as_secs_f64()
+        );
     }
 }

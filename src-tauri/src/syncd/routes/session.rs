@@ -59,5 +59,6 @@ pub async fn delete_session(
     db::revoke_paired_device(&state.pool, &session.device_id)
         .await
         .map_err(|_| AppError::Internal("Failed to end the session.".to_string()))?;
+    super::status::forget_device_upload_reports(&session.device_id);
     Ok(StatusCode::NO_CONTENT)
 }

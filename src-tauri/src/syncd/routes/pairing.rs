@@ -218,6 +218,7 @@ pub async fn post_paired_device_revoke(
             None,
         ));
     }
+    super::status::forget_device_upload_reports(&request.device_id);
     Ok(StatusCode::NO_CONTENT)
 }
 

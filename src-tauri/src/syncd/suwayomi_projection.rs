@@ -27,6 +27,12 @@ const DRAIN_BUDGET: Duration = Duration::from_secs(4);
 /// A device's progress arrives as runs of chapters of one work, which share one chapter lookup and
 /// go out as one mutation per distinct progress state.
 const MAX_GROUPED_ROWS: usize = 50;
+/// Progress groups share one chapter listing of their work, the slow part of applying them, so a
+/// work's whole run (a first sync sends hundreds of chapters of one work) goes in a few groups.
+const MAX_GROUPED_PROGRESS_ROWS: usize = 250;
+/// Works one import pass brings in with a single Suwayomi restore. Restoring is one job however
+/// many works it carries, so a first sync's library arrives in a handful of restores.
+const IMPORT_BATCH_WORKS: usize = 500;
 const UPDATE_MANGAS_MUTATION: &str = r#"
 mutation EpigraphCoreUpdateMangas($ids: [Int!]!, $inLibrary: Boolean) {
   updateMangas(input: { ids: $ids, patch: { inLibrary: $inLibrary } }) { mangas { id inLibrary } }
@@ -92,6 +98,30 @@ const NON_HOLDING_RETRY_CODES: [&str; 3] =
     [UNBOUND_WORK_CODES[0], UNBOUND_WORK_CODES[1], COMMAND_FAILED];
 /// A row whose record names a category of another Core server (the desktop before a reinstall).
 /// Its numeric id means nothing to this Suwayomi, so it stays blocked.
+/// The earliest retry of each profile still in its first [ORDERED_RETRY_ATTEMPTS] attempts, for
+/// all rows and for library rows: later rows of its kind wait behind it (see [claim_next_at]).
+/// Materialized once per claim; binds the attempt limit and [NON_HOLDING_RETRY_CODES].
+const CLAIM_BARRIER_CTE: &str = r#"
+    WITH barrier AS MATERIALIZED (
+        SELECT profile_id, MIN(source_server_version) AS version,
+               MIN(CASE WHEN operation_name <> 'UpdateChaptersProgress'
+                   THEN source_server_version END) AS library_version
+        FROM suwayomi_projection_outbox
+        WHERE status = 'retry' AND attempt_count < ?
+          AND COALESCE(last_error, '') NOT IN (?, ?, ?)
+        GROUP BY profile_id
+    )
+"#;
+const CLAIM_BARRIER_CONDITION: &str = r#"
+    candidate.source_server_version <= COALESCE((
+        SELECT CASE WHEN candidate.operation_name = 'UpdateChaptersProgress'
+            THEN barrier.version ELSE barrier.library_version END
+        FROM barrier WHERE barrier.profile_id = candidate.profile_id
+    ), candidate.source_server_version)
+"#;
+/// How many rows after a claimed one are read, per row a group can take, to find the rows that
+/// join it past the rows it passes over.
+const GROUP_SCAN_FACTOR: usize = 4;
 const FOREIGN_SERVER_IDENTITY: &str = "foreign_server_identity";
 /// How a phone names a chapter it only knows through a Core listing, in place of the source's
 /// chapter key: `aethon-core://suwayomi/<server>/<profile>/chapter/<id>`.
@@ -231,6 +261,7 @@ pub fn spawn_projection_task(
         let mut maintenance = MaintenanceWatch::default();
         let mut runtime_return = RuntimeReturnWatch::default();
         let mut import = ImportWatch::default();
+        let mut bulk_progress = BulkProgressWatch::default();
         let mut catalog_notice = CatalogNotice::default();
         loop {
             tokio::select! {
@@ -260,6 +291,13 @@ pub fn spawn_projection_task(
                         match import_unseen_comics(&state, &mut import).await {
                             Ok(ImportPass::Idle) => {}
                             Ok(ImportPass::Busy) => {
+                                // The next batch goes right away: a first sync brings in
+                                // hundreds of works before their rows can drain.
+                                catalog_notice.announce_if_due(false);
+                                ticker.reset_immediately();
+                                continue;
+                            }
+                            Ok(ImportPass::Retrying) => {
                                 catalog_notice.announce_if_due(false);
                                 continue;
                             }
@@ -268,9 +306,21 @@ pub fn spawn_projection_task(
                             }
                         }
                     }
+                    // Progress of works already here settles in bulk; while it does, the queue
+                    // drains only library changes, which the per-row path handles quickly.
+                    let mut library_only = false;
+                    if !held {
+                        match settle_progress_in_bulk(&state, &mut bulk_progress).await {
+                            Ok(0) => {}
+                            Ok(_) => library_only = true,
+                            Err(error) => {
+                                tracing::warn!(error = %error, "failed to settle synced progress in bulk")
+                            }
+                        }
+                    }
                     let started = Instant::now();
                     let drained = loop {
-                        match drain_ready(&state).await {
+                        match drain_ready(&state, library_only).await {
                             Ok(claimed) if claimed == MAX_BATCH && started.elapsed() < DRAIN_BUDGET => {}
                             Ok(claimed) => break claimed < MAX_BATCH,
                             Err(error) => {
@@ -279,6 +329,11 @@ pub fn spawn_projection_task(
                             }
                         }
                     };
+                    if library_only {
+                        catalog_notice.announce_if_due(false);
+                        ticker.reset_immediately();
+                        continue;
+                    }
                     catalog_notice.announce_if_due(drained);
                 }
                 _ = PROJECTION_WAKE.notified() => ticker.reset_immediately(),
@@ -484,10 +539,10 @@ pub fn wake_projection() {
 
 /// Applies up to `MAX_BATCH` ready projections (each with the rows grouped behind it) and returns
 /// how many it claimed, so a full batch tells the caller more are waiting.
-async fn drain_ready(state: &SharedAppState) -> anyhow::Result<usize> {
+async fn drain_ready(state: &SharedAppState, library_only: bool) -> anyhow::Result<usize> {
     let mut claimed = 0;
     for _ in 0..MAX_BATCH {
-        let Some(row) = claim_next(state).await? else {
+        let Some(row) = claim_next(state, library_only).await? else {
             break;
         };
         claimed += 1;
@@ -498,77 +553,78 @@ async fn drain_ready(state: &SharedAppState) -> anyhow::Result<usize> {
             Some(change) => claim_group(state, &row, change).await?,
             None => Vec::new(),
         };
-        match change {
+        let outcomes = match change {
             Some(change) if !companions.is_empty() => {
                 let mut rows = Vec::with_capacity(companions.len() + 1);
                 rows.push(row);
                 rows.extend(companions);
-                for (row, outcome) in apply_group(state, rows, &change).await {
-                    settle(state, &row, outcome).await?;
-                }
+                apply_group(state, rows, &change).await
             }
             _ => {
                 let outcome = apply_projection(state, &row).await;
-                settle(state, &row, outcome).await?;
+                vec![(row, outcome)]
             }
-        }
+        };
+        settle(state, &outcomes).await?;
     }
     Ok(claimed)
 }
 
-/// Stores a projection's outcome; true when it was applied and left the outbox.
+/// Stores the outcomes of one group in one write: applied rows leave the outbox, the rest are
+/// rescheduled or blocked.
 async fn settle(
     state: &SharedAppState,
-    row: &ProjectionRow,
-    outcome: ProjectionOutcome,
-) -> anyhow::Result<bool> {
-    match outcome {
-        ProjectionOutcome::Applied => {
-            let _writer_guard = state.mutation_gate.lock().await;
-            sqlx::query("DELETE FROM suwayomi_projection_outbox WHERE operation_id = ?")
+    outcomes: &[(ProjectionRow, ProjectionOutcome)],
+) -> anyhow::Result<()> {
+    let now = super::db::now_ms();
+    let _writer_guard = state.mutation_gate.lock().await;
+    let mut tx = super::db::begin_write(&state.pool).await?;
+    let mut applied = 0;
+    for (row, outcome) in outcomes {
+        match outcome {
+            ProjectionOutcome::Applied => {
+                sqlx::query("DELETE FROM suwayomi_projection_outbox WHERE operation_id = ?")
+                    .bind(&row.operation_id)
+                    .execute(&mut *tx)
+                    .await?;
+                applied += 1;
+            }
+            ProjectionOutcome::Retry(code) => {
+                let delay = retry_delay_ms(code, row.attempt_count);
+                sqlx::query(
+                    r#"
+                    UPDATE suwayomi_projection_outbox
+                    SET status = 'retry', next_attempt_at_ms = ?, lease_until_ms = NULL,
+                        last_error = ?, updated_at_ms = ?
+                    WHERE operation_id = ?
+                    "#,
+                )
+                .bind(now.saturating_add(delay))
+                .bind(*code)
+                .bind(now)
                 .bind(&row.operation_id)
-                .execute(&state.pool)
+                .execute(&mut *tx)
                 .await?;
-            APPLIED_PROJECTIONS.fetch_add(1, Ordering::Relaxed);
-            return Ok(true);
-        }
-        ProjectionOutcome::Retry(code) => {
-            let delay = retry_delay_ms(code, row.attempt_count);
-            let now = super::db::now_ms();
-            let _writer_guard = state.mutation_gate.lock().await;
-            sqlx::query(
-                r#"
-                UPDATE suwayomi_projection_outbox
-                SET status = 'retry', next_attempt_at_ms = ?, lease_until_ms = NULL,
-                    last_error = ?, updated_at_ms = ?
-                WHERE operation_id = ?
-                "#,
-            )
-            .bind(now.saturating_add(delay))
-            .bind(code)
-            .bind(now)
-            .bind(&row.operation_id)
-            .execute(&state.pool)
-            .await?;
-        }
-        ProjectionOutcome::Blocked(code) => {
-            let now = super::db::now_ms();
-            let _writer_guard = state.mutation_gate.lock().await;
-            sqlx::query(
-                r#"
-                UPDATE suwayomi_projection_outbox
-                SET status = 'blocked', lease_until_ms = NULL, last_error = ?, updated_at_ms = ?
-                WHERE operation_id = ?
-                "#,
-            )
-            .bind(code)
-            .bind(now)
-            .bind(&row.operation_id)
-            .execute(&state.pool)
-            .await?;
+            }
+            ProjectionOutcome::Blocked(code) => {
+                sqlx::query(
+                    r#"
+                    UPDATE suwayomi_projection_outbox
+                    SET status = 'blocked', lease_until_ms = NULL, last_error = ?, updated_at_ms = ?
+                    WHERE operation_id = ?
+                    "#,
+                )
+                .bind(*code)
+                .bind(now)
+                .bind(&row.operation_id)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
     }
-    Ok(false)
+    tx.commit().await?;
+    APPLIED_PROJECTIONS.fetch_add(applied, Ordering::Relaxed);
+    Ok(())
 }
 
 fn retry_delay_ms(code: &str, attempt_count: i64) -> i64 {
@@ -581,9 +637,13 @@ fn retry_delay_ms(code: &str, attempt_count: i64) -> i64 {
     BASE_RETRY_MS.saturating_mul(1_i64 << shift).min(ceiling)
 }
 
-async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionRow>> {
+async fn claim_next(
+    state: &SharedAppState,
+    library_only: bool,
+) -> anyhow::Result<Option<ProjectionRow>> {
     let _writer_guard = state.mutation_gate.lock().await;
-    claim_next_at(&state.pool, super::db::now_ms()).await
+    let kinds: &[bool] = if library_only { &[false] } else { &[false, true] };
+    claim_next_of(&state.pool, super::db::now_ms(), kinds).await
 }
 
 /// Claims the earliest ready row, library and category changes first. Chapter progress only needs
@@ -591,7 +651,17 @@ async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionR
 /// longer keep the library and its folders waiting behind them (the desktop first run waits for
 /// those). Each kind keeps commit order: a progress retry holds later progress only, while a
 /// library retry still holds everything after it.
+#[cfg(test)]
 async fn claim_next_at(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Option<ProjectionRow>> {
+    claim_next_of(pool, now, &[false, true]).await
+}
+
+/// [claim_next_at] for the given kinds only (`true` is chapter progress).
+async fn claim_next_of(
+    pool: &sqlx::SqlitePool,
+    now: i64,
+    kinds: &[bool],
+) -> anyhow::Result<Option<ProjectionRow>> {
     let mut tx = super::db::begin_write(pool).await?;
     sqlx::query(
         r#"
@@ -606,38 +676,36 @@ async fn claim_next_at(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Opti
     .bind(now)
     .execute(&mut *tx)
     .await?;
-    let row = sqlx::query_as::<_, ProjectionRow>(
-        r#"
-        WITH barrier AS (
-            SELECT profile_id, MIN(source_server_version) AS version,
-                   MIN(CASE WHEN operation_name <> 'UpdateChaptersProgress'
-                       THEN source_server_version END) AS library_version
-            FROM suwayomi_projection_outbox
-            WHERE status = 'retry' AND attempt_count < ?
-              AND COALESCE(last_error, '') NOT IN (?, ?, ?)
-            GROUP BY profile_id
-        )
-        SELECT candidate.operation_id, candidate.profile_id, candidate.operation_name,
-               candidate.variables_json, candidate.attempt_count
-        FROM suwayomi_projection_outbox AS candidate
-        LEFT JOIN barrier ON barrier.profile_id = candidate.profile_id
-        WHERE candidate.status IN ('pending', 'retry') AND candidate.next_attempt_at_ms <= ?
-          AND candidate.source_server_version <= COALESCE(
-            CASE WHEN candidate.operation_name = 'UpdateChaptersProgress'
-              THEN barrier.version ELSE barrier.library_version END,
-            candidate.source_server_version)
-        ORDER BY candidate.operation_name = 'UpdateChaptersProgress' ASC,
-                 candidate.source_server_version ASC
-        LIMIT 1
-        "#,
-    )
-    .bind(ORDERED_RETRY_ATTEMPTS)
-    .bind(NON_HOLDING_RETRY_CODES[0])
-    .bind(NON_HOLDING_RETRY_CODES[1])
-    .bind(NON_HOLDING_RETRY_CODES[2])
-    .bind(now)
-    .fetch_optional(&mut *tx)
-    .await?;
+    // One kind at a time, so the claim walks idx_suwayomi_projection_claim in commit order and
+    // stops at the first due row instead of sorting the whole queue.
+    let mut row = None;
+    for &progress in kinds {
+        row = sqlx::query_as::<_, ProjectionRow>(&format!(
+            r#"
+            {CLAIM_BARRIER_CTE}
+            SELECT candidate.operation_id, candidate.profile_id, candidate.operation_name,
+                   candidate.variables_json, candidate.attempt_count
+            FROM suwayomi_projection_outbox AS candidate
+            WHERE candidate.status IN ('pending', 'retry')
+              AND (candidate.operation_name = 'UpdateChaptersProgress') = ?
+              AND +candidate.next_attempt_at_ms <= ?
+              AND {CLAIM_BARRIER_CONDITION}
+            ORDER BY candidate.source_server_version ASC
+            LIMIT 1
+            "#
+        ))
+        .bind(ORDERED_RETRY_ATTEMPTS)
+        .bind(NON_HOLDING_RETRY_CODES[0])
+        .bind(NON_HOLDING_RETRY_CODES[1])
+        .bind(NON_HOLDING_RETRY_CODES[2])
+        .bind(progress)
+        .bind(now)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if row.is_some() {
+            break;
+        }
+    }
     if let Some(row) = &row {
         sqlx::query(
             r#"
@@ -700,69 +768,87 @@ async fn claim_group(
     claim_group_at(&state.pool, super::db::now_ms(), first, change).await
 }
 
-/// Claims the rows right after `first` (already claimed) that make the same change, so they can
-/// go to Suwayomi together. Only an unbroken run of its kind (chapter progress, or everything
-/// else; see [claim_next_at]) is taken: it stops at the first ready row of that kind that does
-/// something else, so no change is applied ahead of an earlier, different one.
+/// The work a row changes, when its variables name one portably. Rows of different works can be
+/// applied in either order; rows that name no work (category edits, old clients) order everything.
+fn row_work(row: &ProjectionRow) -> Option<String> {
+    let variables = serde_json::from_str::<Value>(&row.variables_json).ok()?;
+    let reference = variables.get("portableWorkRef")?.clone();
+    let reference = serde_json::from_value::<PortableWorkRefV3>(reference).ok()?;
+    Some(canonical_portable_work_id(&reference))
+}
+
+/// Claims ready rows after `first` (already claimed) that make the same change, so they can go to
+/// Suwayomi together. Only rows of its kind (chapter progress, or everything else; see
+/// [claim_next_at]) are read. A row that does something else is passed over, and so is every later
+/// row of its work, so each work still sees its changes in commit order: a synced library's
+/// alternating "into the library" and "into these categories" rows become two bulk mutations
+/// instead of one per row. A row that names no work joins only while nothing was passed over,
+/// and otherwise ends the group.
 async fn claim_group_at(
     pool: &sqlx::SqlitePool,
     now: i64,
     first: &ProjectionRow,
     change: &Value,
 ) -> anyhow::Result<Vec<ProjectionRow>> {
+    let progress = first.operation_name == "UpdateChaptersProgress";
+    let limit = if progress {
+        MAX_GROUPED_PROGRESS_ROWS
+    } else {
+        MAX_GROUPED_ROWS
+    };
     let mut tx = super::db::begin_write(pool).await?;
-    let candidates = sqlx::query_as::<_, ProjectionRow>(
+    let candidates = sqlx::query_as::<_, ProjectionRow>(&format!(
         r#"
-        WITH barrier AS (
-            SELECT profile_id, MIN(source_server_version) AS version,
-                   MIN(CASE WHEN operation_name <> 'UpdateChaptersProgress'
-                       THEN source_server_version END) AS library_version
-            FROM suwayomi_projection_outbox
-            WHERE status = 'retry' AND attempt_count < ?
-              AND COALESCE(last_error, '') NOT IN (?, ?, ?)
-            GROUP BY profile_id
-        )
+        {CLAIM_BARRIER_CTE}
         SELECT candidate.operation_id, candidate.profile_id, candidate.operation_name,
                candidate.variables_json, candidate.attempt_count
         FROM suwayomi_projection_outbox AS candidate
-        LEFT JOIN barrier ON barrier.profile_id = candidate.profile_id
-        WHERE candidate.profile_id = ? AND candidate.operation_id != ?
-          AND candidate.status IN ('pending', 'retry') AND candidate.next_attempt_at_ms <= ?
-          AND (candidate.operation_name = 'UpdateChaptersProgress') = (? = 'UpdateChaptersProgress')
-          AND candidate.source_server_version >= (
+        WHERE candidate.status IN ('pending', 'retry')
+          AND (candidate.operation_name = 'UpdateChaptersProgress') = ?
+          AND candidate.source_server_version > (
             SELECT source_server_version FROM suwayomi_projection_outbox WHERE operation_id = ?
           )
-          AND candidate.source_server_version <= COALESCE(
-            CASE WHEN candidate.operation_name = 'UpdateChaptersProgress'
-              THEN barrier.version ELSE barrier.library_version END,
-            candidate.source_server_version)
+          AND candidate.profile_id = ? AND candidate.operation_id != ?
+          AND +candidate.next_attempt_at_ms <= ?
+          AND {CLAIM_BARRIER_CONDITION}
         ORDER BY candidate.source_server_version ASC
         LIMIT ?
-        "#,
-    )
+        "#
+    ))
     .bind(ORDERED_RETRY_ATTEMPTS)
     .bind(NON_HOLDING_RETRY_CODES[0])
     .bind(NON_HOLDING_RETRY_CODES[1])
     .bind(NON_HOLDING_RETRY_CODES[2])
+    .bind(progress)
+    .bind(&first.operation_id)
     .bind(&first.profile_id)
     .bind(&first.operation_id)
     .bind(now)
-    .bind(&first.operation_name)
-    .bind(&first.operation_id)
-    .bind((MAX_GROUPED_ROWS - 1) as i64)
+    .bind((GROUP_SCAN_FACTOR * limit) as i64)
     .fetch_all(&mut *tx)
     .await?;
-    let group: Vec<ProjectionRow> = candidates
-        .into_iter()
-        .take_while(|row| {
-            row.operation_name == first.operation_name
-                && serde_json::from_str::<Value>(&row.variables_json)
-                    .ok()
-                    .and_then(|variables| group_change(&row.operation_name, &variables))
-                    .as_ref()
-                    == Some(change)
-        })
-        .collect();
+    let mut passed_over = std::collections::HashSet::new();
+    let mut group = Vec::new();
+    for row in candidates {
+        if group.len() + 1 >= limit {
+            break;
+        }
+        let same = row.operation_name == first.operation_name
+            && serde_json::from_str::<Value>(&row.variables_json)
+                .ok()
+                .and_then(|variables| group_change(&row.operation_name, &variables))
+                .as_ref()
+                == Some(change);
+        match row_work(&row) {
+            Some(work) if same && !passed_over.contains(&work) => group.push(row),
+            Some(work) => {
+                passed_over.insert(work);
+            }
+            // A row that names no work may change any of them: it joins only an unbroken run.
+            None if same && passed_over.is_empty() => group.push(row),
+            None => break,
+        }
+    }
     for row in &group {
         sqlx::query(
             r#"
@@ -1465,8 +1551,10 @@ impl ImportWatch {
 enum ImportPass {
     /// Nothing left to bring in; the queue drains normally.
     Idle,
-    /// A batch was handled; the next tick looks for more before draining.
+    /// A batch was handled; the next pass looks for more right away, before draining.
     Busy,
+    /// The runtime asked to retry the batch; the next tick tries again before draining.
+    Retrying,
 }
 
 /// A work some device keeps in its library, with what the outbox holds about it.
@@ -1536,13 +1624,29 @@ fn collect_portable_works(rows: &[(String, String, String, String)]) -> Vec<Unse
                     .and_then(Value::as_str)
                     .filter(|key| !key.starts_with(CORE_LISTED_CHAPTER_PREFIX))
                 {
-                    entry.chapters.insert(key.to_string(), variables.clone());
+                    // Rows come oldest first and each carries only what changed, so a later
+                    // row's fields override and the ones it leaves out keep the earlier value.
+                    let merged = entry.chapters.entry(key.to_string()).or_insert_with(|| json!({}));
+                    merge_progress_fields(merged, &variables);
                 }
             }
             _ => {}
         }
     }
     works
+}
+
+/// Lays the fields `newer` sets over `merged`; a field `newer` leaves out or nulls keeps its
+/// earlier value.
+fn merge_progress_fields(merged: &mut Value, newer: &Value) {
+    let (Some(merged), Some(newer)) = (merged.as_object_mut(), newer.as_object()) else {
+        return;
+    };
+    for (field, value) in newer {
+        if !value.is_null() {
+            merged.insert(field.clone(), value.clone());
+        }
+    }
 }
 
 /// The work as `suwayomi_import` takes it: in the library, with the chapters a device has progress
@@ -1603,21 +1707,30 @@ fn chapter_name_hint(chapter_key: &str) -> String {
 /// Brings in, one restore at a time, the works devices keep in their library that this Suwayomi
 /// has never listed: a desktop that joins (or was reset) gets the whole library at once instead of
 /// searching every source for every title. Categories and progress then drain as usual.
+///
+/// Every step of a pass works on the whole batch at once: one lookup of the works Suwayomi lists,
+/// one restore of the rest, one transaction binding them all. A lookup and a transaction per work
+/// made a first sync of a few thousand works take minutes.
 async fn import_unseen_comics(
     state: &SharedAppState,
     watch: &mut ImportWatch,
 ) -> anyhow::Result<ImportPass> {
+    // Only library entries decide what to import; a work's progress and categories are read
+    // below for the works of this batch. Reading and parsing every queued row instead cost about
+    // half a second a tick with a first sync's 25,000 progress rows.
     let rows: Vec<(String, String, String, String)> = sqlx::query_as(
         r#"
         SELECT operation_id, profile_id, operation_name, variables_json
         FROM suwayomi_projection_outbox
-        WHERE status IN ('pending', 'retry', 'blocked') AND variables_json LIKE '%"portableWorkRef"%'
+        WHERE operation_name = 'UpdateManga' AND status IN ('pending', 'retry', 'blocked')
+          AND variables_json LIKE '%"portableWorkRef"%'
         ORDER BY profile_id, source_server_version
         "#,
     )
     .fetch_all(&state.pool)
     .await
     .context("failed to list Suwayomi projections of portable works")?;
+    let mut bound_by_profile: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut batch = Vec::new();
     for work in collect_portable_works(&rows) {
         if !work.in_library
@@ -1630,67 +1743,698 @@ async fn import_unseen_comics(
         {
             continue;
         }
-        let bound = db::load_portable_work_binding(&state.pool, &work.profile_id, &work.portable_work_id)
-            .await?
-            .is_some_and(|binding| binding.resolution_state == "BOUND");
-        if bound {
+        if !bound_by_profile.contains_key(&work.profile_id) {
+            let bound = db::load_bound_comic_references(&state.pool, &work.profile_id).await?;
+            bound_by_profile.insert(work.profile_id.clone(), bound);
+        }
+        if bound_by_profile[&work.profile_id].contains_key(&work.portable_work_id) {
             watch
                 .attempted
                 .insert(ImportWatch::key(&work.profile_id, &work.portable_work_id));
             continue;
         }
         batch.push(work);
-        if batch.len() == suwayomi_import::MAX_IMPORT_WORKS {
+        if batch.len() == IMPORT_BATCH_WORKS {
             break;
         }
     }
     let Some(profile_id) = batch.first().map(|work| work.profile_id.clone()) else {
         return Ok(ImportPass::Idle);
     };
+    let batch = with_work_rows(&state.pool, &profile_id, &rows, batch).await?;
     let session = projection_session(&profile_id);
 
     // Works Suwayomi already lists are only bound.
-    let mut missing = Vec::new();
-    for work in batch {
-        match lookup_local_comic(state, &session, &work.work).await {
-            Ok(Some(manga_id)) => bind_imported_comic(state, &work, manga_id).await?,
-            Ok(None) => missing.push(work),
-            // The runtime is not answering; its rows back off and are rearmed when it returns.
-            Err(()) => return Ok(ImportPass::Idle),
-        }
+    let Ok(listed) = lookup_local_comics(state, &session, batch.iter().map(|work| &work.work)).await
+    else {
+        // The runtime is not answering; its rows back off and are rearmed when it returns.
+        return Ok(ImportPass::Idle);
+    };
+    let (found, missing): (Vec<UnseenWork>, Vec<UnseenWork>) = batch
+        .into_iter()
+        .partition(|work| comic_key(&work.work).is_some_and(|key| listed.contains_key(&key)));
+    bind_imported_comics(state, &profile_id, &found, &listed).await?;
+    for work in &found {
+        watch
+            .attempted
+            .insert(ImportWatch::key(&work.profile_id, &work.portable_work_id));
     }
+
     let works: Vec<Value> = missing.iter().filter_map(import_work_variables).collect();
     if !works.is_empty() {
+        let started = Instant::now();
         match suwayomi_import::import_works_confirmed(state, &session, json!({ "works": works })).await
         {
             Ok(_) => watch.failures = 0,
-            Err(AppError::ServiceUnavailable(detail))
-                if detail.retryable == Some(true) && watch.failures < 2 =>
-            {
+            // A restore that failed or timed out is tried again, the whole batch: Suwayomi
+            // restores nothing of a failed backup, and its upload can race the temporary file.
+            Err(error) if watch.failures + 1 < MAX_IMPORT_ATTEMPTS => {
                 watch.failures += 1;
-                tracing::warn!(profile = %profile_id, code = %detail.code, "Suwayomi import of synced works will retry");
-                return Ok(ImportPass::Busy);
+                tracing::warn!(profile = %profile_id, error = ?error, failures = watch.failures, "Suwayomi import of synced works will retry");
+                return Ok(ImportPass::Retrying);
             }
             Err(error) => {
                 watch.failures = 0;
-                tracing::warn!(profile = %profile_id, error = ?error, "Suwayomi import of synced works failed");
+                tracing::warn!(profile = %profile_id, error = ?error, "Suwayomi import of synced works failed; its works resolve one by one");
             }
         }
+        tracing::info!(profile = %profile_id, works = works.len(), elapsed_ms = started.elapsed().as_millis() as u64, "Suwayomi restore of synced works finished");
     }
-    let mut imported = 0;
     for work in &missing {
         watch
             .attempted
             .insert(ImportWatch::key(&work.profile_id, &work.portable_work_id));
-        if let Ok(Some(manga_id)) = lookup_local_comic(state, &session, &work.work).await {
-            bind_imported_comic(state, work, manga_id).await?;
-            imported += 1;
-        }
     }
     if !missing.is_empty() {
-        tracing::info!(profile = profile_id, imported, tried = missing.len(), "imported synced works into Suwayomi");
+        let listed = lookup_local_comics(state, &session, missing.iter().map(|work| &work.work))
+            .await
+            .unwrap_or_default();
+        let imported: Vec<UnseenWork> = missing
+            .into_iter()
+            .filter(|work| comic_key(&work.work).is_some_and(|key| listed.contains_key(&key)))
+            .collect();
+        bind_imported_comics(state, &profile_id, &imported, &listed).await?;
+        tracing::info!(profile = profile_id, imported = imported.len(), tried = works.len(), "imported synced works into Suwayomi");
     }
     Ok(ImportPass::Busy)
+}
+
+/// Restores of one batch before its works are given up on and resolve one by one.
+const MAX_IMPORT_ATTEMPTS: u32 = 3;
+
+/// Works one listing query asks Suwayomi about; their keys go in the query's filter.
+const COMIC_LOOKUP_CHUNK: usize = 100;
+const COMIC_LOOKUP_PAGE: usize = 500;
+const PORTABLE_COMICS_LOOKUP_QUERY: &str = r#"
+  query EpigraphResolvePortableComics($sourceIds: [LongString!]!, $urls: [String!]!, $first: Int!, $offset: Int!) {
+    mangas(filter: { sourceId: { in: $sourceIds }, url: { in: $urls } }, orderBy: ID, orderByType: ASC, first: $first, offset: $offset) {
+      pageInfo { hasNextPage }
+      nodes { id sourceId url }
+    }
+  }
+"#;
+
+/// A comic's source and exact key, as Suwayomi lists them.
+fn comic_key(work: &PortableWorkRefV3) -> Option<(String, String)> {
+    match work {
+        PortableWorkRefV3::Comic { source_id, manga_key } => {
+            Some((source_id.clone(), manga_key.clone()))
+        }
+        PortableWorkRefV3::Novel { .. } => None,
+    }
+}
+
+/// The ids Suwayomi has for the works' exact source and key, for those it lists. `Err` means the
+/// runtime did not answer.
+async fn lookup_local_comics<'a>(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    works: impl Iterator<Item = &'a PortableWorkRefV3>,
+) -> Result<HashMap<(String, String), i64>, ()> {
+    let keys: Vec<(String, String)> = works
+        .filter_map(comic_key)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut found = HashMap::new();
+    for chunk in keys.chunks(COMIC_LOOKUP_CHUNK) {
+        let source_ids: Vec<&str> = chunk
+            .iter()
+            .map(|(source, _)| source.as_str())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let urls: Vec<&str> = chunk.iter().map(|(_, url)| url.as_str()).collect();
+        let mut offset = 0;
+        loop {
+            let data = suwayomi_catalog::execute_graphql_document(
+                state,
+                session,
+                PORTABLE_COMICS_LOOKUP_QUERY,
+                json!({ "sourceIds": source_ids, "urls": urls, "first": COMIC_LOOKUP_PAGE, "offset": offset }),
+                false,
+            )
+            .await
+            .map_err(|_| ())?;
+            let nodes = data
+                .pointer("/mangas/nodes")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            collect_listed_comics(&nodes, chunk, &mut found);
+            let more = data
+                .pointer("/mangas/pageInfo/hasNextPage")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if !more || nodes.is_empty() {
+                break;
+            }
+            offset += nodes.len();
+        }
+    }
+    Ok(found)
+}
+
+/// Keeps the listed comics whose source and key are exactly one of `wanted`. The filter narrows by
+/// source and by key separately, so a key of one source can come back for another; the first id
+/// (the oldest entry) wins when Suwayomi lists the same work twice.
+fn collect_listed_comics(
+    nodes: &[Value],
+    wanted: &[(String, String)],
+    found: &mut HashMap<(String, String), i64>,
+) {
+    let wanted: std::collections::HashSet<&(String, String)> = wanted.iter().collect();
+    for node in nodes {
+        let Some(id) = node
+            .get("id")
+            .and_then(Value::as_i64)
+            .filter(|id| *id > 0 && *id <= i32::MAX as i64)
+        else {
+            continue;
+        };
+        let source = match node.get("sourceId") {
+            Some(Value::String(source)) => source.clone(),
+            Some(Value::Number(source)) => source.to_string(),
+            _ => continue,
+        };
+        let Some(url) = node.get("url").and_then(Value::as_str) else {
+            continue;
+        };
+        let key = (source, url.to_string());
+        if wanted.contains(&key) {
+            found.entry(key).or_insert(id);
+        }
+    }
+}
+
+/// Progress rows one bulk pass settles at most.
+const BULK_PROGRESS_ROWS: usize = 5_000;
+/// Works whose chapters one listing query reads.
+const BULK_CHAPTER_WORKS: usize = 100;
+const BULK_CHAPTER_PAGE: usize = 2_000;
+/// Chapters one bulk `updateChapters` names.
+const BULK_UPDATE_CHAPTERS: usize = 500;
+/// Rows a bulk pass could not settle are left to the per-row path; past this many remembered
+/// rows the memory is dropped and they get one more bulk try.
+const BULK_PROGRESS_MAX_TRIED: usize = 200_000;
+const BULK_CHAPTERS_QUERY: &str = r#"
+  query EpigraphBulkProgressChapters($mangaIds: [Int!]!, $first: Int!, $offset: Int!) {
+    chapters(filter: { mangaId: { in: $mangaIds } }, orderBy: ID, orderByType: ASC, first: $first, offset: $offset) {
+      pageInfo { hasNextPage }
+      nodes { id mangaId url isRead isBookmarked lastPageRead pageCount }
+    }
+  }
+"#;
+
+/// Remembers the progress rows a bulk pass claimed but could not settle, so the next pass leaves
+/// them to the per-row path instead of claiming them again.
+#[derive(Default)]
+struct BulkProgressWatch {
+    tried: std::collections::HashSet<String>,
+}
+
+/// A progress row the bulk pass claimed, with where it goes.
+struct BulkProgressRow {
+    operation_id: String,
+    status: String,
+    manga_id: i64,
+    portable_work_id: String,
+    chapter: PortableChapterRefV3,
+    chapter_key: String,
+    variables: Value,
+}
+
+/// Settles in a few queries the chapter progress of works already in Suwayomi. A first sync's
+/// tens of thousands of progress rows otherwise go one work at a time, each with its own chapter
+/// listing, mutations and transactions: about a quarter of a second a work.
+///
+/// The import restore carries most of that progress already, so most rows only need to be seen
+/// to match. Rows whose chapter matches are applied; the others get one `updateChapters` per
+/// distinct state. Rows it cannot settle (a chapter Suwayomi does not list, a rejected command)
+/// are handed back untouched to the per-row path, which knows how to retry or block them.
+/// Returns how many rows it settled.
+async fn settle_progress_in_bulk(
+    state: &SharedAppState,
+    watch: &mut BulkProgressWatch,
+) -> anyhow::Result<usize> {
+    if watch.tried.len() > BULK_PROGRESS_MAX_TRIED {
+        watch.tried.clear();
+    }
+    let Some((profile_id, rows)) = claim_bulk_progress(state, watch).await? else {
+        return Ok(0);
+    };
+    let manga_ids: Vec<i64> = rows
+        .iter()
+        .map(|row| row.manga_id)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let session = projection_session(&profile_id);
+    let chapters = match list_chapters_of(state, &session, &manga_ids).await {
+        Ok(chapters) => chapters,
+        Err(()) => {
+            // The runtime is not answering; the per-row path backs these rows off.
+            release_bulk_progress(state, &rows, &[]).await?;
+            return Ok(0);
+        }
+    };
+
+    // Each chapter's rows, oldest first, folded into the state they leave it in.
+    let mut by_chapter: Vec<(i64, Vec<&BulkProgressRow>)> = Vec::new();
+    let mut chapter_index: HashMap<i64, usize> = HashMap::new();
+    let mut unresolved: Vec<&BulkProgressRow> = Vec::new();
+    for row in &rows {
+        let nodes = chapters.get(&row.manga_id);
+        let (exact, same_path) = chapter_key_matches(nodes, row.manga_id, &row.chapter_key);
+        let chapter_id = exact.or(match same_path.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        });
+        match chapter_id {
+            Some(chapter_id) => {
+                let index = *chapter_index.entry(chapter_id).or_insert_with(|| {
+                    by_chapter.push((chapter_id, Vec::new()));
+                    by_chapter.len() - 1
+                });
+                by_chapter[index].1.push(row);
+            }
+            None => unresolved.push(row),
+        }
+    }
+    let nodes_by_id: HashMap<i64, &Value> = chapters
+        .values()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|node| Some((node.get("id")?.as_i64()?, node)))
+        .collect();
+
+    let mut applied: Vec<&BulkProgressRow> = Vec::new();
+    let mut bound_chapters: Vec<(&BulkProgressRow, i64)> = Vec::new();
+    let mut by_patch: Vec<(Value, Vec<(i64, Vec<&BulkProgressRow>)>)> = Vec::new();
+    for (chapter_id, chapter_rows) in by_chapter {
+        let mut patch = json!({ "isRead": null, "isBookmarked": null, "lastPageRead": null });
+        for row in &chapter_rows {
+            merge_progress_fields(&mut patch, &chapter_progress_patch(&row.variables));
+        }
+        let node = nodes_by_id.get(&chapter_id).copied().unwrap_or(&Value::Null);
+        if node.get("pageCount").and_then(Value::as_i64).map_or(true, |count| count <= 0) {
+            // Suwayomi clamps the page below a page count it does not know yet.
+            patch["lastPageRead"] = Value::Null;
+        }
+        bound_chapters.push((chapter_rows[0], chapter_id));
+        if chapter_matches_patch(node, &patch) {
+            applied.extend(chapter_rows);
+            continue;
+        }
+        match by_patch.iter_mut().find(|(existing, _)| *existing == patch) {
+            Some((_, members)) => members.push((chapter_id, chapter_rows)),
+            None => by_patch.push((patch, vec![(chapter_id, chapter_rows)])),
+        }
+    }
+
+    let mut runtime_down = false;
+    let mut landed: BTreeSet<i64> = applied.iter().map(|row| row.manga_id).collect();
+    for (patch, members) in by_patch {
+        for chunk in members.chunks(BULK_UPDATE_CHAPTERS) {
+            if runtime_down {
+                break;
+            }
+            let mut variables = patch.clone();
+            variables["ids"] = chunk.iter().map(|(chapter_id, _)| *chapter_id).collect();
+            match suwayomi_commands::execute_internal_command(
+                state,
+                &profile_id,
+                CommandOperation::UpdateChaptersProgress,
+                variables,
+            )
+            .await
+            {
+                Ok(data) => {
+                    for (chapter_id, chapter_rows) in chunk {
+                        let mut expected = patch.clone();
+                        expected["ids"] = json!([chapter_id]);
+                        if chapters_projection_confirmed(&expected, &data) {
+                            landed.insert(chapter_rows[0].manga_id);
+                            applied.extend(chapter_rows.iter().copied());
+                        }
+                    }
+                }
+                Err(AppError::ServiceUnavailable(detail)) if detail.retryable != Some(false) => {
+                    runtime_down = true;
+                }
+                // A rejected command is the per-row path's to retry or block.
+                Err(_) => {}
+            }
+        }
+    }
+
+    let applied_ids: std::collections::HashSet<&str> =
+        applied.iter().map(|row| row.operation_id.as_str()).collect();
+    let applied_chapters: Vec<db::BoundPortableChapter<'_>> = bound_chapters
+        .iter()
+        .filter(|(row, _)| applied_ids.contains(row.operation_id.as_str()))
+        .map(|(row, chapter_id)| db::BoundPortableChapter {
+            reference: &row.chapter,
+            portable_work_id: &row.portable_work_id,
+            local_reference: chapter_id.to_string(),
+        })
+        .collect();
+    let applied_list: Vec<&str> = applied_ids.iter().copied().collect();
+    release_bulk_progress(state, &rows, &applied_list).await?;
+    {
+        let _writer_guard = state.mutation_gate.lock().await;
+        db::upsert_bound_portable_chapters(&state.pool, &profile_id, &applied_chapters, db::now_ms())
+            .await?;
+    }
+    // Rows it could not settle go to the per-row path; after an outage they get another bulk try.
+    if !runtime_down {
+        for row in rows.iter().filter(|row| !applied_ids.contains(row.operation_id.as_str())) {
+            watch.tried.insert(row.operation_id.clone());
+        }
+    }
+    APPLIED_PROJECTIONS.fetch_add(applied_list.len() as u64, Ordering::Relaxed);
+    for manga_id in landed {
+        landed_works::record_projection(&profile_id, "UpdateChaptersProgress", &json!({ "mangaId": manga_id }));
+    }
+    if !applied_list.is_empty() || !unresolved.is_empty() {
+        tracing::info!(
+            profile = %profile_id,
+            claimed = rows.len(),
+            applied = applied_list.len(),
+            unresolved = unresolved.len(),
+            "settled synced chapter progress in bulk"
+        );
+    }
+    Ok(applied_list.len())
+}
+
+/// Whether the chapter already has every field the patch sets.
+fn chapter_matches_patch(node: &Value, patch: &Value) -> bool {
+    ["isRead", "isBookmarked", "lastPageRead"].iter().all(|field| {
+        match patch.get(*field).filter(|value| !value.is_null()) {
+            None => true,
+            Some(expected) => match expected {
+                Value::Bool(expected) => node.get(*field).and_then(Value::as_bool) == Some(*expected),
+                Value::Number(expected) => {
+                    node.get(*field).and_then(Value::as_i64) == expected.as_i64()
+                }
+                _ => false,
+            },
+        }
+    })
+}
+
+/// Claims, in commit order and behind the same barrier as [claim_next_at], the due progress rows
+/// of one profile that name a chapter of a work bound here.
+async fn claim_bulk_progress(
+    state: &SharedAppState,
+    watch: &BulkProgressWatch,
+) -> anyhow::Result<Option<(String, Vec<BulkProgressRow>)>> {
+    let _writer_guard = state.mutation_gate.lock().await;
+    claim_bulk_progress_at(&state.pool, db::now_ms(), watch).await
+}
+
+async fn claim_bulk_progress_at(
+    pool: &sqlx::SqlitePool,
+    now: i64,
+    watch: &BulkProgressWatch,
+) -> anyhow::Result<Option<(String, Vec<BulkProgressRow>)>> {
+    let candidates: Vec<(String, String, String, String)> = sqlx::query_as(&format!(
+        r#"
+        {CLAIM_BARRIER_CTE}
+        SELECT candidate.operation_id, candidate.profile_id, candidate.variables_json, candidate.status
+        FROM suwayomi_projection_outbox AS candidate
+        WHERE candidate.status IN ('pending', 'retry')
+          AND candidate.operation_name = 'UpdateChaptersProgress'
+          AND +candidate.next_attempt_at_ms <= ?
+          AND {CLAIM_BARRIER_CONDITION}
+        ORDER BY candidate.source_server_version ASC
+        LIMIT ?
+        "#
+    ))
+    .bind(ORDERED_RETRY_ATTEMPTS)
+    .bind(NON_HOLDING_RETRY_CODES[0])
+    .bind(NON_HOLDING_RETRY_CODES[1])
+    .bind(NON_HOLDING_RETRY_CODES[2])
+    .bind(now)
+    .bind((BULK_PROGRESS_ROWS * 4) as i64)
+    .fetch_all(pool)
+    .await
+    .context("failed to list Suwayomi progress projections")?;
+    let Some(profile_id) = candidates
+        .iter()
+        .find(|row| !watch.tried.contains(&row.0))
+        .map(|row| row.1.clone())
+    else {
+        return Ok(None);
+    };
+    let bound = db::load_bound_comic_references(pool, &profile_id).await?;
+    let mut rows = Vec::new();
+    // A chapter with a row left to the per-row path keeps its later rows there too, so they do
+    // not land before it.
+    let mut held_chapters = std::collections::HashSet::new();
+    for (operation_id, row_profile, variables_json, status) in candidates {
+        if row_profile != profile_id {
+            continue;
+        }
+        let tried = watch.tried.contains(&operation_id);
+        let Some(row) = bulk_progress_row(operation_id, status, &variables_json, &bound) else {
+            continue;
+        };
+        let chapter = (row.manga_id, row.chapter_key.clone());
+        if tried || held_chapters.contains(&chapter) {
+            held_chapters.insert(chapter);
+            continue;
+        }
+        rows.push(row);
+        if rows.len() == BULK_PROGRESS_ROWS {
+            break;
+        }
+    }
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let ids = serde_json::to_string(&rows.iter().map(|row| &row.operation_id).collect::<Vec<_>>())?;
+    let mut tx = db::begin_write(pool).await?;
+    sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET status = 'in_flight', lease_until_ms = ?, updated_at_ms = ?
+        WHERE status IN ('pending', 'retry') AND operation_id IN (SELECT value FROM json_each(?))
+        "#,
+    )
+    .bind(now.saturating_add(LEASE_MS))
+    .bind(now)
+    .bind(ids)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Some((profile_id, rows)))
+}
+
+/// The row as the bulk pass handles it, when it names a source chapter of a work bound here.
+fn bulk_progress_row(
+    operation_id: String,
+    status: String,
+    variables_json: &str,
+    bound: &HashMap<String, String>,
+) -> Option<BulkProgressRow> {
+    let variables = serde_json::from_str::<Value>(variables_json).ok()?;
+    let work = serde_json::from_value::<PortableWorkRefV3>(variables.get("portableWorkRef")?.clone())
+        .ok()
+        .filter(|work| work.validate().is_ok() && matches!(work, PortableWorkRefV3::Comic { .. }))?;
+    let chapter =
+        serde_json::from_value::<PortableChapterRefV3>(variables.get("portableChapterRef")?.clone())
+            .ok()
+            .filter(|chapter| chapter.validate().is_ok())?;
+    let PortableChapterRefV3::Comic { work: chapter_work, chapter_key } = &chapter else {
+        return None;
+    };
+    // A Core-listed address carries this Suwayomi's own id; the per-row path checks it.
+    if *chapter_work != work || chapter_key.starts_with(CORE_LISTED_CHAPTER_PREFIX) {
+        return None;
+    }
+    let portable_work_id = canonical_portable_work_id(&work);
+    let manga_id = bound
+        .get(&portable_work_id)?
+        .parse::<i64>()
+        .ok()
+        .filter(|id| (1..=i32::MAX as i64).contains(id))?;
+    Some(BulkProgressRow {
+        operation_id,
+        status,
+        manga_id,
+        portable_work_id,
+        chapter_key: chapter_key.clone(),
+        chapter,
+        variables,
+    })
+}
+
+/// Every chapter Suwayomi lists for the works, per work. `Err` means the runtime did not answer.
+async fn list_chapters_of(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    manga_ids: &[i64],
+) -> Result<HashMap<i64, Value>, ()> {
+    let mut chapters: HashMap<i64, Vec<Value>> = HashMap::new();
+    for chunk in manga_ids.chunks(BULK_CHAPTER_WORKS) {
+        let mut offset = 0;
+        loop {
+            let data = suwayomi_catalog::execute_graphql_document(
+                state,
+                session,
+                BULK_CHAPTERS_QUERY,
+                json!({ "mangaIds": chunk, "first": BULK_CHAPTER_PAGE, "offset": offset }),
+                false,
+            )
+            .await
+            .map_err(|_| ())?;
+            let nodes = data
+                .pointer("/chapters/nodes")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let fetched = nodes.len();
+            for node in nodes {
+                if let Some(manga_id) = node.get("mangaId").and_then(Value::as_i64) {
+                    chapters.entry(manga_id).or_default().push(node);
+                }
+            }
+            let more = data
+                .pointer("/chapters/pageInfo/hasNextPage")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if !more || fetched == 0 {
+                break;
+            }
+            offset += fetched;
+        }
+    }
+    Ok(chapters
+        .into_iter()
+        .map(|(manga_id, nodes)| (manga_id, Value::Array(nodes)))
+        .collect())
+}
+
+/// Removes the applied rows and hands every other claimed row back as it was, in one write.
+async fn release_bulk_progress(
+    state: &SharedAppState,
+    rows: &[BulkProgressRow],
+    applied: &[&str],
+) -> anyhow::Result<()> {
+    let applied_set: std::collections::HashSet<&str> = applied.iter().copied().collect();
+    let mut pending = Vec::new();
+    let mut retry = Vec::new();
+    for row in rows {
+        if applied_set.contains(row.operation_id.as_str()) {
+            continue;
+        }
+        if row.status == "pending" {
+            pending.push(row.operation_id.as_str());
+        } else {
+            retry.push(row.operation_id.as_str());
+        }
+    }
+    let _writer_guard = state.mutation_gate.lock().await;
+    release_bulk_progress_at(&state.pool, db::now_ms(), &pending, &retry, applied).await
+}
+
+async fn release_bulk_progress_at(
+    pool: &sqlx::SqlitePool,
+    now: i64,
+    pending: &[&str],
+    retry: &[&str],
+    applied: &[&str],
+) -> anyhow::Result<()> {
+    let mut tx = db::begin_write(pool).await?;
+    sqlx::query(
+        r#"
+        DELETE FROM suwayomi_projection_outbox
+        WHERE status = 'in_flight' AND operation_id IN (SELECT value FROM json_each(?))
+        "#,
+    )
+    .bind(serde_json::to_string(applied)?)
+    .execute(&mut *tx)
+    .await?;
+    for (status, ids) in [("pending", pending), ("retry", retry)] {
+        if ids.is_empty() {
+            continue;
+        }
+        sqlx::query(
+            r#"
+            UPDATE suwayomi_projection_outbox
+            SET status = ?, lease_until_ms = NULL, updated_at_ms = ?
+            WHERE status = 'in_flight' AND operation_id IN (SELECT value FROM json_each(?))
+            "#,
+        )
+        .bind(status)
+        .bind(now)
+        .bind(serde_json::to_string(ids)?)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The batch's works with every queued row that concerns them: the chapters a device has progress
+/// on become stand-ins of the import, and all their rows are made due once the work is bound.
+/// Progress rows name their work in their entity id; category assignments only in their variables.
+async fn with_work_rows(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    entries: &[(String, String, String, String)],
+    batch: Vec<UnseenWork>,
+) -> anyhow::Result<Vec<UnseenWork>> {
+    let wanted: std::collections::HashSet<String> =
+        batch.iter().map(|work| work.portable_work_id.clone()).collect();
+    let mut rows: Vec<(String, String, String, String)> = entries
+        .iter()
+        .filter(|row| row.1 == profile_id)
+        .cloned()
+        .collect();
+    for work in &batch {
+        let id = &work.portable_work_id;
+        rows.extend(
+            sqlx::query_as::<_, (String, String, String, String)>(
+                r#"
+                SELECT operation_id, profile_id, operation_name, variables_json
+                FROM suwayomi_projection_outbox
+                WHERE profile_id = ? AND status IN ('pending', 'retry', 'blocked')
+                  AND ((entity_type = 'comic.history' AND entity_id = ?)
+                    OR (entity_type = 'comic.chapter_state' AND entity_id >= ? AND entity_id < ?))
+                ORDER BY source_server_version
+                "#,
+            )
+            .bind(profile_id)
+            .bind(format!("comic.history::{id}"))
+            .bind(format!("comic.chapter_state::{id}::"))
+            .bind(format!("comic.chapter_state::{id}:;"))
+            .fetch_all(pool)
+            .await
+            .context("failed to list Suwayomi progress projections of a work")?,
+        );
+    }
+    rows.extend(
+        sqlx::query_as::<_, (String, String, String, String)>(
+            r#"
+            SELECT operation_id, profile_id, operation_name, variables_json
+            FROM suwayomi_projection_outbox
+            WHERE profile_id = ? AND entity_type = 'comic.category_assignment'
+              AND status IN ('pending', 'retry', 'blocked')
+            ORDER BY source_server_version
+            "#,
+        )
+        .bind(profile_id)
+        .fetch_all(pool)
+        .await
+        .context("failed to list Suwayomi category projections")?,
+    );
+    Ok(collect_portable_works(&rows)
+        .into_iter()
+        .filter(|work| wanted.contains(&work.portable_work_id))
+        .collect())
 }
 
 /// The id Suwayomi has for the work's exact source and key, if it lists it.
@@ -1718,46 +2462,46 @@ async fn lookup_local_comic(
     Ok(exact_comic_match(data.pointer("/mangas/nodes"), manga_key))
 }
 
-/// Binds the work and makes its waiting rows due again with fresh attempts, so its category and
-/// progress land now instead of after the backoff they earned while it was missing.
-async fn bind_imported_comic(
+/// Binds the works in one transaction and makes their waiting rows due again with fresh attempts,
+/// so their categories and progress land now instead of after the backoff they earned while the
+/// works were missing.
+async fn bind_imported_comics(
     state: &SharedAppState,
-    work: &UnseenWork,
-    manga_id: i64,
+    profile_id: &str,
+    works: &[UnseenWork],
+    listed: &HashMap<(String, String), i64>,
 ) -> anyhow::Result<()> {
-    let local_reference = manga_id.to_string();
-    db::upsert_portable_work_binding(
-        &state.pool,
-        &work.profile_id,
-        &work.portable_work_id,
-        &work.work,
-        None,
-        Some(&local_reference),
-        PortableResolutionStateV3::Bound,
-        None,
-        work.title_hint.as_deref(),
-        None,
-        0,
-        db::now_ms(),
-    )
-    .await?;
-    let now = db::now_ms();
-    let _writer_guard = state.mutation_gate.lock().await;
-    for operation_id in &work.operation_ids {
-        sqlx::query(
-            r#"
-            UPDATE suwayomi_projection_outbox
-            SET status = 'retry', attempt_count = 0, next_attempt_at_ms = ?, lease_until_ms = NULL,
-                updated_at_ms = ?
-            WHERE operation_id = ? AND status IN ('retry', 'blocked')
-            "#,
-        )
-        .bind(now)
-        .bind(now)
-        .bind(operation_id)
-        .execute(&state.pool)
-        .await?;
+    let references: Vec<(&UnseenWork, String)> = works
+        .iter()
+        .filter_map(|work| {
+            let id = listed.get(&comic_key(&work.work)?)?;
+            Some((work, id.to_string()))
+        })
+        .collect();
+    if references.is_empty() {
+        return Ok(());
     }
+    let bindings: Vec<db::BoundPortableWork<'_>> = references
+        .iter()
+        .map(|(work, local_reference)| db::BoundPortableWork {
+            portable_id: &work.portable_work_id,
+            reference: &work.work,
+            dependency_key: None,
+            local_reference,
+            title_hint: work.title_hint.as_deref(),
+            provider_label_hint: None,
+        })
+        .collect();
+    let operation_ids: Vec<&str> = references
+        .iter()
+        .flat_map(|(work, _)| work.operation_ids.iter().map(String::as_str))
+        .collect();
+    {
+        let _writer_guard = state.mutation_gate.lock().await;
+        db::upsert_bound_portable_works(&state.pool, profile_id, &bindings, db::now_ms()).await?;
+        db::rearm_projection_operations(&state.pool, &operation_ids).await?;
+    }
+    super::catalog_revision::invalidate(profile_id);
     Ok(())
 }
 
@@ -3194,6 +3938,67 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_group_passes_over_other_changes_of_a_work_but_keeps_its_order() {
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let work = |key: &str| json!({ "type": "comic", "sourceId": "1", "mangaKey": key });
+        let entry = |key: &str| json!({ "mangaId": 1, "inLibrary": true, "portableWorkRef": work(key) }).to_string();
+        let folder =
+            |key: &str| json!({ "mangaId": 1, "addTo": [1], "removeFrom": [], "portableWorkRef": work(key) }).to_string();
+        // How a synced library arrives: each work's entry, then its categories.
+        for (id, operation, variables, version) in [
+            ("entry-a", "UpdateManga", entry("/a"), 1),
+            ("folder-a", "UpdateMangaCategories", folder("/a"), 2),
+            ("entry-b", "UpdateManga", entry("/b"), 3),
+            ("folder-b", "UpdateMangaCategories", folder("/b"), 4),
+            ("entry-c", "UpdateManga", entry("/c"), 5),
+            ("folder-c", "UpdateMangaCategories", folder("/c"), 6),
+            // Waits for folder-a, which came first.
+            ("entry-a-again", "UpdateManga", entry("/a"), 7),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', ?, ?, 'comic.test', ?, ?, 'pending', 0, 0, NULL, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(operation)
+            .bind(variables)
+            .bind(id)
+            .bind(version)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let mut claimed = Vec::new();
+        while let Some(first) = claim_next_at(&pool, 500).await.unwrap() {
+            let change = group_change(&first.operation_name, &serde_json::from_str(&first.variables_json).unwrap())
+                .unwrap();
+            let group = claim_group_at(&pool, 500, &first, &change).await.unwrap();
+            let mut ids = vec![first.operation_id.clone()];
+            ids.extend(group.iter().map(|row| row.operation_id.clone()));
+            sqlx::query("DELETE FROM suwayomi_projection_outbox WHERE status = 'in_flight'")
+                .execute(&pool)
+                .await
+                .unwrap();
+            claimed.push(ids);
+        }
+        assert_eq!(
+            claimed,
+            vec![
+                vec!["entry-a", "entry-b", "entry-c"],
+                vec!["folder-a", "folder-b", "folder-c"],
+                vec!["entry-a-again"],
+            ]
+        );
+    }
+
     #[test]
     fn a_bulk_mutation_confirms_only_the_works_it_answered_for() {
         let library = json!({ "updateMangas": { "mangas": [
@@ -3245,6 +4050,9 @@ mod tests {
         assert_eq!(first.operation_ids, ["entry", "old", "new", "category"]);
         assert_eq!(first.chapters.len(), 1);
         assert_eq!(first.chapters["/manga/a/chapter-1"]["isRead"], json!(true));
+        // The newer row leaves the page out, so the older row's page stands, as it would if the
+        // rows were applied one after the other.
+        assert_eq!(first.chapters["/manga/a/chapter-1"]["lastPageRead"], json!(2));
         // A work only categorised here is not in any device's library.
         assert!(!works[1].in_library);
 
@@ -3255,7 +4063,7 @@ mod tests {
         assert_eq!(
             import["chapters"],
             json!([{ "url": "/manga/a/chapter-1", "name": "chapter-1", "isRead": true,
-                     "isBookmarked": false, "lastPageRead": 0, "chapterNumber": -1.0 }])
+                     "isBookmarked": false, "lastPageRead": 2, "chapterNumber": -1.0 }])
         );
         // Without a title hint the key stands in until the source fills the details.
         assert_eq!(import_work_variables(&works[1]).unwrap()["title"], json!("/manga/b"));
@@ -3589,5 +4397,282 @@ mod tests {
                 ] }
             }),
         ));
+    }
+
+    #[test]
+    fn later_progress_fields_override_and_missing_ones_keep_the_earlier_value() {
+        let mut merged = json!({ "isRead": true, "lastPageRead": 4 });
+        merge_progress_fields(&mut merged, &json!({ "lastPageRead": 9, "isBookmarked": null }));
+        assert_eq!(merged, json!({ "isRead": true, "lastPageRead": 9 }));
+        merge_progress_fields(&mut merged, &json!({ "isRead": false, "isBookmarked": true }));
+        assert_eq!(merged, json!({ "isRead": false, "isBookmarked": true, "lastPageRead": 9 }));
+        // Not an object on either side: nothing to merge.
+        merge_progress_fields(&mut merged, &json!(null));
+        assert_eq!(merged["lastPageRead"], 9);
+    }
+
+    #[test]
+    fn a_chapter_matches_a_patch_only_on_the_fields_it_sets() {
+        let node = json!({ "id": 1, "isRead": true, "isBookmarked": false, "lastPageRead": 12 });
+        assert!(chapter_matches_patch(&node, &json!({ "isRead": true, "isBookmarked": null, "lastPageRead": null })));
+        assert!(chapter_matches_patch(&node, &json!({ "isRead": true, "isBookmarked": false, "lastPageRead": 12 })));
+        assert!(!chapter_matches_patch(&node, &json!({ "isRead": true, "lastPageRead": 13 })));
+        assert!(!chapter_matches_patch(&node, &json!({ "isBookmarked": true })));
+        // A chapter Suwayomi did not list matches only an empty patch.
+        assert!(!chapter_matches_patch(&Value::Null, &json!({ "isRead": true })));
+        assert!(chapter_matches_patch(&Value::Null, &json!({ "isRead": null })));
+    }
+
+    #[test]
+    fn listed_comics_match_their_exact_source_and_key() {
+        let wanted = vec![
+            ("10002".to_string(), "/series/a".to_string()),
+            ("10003".to_string(), "/series/b".to_string()),
+        ];
+        let nodes = vec![
+            json!({ "id": 7, "sourceId": "10002", "url": "/series/a" }),
+            // The same work listed twice: the oldest entry wins.
+            json!({ "id": 9, "sourceId": "10002", "url": "/series/a" }),
+            // A key of one source coming back for another is not the work.
+            json!({ "id": 8, "sourceId": "10002", "url": "/series/b" }),
+            json!({ "id": 11, "sourceId": 10003, "url": "/series/b" }),
+            json!({ "id": 0, "sourceId": "10003", "url": "/series/b" }),
+            json!({ "id": 12, "url": "/series/b" }),
+        ];
+        let mut found = HashMap::new();
+        collect_listed_comics(&nodes, &wanted, &mut found);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[&wanted[0]], 7);
+        assert_eq!(found[&wanted[1]], 11);
+        assert_eq!(
+            comic_key(&PortableWorkRefV3::comic("10002", "/series/a")),
+            Some(wanted[0].clone())
+        );
+    }
+
+    fn progress_variables(key: &str, chapter_key: &str, fields: Value) -> Value {
+        let work = json!({ "type": "comic", "sourceId": "10002", "mangaKey": key });
+        let mut variables = json!({
+            "portableWorkRef": work,
+            "portableChapterRef": { "type": "comic", "work": work, "chapterKey": chapter_key },
+        });
+        for (field, value) in fields.as_object().unwrap() {
+            variables[field] = value.clone();
+        }
+        variables
+    }
+
+    #[test]
+    fn bulk_rows_name_a_source_chapter_of_a_bound_work() {
+        let bound: HashMap<String, String> = [(
+            canonical_portable_work_id(&PortableWorkRefV3::comic("10002", "/series/a")),
+            "7".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let row = |variables: Value| {
+            bulk_progress_row("op".to_string(), "pending".to_string(), &variables.to_string(), &bound)
+        };
+        let accepted = row(progress_variables("/series/a", "/series/a/1", json!({ "isRead": true })))
+            .expect("a chapter of a bound work");
+        assert_eq!(accepted.manga_id, 7);
+        assert_eq!(accepted.chapter_key, "/series/a/1");
+        assert!(row(progress_variables("/series/b", "/series/b/1", json!({}))).is_none(), "not bound");
+        assert!(
+            row(progress_variables("/series/a", "aethon-core://suwayomi/s/main/chapter/5", json!({})))
+                .is_none(),
+            "a Core-listed address is checked by the per-row path"
+        );
+        let mut other_work = progress_variables("/series/a", "/series/b/1", json!({}));
+        other_work["portableChapterRef"]["work"]["mangaKey"] = json!("/series/b");
+        assert!(row(other_work).is_none(), "the chapter belongs to another work");
+        assert!(row(json!({ "portableWorkRef": { "type": "comic", "sourceId": "10002", "mangaKey": "/series/a" } })).is_none());
+        let huge: HashMap<String, String> =
+            bound.keys().map(|key| (key.clone(), "4294967296".to_string())).collect();
+        assert!(bulk_progress_row(
+            "op".to_string(),
+            "pending".to_string(),
+            &progress_variables("/series/a", "/series/a/1", json!({})).to_string(),
+            &huge
+        )
+        .is_none());
+    }
+
+    async fn insert_progress(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+        version: i64,
+        status: &str,
+        attempts: i64,
+        error: Option<&str>,
+        variables: &Value,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO suwayomi_projection_outbox (
+              operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+              source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+              created_at_ms, updated_at_ms
+            ) VALUES (?, 'main', 'UpdateChaptersProgress', ?, 'comic.chapter_state', ?, ?, ?, ?, 0, ?, 1, 1)
+            "#,
+        )
+        .bind(id)
+        .bind(variables.to_string())
+        .bind(id)
+        .bind(version)
+        .bind(status)
+        .bind(attempts)
+        .bind(error)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn outbox_rows(pool: &sqlx::SqlitePool) -> Vec<(String, String, i64)> {
+        sqlx::query_as(
+            "SELECT operation_id, status, attempt_count FROM suwayomi_projection_outbox ORDER BY operation_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn bulk_progress_claims_bound_rows_in_order_and_releases_what_it_did_not_apply() {
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let bound = PortableWorkRefV3::comic("10002", "/series/a");
+        db::upsert_portable_work_binding(
+            &pool,
+            "main",
+            &canonical_portable_work_id(&bound),
+            &bound,
+            None,
+            Some("7"),
+            PortableResolutionStateV3::Bound,
+            None,
+            None,
+            None,
+            0,
+            1,
+        )
+        .await
+        .unwrap();
+        let read = |chapter: &str| progress_variables("/series/a", chapter, json!({ "isRead": true }));
+        insert_progress(&pool, "a1", 1, "pending", 0, None, &read("/series/a/1")).await;
+        insert_progress(&pool, "a2", 2, "retry", 1, Some("command_failed"), &read("/series/a/2")).await;
+        insert_progress(&pool, "a3", 3, "pending", 0, None, &read("/series/a/3")).await;
+        // A later row of a chapter whose earlier row is left to the per-row path stays there too.
+        insert_progress(&pool, "a3-later", 4, "pending", 0, None, &read("/series/a/3")).await;
+        insert_progress(&pool, "unbound", 5, "pending", 0, None, &progress_variables("/series/b", "/series/b/1", json!({ "isRead": true }))).await;
+
+        let mut watch = BulkProgressWatch::default();
+        watch.tried.insert("a3".to_string());
+        let (profile, rows) = claim_bulk_progress_at(&pool, 10, &watch).await.unwrap().unwrap();
+        assert_eq!(profile, "main");
+        let claimed: Vec<&str> = rows.iter().map(|row| row.operation_id.as_str()).collect();
+        assert_eq!(claimed, vec!["a1", "a2"]);
+        assert_eq!(
+            outbox_rows(&pool).await,
+            vec![
+                ("a1".to_string(), "in_flight".to_string(), 0),
+                ("a2".to_string(), "in_flight".to_string(), 1),
+                ("a3".to_string(), "pending".to_string(), 0),
+                ("a3-later".to_string(), "pending".to_string(), 0),
+                ("unbound".to_string(), "pending".to_string(), 0),
+            ]
+        );
+        // The per-row path does not take the claimed rows meanwhile.
+        let next = claim_next_of(&pool, 10, &[true]).await.unwrap().unwrap();
+        assert_eq!(next.operation_id, "a3");
+
+        // a1 landed; a2 goes back as it was, without an attempt spent.
+        release_bulk_progress_at(&pool, 20, &[], &["a2"], &["a1"]).await.unwrap();
+        let rows = outbox_rows(&pool).await;
+        assert_eq!(
+            rows,
+            vec![
+                ("a2".to_string(), "retry".to_string(), 1),
+                ("a3".to_string(), "in_flight".to_string(), 1),
+                ("a3-later".to_string(), "pending".to_string(), 0),
+                ("unbound".to_string(), "pending".to_string(), 0),
+            ]
+        );
+        let lease: Option<i64> = sqlx::query_scalar(
+            "SELECT lease_until_ms FROM suwayomi_projection_outbox WHERE operation_id = 'a2'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(lease, None);
+    }
+
+    #[tokio::test]
+    async fn bulk_progress_waits_behind_a_holding_retry_and_library_only_claims_skip_progress() {
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let bound = PortableWorkRefV3::comic("10002", "/series/a");
+        db::upsert_portable_work_binding(
+            &pool,
+            "main",
+            &canonical_portable_work_id(&bound),
+            &bound,
+            None,
+            Some("7"),
+            PortableResolutionStateV3::Bound,
+            None,
+            None,
+            None,
+            0,
+            1,
+        )
+        .await
+        .unwrap();
+        let read = |chapter: &str| progress_variables("/series/a", chapter, json!({ "isRead": true }));
+        // An earlier progress retry that holds the profile's later progress, not yet due.
+        sqlx::query(
+            r#"
+            INSERT INTO suwayomi_projection_outbox (
+              operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+              source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+              created_at_ms, updated_at_ms
+            ) VALUES ('held', 'main', 'UpdateChaptersProgress', ?, 'comic.chapter_state', 'held', 1, 'retry', 1, 1000, 'confirmation_mismatch', 1, 1)
+            "#,
+        )
+        .bind(read("/series/a/0").to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_progress(&pool, "later", 2, "pending", 0, None, &read("/series/a/1")).await;
+        let watch = BulkProgressWatch::default();
+        assert!(claim_bulk_progress_at(&pool, 10, &watch).await.unwrap().is_none());
+        assert!(claim_next_of(&pool, 10, &[false]).await.unwrap().is_none(), "no library rows");
+    }
+
+    #[tokio::test]
+    async fn rearming_gives_waiting_rows_fresh_attempts_and_leaves_others() {
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let variables = progress_variables("/series/a", "/series/a/1", json!({ "isRead": true }));
+        insert_progress(&pool, "retry", 1, "retry", 4, Some("portable_work_not_bound"), &variables).await;
+        insert_progress(&pool, "blocked", 2, "blocked", 6, Some("portable_work_not_found"), &variables).await;
+        insert_progress(&pool, "flight", 3, "in_flight", 2, None, &variables).await;
+        insert_progress(&pool, "untouched", 4, "retry", 4, Some("portable_work_not_bound"), &variables).await;
+        let rearmed = db::rearm_projection_operations(&pool, &["retry", "blocked", "flight", "missing"])
+            .await
+            .unwrap();
+        assert_eq!(rearmed, 2);
+        assert_eq!(
+            outbox_rows(&pool).await,
+            vec![
+                ("blocked".to_string(), "retry".to_string(), 0),
+                ("flight".to_string(), "in_flight".to_string(), 2),
+                ("retry".to_string(), "retry".to_string(), 0),
+                ("untouched".to_string(), "retry".to_string(), 4),
+            ]
+        );
     }
 }

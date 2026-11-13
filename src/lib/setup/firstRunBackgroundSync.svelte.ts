@@ -1,4 +1,12 @@
-import { syncdGetReplicationState, syncdGetSyncProgressIfRunning, type SyncdSyncProgress } from "../syncdDesktop";
+import {
+  syncdDisconnectPersistedSession,
+  syncdGetReplicationState,
+  syncdGetSyncProgressIfRunning,
+  syncdListPairedDevicesIfRunning,
+  syncdRevokePairedDevice,
+  type SyncdPairedDeviceView,
+  type SyncdSyncProgress,
+} from "../syncdDesktop";
 import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "./firstRunSyncReadiness";
 import { notifyInBackground } from "../backgroundNotifications";
 import { translate } from "../i18n/runtime";
@@ -15,6 +23,10 @@ export interface FirstRunBackgroundSyncOptions {
   waitForUploads: boolean;
   /** Paired with another computer: wait until replication is live with its library. */
   waitForReplication: boolean;
+  /** The phone or computer that paired with this computer's Core; the run ends if it forgets the pairing. */
+  peerDeviceId?: string | null;
+  /** The replication session with another computer, which Cancel disconnects. */
+  sessionKey?: string | null;
 }
 
 interface Marker extends FirstRunBackgroundSyncOptions {
@@ -42,7 +54,14 @@ function readMarker(): Marker | null {
       globalThis.localStorage?.removeItem(MARKER_KEY);
       return null;
     }
-    return { profileId: marker.profileId, waitForUploads: marker.waitForUploads === true, waitForReplication: marker.waitForReplication === true, startedAt: marker.startedAt };
+    return {
+      profileId: marker.profileId,
+      waitForUploads: marker.waitForUploads === true,
+      waitForReplication: marker.waitForReplication === true,
+      peerDeviceId: typeof marker.peerDeviceId === "string" ? marker.peerDeviceId : null,
+      sessionKey: typeof marker.sessionKey === "string" ? marker.sessionKey : null,
+      startedAt: marker.startedAt,
+    };
   } catch {
     return null;
   }
@@ -59,6 +78,26 @@ export const firstRunBackgroundSync = $state<{ running: boolean }>({ running: re
 
 let runId = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
+let followed: Marker | null = null;
+/* Misses in a row before the peer counts as gone, so one read during a Core restart does not end the run. */
+const PEER_MISSES_TO_LEAVE = 2;
+
+/**
+ * Whether the device that paired here is still paired: a phone that forgot this computer is revoked
+ * and leaves the list.
+ */
+export function pairedPeerPresent(devices: SyncdPairedDeviceView[], profileId: string, deviceId?: string | null): boolean {
+  return devices.some((device) => device.profileId === profileId && !device.inactive && (!deviceId || device.deviceId === deviceId));
+}
+
+/**
+ * Stops syncing with the device this computer paired with: a phone is unpaired here, so it can no
+ * longer send or receive; another computer's session is disconnected. What already arrived stays.
+ */
+export async function cancelPeerSync(target: { peerDeviceId?: string | null; sessionKey?: string | null }) {
+  if (target.peerDeviceId) await syncdRevokePairedDevice(target.peerDeviceId);
+  else if (target.sessionKey) await syncdDisconnectPersistedSession(target.sessionKey);
+}
 
 /** What is still to come, or null while a phone has not said what it holds yet. */
 export function firstRunSyncRemaining(progress: SyncdSyncProgress, waitForUploads: boolean): number | null {
@@ -95,14 +134,34 @@ export function resumeFirstRunBackgroundSync() {
 export function stopFirstRunBackgroundSync() {
   runId += 1;
   clearTimeout(timer);
+  followed = null;
   writeMarker(null);
   firstRunBackgroundSync.running = false;
+}
+
+/** Cancel on the toast: stops syncing with the other device and ends the run. */
+export async function cancelFirstRunBackgroundSync() {
+  const marker = followed ?? readMarker();
+  stopFirstRunBackgroundSync();
+  if (!marker) return;
+  const outcome = { title: translate("firstRun.sync.toastCancelled"), body: translate("firstRun.sync.toastCancelledBody") };
+  try {
+    await cancelPeerSync(marker);
+  } catch (error) {
+    console.warn("First-run background sync could not stop syncing with the other device.", error);
+    finishProgressToast(TOAST_ID, { kind: "error", title: translate("firstRun.sync.cancelFailed"), body: translate("firstRun.sync.cancelFailedBody"), duration: 0 });
+    return;
+  }
+  finishProgressToast(TOAST_ID, { kind: "info", ...outcome, duration: 6000 });
+  addSystemNotification({ id: NOTIFICATION_ID, profileId: marker.profileId, kind: "info", ...outcome });
 }
 
 function follow(marker: Marker) {
   const id = ++runId;
   clearTimeout(timer);
+  followed = marker;
   firstRunBackgroundSync.running = true;
+  let peerMisses = 0;
   let total = 0;
   let previous: number | null | undefined;
   let lastAdvance = Date.now();
@@ -110,6 +169,7 @@ function follow(marker: Marker) {
 
   const release = () => {
     if (id !== runId) return;
+    followed = null;
     writeMarker(null);
     firstRunBackgroundSync.running = false;
   };
@@ -140,6 +200,18 @@ function follow(marker: Marker) {
     release();
   };
 
+  /* The other device forgot this computer: nothing more will come, so the run ends here. */
+  const peerLeft = () => {
+    const title = translate("firstRun.sync.toastPeerLeft");
+    const body = translate("firstRun.sync.toastPeerLeftBody");
+    finishProgressToast(TOAST_ID, { kind: "info", title, body, duration: 0 });
+    addSystemNotification({ id: NOTIFICATION_ID, profileId: marker.profileId, kind: "info", title, body });
+    release();
+  };
+
+  /* A phone pairs with this Core; another computer's pairing is followed through replication. */
+  const watchesPeer = Boolean(marker.peerDeviceId);
+
   const poll = async () => {
     if (id !== runId) return;
     let progress: SyncdSyncProgress | null = null;
@@ -151,6 +223,19 @@ function follow(marker: Marker) {
       console.warn("First-run background sync could not read sync progress.", error);
     }
     if (id !== runId) return;
+    if (progress && watchesPeer) {
+      try {
+        const devices = (await syncdListPairedDevicesIfRunning()) ?? [];
+        if (id !== runId) return;
+        peerMisses = pairedPeerPresent(devices, marker.profileId, marker.peerDeviceId) ? 0 : peerMisses + 1;
+      } catch (error) {
+        console.warn("First-run background sync could not read the paired devices.", error);
+      }
+      if (peerMisses >= PEER_MISSES_TO_LEAVE) {
+        peerLeft();
+        return;
+      }
+    }
     const now = Date.now();
     if (!progress) {
       if (now - coreSeenAt > CORE_ABSENT_MS) {
@@ -177,6 +262,9 @@ function follow(marker: Marker) {
         body: remaining === null || !replicating ? undefined : translate("firstRun.sync.toastRunningBody", { remaining }),
         progress: remaining !== null && total > 0
           ? { current: done, total, percent: Math.floor((done / total) * 100) }
+          : undefined,
+        actions: marker.peerDeviceId || marker.sessionKey
+          ? [{ label: translate("firstRun.sync.cancelSync"), run: () => void cancelFirstRunBackgroundSync() }]
           : undefined,
       });
     }

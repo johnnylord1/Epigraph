@@ -98,6 +98,16 @@ fn upload_reports() -> std::sync::MutexGuard<'static, UploadReports> {
     UPLOAD_REPORTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Drops what a device reported once it forgot this computer or was revoked here, so nothing
+/// still waits for uploads that will never come.
+pub fn forget_device_upload_reports(device_id: &str) {
+    forget_device_at(&mut upload_reports(), device_id);
+}
+
+fn forget_device_at(reports_by_device: &mut UploadReports, device_id: &str) {
+    reports_by_device.retain(|(_, reporting_device), _| reporting_device != device_id);
+}
+
 /// What paired devices still have to upload here, from their latest status calls. `None` until
 /// every device that synced lately has finished a run and reported it.
 pub fn pending_uploads() -> Option<i64> {
@@ -289,6 +299,22 @@ mod tests {
         record_upload_report(&mut reports, "main", "gone", true, Some(5), None, then);
         record_upload_report(&mut reports, "main", "gone", true, None, None, later);
         assert_eq!(pending_uploads_at(&mut reports, later), None);
+    }
+
+    #[test]
+    fn a_revoked_device_no_longer_holds_uploads() {
+        let mut reports = UploadReports::new();
+        let now = Instant::now();
+        record_upload_report(&mut reports, "main", "phone", true, Some(120), Some(40), now);
+        record_upload_report(&mut reports, "main", "tablet", true, Some(3), Some(0), now);
+        assert_eq!(pending_uploads_at(&mut reports, now), Some(123));
+
+        forget_device_at(&mut reports, "phone");
+        assert_eq!(pending_uploads_at(&mut reports, now), Some(3));
+        assert_eq!(pending_library_uploads_at(&mut reports, now), Some(0));
+
+        forget_device_at(&mut reports, "tablet");
+        assert_eq!(pending_uploads_at(&mut reports, now), None);
     }
 
     #[test]

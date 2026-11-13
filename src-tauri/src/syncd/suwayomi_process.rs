@@ -44,9 +44,73 @@ const STARTUP_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const STARTUP_PROBE_TIMEOUT_EMPTY: Duration = Duration::from_secs(240);
 const STARTUP_PROBE_TIMEOUT_EXISTING: Duration = Duration::from_secs(360);
 const PROBE_TIMEOUT: Duration = Duration::from_millis(2_500);
+/// How long a health probe of a server that is already running may take. Applying a first sync
+/// keeps Suwayomi's database busy, and even a trivial query then took 8 to 15 seconds to answer;
+/// the readiness timeout above counted that as a hang and restarted the server every few minutes.
+const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// A running server that answered any Core request this recently is busy, not hung, whatever the
+/// health probe says.
+const RECENT_ANSWER_WINDOW: Duration = Duration::from_secs(60);
 const SUPERVISOR_HEALTH_INTERVAL: Duration = Duration::from_secs(15);
 const SUPERVISOR_CONFIGURATION_INTERVAL: Duration = Duration::from_secs(1);
 const SUPERVISOR_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+/// Health probes in a row a running main server may miss before it is restarted. A JVM busy
+/// restoring a synced library or collecting garbage can miss one probe; restarting it then threw
+/// away the work it was doing (four restarts in twenty minutes of a first sync). With the retry
+/// interval this still restarts a hung server within about half a minute.
+const MISSED_PROBES_BEFORE_RESTART: u32 = 4;
+static MISSED_HEALTH_PROBES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Records a health probe of the running main server; true once it missed enough in a row that it
+/// is to be restarted, which also starts the count again for the next server.
+fn record_health_probe(missed: &std::sync::atomic::AtomicU32, answered: bool) -> bool {
+    use std::sync::atomic::Ordering;
+    if answered {
+        missed.store(0, Ordering::Release);
+        return false;
+    }
+    if missed.fetch_add(1, Ordering::AcqRel) + 1 < MISSED_PROBES_BEFORE_RESTART {
+        return false;
+    }
+    missed.store(0, Ordering::Release);
+    true
+}
+
+/// When the main server last answered a Core request (0 for never), so a slow health probe of a
+/// server that keeps answering projections, catalog reads and the proxy does not restart it.
+static LAST_MAIN_ANSWER_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+fn unix_ms_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
+}
+
+/// Records that the Suwayomi at `url` answered a request, whatever the status.
+pub(crate) fn note_suwayomi_answer(url: &Url) {
+    if url.port_or_known_default() == Some(main_server_port()) {
+        LAST_MAIN_ANSWER_MS.store(unix_ms_now(), std::sync::atomic::Ordering::Release);
+    }
+}
+
+fn answered_within(last_answer_ms: i64, now_ms: i64, window: Duration) -> bool {
+    last_answer_ms > 0
+        && now_ms.saturating_sub(last_answer_ms) <= i64::try_from(window.as_millis()).unwrap_or(i64::MAX)
+}
+
+/// Whether the running main server is alive: it answers a health probe, or it answered another
+/// request within [RECENT_ANSWER_WINDOW]. A hung server answers neither, so it is still restarted.
+async fn running_server_answers(port: u16) -> bool {
+    if probe_server_within(port, HEALTH_PROBE_TIMEOUT).await {
+        return true;
+    }
+    answered_within(
+        LAST_MAIN_ANSWER_MS.load(std::sync::atomic::Ordering::Acquire),
+        unix_ms_now(),
+        RECENT_ANSWER_WINDOW,
+    )
+}
 // G1 keeps the heap an update grew until a collection runs; the periodic one returns it when the server sits idle.
 const JAVA_TOOL_OPTIONS: &str =
     "-Djava.awt.headless=true -Xms256m -Xmx1536m -XX:+UseG1GC -XX:G1PeriodicGCInterval=120000";
@@ -281,13 +345,17 @@ async fn ensure_main_instance_under_lease() -> Result<HeadlessSuwayomiOutcome, S
     }
 
     if let Some(instance) = attach_owned_instance(&root) {
-        if probe_server(main_server_port()).await {
+        if running_server_answers(main_server_port()).await {
+            record_health_probe(&MISSED_HEALTH_PROBES, true);
             return Ok(HeadlessSuwayomiOutcome::Attached(instance));
         }
         if process_age_secs(instance.java_pid).unwrap_or_default()
             < STARTUP_PROBE_TIMEOUT_EXISTING.as_secs()
         {
             return Err("managed Suwayomi is still starting".to_string());
+        }
+        if !record_health_probe(&MISSED_HEALTH_PROBES, false) {
+            return Err("managed Suwayomi did not answer a health probe; checking again".to_string());
         }
         let retained = instance.run_id.as_ref().is_some_and(|run| spawned_runs().lock().unwrap().contains_key(run));
         if retained {
@@ -330,13 +398,19 @@ async fn ensure_main_instance_under_lease() -> Result<HeadlessSuwayomiOutcome, S
     }
     remove_stale_owner(&root)?;
     if let Some(java_pid) = find_java_pid_for_root(&root) {
-        if probe_server(main_server_port()).await {
+        if running_server_answers(main_server_port()).await {
+            record_health_probe(&MISSED_HEALTH_PROBES, true);
             let instance = publish_reconstructed_owner(&root, java_pid, false)?;
             return Ok(HeadlessSuwayomiOutcome::Attached(instance));
         }
         if process_age_secs(java_pid).unwrap_or_default() < STARTUP_PROBE_TIMEOUT_EXISTING.as_secs() {
             return Err(format!(
                 "owned Suwayomi PID {java_pid} is running for the managed profile but is not ready"
+            ));
+        }
+        if !record_health_probe(&MISSED_HEALTH_PROBES, false) {
+            return Err(format!(
+                "owned Suwayomi PID {java_pid} did not answer a health probe; checking again"
             ));
         }
         stop_unresponsive_java(&root, java_pid)?;
@@ -832,9 +906,13 @@ async fn wait_for_spawned_runtime(
 }
 
 async fn probe_server(port: u16) -> bool {
+    probe_server_within(port, PROBE_TIMEOUT).await
+}
+
+async fn probe_server_within(port: u16, timeout: Duration) -> bool {
     let client = match reqwest::Client::builder()
         .no_proxy()
-        .timeout(PROBE_TIMEOUT)
+        .timeout(timeout)
         .build()
     {
         Ok(client) => client,
@@ -1133,6 +1211,49 @@ fn normalize_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_running_server_is_restarted_only_after_missing_probes_in_a_row() {
+        let missed = std::sync::atomic::AtomicU32::new(0);
+        for _ in 1..MISSED_PROBES_BEFORE_RESTART {
+            assert!(!record_health_probe(&missed, false));
+        }
+        // An answer in between starts the count again.
+        assert!(!record_health_probe(&missed, true));
+        for _ in 1..MISSED_PROBES_BEFORE_RESTART {
+            assert!(!record_health_probe(&missed, false));
+        }
+        assert!(record_health_probe(&missed, false));
+        // The restarted server gets a fresh count.
+        assert!(!record_health_probe(&missed, false));
+    }
+
+    #[test]
+    fn a_server_that_answered_core_recently_counts_as_busy_not_hung() {
+        let window = RECENT_ANSWER_WINDOW;
+        let now = 1_000_000_000;
+        let window_ms = window.as_millis() as i64;
+        assert!(answered_within(now - 1_000, now, window));
+        assert!(answered_within(now - window_ms, now, window));
+        assert!(!answered_within(now - window_ms - 1, now, window));
+        // Never answered: only the health probe decides.
+        assert!(!answered_within(0, now, window));
+        // A slow probe alone must still allow for the slowest answer seen under a first sync.
+        assert!(HEALTH_PROBE_TIMEOUT >= Duration::from_secs(10));
+    }
+
+    #[test]
+    fn only_answers_of_the_main_server_are_recorded() {
+        use std::sync::atomic::Ordering;
+        LAST_MAIN_ANSWER_MS.store(0, Ordering::Release);
+        let other = Url::parse(&format!("http://127.0.0.1:{}/api/graphql", main_server_port().wrapping_add(1))).unwrap();
+        note_suwayomi_answer(&other);
+        assert_eq!(LAST_MAIN_ANSWER_MS.load(Ordering::Acquire), 0);
+        let main = Url::parse(&format!("http://127.0.0.1:{}/api/graphql", main_server_port())).unwrap();
+        note_suwayomi_answer(&main);
+        assert!(answered_within(LAST_MAIN_ANSWER_MS.load(Ordering::Acquire), unix_ms_now(), RECENT_ANSWER_WINDOW));
+        LAST_MAIN_ANSWER_MS.store(0, Ordering::Release);
+    }
 
     #[cfg(windows)]
     #[tokio::test]

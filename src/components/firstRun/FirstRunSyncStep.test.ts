@@ -11,6 +11,7 @@ const sync = vi.hoisted(() => ({
   paired: vi.fn(),
   progress: vi.fn(),
   background: vi.fn(),
+  cancel: vi.fn(),
   pairingListener: null as null | ((payload: unknown) => void),
   replicationListener: null as null | ((payload: unknown) => void),
 }));
@@ -29,7 +30,12 @@ vi.mock("../../lib/setup/firstRunSyncReadiness", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../lib/setup/firstRunSyncReadiness")>(),
   refreshFirstRunSyncLibrary: sync.refresh,
 }));
-vi.mock("../../lib/setup/firstRunBackgroundSync.svelte", () => ({ startFirstRunBackgroundSync: sync.background }));
+vi.mock("../../lib/setup/firstRunBackgroundSync.svelte", () => ({
+  startFirstRunBackgroundSync: sync.background,
+  cancelPeerSync: sync.cancel,
+  pairedPeerPresent: (devices: Array<{ deviceId: string; profileId: string; inactive: boolean }>, profileId: string, deviceId?: string | null) =>
+    devices.some((device) => device.profileId === profileId && !device.inactive && (!deviceId || device.deviceId === deviceId)),
+}));
 vi.mock("../settings/SyncdConnectionPanel.svelte", () => import("../../test/fixtures/FirstRunSurface.svelte"));
 
 import FirstRunSyncStep from "./FirstRunSyncStep.svelte";
@@ -90,6 +96,7 @@ beforeEach(() => {
   sync.refresh.mockResolvedValue(undefined);
   sync.paired.mockResolvedValue([]);
   sync.progress.mockResolvedValue({ pendingProjections: 0, pendingTrackerLogins: 0, pendingDetails: 0 });
+  sync.cancel.mockResolvedValue(undefined);
 });
 
 afterEach(cleanup);
@@ -270,7 +277,7 @@ describe("FirstRunSyncStep", () => {
     expect(sync.background).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(sync.background).toHaveBeenCalledWith({ profileId: "main", waitForUploads: true, waitForReplication: false });
+    expect(sync.background).toHaveBeenCalledWith({ profileId: "main", waitForUploads: true, waitForReplication: false, peerDeviceId: "phone-1", sessionKey: null });
   });
 
   it("never blocks Continue and offers to let a running sync finish in the background", async () => {
@@ -293,9 +300,73 @@ describe("FirstRunSyncStep", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Continue in background" }));
-    expect(sync.background).toHaveBeenCalledWith({ profileId: "main", waitForUploads: true, waitForReplication: false });
+    expect(sync.background).toHaveBeenCalledWith({ profileId: "main", waitForUploads: true, waitForReplication: false, peerDeviceId: "phone-1", sessionKey: null });
     expect(onReadyChange).toHaveBeenLastCalledWith(true);
     expect(onContinue).toHaveBeenCalledOnce();
+  });
+
+  it("goes back to choosing a device when the phone forgets this computer", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      sync.progress.mockResolvedValue({ pendingProjections: 12, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: 5 });
+      sync.paired.mockResolvedValue([phone]);
+      render(FirstRunSyncStep, { props: { profileId: "main" } });
+      await waitFor(() => expect(screen.getByText("Importing")).toBeTruthy());
+
+      sync.paired.mockResolvedValue([]);
+      await vi.advanceTimersByTimeAsync(7000);
+
+      expect(await screen.findByText("Galaxy S23 stopped syncing with this computer. What already arrived stays in your library.")).toBeTruthy();
+      expect(await screen.findByText("OFFICE-PC")).toBeTruthy();
+      expect(continueReady()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not read a phone that just paired as gone before it is listed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      sync.progress.mockResolvedValue({ pendingProjections: 12, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: 5 });
+      render(FirstRunSyncStep, { props: { profileId: "main" } });
+      await screen.findByText("OFFICE-PC");
+      sync.pairingListener?.({ profileId: "main", sessionId: "host-1", status: "approved", claimedDeviceId: "phone-1", claimedDeviceName: "Galaxy S23", claimedPlatform: "android", bootstrapBundle: "{}" });
+      await waitFor(() => expect(screen.getByText("Importing")).toBeTruthy());
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(screen.getByText("Importing")).toBeTruthy();
+      expect(screen.queryByText(/stopped syncing/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the sync with a phone and goes back to choosing a device", async () => {
+    sync.progress.mockResolvedValue({ pendingProjections: 12, pendingTrackerLogins: 0, pendingDetails: 0, pendingUploads: 5 });
+    sync.paired.mockResolvedValue([phone]);
+    render(FirstRunSyncStep, { props: { profileId: "main" } });
+    await waitFor(() => expect(screen.getByText("Importing")).toBeTruthy());
+
+    sync.cancel.mockRejectedValueOnce(new Error("offline"));
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel sync" }));
+    expect(await screen.findByText(/Try again, or remove the device/)).toBeTruthy();
+
+    sync.paired.mockResolvedValue([]);
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel sync" }));
+    expect(sync.cancel).toHaveBeenLastCalledWith({ peerDeviceId: "phone-1", sessionKey: null });
+    expect(await screen.findByText("Sync cancelled. What already arrived stays in your library.")).toBeTruthy();
+    expect(await screen.findByText("OFFICE-PC")).toBeTruthy();
+  });
+
+  it("cancels a sync with another computer by disconnecting its session", async () => {
+    render(FirstRunSyncStep, { props: { profileId: "main" } });
+    await choosePin("123456");
+    await screen.findByText("Approve on OFFICE-PC");
+    sync.replicationListener?.({ localProfileId: "main", activeSessionKey: "session-1", replicationStatus: "replaying", paused: false, lastError: null });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Cancel sync" }));
+    expect(sync.cancel).toHaveBeenCalledWith({ peerDeviceId: null, sessionKey: "session-1" });
+    expect(await screen.findByText("Sync cancelled. What already arrived stays in your library.")).toBeTruthy();
   });
 
   it("follows a sync with another computer until its replication is live", async () => {
@@ -306,7 +377,7 @@ describe("FirstRunSyncStep", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Continue in background" }));
-    expect(sync.background).toHaveBeenCalledWith({ profileId: "main", waitForUploads: false, waitForReplication: true });
+    expect(sync.background).toHaveBeenCalledWith({ profileId: "main", waitForUploads: false, waitForReplication: true, peerDeviceId: null, sessionKey: null });
     expect(onContinue).toHaveBeenCalledOnce();
   });
 

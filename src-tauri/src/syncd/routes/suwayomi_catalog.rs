@@ -410,6 +410,7 @@ async fn send_graphql_document(
                 true,
             )
         })?;
+    super::super::suwayomi_process::note_suwayomi_answer(response.url());
 
     if !response.status().is_success() {
         tracing::warn!(
