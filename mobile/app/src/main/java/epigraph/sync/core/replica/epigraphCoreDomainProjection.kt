@@ -36,6 +36,9 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.coroutines.currentCoroutineContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import tachiyomi.data.Mangas
 import yokai.data.Database
 
@@ -64,6 +67,7 @@ class EpigraphCoreDomainProjection(
         records: List<CoreConfirmedRecord>,
         tombstones: List<CoreConfirmedTombstone>,
     ) {
+        currentCoroutineContext()[CoreProjectionBatch]?.clear()
         val currentKeys = (records.map { it.key } + tombstones.map { it.key }).toSet()
 
         // An authoritative snapshot is the only operation allowed to infer absence. Demote
@@ -124,14 +128,18 @@ class EpigraphCoreDomainProjection(
     }
 
     override suspend fun upsert(database: Database, record: CoreConfirmedRecord) {
+        val batch = currentCoroutineContext()[CoreProjectionBatch]
+        val readerState = record.key.entityType == "comic.chapter_state" || record.key.entityType == "comic.history"
+        // Any other record may bind a work or rewrite an identity the batch remembers.
+        if (!readerState) batch?.clear()
         if (database.hasBlockingLocalMutation(record.key, record.serverVersion)) return
         val obj = record.record as? JsonObject ?: return
         when (record.key.entityType) {
             "comic.entry" -> projectComicEntry(database, record.key.entityId, obj)
             "comic.category" -> projectCategory(database, record.key.entityId, obj, "MANGA")
             "comic.category_assignment" -> projectComicAssignment(database, obj, assigned = true)
-            "comic.chapter_state" -> projectComicChapterState(database, record)
-            "comic.history" -> projectComicHistory(database, record, obj)
+            "comic.chapter_state" -> projectComicChapterState(database, record, batch)
+            "comic.history" -> projectComicHistory(database, record, obj, batch)
             // Page bookmarks remain in the confirmed Core mirror until the reader exposes a
             // dedicated local page-bookmark table. They must still be accepted as valid records.
             "comic.page_bookmark" -> Unit
@@ -264,6 +272,7 @@ class EpigraphCoreDomainProjection(
         tombstone: CoreConfirmedTombstone,
         previousRecord: CoreConfirmedRecord?,
     ) {
+        currentCoroutineContext()[CoreProjectionBatch]?.clear()
         if (
             tombstone.key.entityType == "book.entry" &&
             database.hasBlockingBookMutationTree(tombstone.key, tombstone.serverVersion)
@@ -820,7 +829,11 @@ class EpigraphCoreDomainProjection(
      * the protocol names and the legacy local names so a bridge can evolve without a client-only
      * migration.
      */
-    private fun projectComicChapterState(database: Database, record: CoreConfirmedRecord) {
+    private fun projectComicChapterState(
+        database: Database,
+        record: CoreConfirmedRecord,
+        batch: CoreProjectionBatch? = null,
+    ) {
         val obj = record.record as? JsonObject ?: return
         val comicId = obj.string("comicId") ?: obj.string("mangaId") ?: return
         val portableWork = obj["portableWorkRef"]?.let { element ->
@@ -830,7 +843,7 @@ class EpigraphCoreDomainProjection(
             runCatching { json.decodeFromJsonElement<PortableChapterRef.Comic>(element) }.getOrNull()
         }
         val carriesPortableRefs = obj.carries("portableWorkRef") || obj.carries("portableChapterRef")
-        val portableWorkId = portableWork?.let(PortableIdentityV3::workId)
+        val portableWorkId = portableWork?.let { batch?.workId(it) ?: PortableIdentityV3.workId(it) }
         val portableChapterId = portableChapter?.let(PortableIdentityV3::chapterId)
         val validPortableRefs = portableWork != null &&
             portableChapter != null &&
@@ -840,7 +853,8 @@ class EpigraphCoreDomainProjection(
         if (carriesPortableRefs && !validPortableRefs) return
         if (validPortableRefs) {
             val store = SqlDelightPortableBindingStore(database)
-            var workBinding = store.work(requireNotNull(portableWork))
+            var workBinding = batch?.works?.get(requireNotNull(portableWorkId))
+                ?: store.work(requireNotNull(portableWork))
             if (workBinding == null) {
                 workBinding = PortableWorkBindingRecord(
                     portableId = requireNotNull(portableWorkId),
@@ -855,6 +869,7 @@ class EpigraphCoreDomainProjection(
                 )
                 store.upsertWork(workBinding)
             }
+            batch?.works?.put(portableWorkId, workBinding)
             markPortableStateMembership(database, record, requireNotNull(portableWorkId))
             var chapterBinding = store.chapter(requireNotNull(portableChapterId))
             if (chapterBinding == null) {
@@ -881,6 +896,7 @@ class EpigraphCoreDomainProjection(
                 record = obj,
                 serverRevision = record.serverVersion,
                 updatedAt = obj.long("updatedAtMs") ?: now(obj),
+                batch = batch,
             )
             removeLegacySyntheticComicChapter(
                 database = database,
@@ -906,6 +922,7 @@ class EpigraphCoreDomainProjection(
                 record = obj,
                 serverRevision = record.serverVersion,
                 updatedAt = obj.long("updatedAtMs") ?: now(obj),
+                batch = batch,
             )
             return
         }
@@ -944,6 +961,7 @@ class EpigraphCoreDomainProjection(
             record = obj,
             serverRevision = record.serverVersion,
             updatedAt = obj.long("updatedAtMs") ?: now(obj),
+            batch = batch,
         )
     }
 
@@ -1040,6 +1058,7 @@ class EpigraphCoreDomainProjection(
         database: Database,
         recordKey: CoreConfirmedRecord,
         record: JsonObject,
+        batch: CoreProjectionBatch? = null,
     ) {
         val comicId = record.string("comicId") ?: return
         val portableWork = record["portableWorkRef"]?.let { element ->
@@ -1049,7 +1068,7 @@ class EpigraphCoreDomainProjection(
             runCatching { json.decodeFromJsonElement<PortableChapterRef.Comic>(element) }.getOrNull()
         }
         val carriesPortableRefs = record.carries("portableWorkRef") || record.carries("portableChapterRef")
-        val portableWorkId = portableWork?.let(PortableIdentityV3::workId)
+        val portableWorkId = portableWork?.let { batch?.workId(it) ?: PortableIdentityV3.workId(it) }
         val portableChapterId = portableChapter?.let(PortableIdentityV3::chapterId)
         val validPortableRefs = portableWork != null &&
             portableChapter != null &&
@@ -1059,7 +1078,8 @@ class EpigraphCoreDomainProjection(
         if (carriesPortableRefs && !validPortableRefs) return
         if (validPortableRefs) {
             val store = SqlDelightPortableBindingStore(database)
-            var workBinding = store.work(requireNotNull(portableWork))
+            var workBinding = batch?.works?.get(requireNotNull(portableWorkId))
+                ?: store.work(requireNotNull(portableWork))
             if (workBinding == null) {
                 workBinding = PortableWorkBindingRecord(
                     portableId = requireNotNull(portableWorkId),
@@ -1074,6 +1094,7 @@ class EpigraphCoreDomainProjection(
                 )
                 store.upsertWork(workBinding)
             }
+            batch?.works?.put(portableWorkId, workBinding)
             markPortableStateMembership(database, recordKey, requireNotNull(portableWorkId))
             var chapterBinding = store.chapter(requireNotNull(portableChapterId))
             if (chapterBinding == null) {
@@ -1101,6 +1122,7 @@ class EpigraphCoreDomainProjection(
                 record = record,
                 serverRevision = recordKey.serverVersion,
                 updatedAt = record.long("readAtMs") ?: now(record),
+                batch = batch,
             )
             recordComicHistory(database, localChapterId, record)
             return
@@ -1120,6 +1142,7 @@ class EpigraphCoreDomainProjection(
             record = record,
             serverRevision = recordKey.serverVersion,
             updatedAt = record.long("readAtMs") ?: now(record),
+            batch = batch,
         )
         recordComicHistory(database, binding?.local_chapter_id, record)
     }
@@ -1141,33 +1164,44 @@ class EpigraphCoreDomainProjection(
         record: JsonObject,
         serverRevision: Long,
         updatedAt: Long,
+        batch: CoreProjectionBatch? = null,
     ) {
         // Reader progress is keyed by the work identity. Ensure the identity row exists even for
         // pending portable works that have no local manga yet: local_reference falls back to the
         // portable id until an entry projection or hydration binds a real local manga id.
-        val identity = database.aethon_syncQueries.selectIdentityByEntityId(comicId).executeAsOneOrNull()
-        val localManga = identity?.local_reference?.toLongOrNull()?.takeIf { it > 0 }
-            ?: localMangaId(database, comicId)
+        val identity = batch?.identities?.get(comicId)
+            ?: database.aethon_syncQueries.selectIdentityByEntityId(comicId).executeAsOneOrNull()
+                ?.let { CoreProjectionBatch.Identity(it.local_reference, it.created_at) }
+        val localManga = identity?.localReference?.toLongOrNull()?.takeIf { it > 0 }
+        val localReference = localManga?.toString() ?: comicId
+        val createdAt = identity?.createdAt ?: updatedAt
         database.aethon_syncQueries.upsertIdentity(
             entityId = comicId,
             contentType = "MANGA",
-            localReference = localManga?.toString() ?: comicId,
-            createdAt = identity?.created_at ?: updatedAt,
+            localReference = localReference,
+            createdAt = createdAt,
             updatedAt = updatedAt,
         )
+        batch?.identities?.put(comicId, CoreProjectionBatch.Identity(localReference, createdAt))
         // chapter_entity_id must reference an existing chapter binding; pending portable chapters
         // have none, so the progress row stays keyed by the work until the chapter binds locally.
         val resolvedChapterEntityId = chapterEntityId?.let {
             database.aethon_syncQueries.selectChapterBindingByEntityId(it).executeAsOneOrNull()?.chapter_entity_id
         }
-        val previousProgression = database.aethon_syncQueries
-            .selectReaderProgress(comicId)
-            .executeAsOneOrNull()
-            ?.progression
+        // The progress row is keyed by the work, so its progression may belong to another chapter.
+        // Only the same chapter's progression carries over, or a finished chapter would finish this one.
+        val recordChapterId = record.string("chapterId")
         val progression = (
             record.double("progressPercent")
                 ?: record.double("progress")
-                ?: previousProgression
+                ?: database.aethon_syncQueries
+                    .selectReaderProgress(comicId)
+                    .executeAsOneOrNull()
+                    ?.takeIf { previous ->
+                        (resolvedChapterEntityId != null && previous.chapter_entity_id == resolvedChapterEntityId) ||
+                            (recordChapterId != null && previous.locatorChapterId() == recordChapterId)
+                    }
+                    ?.progression
                 ?: 0.0
             )
             .coerceIn(0.0, 1.0)
@@ -2617,6 +2651,9 @@ class EpigraphCoreDomainProjection(
     /** An explicit JSON null means the field is absent, as serializers emit for unset optionals. */
     private fun JsonObject.carries(key: String): Boolean = this[key].let { it != null && it != JsonNull }
 
+    private fun tachiyomi.data.Aethon_reader_progress.locatorChapterId(): String? =
+        runCatching { (Json.parseToJsonElement(locator_json) as? JsonObject)?.string("chapterId") }.getOrNull()
+
     private fun JsonObject.string(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.long(key: String): Long? = string(key)?.toLongOrNull()
@@ -2685,4 +2722,28 @@ internal fun novelHistoryChapter(record: JsonObject): Pair<String, String>? {
         val work = PortableWorkRef.Novel(parts[2], ProviderOwnedKey(workKey))
         (novelId to chapterKey).takeIf { PortableIdentityV3.workId(work) == novelId && chapterKey.isNotEmpty() }
     }.getOrNull()
+}
+
+/**
+ * Lookups the domain projection reuses while one replica transaction projects a run of comic
+ * reader-state records, which name the same few titles thousands of times. It lives in that
+ * transaction's coroutine context, so nothing survives the transaction, and the projection clears
+ * it before any record or deletion that could bind a work or rewrite an identity it holds.
+ */
+internal class CoreProjectionBatch : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<CoreProjectionBatch>
+
+    data class Identity(val localReference: String, val createdAt: Long)
+
+    val works = HashMap<String, PortableWorkBindingRecord>()
+    val identities = HashMap<String, Identity>()
+    private val workIds = HashMap<PortableWorkRef.Comic, String>()
+
+    /** Work ids are pure digests of the reference, so they never go stale. */
+    fun workId(ref: PortableWorkRef.Comic): String = workIds.getOrPut(ref) { PortableIdentityV3.workId(ref) }
+
+    fun clear() {
+        works.clear()
+        identities.clear()
+    }
 }

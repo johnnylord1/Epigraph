@@ -290,6 +290,31 @@ class CoreOutboxDrainerTest {
     }
 
     @Test
+    fun `reserves every lamport of a batch in one allocation`() = runTest {
+        val store = FakeStore(listOf(claim(3), claim(1), claim(2)))
+        val requested = mutableListOf<Int>()
+        val source = object : CoreLamportSource {
+            override suspend fun nextLamport(): Long = throw AssertionError("batch must not allocate one by one")
+            override suspend fun nextLamports(count: Int): List<Long> {
+                requested += count
+                return List(count) { 100L + it }
+            }
+        }
+        val gateway = FakeGateway { _, request ->
+            assertEquals(listOf(100L, 101L, 102L), request.mutations.map { it.lamport })
+            CoreHttpResult.Success(
+                response(request, result(request, 1), result(request, 2), result(request, 3)),
+            )
+        }
+
+        val report = drainer(store, gateway, source).drain(authorization(), capabilities(), NOW)
+
+        assertEquals(listOf(3), requested)
+        assertEquals(3, store.acknowledged.size)
+        assertEquals(CoreOutboxDrainReport(3, 3, 3, 0, 0), report)
+    }
+
+    @Test
     fun `transient lamport source failure retries row instead of permanently blocking it`() = runTest {
         val store = FakeStore(listOf(claim(1)))
         var gatewayUsed = false

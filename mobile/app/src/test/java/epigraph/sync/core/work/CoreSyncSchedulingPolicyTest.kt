@@ -3,6 +3,8 @@ package epigraph.sync.core.work
 import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkRequest
 import epigraph.sync.core.events.CoreBackgroundSyncReason
+import epigraph.sync.core.outbox.CoreOutboxDrainReport
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -131,6 +133,15 @@ class CoreSyncSchedulingPolicyTest {
     }
 
     @Test
+    fun `degraded retry starts over only when fewer rows are pending than after the last one`() {
+        // First degraded run of the process: nothing to compare against.
+        assertFalse(scheduler.degradedRetryMadeProgress(previousPending = -1, pending = 19_590))
+        assertTrue(scheduler.degradedRetryMadeProgress(previousPending = 19_590, pending = 19_340))
+        assertFalse(scheduler.degradedRetryMadeProgress(previousPending = 19_590, pending = 19_590))
+        assertFalse(scheduler.degradedRetryMadeProgress(previousPending = 19_340, pending = 19_400))
+    }
+
+    @Test
     fun `degraded retry chain never replaces and does not grow from outside wakes`() {
         assertEquals(
             ExistingWorkPolicy.APPEND_OR_REPLACE,
@@ -172,5 +183,74 @@ class CoreSyncSchedulingPolicyTest {
         // A late, older snapshot never brings a served request back.
         requests.markServed(passStart)
         assertFalse(requests.pending())
+    }
+
+    @Test
+    fun `progress backfill keeps sending while Core answers and rows are left`() = runTest {
+        val drained = CoreOutboxSyncOutcome.OutboxDrained(
+            CoreOutboxDrainReport(0, 0, 0, 0, 0),
+            CoreReplicaSyncOutcome.APPLIED,
+        )
+        val queued = ArrayDeque(listOf(2_000, 2_000, 700, 0))
+        var runs = 0
+        val sent = scheduler.sendProgressBackfill(
+            first = drained,
+            backfill = { reachable ->
+                assertTrue(reachable)
+                queued.removeFirst()
+            },
+            run = {
+                runs += 1
+                CoreOutboxSyncOutcome.Retry(0, CoreOutboxRetryReason.OUTBOX_PENDING)
+            },
+        )
+        assertEquals(3, runs)
+        assertTrue(sent.sentAny)
+        assertTrue(queued.isEmpty())
+        assertEquals(CoreOutboxSyncOutcome.Retry(0, CoreOutboxRetryReason.OUTBOX_PENDING), sent.outcome)
+    }
+
+    @Test
+    fun `progress backfill stops sending once Core stops answering and is bounded`() = runTest {
+        val offline = CoreOutboxSyncOutcome.Retry(5, CoreOutboxRetryReason.CONNECTION)
+        var backfills = 0
+        var runs = 0
+        // Core did not answer: queue for the next run, send nothing.
+        val queuedOnly = scheduler.sendProgressBackfill(
+            first = offline,
+            backfill = { reachable ->
+                assertFalse(reachable)
+                backfills += 1
+                10
+            },
+            run = { runs += 1; offline },
+        )
+        assertEquals(1, backfills)
+        assertEquals(0, runs)
+        assertFalse(queuedOnly.sentAny)
+        // Core went away after the first send: no further backfill.
+        backfills = 0
+        val drained = CoreOutboxSyncOutcome.OutboxDrained(
+            CoreOutboxDrainReport(0, 0, 0, 0, 0),
+            CoreReplicaSyncOutcome.APPLIED,
+        )
+        val dropped = scheduler.sendProgressBackfill(
+            first = drained,
+            backfill = { backfills += 1; 10 },
+            run = { runs += 1; offline },
+        )
+        assertEquals(1, backfills)
+        assertEquals(1, runs)
+        assertTrue(dropped.sentAny)
+        assertEquals(offline, dropped.outcome)
+        // A backfill that never runs dry stops at the pass cap.
+        runs = 0
+        scheduler.sendProgressBackfill(
+            first = drained,
+            maxPasses = 3,
+            backfill = { 10 },
+            run = { runs += 1; drained },
+        )
+        assertEquals(3, runs)
     }
 }

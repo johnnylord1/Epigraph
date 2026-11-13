@@ -119,7 +119,21 @@ object PortableIdentityV3 {
             if (index > 0) digest.update(0)
             digest.update(value.toByteArray(Charsets.UTF_8))
         }
-        return digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
+        return digest.digest().toLowerHex()
+    }
+
+    // Formatting each byte through String.format dominated the cost of deriving an id, and a
+    // sync derives one per chapter record.
+    private val HEX_DIGITS = "0123456789abcdef".toCharArray()
+
+    private fun ByteArray.toLowerHex(): String {
+        val out = CharArray(size * 2)
+        forEachIndexed { index, byte ->
+            val value = byte.toInt() and 0xff
+            out[index * 2] = HEX_DIGITS[value ushr 4]
+            out[index * 2 + 1] = HEX_DIGITS[value and 0x0f]
+        }
+        return out.concatToString()
     }
 }
 

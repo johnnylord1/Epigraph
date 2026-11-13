@@ -75,6 +75,12 @@ data class CoreOutboxAcknowledgedRecord(
 /** This port must return a durable, strictly increasing value; wall-clock time is forbidden. */
 fun interface CoreLamportSource {
     suspend fun nextLamport(): Long
+
+    /**
+     * Reserves [count] strictly increasing values. Durable sources should override this to
+     * reserve the whole range in one write instead of one transaction per mutation.
+     */
+    suspend fun nextLamports(count: Int): List<Long> = List(count) { nextLamport() }
 }
 
 fun interface CoreRequestIdSource {
@@ -177,7 +183,9 @@ class ExponentialCoreOutboxRetryPlanner(
 }
 
 data class CoreOutboxDrainConfig(
-    val claimLimit: Long = 100,
+    // Per-request costs (claim, acknowledge, network round trip) dominate small batches. The Core
+    // body limit is 2 MiB; an oversized request is isolated mutation by mutation, never dropped.
+    val claimLimit: Long = 250,
     val leaseDurationMillis: Long = 60_000,
 ) {
     init {
@@ -232,26 +240,30 @@ class CoreOutboxDrainer(
         val ready = mutableListOf<ReadyClaim>()
         var blocked = 0
         var preSubmitRetries = 0
-        var previousLamport: Long? = null
-        for (claim in ordered) {
-            if (claim.record.scopeId !in authorization.grantedScopes) {
+        val eligible = ordered.filter { claim ->
+            val inScope = claim.record.scopeId in authorization.grantedScopes
+            if (!inScope) {
                 claim.release("scope_paused", nowEpochMillis)
                 preSubmitRetries += 1
-                continue
             }
-
-            val lamport = try {
-                lamports.nextLamport()
-            } catch (cancelled: CancellationException) {
-                releaseAfterCancellation(ready, ordered.dropWhile { it !== claim }, nowEpochMillis)
-                throw cancelled
-            } catch (_: Throwable) {
-                // Storage/allocator failures are transient. Never strand the row as a permanent
-                // capability block merely because the durable Lamport source is unavailable.
-                claim.release("lamport_source_failure", nowEpochMillis)
-                preSubmitRetries += 1
-                continue
+            inScope
+        }
+        val lamportValues = try {
+            lamports.nextLamports(eligible.size).also {
+                check(it.size == eligible.size) { "Lamport source returned ${it.size} of ${eligible.size} values" }
             }
+        } catch (cancelled: CancellationException) {
+            releaseAfterCancellation(emptyList(), eligible, nowEpochMillis)
+            throw cancelled
+        } catch (_: Throwable) {
+            // Storage/allocator failures are transient. Never strand the rows as a permanent
+            // capability block merely because the durable Lamport source is unavailable.
+            eligible.forEach { it.release("lamport_source_failure", nowEpochMillis) }
+            preSubmitRetries += eligible.size
+            emptyList()
+        }
+        var previousLamport: Long? = null
+        for ((claim, lamport) in eligible.zip(lamportValues)) {
             if (lamport < 0 || previousLamport?.let { lamport <= it } == true) {
                 claim.block("lamport_not_monotonic")
                 blocked += 1

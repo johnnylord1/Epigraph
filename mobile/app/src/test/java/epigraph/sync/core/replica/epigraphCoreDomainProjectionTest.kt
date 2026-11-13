@@ -22,6 +22,7 @@ import epigraph.sync.portable.SqlDelightPortableBindingStore
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -957,6 +958,152 @@ class EpigraphCoreDomainProjectionTest {
         assertEquals(PortableResolutionState.BOUND.name, binding.resolution_state)
         assertEquals(localChapterId.toString(), binding.local_reference)
         assertTrue(database.chaptersQueries.getChaptersByMangaId(mangaId, 0).executeAsOne().read)
+    }
+
+    @Test
+    fun `a finished chapter's progress never finishes another chapter of the title`() = runTest {
+        val mangaId = insertTrackingManga(42, "/series/300")
+        val urls = listOf("/series/300/1", "/series/300/2")
+        val localChapterIds = urls.map { url ->
+            database.chaptersQueries.insert(
+                mangaId = mangaId,
+                url = url,
+                name = url,
+                scanlator = null,
+                read = false,
+                bookmark = false,
+                lastPageRead = 0,
+                pagesLeft = 0,
+                chapterNumber = 1.0,
+                sourceOrder = 0,
+                dateFetch = 0,
+                dateUpload = 0,
+                memo = JsonObject(emptyMap()),
+            )
+            database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        }
+        val work = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey("/series/300"))
+        val workId = PortableIdentityV3.workId(work)
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = null,
+                providerLabelHint = null,
+                attemptCount = 1,
+                updatedAt = 1,
+            ),
+        )
+        fun chapterState(index: Int, body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): CoreConfirmedRecord {
+            val chapter = PortableChapterRef.Comic(work, ProviderOwnedKey(urls[index]))
+            val chapterId = PortableIdentityV3.chapterId(chapter)
+            return CoreConfirmedRecord(
+                key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.chapter_state", "comic.chapter_state::$workId::$chapterId"),
+                serverVersion = 20L + index,
+                lamport = 20L + index,
+                originServerId = ORIGIN_SERVER_ID,
+                record = buildJsonObject {
+                    put("comicId", workId)
+                    put("chapterId", chapterId)
+                    put("updatedAtMs", 2_000L + index)
+                    put("portableWorkRef", Json.encodeToJsonElement(work))
+                    put("portableChapterRef", Json.encodeToJsonElement(chapter))
+                    body()
+                },
+            )
+        }
+
+        projection.upsert(database, chapterState(0) {
+            put("read", true)
+            put("progressPercent", 1.0)
+        })
+        // A chapter read halfway carries only its page, as the phone backfill publishes it.
+        projection.upsert(database, chapterState(1) { put("lastPageRead", 1) })
+
+        assertTrue(database.chaptersQueries.getChaptersById(localChapterIds[0]).executeAsOne().read)
+        val inProgress = database.chaptersQueries.getChaptersById(localChapterIds[1]).executeAsOne()
+        assertFalse(inProgress.read)
+        assertEquals(1L, inProgress.last_page_read)
+    }
+
+    @Test
+    fun `one transaction reuses a title's lookups across its chapters and drops them for other records`() = runTest {
+        val mangaId = insertTrackingManga(42, "/series/200")
+        val localChapterIds = listOf("/series/200/1", "/series/200/2").map { url ->
+            database.chaptersQueries.insert(
+                mangaId = mangaId,
+                url = url,
+                name = url,
+                scanlator = null,
+                read = false,
+                bookmark = false,
+                lastPageRead = 0,
+                pagesLeft = 0,
+                chapterNumber = 1.0,
+                sourceOrder = 0,
+                dateFetch = 0,
+                dateUpload = 0,
+                memo = JsonObject(emptyMap()),
+            )
+            database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        }
+        val work = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey("/series/200"))
+        val workId = PortableIdentityV3.workId(work)
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = null,
+                providerLabelHint = null,
+                attemptCount = 1,
+                updatedAt = 1,
+            ),
+        )
+        val batch = CoreProjectionBatch()
+
+        withContext(batch) {
+            listOf("/series/200/1", "/series/200/2").forEachIndexed { index, url ->
+                val chapter = PortableChapterRef.Comic(work, ProviderOwnedKey(url))
+                val chapterId = PortableIdentityV3.chapterId(chapter)
+                projection.upsert(
+                    database,
+                    CoreConfirmedRecord(
+                        key = CoreReplicaKey(
+                            COMIC_SCOPE_ID,
+                            "comic.chapter_state",
+                            "comic.chapter_state::$workId::$chapterId",
+                        ),
+                        serverVersion = 10L + index,
+                        lamport = 10L + index,
+                        originServerId = ORIGIN_SERVER_ID,
+                        record = buildJsonObject {
+                            put("comicId", workId)
+                            put("chapterId", chapterId)
+                            put("read", true)
+                            put("updatedAtMs", 1_000L + index)
+                            put("portableWorkRef", Json.encodeToJsonElement(work))
+                            put("portableChapterRef", Json.encodeToJsonElement(chapter))
+                        },
+                    ),
+                )
+            }
+            assertEquals(mangaId.toString(), batch.works[workId]?.localReference)
+            // The progress identity of a portable work keeps its portable id as the local reference.
+            assertEquals(workId, batch.identities[workId]?.localReference)
+
+            projection.upsert(database, categoryRecord(COMIC_SCOPE_ID, "comic.category", "comic-cat-batch", "Reading", 1))
+            assertTrue(batch.works.isEmpty())
+            assertTrue(batch.identities.isEmpty())
+        }
+
+        localChapterIds.forEach { id ->
+            assertTrue(database.chaptersQueries.getChaptersById(id).executeAsOne().read)
+        }
+        assertEquals(workId, database.aethon_syncQueries.selectIdentityByEntityId(workId).executeAsOne().local_reference)
     }
 
     @Test

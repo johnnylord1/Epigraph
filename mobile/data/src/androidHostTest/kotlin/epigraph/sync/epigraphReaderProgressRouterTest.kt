@@ -555,6 +555,19 @@ class EpigraphReaderProgressRouterTest {
     }
 
     @Test
+    fun `an unread chapter with no pages left never publishes as finished`() = runTest {
+        val (_, chapterId) = bindReadComicChapter()
+        driver.execute(null, "UPDATE chapters SET read = 0, pages_left = 0 WHERE _id = $chapterId", 0)
+        coverComicScope()
+
+        assertEquals(2, backfillRouter().backfillComicProgress())
+        val locator = commandOf(queuedMutations().single { it.entity_type == "comic.history" })["locator"]!!.jsonObject
+        assertEquals("5", locator["pageIndex"]!!.jsonPrimitive.content)
+        assertTrue(locator["pageCount"].let { it == null || it is kotlinx.serialization.json.JsonNull })
+        assertTrue(locator["progression"]!!.jsonPrimitive.content.toDouble() < 1.0)
+    }
+
+    @Test
     fun `backfill skips unread chapters and progress the paired Core already holds`() = runTest {
         val (mangaId, _) = bindReadComicChapter()
         database.chaptersQueries.insert(

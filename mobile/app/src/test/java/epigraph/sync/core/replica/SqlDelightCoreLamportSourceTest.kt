@@ -41,6 +41,20 @@ class SqlDelightCoreLamportSourceTest {
     }
 
     @Test
+    fun `a batch reserves a consecutive range in one step`() = runTest {
+        var now = 5_000L
+        val source = SqlDelightCoreLamportSource(handler, wallClock = { now })
+
+        assertEquals(listOf(5_000L, 5_001L, 5_002L), source.nextLamports(3))
+        assertEquals(5_003L, source.nextLamport())
+        assertEquals(emptyList<Long>(), source.nextLamports(0))
+
+        now = 20_000L
+        assertEquals(listOf(20_000L, 20_001L), source.nextLamports(2))
+        assertEquals(20_002L, source.nextLamport())
+    }
+
+    @Test
     fun `a permanently refused outbox row no longer holds the entity`() {
         database.aethon_syncQueries.enqueueMutation(
             clientMutationId = "refused",

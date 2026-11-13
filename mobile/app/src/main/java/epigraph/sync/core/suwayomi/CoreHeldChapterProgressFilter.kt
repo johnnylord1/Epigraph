@@ -168,7 +168,7 @@ class CoreHeldChapterProgressFilter(
 
     private companion object {
         const val MANGA_CONTENT_TYPE = "MANGA"
-        const val PARALLEL_CHECKS = 4
+        const val PARALLEL_CHECKS = 8
         const val CHECK_BUDGET_MILLIS = 30_000L
         const val MAX_FAILED_CHECKS = 3
     }

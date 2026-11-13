@@ -312,6 +312,9 @@ CREATE TABLE aethon_sync_replica_wait (
 CREATE INDEX aethon_sync_replica_wait_entity_index
 ON aethon_sync_replica_wait(scope_id, entity_type, entity_id, required_server_version);
 
+CREATE INDEX aethon_sync_replica_wait_canonical_index
+ON aethon_sync_replica_wait(scope_id, entity_type, canonical_entity_id, required_server_version);
+
 CREATE TABLE aethon_sync_checkpoint (
     scope_id TEXT NOT NULL PRIMARY KEY,
     cursor TEXT,

@@ -1,0 +1,6 @@
+-- Replica lookups match a wait by entity_id OR canonical_entity_id. Only entity_id had an index, so the
+-- canonical branch scanned every wait row. After a first sync with thousands of pending echoes, applying
+-- the desktop's change feed ran that scan once per change and took minutes.
+-- Index only: no data changes, and an older build simply ignores it.
+CREATE INDEX IF NOT EXISTS aethon_sync_replica_wait_canonical_index
+ON aethon_sync_replica_wait(scope_id, entity_type, canonical_entity_id, required_server_version);

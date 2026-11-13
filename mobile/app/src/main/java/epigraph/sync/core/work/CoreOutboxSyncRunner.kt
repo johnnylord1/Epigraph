@@ -960,12 +960,15 @@ class CoreOutboxSyncRunner(
                     countPending = { pendingOutbox.countActive(policy) },
                     onBatchWithMorePending = reportLibraryUploaded,
                     drainBatch = {
+                        val started = System.nanoTime()
                         val assets = if (policy.transferBookAssets) {
                             connection.drainBookAssets(nowEpochMillis)
                         } else {
                             BookAssetDrainReport(0, 0, 0, 0)
                         }
+                        val coreStarted = System.nanoTime()
                         val core = connection.drain(authorization, capabilities, nowEpochMillis)
+                        val coreEnded = System.nanoTime()
                         val suwayomi = if (policy.syncComics) {
                             connection.drainSuwayomi(
                                 nowEpochMillis,
@@ -974,6 +977,17 @@ class CoreOutboxSyncRunner(
                             )
                         } else {
                             SuwayomiMutationDrainReport(0, 0, 0, 0, 0)
+                        }
+                        if (BuildConfig.DEBUG) {
+                            val ended = System.nanoTime()
+                            runCatching {
+                                Log.d(
+                                    "EpigraphCoreSync",
+                                    "drain batch: core=${core.acknowledged}/${core.claimed} " +
+                                        "in ${(coreEnded - coreStarted) / 1_000_000}ms, " +
+                                        "total ${(ended - started) / 1_000_000}ms",
+                                )
+                            }
                         }
                         CoreDrainBatch(assets = assets, suwayomi = suwayomi, core = core)
                     },

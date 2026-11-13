@@ -4,6 +4,7 @@ import epigraph.sync.core.outbox.CoreLamportSource
 import epigraph.sync.core.replay.CoreReplayCheckpoint
 import epigraph.sync.core.replay.CoreReplayCoverage
 import java.security.MessageDigest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -28,7 +29,10 @@ class SqlDelightCoreReplicaStore(
     CoreReplicaTombstoneReader, CoreReplicaCheckpointResetter {
     override suspend fun <T> transaction(block: suspend CoreReplicaTransaction.() -> T): T =
         databaseHandler.await(inTransaction = true) {
-            SqlDelightCoreReplicaTransaction(this, aethon_syncQueries, projection, clock).block()
+            // The batch only adds a context element, so the block stays on the transaction thread.
+            withContext(CoreProjectionBatch()) {
+                SqlDelightCoreReplicaTransaction(this@await, aethon_syncQueries, projection, clock).block()
+            }
         }
 
     override suspend fun latestCheckpoint(coverage: CoreReplayCoverage): CoreReplayCheckpoint? =
@@ -168,6 +172,20 @@ class SqlDelightCoreLamportSource(
         val next = maxOf(current + 1, wallClock())
         aethon_syncQueries.advanceCoreLamport(next)
         next
+    }
+
+    override suspend fun nextLamports(count: Int): List<Long> {
+        require(count >= 0) { "Lamport count must not be negative" }
+        if (count == 0) return emptyList()
+        return databaseHandler.await(inTransaction = true) {
+            val current = aethon_syncQueries.selectCoreLamport().executeAsOneOrNull() ?: 0L
+            check(current <= Long.MAX_VALUE - count) { "Core Lamport clock is exhausted" }
+            val first = maxOf(current + 1, wallClock())
+            check(first <= Long.MAX_VALUE - (count - 1)) { "Core Lamport clock is exhausted" }
+            val last = first + (count - 1)
+            aethon_syncQueries.advanceCoreLamport(last)
+            List(count) { first + it }
+        }
     }
 }
 
@@ -465,9 +483,19 @@ internal object CoreReplicaPayloadHasher {
 
     fun parse(payload: String): JsonElement = Json.parseToJsonElement(payload)
 
-    fun sha256(payload: String): String = MessageDigest.getInstance(SHA_256)
-        .digest(payload.toByteArray(Charsets.UTF_8))
-        .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    fun sha256(payload: String): String {
+        val bytes = MessageDigest.getInstance(SHA_256).digest(payload.toByteArray(Charsets.UTF_8))
+        // A per-byte String.format was most of this hash's cost, paid several times per record.
+        val out = CharArray(bytes.size * 2)
+        bytes.forEachIndexed { index, byte ->
+            val value = byte.toInt() and 0xff
+            out[index * 2] = HEX_DIGITS[value ushr 4]
+            out[index * 2 + 1] = HEX_DIGITS[value and 0x0f]
+        }
+        return String(out)
+    }
+
+    private val HEX_DIGITS = "0123456789abcdef".toCharArray()
 
     fun inbox(event: CoreReplicaInboxEvent): String = hashFields(
         event.globalEventId.toString(),
