@@ -1019,6 +1019,7 @@ mod tests {
         assert_eq!(payload["supportsPagedSnapshotV1"], true);
         assert_eq!(payload["supportsGzipRequestBodiesV1"], true);
         assert_eq!(payload["supportsSkipOwnEchoesV1"], true);
+        assert_eq!(payload["supportsHeldVersionsV1"], true);
         assert_eq!(payload["supportsComicDeleteProjectionWithoutRecord"], true);
         assert_eq!(payload["supportsSuwayomiCategoryCreate"], true);
         assert_eq!(payload["supportsSuwayomiExtensionInstall"], true);
@@ -2161,6 +2162,31 @@ mod tests {
         assert_eq!(changes["changes"].as_array().unwrap().len(), 1);
         assert_eq!(changes["changes"][0]["serverVersion"], applied_version);
         assert_eq!(changes["changes"][0]["entityId"], "category-after");
+
+        // A client that already applied the version does not get it back.
+        let (held_status, held) = request_json(
+            &app,
+            Method::GET,
+            &format!(
+                "/v1/changes?sinceVersion={checkpoint}&scopeId=books%3Aglobal&heldVersions={applied_version}-{applied_version}"
+            ),
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert_eq!(held_status, StatusCode::OK);
+        assert!(held["changes"].as_array().unwrap().is_empty());
+        assert_eq!(held["currentServerVersion"], changes["currentServerVersion"]);
+
+        let (bad_status, _) = request_json(
+            &app,
+            Method::GET,
+            &format!("/v1/changes?sinceVersion={checkpoint}&scopeId=books%3Aglobal&heldVersions=x"),
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert_eq!(bad_status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

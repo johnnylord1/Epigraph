@@ -53,6 +53,7 @@ pub async fn get_capabilities(
         supports_paged_snapshot_v1: true,
         supports_gzip_request_bodies_v1: true,
         supports_skip_own_echoes_v1: true,
+        supports_held_versions_v1: true,
         snapshot_schema_version: SNAPSHOT_SCHEMA_VERSION,
         snapshot_entity_types: SNAPSHOT_ENTITY_TYPES
             .iter()

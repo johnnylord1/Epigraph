@@ -331,6 +331,9 @@ pub struct CapabilitiesResponse {
     /// `/v1/events?skipOwnEchoes=true` leaves out the merges the device itself just had applied;
     /// it confirms them from their acknowledgement. `/v1/changes` and replays still return them.
     pub supports_skip_own_echoes_v1: bool,
+    /// `/v1/changes?heldVersions=a-b,c` leaves out the versions the client says it already applied,
+    /// so a device does not download its own first-sync upload back.
+    pub supports_held_versions_v1: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,

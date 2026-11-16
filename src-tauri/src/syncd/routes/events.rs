@@ -35,6 +35,43 @@ pub struct EventsQuery {
 pub struct ChangesQuery {
     pub since_version: i64,
     pub scope_id: Option<String>,
+    /// Server versions the client already applied, as `a-b,c` ranges (`supportsHeldVersionsV1`).
+    /// They are left out of the response; the client would only skip them on arrival.
+    #[serde(default)]
+    pub held_versions: Option<String>,
+}
+
+/// Bounds the query string; versions past the last range are simply returned as before.
+const MAX_HELD_VERSION_RANGES: usize = 512;
+
+/// Parses `heldVersions` into sorted, inclusive ranges.
+fn parse_held_versions(raw: &str) -> Result<Vec<(i64, i64)>, AppError> {
+    let invalid = || AppError::BadRequest("heldVersions must be comma-separated a-b ranges.".to_string());
+    let mut ranges = Vec::new();
+    for part in raw.split(',').filter(|part| !part.is_empty()) {
+        if ranges.len() == MAX_HELD_VERSION_RANGES {
+            return Err(AppError::BadRequest(format!(
+                "heldVersions allows at most {MAX_HELD_VERSION_RANGES} ranges."
+            )));
+        }
+        let (start, end) = match part.split_once('-') {
+            Some((start, end)) => (start, end),
+            None => (part, part),
+        };
+        let start = start.parse::<i64>().map_err(|_| invalid())?;
+        let end = end.parse::<i64>().map_err(|_| invalid())?;
+        if start < 0 || end < start {
+            return Err(invalid());
+        }
+        ranges.push((start, end));
+    }
+    ranges.sort_unstable();
+    Ok(ranges)
+}
+
+fn is_held(ranges: &[(i64, i64)], version: i64) -> bool {
+    let index = ranges.partition_point(|(start, _)| *start <= version);
+    index > 0 && version <= ranges[index - 1].1
 }
 
 #[derive(Debug, Serialize)]
@@ -96,6 +133,10 @@ pub async fn get_changes(
 
     let allowed_scopes =
         crate::syncd::middleware::filter_allowed_scopes(&session, query.scope_id.as_deref())?;
+    let held = match query.held_versions.as_deref() {
+        Some(raw) => parse_held_versions(raw)?,
+        None => Vec::new(),
+    };
     let rows = db::fetch_replay_changes(
         &state.pool,
         query.since_version,
@@ -105,7 +146,7 @@ pub async fn get_changes(
     .map_err(|_| AppError::Internal("Failed to fetch change feed.".to_string()))?;
     let mut changes = Vec::new();
     for row in rows {
-        if !allowed_scopes.contains(&row.scope_id) {
+        if !allowed_scopes.contains(&row.scope_id) || is_held(&held, row.server_version) {
             continue;
         }
         changes
@@ -297,4 +338,31 @@ fn replay_required_event(payload: serde_json::Value) -> Event {
     Event::default()
         .event("replay_required")
         .data(payload.to_string())
+}
+
+#[cfg(test)]
+mod held_versions_tests {
+    use super::{is_held, parse_held_versions, MAX_HELD_VERSION_RANGES};
+
+    #[test]
+    fn parses_ranges_and_single_versions() {
+        let ranges = parse_held_versions("40-50,7,12-13").unwrap();
+        assert_eq!(ranges, vec![(7, 7), (12, 13), (40, 50)]);
+        for held in [7, 12, 13, 40, 45, 50] {
+            assert!(is_held(&ranges, held), "{held}");
+        }
+        for returned in [0, 6, 8, 11, 14, 39, 51] {
+            assert!(!is_held(&ranges, returned), "{returned}");
+        }
+        assert!(parse_held_versions("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_malformed_or_oversized_lists() {
+        for raw in ["a", "5-3", "-1", "1-", "1-2-3"] {
+            assert!(parse_held_versions(raw).is_err(), "{raw}");
+        }
+        let too_many = (0..=MAX_HELD_VERSION_RANGES).map(|v| (v * 2).to_string()).collect::<Vec<_>>();
+        assert!(parse_held_versions(&too_many.join(",")).is_err());
+    }
 }
