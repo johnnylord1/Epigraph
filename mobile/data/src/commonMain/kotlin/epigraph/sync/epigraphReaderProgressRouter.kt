@@ -29,7 +29,9 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import tachiyomi.data.Aethon_chapter_binding
 import tachiyomi.data.Aethon_content_identity
+import tachiyomi.data.Aethon_portable_chapter_binding
 import tachiyomi.data.Chapters
 import yokai.data.Database
 
@@ -481,11 +483,13 @@ class EpigraphReaderProgressRouter(
      * the Core's snapshot has arrived, since that is what tells which chapters it already holds;
      * titles without a bound portable identity wait for it. [filter] holds chapters back for this
      * run, such as progress the desktop's Suwayomi already holds and would only receive as an echo.
+     * [onBatchQueued] runs after each committed batch, so sending can start before the scan ends.
      * Returns the number of commands queued.
      */
     suspend fun backfillComicProgress(
         maxCommands: Int = BACKFILL_MAX_COMMANDS,
         filter: ComicProgressBackfillFilter = ComicProgressBackfillFilter.NONE,
+        onBatchQueued: () -> Unit = {},
     ): Int {
         val scopes = pairedScopes() ?: return 0
         val comicScope = scopes.comics.value
@@ -523,12 +527,15 @@ class EpigraphReaderProgressRouter(
         for ((batch, history) in batches) {
             if (emitted >= maxCommands) break
             val now = clock().also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
-            emitted += coordinator.mutateLocalBatch(now) {
+            val queued = coordinator.mutateLocalBatch(now) {
                 val novelByManga = mutableMapOf<Long, Boolean?>()
                 // Work bindings and identities are per title, and a batch walks many chapters of the
                 // same title; they are not written here, so one lookup per title serves the batch.
                 val workLookups = WorkLookupCache()
-                val dated = batch.mapNotNull { row ->
+                // Chapters and their bindings for the whole batch in a few queries: one query per
+                // chapter and lookup held the database for seconds per batch on a large library.
+                workLookups.preload(this, batch.map { it.chapterId })
+                val resolvedRows = batch.mapNotNull { row ->
                     if (novelByManga.getOrPut(row.mangaId) { isNovelWork(row.mangaId) } != false) return@mapNotNull null
                     val readAt = row.readAt.coerceAtLeast(0)
                     val envelope = if (history) {
@@ -538,12 +545,16 @@ class EpigraphReaderProgressRouter(
                     }
                     envelope?.let { it to readAt }
                 }
+                // A chapter that had no portable binding yet was listed without checking Core.
+                val dated = if (history) resolvedRows else withoutKnownToCore(resolvedRows)
                 LocalMutationResult(
                     value = dated.size,
                     envelopes = dated.map { it.first },
                     envelopeCreatedAt = dated.associate { (envelope, readAt) -> envelope.clientMutationId to readAt },
                 )
             }
+            emitted += queued
+            if (queued > 0) onBatchQueued()
         }
         return emitted
     }
@@ -555,13 +566,13 @@ class EpigraphReaderProgressRouter(
         readAt: Long,
         workLookups: WorkLookupCache,
     ): SyncCommandEnvelope? {
-        val chapter = chaptersQueries.getChaptersById(row.chapterId).executeAsOneOrNull() ?: return null
+        val chapter = workLookups.chapter(row.chapterId) ?: return null
         val lastPageRead = chapter.last_page_read.takeIf { it in 1..Int.MAX_VALUE.toLong() }?.toInt()
         if (!chapter.read && !chapter.bookmark && lastPageRead == null) return null
         val resolved = resolveChapter(row.mangaId, row.chapterId, chapter, novel = false, now, workLookups)
             ?.takeIf { it.portableReady }
             ?: return null
-        val envelope = comicChapterStateEnvelope(
+        return comicChapterStateEnvelope(
             resolved = resolved,
             scopes = scopes,
             read = true.takeIf { chapter.read },
@@ -570,13 +581,21 @@ class EpigraphReaderProgressRouter(
             createdAt = readAt,
             explicitProgressReset = false,
         )
-        // A chapter that had no portable binding yet was listed without checking Core.
-        val known = aethon_syncQueries.isEntityKnownToCore(
-            envelope.scopeId.value,
-            COMIC_CHAPTER_STATE.value,
-            envelope.command.entityId.value,
-        ).executeAsOne()
-        return envelope.takeUnless { known }
+    }
+
+    /** Drops the chapter states Core already holds, removed, or is about to receive (isEntityKnownToCore). */
+    private fun Database.withoutKnownToCore(
+        rows: List<Pair<SyncCommandEnvelope, Long>>,
+    ): List<Pair<SyncCommandEnvelope, Long>> {
+        val known = HashSet<Pair<String, String>>()
+        rows.groupBy({ it.first.scopeId.value }, { it.first.command.entityId.value }).forEach { (scopeId, ids) ->
+            ids.distinct().chunked(KNOWN_TO_CORE_CHUNK).forEach { chunk ->
+                aethon_syncQueries.selectEntitiesKnownToCore(scopeId, COMIC_CHAPTER_STATE.value, chunk)
+                    .executeAsList()
+                    .forEach { entityId -> known += scopeId to entityId.toString() }
+            }
+        }
+        return rows.filterNot { (envelope, _) -> (envelope.scopeId.value to envelope.command.entityId.value) in known }
     }
 
     private fun Database.backfillHistoryEnvelope(
@@ -585,7 +604,7 @@ class EpigraphReaderProgressRouter(
         now: Long,
         workLookups: WorkLookupCache,
     ): SyncCommandEnvelope? {
-        val chapter = chaptersQueries.getChaptersById(row.chapterId).executeAsOneOrNull() ?: return null
+        val chapter = workLookups.chapter(row.chapterId) ?: return null
         val resolved = resolveChapter(row.mangaId, row.chapterId, chapter, novel = false, now, workLookups)
             ?.takeIf { it.portableReady }
             ?: return null
@@ -642,7 +661,16 @@ class EpigraphReaderProgressRouter(
             ?.takeIf { it.resolution.state == PortableResolutionState.BOUND }
         val portableWork = portableWorkBinding?.ref
             ?.takeIf { if (novel) it is PortableWorkRef.Novel else it is PortableWorkRef.Comic }
-        val existingPortableChapter = portableStore.chapterByLocalReference(localChapterId.toString())
+        val existingPortableChapter = if (workLookups?.preloaded == true) {
+            workLookups.portableChapter(localChapterId)?.let { row ->
+                portableStore.chapterRecord(
+                    row,
+                    knownWork = portableWorkBinding?.ref?.takeIf { row.portable_work_id == portableWorkBinding.portableId },
+                )
+            }
+        } else {
+            portableStore.chapterByLocalReference(localChapterId.toString())
+        }
         val portableChapter = when {
             portableWork == null || localChapter == null -> null
             existingPortableChapter != null -> existingPortableChapter
@@ -675,9 +703,11 @@ class EpigraphReaderProgressRouter(
         }
         val identity = workLookups?.identity(identityType, localMangaId, identityLookup)
             ?: identityLookup.takeIf { workLookups == null }?.invoke()
-        val binding = aethon_syncQueries
-            .selectChapterBindingByLocalChapterId(localChapterId)
-            .executeAsOneOrNull()
+        val binding = if (workLookups?.preloaded == true) {
+            workLookups.legacyBinding(localChapterId)
+        } else {
+            aethon_syncQueries.selectChapterBindingByLocalChapterId(localChapterId).executeAsOneOrNull()
+        }
         if (!portableReady && (identity == null || binding == null || binding.work_entity_id != identity.entity_id)) {
             return null
         }
@@ -706,11 +736,14 @@ class EpigraphReaderProgressRouter(
             // aethon_portable_chapter_binding. Mirror the replica projection's resolution:
             // store the legacy binding id when one exists, otherwise keep the row work-keyed
             // (the chapter id itself is carried inside the locator JSON).
-            persistedChapterEntityId = if (portableReady) {
-                aethon_syncQueries.selectChapterBindingByEntityId(chapterEntityId)
-                    .executeAsOneOrNull()?.chapter_entity_id
+            // Read only when used: the progress backfill publishes without writing a local progress row.
+            persistedChapterEntityIdLoader = if (portableReady) {
+                {
+                    aethon_syncQueries.selectChapterBindingByEntityId(chapterEntityId)
+                        .executeAsOneOrNull()?.chapter_entity_id
+                }
             } else {
-                chapterEntityId
+                { chapterEntityId }
             },
         )
     }
@@ -853,10 +886,37 @@ class EpigraphReaderProgressRouter(
         null
     }
 
-    /** Per-title lookups shared by one backfill batch; a null result is cached too. */
+    /**
+     * Per-title lookups shared by one backfill batch; a null result is cached too. After [preload],
+     * also the batch's chapters and their portable and legacy chapter bindings.
+     */
     private class WorkLookupCache {
         private val works = HashMap<Long, PortableWorkBindingRecord?>()
         private val identities = HashMap<Pair<String, Long>, Aethon_content_identity?>()
+        private val chapters = HashMap<Long, Chapters>()
+        private val portableChapters = HashMap<Long, Aethon_portable_chapter_binding>()
+        private val legacyBindings = HashMap<Long, Aethon_chapter_binding>()
+        var preloaded = false
+            private set
+
+        fun preload(database: Database, chapterIds: List<Long>) {
+            chapterIds.distinct().chunked(PRELOAD_CHUNK).forEach { chunk ->
+                database.chaptersQueries.getChaptersByIds(chunk).executeAsList()
+                    .forEach { chapters[it._id] = it }
+                // Newest first: the first binding of a chapter is the one a single lookup returns.
+                database.aethon_syncQueries
+                    .selectPortableChapterBindingsByLocalReferences(chunk.map(Long::toString))
+                    .executeAsList()
+                    .forEach { row -> row.local_reference?.toLongOrNull()?.let { portableChapters.putIfAbsent(it, row) } }
+                database.aethon_syncQueries.selectChapterBindingsByLocalChapterIds(chunk).executeAsList()
+                    .forEach { row -> legacyBindings.putIfAbsent(row.local_chapter_id, row) }
+            }
+            preloaded = true
+        }
+
+        fun chapter(chapterId: Long): Chapters? = chapters[chapterId]
+        fun portableChapter(chapterId: Long): Aethon_portable_chapter_binding? = portableChapters[chapterId]
+        fun legacyBinding(chapterId: Long): Aethon_chapter_binding? = legacyBindings[chapterId]
 
         fun work(localMangaId: Long, load: () -> PortableWorkBindingRecord?): PortableWorkBindingRecord? =
             if (localMangaId in works) works[localMangaId] else load().also { works[localMangaId] = it }
@@ -879,8 +939,10 @@ class EpigraphReaderProgressRouter(
         val portableWork: PortableWorkRef?,
         val portableChapter: PortableChapterRef?,
         val chapterOrderKey: Double?,
-        val persistedChapterEntityId: String?,
+        persistedChapterEntityIdLoader: () -> String?,
     ) {
+        val persistedChapterEntityId: String? by lazy(LazyThreadSafetyMode.NONE, persistedChapterEntityIdLoader)
+
         fun comicScope(scopes: EpigraphSyncScopes): SyncScopeId = if (portableReady) {
             scopes.comics
         } else {
@@ -902,7 +964,9 @@ class EpigraphReaderProgressRouter(
          * and asks the desktop again, so a smaller share per run multiplied that work and the
          * replica downloads between runs, and a first sync took minutes.
          */
-        const val BACKFILL_BATCH = 200
+        const val BACKFILL_BATCH = 500
+        const val PRELOAD_CHUNK = 500
+        const val KNOWN_TO_CORE_CHUNK = 100
         const val BACKFILL_MAX_COMMANDS = 100_000
 
         fun deterministicNovelBookmarkId(novelId: String, chapterId: String): String {

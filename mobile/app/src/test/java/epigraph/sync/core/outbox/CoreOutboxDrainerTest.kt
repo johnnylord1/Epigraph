@@ -335,10 +335,78 @@ class CoreOutboxDrainerTest {
         assertFalse(failure.errorCode.startsWith("blocked:"))
     }
 
+    @Test
+    fun `a full batch prepares the next one while it is on the network`() = runTest {
+        val store = LeasingStore((1L..5L).map { claim(it) })
+        val sent = mutableListOf<List<String>>()
+        val gateway = FakeGateway { _, request ->
+            sent += request.ids()
+            CoreHttpResult.Success(response(request, *request.mutations.indices.map { result(request, it + 1) }.toTypedArray()))
+        }
+        val drainer = drainer(store, gateway, countingLamports(), CoreOutboxDrainConfig(claimLimit = 2))
+        val authorization = authorization()
+
+        assertEquals(CoreOutboxDrainReport(2, 2, 2, 0, 0), drainer.drain(authorization, capabilities(), NOW))
+        // The second batch was claimed during the first request, before any second drain.
+        assertEquals(listOf(listOf("mutation-1", "mutation-2"), listOf("mutation-3", "mutation-4")), store.claimCalls)
+
+        drainer.drain(authorization, capabilities(), NOW).also { assertEquals(2, it.acknowledged) }
+        drainer.drain(authorization, capabilities(), NOW).also { assertEquals(1, it.acknowledged) }
+        assertEquals(CoreOutboxDrainReport(0, 0, 0, 0, 0), drainer.drain(authorization, capabilities(), NOW))
+
+        assertEquals(
+            listOf(listOf("mutation-1", "mutation-2"), listOf("mutation-3", "mutation-4"), listOf("mutation-5")),
+            sent,
+        )
+        // Lamports stay in send order across the overlapped batches.
+        assertEquals((1L..5L).map { "mutation-$it" }, store.acknowledged)
+        assertTrue(store.failed.isEmpty())
+    }
+
+    @Test
+    fun `a batch that settles nothing frees the batch prepared behind it at once`() = runTest {
+        val store = LeasingStore((1L..4L).map { claim(it) })
+        val drainer = drainer(
+            store,
+            FakeGateway { _, _ -> throw IOException("offline") },
+            countingLamports(),
+            CoreOutboxDrainConfig(claimLimit = 2),
+        )
+
+        assertEquals(CoreOutboxDrainReport(2, 2, 0, 2, 0), drainer.drain(authorization(), capabilities(), NOW))
+
+        val failed = store.failed.associateBy { it.identity.clientMutationId }
+        assertEquals("core_transport_failure", failed.getValue("mutation-1").errorCode)
+        assertEquals(NOW + RETRY_DELAY, failed.getValue("mutation-1").nextAttemptAt)
+        // Never sent, so ready again without backoff.
+        assertEquals("drain_not_sent", failed.getValue("mutation-3").errorCode)
+        assertEquals(NOW, failed.getValue("mutation-3").nextAttemptAt)
+        assertEquals(NOW, failed.getValue("mutation-4").nextAttemptAt)
+    }
+
+    @Test
+    fun `a prepared batch is freed when the next drain uses another session or the pass stops`() = runTest {
+        val store = LeasingStore((1L..6L).map { claim(it) })
+        val drainer = drainer(store, acknowledgeAll(), countingLamports(), CoreOutboxDrainConfig(claimLimit = 2))
+
+        drainer.drain(authorization(), capabilities(), NOW)
+        // A new session must not send rows prepared under the old one.
+        drainer.drain(authorization(), capabilities(), NOW)
+        assertEquals(setOf("mutation-3", "mutation-4"), store.failed.map { it.identity.clientMutationId }.toSet())
+        assertTrue(store.failed.all { it.errorCode == "drain_not_sent" && it.nextAttemptAt == NOW })
+        assertEquals(listOf("mutation-1", "mutation-2", "mutation-5", "mutation-6"), store.acknowledged)
+
+        store.failed.clear()
+        drainer.releasePrepared()
+        drainer.releasePrepared()
+        assertTrue(store.failed.isEmpty(), "nothing was left prepared after an empty claim")
+    }
+
     private fun drainer(
-        store: FakeStore,
+        store: CoreOutboxStore,
         gateway: CoreMutationGateway,
         lamports: CoreLamportSource,
+        config: CoreOutboxDrainConfig = CoreOutboxDrainConfig(),
     ) = CoreOutboxDrainer(
         store = store,
         adapter = CoreV1OutboxAdapter(json),
@@ -346,7 +414,17 @@ class CoreOutboxDrainerTest {
         lamports = lamports,
         requestIds = CoreRequestIdSource { "request-1" },
         retryPlanner = retryPlanner(),
+        config = config,
     )
+
+    private fun countingLamports(): CoreLamportSource {
+        var next = 0L
+        return CoreLamportSource { ++next }
+    }
+
+    private fun acknowledgeAll() = FakeGateway { _, request ->
+        CoreHttpResult.Success(response(request, *request.mutations.indices.map { result(request, it + 1) }.toTypedArray()))
+    }
 
     private fun retryPlanner() = CoreOutboxRetryPlanner { now, _, _ -> now + RETRY_DELAY }
 
@@ -479,6 +557,40 @@ class CoreOutboxDrainerTest {
             receivedAtEpochMillis: Long,
         ) {
             acknowledged += record to result
+        }
+
+        override suspend fun markFailed(
+            identity: CoreOutboxIdentity,
+            errorCode: String,
+            nextAttemptAtEpochMillis: Long,
+        ) {
+            failed += Failure(identity, errorCode, nextAttemptAtEpochMillis)
+        }
+    }
+
+    /** Leases each row once, as the durable outbox does, until it is released. */
+    private class LeasingStore(claims: List<ClaimedCoreOutboxRecord>) : CoreOutboxStore {
+        private val ready = ArrayDeque(claims)
+        val claimCalls = mutableListOf<List<String>>()
+        val acknowledged = mutableListOf<String>()
+        val failed = mutableListOf<Failure>()
+
+        override suspend fun claimReady(
+            nowEpochMillis: Long,
+            leaseDurationMillis: Long,
+            limit: Long,
+        ): List<ClaimedCoreOutboxRecord> {
+            val leased = List(minOf(limit.toInt(), ready.size)) { ready.removeFirst() }
+            claimCalls += leased.map { it.record.clientMutationId }
+            return leased
+        }
+
+        override suspend fun acknowledge(
+            record: CoreOutboxRecord,
+            result: CoreMutationResult,
+            receivedAtEpochMillis: Long,
+        ) {
+            acknowledged += record.clientMutationId
         }
 
         override suspend fun markFailed(

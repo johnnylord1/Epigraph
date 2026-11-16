@@ -5,7 +5,9 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import epigraph.sync.ComicBackfillCandidate
 import epigraph.sync.core.portable.CoreChapterCatalog
 import epigraph.sync.core.portable.CoreChapterCatalogReader
+import epigraph.sync.core.portable.CoreChapterCounts
 import epigraph.sync.core.portable.CoreChapterList
+import epigraph.sync.core.portable.CoreLibraryChapterCounts
 import epigraph.sync.core.portable.CoreWorkKey
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +40,7 @@ class CoreHeldChapterProgressFilterTest {
         var fails: Boolean = false,
         var servedMangaId: Long = 7,
         val reachable: Boolean = true,
+        var counts: CoreChapterCounts? = null,
     ) : CoreChapterCatalog {
         var asked = 0
 
@@ -52,6 +55,9 @@ class CoreHeldChapterProgressFilterTest {
                         if (fails) error("chapters unavailable")
                         return CoreChapterList(emptyList(), CoreChapterNodes(SERVER, PROFILE, servedMangaId, nodes))
                     }
+
+                    override suspend fun libraryChapterCounts(): CoreLibraryChapterCounts? =
+                        counts?.let { CoreLibraryChapterCounts(SERVER, PROFILE, mapOf(servedMangaId to it)) }
                 },
             )
         }
@@ -120,6 +126,45 @@ class CoreHeldChapterProgressFilterTest {
         catalog.nodes = emptyList()
         assertEquals(emptySet<Long>(), filter.withheld(listOf(candidate(10, lastPageRead = 4))))
         assertEquals(2, catalog.asked)
+    }
+
+    @Test
+    fun `library counts settle titles the desktop holds nothing of without a chapter request`() = runTest {
+        serve(1)
+        // No chapters on the desktop.
+        val empty = FakeCatalog(nodes = listOf(node("/c/10", read = true)), counts = CoreChapterCounts(0, 0))
+        assertEquals(emptySet<Long>(), filter(empty).withheld(listOf(candidate(10))))
+        assertEquals(0, empty.asked)
+
+        // Nothing read on the desktop, and every candidate is read.
+        preferences.values.clear()
+        val unread = FakeCatalog(nodes = listOf(node("/c/10", read = true)), counts = CoreChapterCounts(5, 5))
+        assertEquals(emptySet<Long>(), filter(unread).withheld(listOf(candidate(10))))
+        assertEquals(0, unread.asked)
+    }
+
+    @Test
+    fun `library counts that cannot rule a title out leave it to its chapter list`() = runTest {
+        serve(1)
+        // A page read here may match the desktop's page even with every desktop chapter unread.
+        val partial = FakeCatalog(
+            nodes = listOf(node("/c/10", read = false, lastPageRead = 5)),
+            counts = CoreChapterCounts(5, 5),
+        )
+        assertEquals(setOf(10L), filter(partial).withheld(listOf(candidate(10, read = false, lastPageRead = 5))))
+        assertEquals(1, partial.asked)
+
+        preferences.values.clear()
+        val someRead = FakeCatalog(nodes = listOf(node("/c/10", read = true)), counts = CoreChapterCounts(5, 4))
+        assertEquals(setOf(10L), filter(someRead).withheld(listOf(candidate(10))))
+        assertEquals(1, someRead.asked)
+
+        // Counts for another work do not settle this one.
+        preferences.values.clear()
+        val other = FakeCatalog(nodes = listOf(node("/c/10", read = true)), counts = CoreChapterCounts(0, 0))
+        other.servedMangaId = 8
+        assertEquals(emptySet<Long>(), filter(other).withheld(listOf(candidate(10))))
+        assertEquals(1, other.asked)
     }
 
     @Test

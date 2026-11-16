@@ -401,6 +401,8 @@ fun epigraphSyncModule(app: Application) = module {
         EpigraphCoordinatorOutboxStore(
             coordinator = get(),
             projectHeldRecord = { key -> get<SqlDelightCoreReplicaStore>().projectHeldRecord(key) },
+            confirmOwnWrites = { records -> get<SqlDelightCoreReplicaStore>().confirmOwnWrites(records) },
+            confirmationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
         )
     }
     single { CoreV1OutboxAdapter() }
@@ -586,6 +588,7 @@ fun epigraphSyncModule(app: Application) = module {
                 CoreReplicaAppliedHook { now -> get<EpigraphTrackingMutationRouter>().reconcileWithReplica(now) },
             ),
             policyHooks = listOf(get<LocalNovelDependencyPublisher>()),
+            clock = System::currentTimeMillis,
         )
     }
 }

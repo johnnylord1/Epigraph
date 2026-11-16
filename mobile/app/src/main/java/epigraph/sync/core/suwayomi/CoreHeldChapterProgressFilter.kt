@@ -5,6 +5,7 @@ import epigraph.sync.ComicBackfillCandidate
 import epigraph.sync.ComicProgressBackfillFilter
 import epigraph.sync.core.portable.CoreChapterCatalog
 import epigraph.sync.core.portable.CoreChapterCatalogReader
+import epigraph.sync.core.portable.CoreChapterCounts
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -49,16 +50,17 @@ class CoreHeldChapterProgressFilter(
 
     private suspend fun withheld(candidates: List<ComicBackfillCandidate>, check: Boolean): Set<Long> {
         val byManga = candidates.groupBy { it.mangaId }
+        // One read for every candidate title: a first sync passes hundreds of titles, and each
+        // separate read waits its turn behind the backfill's writes.
         val served = database.await {
-            byManga.keys.mapNotNull { mangaId ->
-                val entityId = aethon_syncQueries
-                    .selectIdentityByLocalReference(MANGA_CONTENT_TYPE, mangaId.toString())
-                    .executeAsOneOrNull()
-                    ?.entity_id
-                    ?: return@mapNotNull null
-                SuwayomiCoreContentReference.parseMangaEntityId(entityId)?.let { mangaId to ServedWork(entityId, it) }
-            }.toMap()
-        }
+            aethon_syncQueries.selectContentIdentityReferences().executeAsList()
+        }.mapNotNull { identity ->
+            if (identity.content_type != MANGA_CONTENT_TYPE) return@mapNotNull null
+            val mangaId = identity.local_reference.toLongOrNull()?.takeIf(byManga::containsKey)
+                ?: return@mapNotNull null
+            SuwayomiCoreContentReference.parseMangaEntityId(identity.entity_id)
+                ?.let { mangaId to ServedWork(identity.entity_id, it) }
+        }.toMap()
         val withheld = HashSet<Long>()
         val unchecked = ArrayList<Long>()
         served.forEach { (mangaId, work) ->
@@ -72,9 +74,24 @@ class CoreHeldChapterProgressFilter(
         catalog.withReader { reader ->
             // Titles not reached in time wait for the next run, which skips those already confirmed.
             withTimeoutOrNull(checkBudgetMillis) {
+                // One library read settles the titles whose desktop counts show they hold nothing,
+                // so only the rest pay one chapter-list request each over the network.
+                val counts = try {
+                    reader.libraryChapterCounts()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                val remaining = unchecked.filter { mangaId ->
+                    val settled = counts?.of(served.getValue(mangaId).manga)
+                        ?.let { holdsNothing(it, byManga.getValue(mangaId)) } == true
+                    if (settled) outcomes[mangaId] = Outcome.Checked(emptySet())
+                    !settled
+                }
                 val permits = Semaphore(PARALLEL_CHECKS)
                 coroutineScope {
-                    unchecked.forEach { mangaId ->
+                    remaining.forEach { mangaId ->
                         launch {
                             permits.withPermit {
                                 outcomes[mangaId] = check(reader, served.getValue(mangaId).manga, byManga.getValue(mangaId))
@@ -127,6 +144,13 @@ class CoreHeldChapterProgressFilter(
         Outcome.Failed
     }
 
+    /**
+     * Whether a desktop title with [counts] can hold none of [chapters]: it has no chapters, or has
+     * read none of them while every candidate is read, which [held] then requires.
+     */
+    private fun holdsNothing(counts: CoreChapterCounts, chapters: List<ComicBackfillCandidate>): Boolean =
+        counts.total == 0L || (counts.unread >= counts.total && chapters.all { it.read })
+
     private fun held(nodes: List<JsonObject>, chapters: List<ComicBackfillCandidate>): Set<Long> {
         val byUrl = nodes.mapNotNull { node -> node.string("url")?.let { it to node } }.toMap()
         val byId = nodes.mapNotNull { node -> node.long("id")?.let { it to node } }.toMap()
@@ -168,7 +192,7 @@ class CoreHeldChapterProgressFilter(
 
     private companion object {
         const val MANGA_CONTENT_TYPE = "MANGA"
-        const val PARALLEL_CHECKS = 8
+        const val PARALLEL_CHECKS = 16
         const val CHECK_BUDGET_MILLIS = 30_000L
         const val MAX_FAILED_CHECKS = 3
     }

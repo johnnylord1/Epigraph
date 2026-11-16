@@ -2579,6 +2579,54 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `own writes confirmed from the acknowledgement project once and their echo is skipped`() = runTest {
+        val bookProjection = EpigraphCoreDomainProjection(privateBookStorageDirectory = tempDirectory)
+        bookProjection.upsert(database, bookEntryRecord())
+        database.local_booksQueries.upsertProgress(
+            bookId = BOOK_ID,
+            locatorJson = "local-progress",
+            progression = 0.8,
+            updatedAt = 900,
+        )
+        database.aethon_syncQueries.upsertReceipt("phone-a", "acked-progress", null, 910)
+        database.aethon_syncQueries.upsertReplicaWait(
+            deviceId = "phone-a",
+            clientMutationId = "acked-progress",
+            scopeId = BOOK_SCOPE_ID,
+            entityType = "book.progress",
+            entityId = "book.progress::$BOOK_ID",
+            canonicalEntityId = null,
+            resultStatus = "APPLIED",
+            requiredServerVersion = 7,
+            appliedLamport = 7,
+            eventClockJson = null,
+            canonicalRecordSha256 = null,
+            receivedAt = 910,
+        )
+        val store = SqlDelightCoreReplicaStore(
+            databaseHandler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            projection = bookProjection,
+        )
+        val acknowledged = bookProgressRecord().copy(serverVersion = 7, lamport = 7)
+
+        store.confirmOwnWrites(listOf(acknowledged))
+
+        assertEquals(0.4, database.local_booksQueries.findProgress(BOOK_ID).executeAsOne().progression)
+        assertEquals(0, database.aethon_syncQueries.replicaWaitCount().executeAsOne())
+        assertTrue(store.transaction { hasAppliedInboxEvent(7) })
+
+        // A later local edit is not undone when the same acknowledgement is confirmed again.
+        database.local_booksQueries.upsertProgress(
+            bookId = BOOK_ID,
+            locatorJson = "later-progress",
+            progression = 0.9,
+            updatedAt = 1_000,
+        )
+        store.confirmOwnWrites(listOf(acknowledged))
+        assertEquals(0.9, database.local_booksQueries.findProgress(BOOK_ID).executeAsOne().progression)
+    }
+
+    @Test
     fun `an offline folder rename that lost to a newer edit takes the newer name once superseded`() = runTest {
         val folder = insertBooksFolder("Reading", sort = 0)
         val store = SqlDelightCoreReplicaStore(

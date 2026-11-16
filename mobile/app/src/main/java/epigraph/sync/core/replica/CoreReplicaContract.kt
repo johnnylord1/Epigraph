@@ -18,6 +18,11 @@ data class CoreConfirmedRecord(
     val record: JsonElement,
     /** Authenticated transport origin; diagnostic/projection context, never part of entity identity. */
     val originServerId: String? = null,
+    /**
+     * Core confirmed exactly the record this device sent, so the local rows it would project are
+     * the rows that record was read from. A projection may skip rewriting them.
+     */
+    val echoesLocalState: Boolean = false,
 )
 
 /** A deletion explicitly supplied by Core. Absence from a change page is never a tombstone. */
@@ -57,6 +62,12 @@ interface CoreReplicaProjection {
     suspend fun upsert(
         database: Database,
         record: CoreConfirmedRecord,
+    ) = Unit
+
+    /** Reads ahead, in bulk, what [upsert] will look up for each of [records]. */
+    suspend fun preload(
+        database: Database,
+        records: List<CoreConfirmedRecord>,
     ) = Unit
 
     suspend fun delete(

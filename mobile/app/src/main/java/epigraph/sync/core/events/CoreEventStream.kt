@@ -133,17 +133,27 @@ class OkHttpCoreEventStream internal constructor(
      *
      * A non-null [onCatalogRevision] asks the Core for `catalog_revision` events (only Cores that
      * advertise them may be asked; older clients reject unknown events) and receives their scope.
+     *
+     * [skipOwnEchoes] asks a Core that advertises `supportsSkipOwnEchoesV1` to leave out the merges
+     * this device just had applied: the outbox confirms them from their acknowledgement, and
+     * `/v1/changes` still returns them for a later replay.
      */
     suspend fun collect(
         accessToken: String,
         session: CoreReplaySession,
         onCatalogRevision: ((String) -> Unit)? = null,
+        skipOwnEchoes: Boolean = false,
         sink: CoreDurableChangeSink,
     ): CoreEventStreamOutcome = withContext(ioDispatcher) {
         require(accessToken.isNotBlank() && accessToken == accessToken.trim()) {
             "accessToken must be non-blank and canonical"
         }
-        val request = eventRequest(accessToken, session.checkpoint, catalogEvents = onCatalogRevision != null)
+        val request = eventRequest(
+            accessToken,
+            session.checkpoint,
+            catalogEvents = onCatalogRevision != null,
+            skipOwnEchoes = skipOwnEchoes,
+        )
         val call = client.newCall(request)
         val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
             if (cause != null) call.cancel()
@@ -172,6 +182,7 @@ class OkHttpCoreEventStream internal constructor(
         accessToken: String,
         checkpoint: CoreReplayCheckpoint,
         catalogEvents: Boolean,
+        skipOwnEchoes: Boolean,
     ): Request {
         val url = baseUrl.newBuilder()
             .addPathSegments("v1/events")
@@ -181,6 +192,7 @@ class OkHttpCoreEventStream internal constructor(
                     addQueryParameter("scopeId", coverage.scopeId)
                 }
                 if (catalogEvents) addQueryParameter("catalogEvents", "true")
+                if (skipOwnEchoes) addQueryParameter("skipOwnEchoes", "true")
             }
             .build()
         return Request.Builder()

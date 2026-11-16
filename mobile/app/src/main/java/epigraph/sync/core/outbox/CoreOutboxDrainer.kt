@@ -11,9 +11,16 @@ import epigraph.sync.core.protocol.CoreMutationResult
 import epigraph.sync.core.protocol.CoreMutationsRequest
 import epigraph.sync.core.protocol.CoreMutationsResponse
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 
 data class ClaimedCoreOutboxRecord(
     val sequence: Long,
@@ -59,6 +66,12 @@ interface CoreOutboxStore {
         acknowledged.forEach { acknowledge(it.record, it.result, receivedAtEpochMillis) }
     }
 
+    /**
+     * Waits until every acknowledged write is confirmed locally too. A store may confirm them in the
+     * background, while the next batch is on the network; the outbox rows are settled already.
+     */
+    suspend fun awaitConfirmations() {}
+
     /** Releases the lease but deliberately keeps the row pending/error. */
     suspend fun markFailed(
         identity: CoreOutboxIdentity,
@@ -70,6 +83,10 @@ interface CoreOutboxStore {
 data class CoreOutboxAcknowledgedRecord(
     val record: CoreOutboxRecord,
     val result: CoreMutationResult,
+    /** The paired Core that acknowledged it, so its record can be confirmed as that Core's state. */
+    val originServerId: String? = null,
+    /** The patch this device sent, to tell an echo of local state from a merged record. */
+    val sentPatch: JsonObject? = null,
 )
 
 /** This port must return a durable, strictly increasing value; wall-clock time is forbidden. */
@@ -96,6 +113,13 @@ fun interface CoreMutationGateway {
         accessToken: String,
         request: CoreMutationsRequest,
     ): CoreHttpResult<CoreMutationsResponse>
+
+    /** [gzipBody] is set only for a Core that advertises `supportsGzipRequestBodiesV1`. */
+    suspend fun submit(
+        accessToken: String,
+        request: CoreMutationsRequest,
+        gzipBody: Boolean,
+    ): CoreHttpResult<CoreMutationsResponse> = submit(accessToken, request)
 }
 
 class EpigraphCoreMutationGateway(
@@ -105,6 +129,12 @@ class EpigraphCoreMutationGateway(
         accessToken: String,
         request: CoreMutationsRequest,
     ): CoreHttpResult<CoreMutationsResponse> = client.mutations(accessToken, request)
+
+    override suspend fun submit(
+        accessToken: String,
+        request: CoreMutationsRequest,
+        gzipBody: Boolean,
+    ): CoreHttpResult<CoreMutationsResponse> = client.mutations(accessToken, request, gzipBody)
 }
 
 /** Supplies a short-lived token copy and owns wiping it after the request. */
@@ -126,6 +156,7 @@ class CoreOutboxAuthorization(
     val authenticatedDeviceId: String,
     grantedScopes: Set<String>,
     private val tokenLease: CoreAccessTokenLease,
+    val originServerId: String? = null,
 ) {
     val grantedScopes: Set<String> = grantedScopes.toSet()
 
@@ -186,10 +217,14 @@ data class CoreOutboxDrainConfig(
     // Per-request costs (claim, acknowledge, network round trip) dominate small batches. The Core
     // body limit is 2 MiB; an oversized request is isolated mutation by mutation, never dropped.
     val claimLimit: Long = 250,
+    // A Core that takes gzip bodies also takes 16 MiB of inflated JSON per request, and on a slow
+    // Wi-Fi every round trip a first sync saves is worth more than a smaller batch.
+    val gzipClaimLimit: Long = 1_000,
     val leaseDurationMillis: Long = 60_000,
 ) {
     init {
         require(claimLimit > 0)
+        require(gzipClaimLimit > 0)
         require(leaseDurationMillis > 0)
     }
 }
@@ -217,24 +252,95 @@ class CoreOutboxDrainer(
     private val retryPlanner: CoreOutboxRetryPlanner = ExponentialCoreOutboxRetryPlanner(),
     private val config: CoreOutboxDrainConfig = CoreOutboxDrainConfig(),
 ) {
+    /** Waits until the writes acknowledged so far are confirmed locally too. */
+    suspend fun awaitConfirmations() = store.awaitConfirmations()
+
+    /**
+     * The next batch, claimed and adapted while the previous one was on the network. Its rows stay
+     * leased until a drain with the same authorization sends them or [releasePrepared] frees them.
+     */
+    private val prepared = AtomicReference<Prepared?>(null)
+
+    /** Frees the rows of a batch prepared ahead, for a caller that stops draining. */
+    suspend fun releasePrepared() {
+        prepared.getAndSet(null)?.releaseNow()
+    }
+
     suspend fun drain(
         authorization: CoreOutboxAuthorization,
         capabilities: CoreCapabilities,
         nowEpochMillis: Long,
     ): CoreOutboxDrainReport {
         require(nowEpochMillis >= 0) { "drain timestamp must be epoch milliseconds" }
+        val ahead = prepared.getAndSet(null)
+        val current = if (ahead != null && ahead.authorization === authorization && ahead.capabilities == capabilities) {
+            ahead
+        } else {
+            ahead?.releaseNow()
+            prepare(authorization, capabilities, nowEpochMillis)
+        }
+        if (current.ready.isEmpty()) return current.report(Settlement())
+        if (!current.full) return current.report(send(current))
+
+        // A full batch means more rows wait. Claiming and adapting them is local work that would
+        // otherwise idle while this request is on the network, so it runs alongside it.
+        return coroutineScope {
+            val next = async { prepare(authorization, capabilities, nowEpochMillis) }
+            val settled = try {
+                send(current)
+            } catch (failure: Throwable) {
+                withContext(NonCancellable) { next.awaitOrNull()?.releaseNow() }
+                throw failure
+            }
+            val upcoming = next.awaitOrNull()
+            when {
+                upcoming == null || upcoming.claimed == 0 -> Unit
+                // The caller stops after a batch that settles nothing, so the rows must not stay leased.
+                settled.acknowledged + settled.blocked == 0 -> upcoming.releaseNow()
+                else -> prepared.getAndSet(upcoming)?.releaseNow()
+            }
+            current.report(settled)
+        }
+    }
+
+    private suspend fun Deferred<Prepared>.awaitOrNull(): Prepared? = try {
+        await()
+    } catch (cancelled: CancellationException) {
+        if (!currentCoroutineContext().isActive) throw cancelled
+        null
+    } catch (_: Throwable) {
+        // A failed claim leaves nothing leased; the next drain claims again.
+        null
+    }
+
+    private suspend fun prepare(
+        authorization: CoreOutboxAuthorization,
+        capabilities: CoreCapabilities,
+        nowEpochMillis: Long,
+    ): Prepared {
+        val limit = if (capabilities.supportsGzipRequestBodiesV1) config.gzipClaimLimit else config.claimLimit
         val claimed = store.claimReadyForScopes(
             nowEpochMillis = nowEpochMillis,
             leaseDurationMillis = config.leaseDurationMillis,
-            limit = config.claimLimit,
+            limit = limit,
             scopeIds = authorization.grantedScopes,
         )
-        if (claimed.isEmpty()) return CoreOutboxDrainReport(0, 0, 0, 0, 0)
+        fun prepared(ready: List<ReadyClaim> = emptyList(), retries: Int = 0, blocked: Int = 0) = Prepared(
+            authorization = authorization,
+            capabilities = capabilities,
+            nowEpochMillis = nowEpochMillis,
+            claimed = claimed.size,
+            full = claimed.size.toLong() >= limit,
+            ready = ready,
+            preSubmitRetries = retries,
+            blocked = blocked,
+        )
+        if (claimed.isEmpty()) return prepared()
 
         val ordered = claimed.sortedBy { it.sequence }
         if (ordered.hasDuplicateClaims()) {
             ordered.forEach { it.release("invalid_claim_set", nowEpochMillis) }
-            return CoreOutboxDrainReport(ordered.size, 0, 0, ordered.size, 0)
+            return prepared(retries = ordered.size)
         }
 
         val ready = mutableListOf<ReadyClaim>()
@@ -293,21 +399,39 @@ class CoreOutboxDrainer(
             }
         }
 
-        if (ready.isEmpty()) {
-            return CoreOutboxDrainReport(ordered.size, 0, 0, preSubmitRetries, blocked)
-        }
+        return prepared(ready, preSubmitRetries, blocked)
+    }
 
-        val batch = submit(ready, authorization, nowEpochMillis, releaseOnRejectedRequest = ready.size == 1)
-        val settled = if (batch.rejectedRequest) {
+    private suspend fun send(prepared: Prepared): Settlement {
+        val gzipBody = prepared.capabilities.supportsGzipRequestBodiesV1
+        val ready = prepared.ready
+        val authorization = prepared.authorization
+        val nowEpochMillis = prepared.nowEpochMillis
+        val batch = submit(ready, authorization, nowEpochMillis, releaseOnRejectedRequest = ready.size == 1, gzipBody)
+        return if (batch.rejectedRequest) {
             // The Core refused the request as a whole (malformed or oversized), so nothing in it was
             // applied. Resend each mutation alone: one bad command must not hold back every command
             // that shared its batch. The bad one stays pending with backoff, never dropped.
-            isolate(ready, authorization, nowEpochMillis)
+            isolate(ready, authorization, nowEpochMillis, gzipBody)
         } else {
             batch
         }
-        return CoreOutboxDrainReport(
-            ordered.size,
+    }
+
+    /** Claimed rows ready to send, plus what claiming them already settled. */
+    private class Prepared(
+        val authorization: CoreOutboxAuthorization,
+        val capabilities: CoreCapabilities,
+        val nowEpochMillis: Long,
+        val claimed: Int,
+        /** The claim reached its limit, so more rows are probably ready. */
+        val full: Boolean,
+        val ready: List<ReadyClaim>,
+        val preSubmitRetries: Int,
+        val blocked: Int,
+    ) {
+        fun report(settled: Settlement) = CoreOutboxDrainReport(
+            claimed,
             settled.submitted,
             settled.acknowledged,
             preSubmitRetries + settled.retries,
@@ -315,15 +439,23 @@ class CoreOutboxDrainer(
         )
     }
 
+    /** Frees rows that were never sent, ready again at once: nothing failed. */
+    private suspend fun Prepared.releaseNow() = withContext(NonCancellable) {
+        ready.forEach {
+            store.markFailed(it.claim.record.identity(), "drain_not_sent", nowEpochMillis)
+        }
+    }
+
     private suspend fun isolate(
         ready: List<ReadyClaim>,
         authorization: CoreOutboxAuthorization,
         nowEpochMillis: Long,
+        gzipBody: Boolean,
     ): Settlement {
         var total = Settlement()
         ready.forEachIndexed { index, item ->
             try {
-                total += submit(listOf(item), authorization, nowEpochMillis, releaseOnRejectedRequest = true)
+                total += submit(listOf(item), authorization, nowEpochMillis, releaseOnRejectedRequest = true, gzipBody)
             } catch (cancelled: CancellationException) {
                 withContext(NonCancellable) {
                     ready.drop(index + 1).forEach { it.claim.release("drain_cancelled", nowEpochMillis) }
@@ -343,6 +475,7 @@ class CoreOutboxDrainer(
         authorization: CoreOutboxAuthorization,
         nowEpochMillis: Long,
         releaseOnRejectedRequest: Boolean,
+        gzipBody: Boolean,
     ): Settlement {
         val requestId = runCatching { requestIds.nextRequestId() }.getOrNull()
         if (requestId == null || !requestId.isCanonicalProtocolIdentifier()) {
@@ -351,7 +484,7 @@ class CoreOutboxDrainer(
         }
         val request = CoreMutationsRequest(requestId, ready.map(ReadyClaim::mutation))
         val response = try {
-            authorization.useAccessToken { gateway.submit(it, request) }
+            authorization.useAccessToken { gateway.submit(it, request, gzipBody) }
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) {
                 ready.forEach { it.claim.release("transport_cancelled", nowEpochMillis) }
@@ -407,7 +540,12 @@ class CoreOutboxDrainer(
                         item.claim.release("invalid_core_result", nowEpochMillis)
                         retries += 1
                     } else {
-                        acknowledged += CoreOutboxAcknowledgedRecord(item.claim.record, result)
+                        acknowledged += CoreOutboxAcknowledgedRecord(
+                            item.claim.record,
+                            result,
+                            authorization.originServerId,
+                            item.mutation.patch,
+                        )
                     }
                 }
 

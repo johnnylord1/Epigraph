@@ -359,6 +359,12 @@ class SqlDelightPortableBindingStore(
             ?.let(::mapChapter)
     }
 
+    /** Maps a chapter binding row read in bulk; [knownWork] spares looking its work up. */
+    fun chapterRecord(
+        row: tachiyomi.data.Aethon_portable_chapter_binding,
+        knownWork: PortableWorkRef? = null,
+    ): PortableChapterBindingRecord = mapChapter(row, knownWork)
+
     override fun chapters(portableWorkId: String): List<PortableChapterBindingRecord> {
         requireIdentifier(portableWorkId, "portable work ID")
         val work = work(portableWorkId) ?: return emptyList()

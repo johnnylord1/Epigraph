@@ -45,8 +45,10 @@ import android.util.Log
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.BuildConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import yokai.data.DatabaseHandler
 import java.util.UUID
 
@@ -58,6 +60,12 @@ interface CorePendingOutbox {
 
     /** Submitted rows plus accepted mutations still waiting for their canonical replica. */
     suspend fun unsettledCount(): Long = count()
+
+    /**
+     * Whether a local change is still waiting to be sent: library and reading rows or comic
+     * commands, not asset transfers, which can stay pending for long and wake nothing.
+     */
+    suspend fun localChangesPending(): Boolean = count() > 0
 
     suspend fun countActive(policy: EffectiveSyncPolicy): Long = count()
 
@@ -84,6 +92,10 @@ class CoordinatorPendingOutbox(
         aethon_suwayomi_mutation_queueQueries.pendingCount().executeAsOne() +
             aethon_syncQueries.pendingAssetUploadCount().executeAsOne() +
             aethon_syncQueries.pendingBookCoverDownloadCount().executeAsOne()
+    }
+
+    override suspend fun localChangesPending(): Boolean = coordinator.pendingCount() > 0 || database.await {
+        aethon_suwayomi_mutation_queueQueries.pendingCount().executeAsOne() > 0
     }
 
     override suspend fun unsettledCount(): Long = coordinator.unsettledCount() + database.await {
@@ -199,6 +211,12 @@ interface CoreOutboxSyncConnection {
         nowEpochMillis: Long,
     ): CoreOutboxDrainReport
 
+    /** Waits until the writes drained so far are confirmed locally too. */
+    suspend fun awaitConfirmations() {}
+
+    /** Frees outbox rows a drain leased ahead for its next batch, once this pass stops draining. */
+    suspend fun releasePrepared() {}
+
     /** Tracker credential endpoints on this paired session; null when the connection has none. */
     fun trackerCredentials(): TrackerCredentialChannel? = null
 
@@ -289,6 +307,10 @@ class PinnedCoreOutboxSyncConnectionFactory(
                 capabilities: CoreCapabilities,
                 nowEpochMillis: Long,
             ): CoreOutboxDrainReport = drainer.drain(authorization, capabilities, nowEpochMillis)
+
+            override suspend fun awaitConfirmations() = drainer.awaitConfirmations()
+
+            override suspend fun releasePrepared() = drainer.releasePrepared()
 
             override fun trackerCredentials(): TrackerCredentialChannel = object : TrackerCredentialChannel {
                 override suspend fun list() = credentials.withAccessTokenString(http::trackerCredentials)
@@ -656,6 +678,12 @@ sealed interface CoreOutboxSyncOutcome {
     data class Retry(
         val pendingCount: Long,
         val reason: CoreOutboxRetryReason,
+        /**
+         * Rows the desktop still has to apply to Suwayomi when it answered that it is busy with
+         * them; null for every other retry. Lets the worker tell a desktop that is working through
+         * this device's upload from one that is stuck, since [pendingCount] stays 0 meanwhile.
+         */
+        val desktopPendingCount: Long? = null,
     ) : CoreOutboxSyncOutcome
 
     data class NeedsPairing(
@@ -729,6 +757,12 @@ class CoreOutboxSyncRunner(
     private val negotiatedHooks: List<CoreNegotiatedSessionHook> = emptyList(),
     private val replicaAppliedHooks: List<CoreReplicaAppliedHook> = emptyList(),
     private val policyHooks: List<CoreSyncPolicyHook> = emptyList(),
+    /**
+     * The current time for each drained batch. Rows queued during a run, such as a progress backfill
+     * sending while it still scans, are due only from when they were queued; a batch claiming with the
+     * run's start time would not see them. Null keeps the run's start time.
+     */
+    private val clock: (() -> Long)? = null,
 ) {
     suspend fun run(
         nowEpochMillis: Long,
@@ -922,6 +956,7 @@ class CoreOutboxSyncRunner(
                     authenticatedDeviceId = devices.currentDeviceId(),
                     grantedScopes = policy.selectedScopes,
                     tokenLease = CredentialCoreAccessTokenLease(session),
+                    originServerId = session.serverId,
                 )
             } catch (_: IllegalArgumentException) {
                 return CoreOutboxSyncOutcome.NeedsPairing(
@@ -960,18 +995,19 @@ class CoreOutboxSyncRunner(
                     countPending = { pendingOutbox.countActive(policy) },
                     onBatchWithMorePending = reportLibraryUploaded,
                     drainBatch = {
+                        val batchNow = clock?.invoke()?.coerceAtLeast(nowEpochMillis) ?: nowEpochMillis
                         val started = System.nanoTime()
                         val assets = if (policy.transferBookAssets) {
-                            connection.drainBookAssets(nowEpochMillis)
+                            connection.drainBookAssets(batchNow)
                         } else {
                             BookAssetDrainReport(0, 0, 0, 0)
                         }
                         val coreStarted = System.nanoTime()
-                        val core = connection.drain(authorization, capabilities, nowEpochMillis)
+                        val core = connection.drain(authorization, capabilities, batchNow)
                         val coreEnded = System.nanoTime()
                         val suwayomi = if (policy.syncComics) {
                             connection.drainSuwayomi(
-                                nowEpochMillis,
+                                batchNow,
                                 canonicalProjectionEnabled =
                                     EpigraphCoreCompatibilityEvaluator.supportsCanonicalComicProjection(capabilities),
                             )
@@ -984,14 +1020,17 @@ class CoreOutboxSyncRunner(
                                 Log.d(
                                     "EpigraphCoreSync",
                                     "drain batch: core=${core.acknowledged}/${core.claimed} " +
-                                        "in ${(coreEnded - coreStarted) / 1_000_000}ms, " +
+                                        "in ${(coreEnded - coreStarted) / 1_000_000}ms, assets ${(coreStarted - started) / 1_000_000}ms, suw ${(ended - coreEnded) / 1_000_000}ms, " +
                                         "total ${(ended - started) / 1_000_000}ms",
                                 )
                             }
                         }
                         CoreDrainBatch(assets = assets, suwayomi = suwayomi, core = core)
                     },
-                )
+                ).also {
+                    // The replica pass below reads what these confirmations write.
+                    connection.awaitConfirmations()
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -1000,6 +1039,8 @@ class CoreOutboxSyncRunner(
                     pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) },
                     CoreOutboxRetryReason.CONNECTION,
                 )
+            } finally {
+                withContext(NonCancellable) { runCatching { connection.releasePrepared() } }
             }
             val replicaOutcome = if (synchronizeReplica) {
                 try {
@@ -1035,6 +1076,7 @@ class CoreOutboxSyncRunner(
             val unsettledAfter = pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) }
             val uploadsLeft = uploadsStillToSend(unsettledAfter, pendingOutbox.blockedCountActive(policy))
             val libraryUploadsLeft = pendingOutbox.libraryCountActive(policy)?.coerceAtLeast(0)
+            var desktopPendingCount: Long? = null
             val remoteProjection = if (
                 EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities) &&
                     policy.syncComics
@@ -1056,6 +1098,8 @@ class CoreOutboxSyncRunner(
                                     CoreUserActionReason.CAPABILITIES_REJECTED,
                                 )
                             }
+                            desktopPendingCount = status.value.suwayomiProjectionPending +
+                                status.value.suwayomiProjectionInFlight
                             status.value.remoteProjectionState()
                         }
                         is CoreHttpResult.Failure -> {
@@ -1106,6 +1150,7 @@ class CoreOutboxSyncRunner(
                 CoreRemoteProjectionState.IN_PROGRESS -> return CoreOutboxSyncOutcome.Retry(
                     unsettledAfter,
                     CoreOutboxRetryReason.OUTBOX_PENDING,
+                    desktopPendingCount = desktopPendingCount,
                 )
                 // Nothing is queued or in flight on the desktop, only rows Suwayomi refused.
                 // Retrying from the phone cannot unblock them; surface it instead of looping.

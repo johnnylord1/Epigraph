@@ -637,11 +637,20 @@ ON CONFLICT(portable_chapter_id) DO UPDATE SET
 selectPortableChapterBinding:
 SELECT * FROM aethon_portable_chapter_binding WHERE portable_chapter_id = :portableChapterId;
 
+selectPortableChapterBindingsByIds:
+SELECT * FROM aethon_portable_chapter_binding WHERE portable_chapter_id IN :portableChapterIds;
+
 selectPortableChapterBindingByLocalReference:
 SELECT * FROM aethon_portable_chapter_binding
 WHERE local_reference = :localReference AND resolution_state = 'BOUND'
 ORDER BY updated_at DESC
 LIMIT 1;
+
+-- Newest first, as selectPortableChapterBindingByLocalReference picks one per reference.
+selectPortableChapterBindingsByLocalReferences:
+SELECT * FROM aethon_portable_chapter_binding
+WHERE local_reference IN :localReferences AND resolution_state = 'BOUND'
+ORDER BY updated_at DESC;
 
 selectPortableChaptersForWork:
 SELECT * FROM aethon_portable_chapter_binding
@@ -1136,6 +1145,10 @@ selectChapterBindingByLocalChapterId:
 SELECT * FROM aethon_chapter_binding
 WHERE local_chapter_id = :localChapterId;
 
+selectChapterBindingsByLocalChapterIds:
+SELECT * FROM aethon_chapter_binding
+WHERE local_chapter_id IN :localChapterIds;
+
 deleteChapterBindingByEntityId:
 DELETE FROM aethon_chapter_binding
 WHERE chapter_entity_id = :chapterEntityId;
@@ -1487,6 +1500,49 @@ SELECT EXISTS(
       AND required_server_version > :observedServerVersion
 );
 
+-- The outbox half of hasBlockingMutationForObservedVersion, for many entities at once.
+selectOutboxEntitiesBlockingReplica:
+SELECT DISTINCT entity_id FROM aethon_sync_outbox
+WHERE scope_id = :scopeId
+  AND entity_type = :entityType
+  AND entity_id IN :entityIds
+  AND (status != 'ERROR' OR last_error IS NULL OR last_error NOT LIKE 'blocked:%');
+
+-- The replica-wait half of hasBlockingMutationForObservedVersion, for many entities at once.
+-- One indexed lookup per column: an OR across entity_id and canonical_entity_id scanned every wait of
+-- the scope, and a first sync holds thousands of them. Callers keep the highest version per entity,
+-- so a wait both halves match may come back once.
+selectReplicaWaitVersionsForEntities:
+SELECT entity_id, canonical_entity_id, required_server_version FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId
+  AND entity_type = :entityType
+  AND entity_id IN :entityIds
+UNION
+SELECT entity_id, canonical_entity_id, required_server_version FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId
+  AND entity_type = :entityType
+  AND canonical_entity_id IN :canonicalEntityIds;
+
+-- reconcileReplicaWaitForEntity for many entities at once, each against the version the mirror holds.
+-- The waits are found by one indexed lookup per column, as in selectReplicaWaitVersionsForEntities.
+reconcileReplicaWaitsForEntities:
+DELETE FROM aethon_sync_replica_wait
+WHERE rowid IN (
+    SELECT rowid FROM aethon_sync_replica_wait
+    WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id IN :entityIds
+    UNION
+    SELECT rowid FROM aethon_sync_replica_wait
+    WHERE scope_id = :scopeId AND entity_type = :entityType AND canonical_entity_id IN :canonicalEntityIds
+  )
+  AND EXISTS(
+    SELECT 1 FROM aethon_core_replica_record AS applied
+    WHERE applied.scope_id = aethon_sync_replica_wait.scope_id
+      AND applied.entity_type = aethon_sync_replica_wait.entity_type
+      AND (applied.entity_id = aethon_sync_replica_wait.entity_id
+          OR applied.entity_id = aethon_sync_replica_wait.canonical_entity_id)
+      AND applied.server_version >= aethon_sync_replica_wait.required_server_version
+  );
+
 markMutationInFlight:
 UPDATE aethon_sync_outbox
 SET status = 'IN_FLIGHT',
@@ -1495,6 +1551,16 @@ SET status = 'IN_FLIGHT',
     in_flight_at = :inFlightAt,
     lease_until = :leaseUntil
 WHERE device_id = :deviceId AND client_mutation_id = :clientMutationId;
+
+-- markMutationInFlight for the rows of one claim at once.
+markMutationsInFlight:
+UPDATE aethon_sync_outbox
+SET status = 'IN_FLIGHT',
+    attempt_count = attempt_count + 1,
+    last_error = NULL,
+    in_flight_at = :inFlightAt,
+    lease_until = :leaseUntil
+WHERE sequence IN :sequences;
 
 markMutationFailed:
 UPDATE aethon_sync_outbox
@@ -1513,6 +1579,11 @@ WHERE status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now;
 deleteAcknowledgedMutation:
 DELETE FROM aethon_sync_outbox
 WHERE device_id = :deviceId AND client_mutation_id = :clientMutationId;
+
+-- deleteAcknowledgedMutation for the rows of one Core response at once.
+deleteAcknowledgedMutations:
+DELETE FROM aethon_sync_outbox
+WHERE device_id = :deviceId AND client_mutation_id IN :clientMutationIds;
 
 upsertReceipt:
 INSERT INTO aethon_sync_receipt(device_id, client_mutation_id, canonical_entity_id, received_at)
@@ -1567,6 +1638,30 @@ reconcileReplicaWaitWithApplied:
 DELETE FROM aethon_sync_replica_wait
 WHERE device_id = :deviceId
   AND client_mutation_id = :clientMutationId
+  AND (
+    EXISTS(
+        SELECT 1 FROM aethon_core_replica_record AS applied
+        WHERE applied.scope_id = aethon_sync_replica_wait.scope_id
+          AND applied.entity_type = aethon_sync_replica_wait.entity_type
+          AND (applied.entity_id = aethon_sync_replica_wait.entity_id
+              OR applied.entity_id = aethon_sync_replica_wait.canonical_entity_id)
+          AND applied.server_version >= aethon_sync_replica_wait.required_server_version
+    )
+    OR EXISTS(
+        SELECT 1 FROM aethon_core_replica_tombstone AS applied
+        WHERE applied.scope_id = aethon_sync_replica_wait.scope_id
+          AND applied.entity_type = aethon_sync_replica_wait.entity_type
+          AND (applied.entity_id = aethon_sync_replica_wait.entity_id
+              OR applied.entity_id = aethon_sync_replica_wait.canonical_entity_id)
+          AND applied.server_version >= aethon_sync_replica_wait.required_server_version
+    )
+  );
+
+-- reconcileReplicaWaitWithApplied for the rows of one Core response at once.
+reconcileReplicaWaitsWithApplied:
+DELETE FROM aethon_sync_replica_wait
+WHERE device_id = :deviceId
+  AND client_mutation_id IN :clientMutationIds
   AND (
     EXISTS(
         SELECT 1 FROM aethon_core_replica_record AS applied
@@ -1804,6 +1899,20 @@ SELECT EXISTS(
     SELECT 1 FROM aethon_core_replica_inbox WHERE global_event_id = :globalEventId
 );
 
+-- isCoreReplicaInboxEventApplied for many events at once.
+selectAppliedCoreReplicaInboxEvents:
+SELECT global_event_id FROM aethon_core_replica_inbox WHERE global_event_id IN :globalEventIds;
+
+-- selectCoreReplicaRecordVersion for many entities of one type at once.
+selectCoreReplicaRecordVersionsByIds:
+SELECT entity_id, server_version FROM aethon_core_replica_record
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id IN :entityIds;
+
+-- selectCoreReplicaTombstoneVersion for many entities of one type at once.
+selectCoreReplicaTombstoneVersionsByIds:
+SELECT entity_id, server_version FROM aethon_core_replica_tombstone
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id IN :entityIds;
+
 insertCoreReplicaInboxEvent:
 INSERT INTO aethon_core_replica_inbox(
     global_event_id, scope_id, entity_type, entity_id, operation, payload_sha256, applied_at
@@ -1987,6 +2096,42 @@ SELECT EXISTS(
     WHERE scope_id = :scopeId AND entity_type = :entityType
       AND (entity_id = :entityId OR canonical_entity_id = :entityId)
 );
+
+-- isEntityKnownToCore for many entities at once: the ones among :entityIds Core holds, removed, or is
+-- about to receive. Callers keep :entityIds to at most 100 (the list is bound seven times).
+selectEntitiesKnownToCore:
+SELECT entity_id FROM aethon_core_replica_record
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id IN :entityIds
+UNION
+SELECT entity_id FROM aethon_core_replica_tombstone
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id IN :entityIds
+UNION
+SELECT A.alias_entity_id FROM aethon_entity_alias AS A
+JOIN aethon_core_replica_record AS R
+  ON R.scope_id = :scopeId AND R.entity_type = :entityType AND R.entity_id = A.canonical_entity_id
+WHERE A.alias_entity_id IN :entityIds
+UNION
+SELECT A.alias_entity_id FROM aethon_entity_alias AS A
+JOIN aethon_core_replica_tombstone AS T
+  ON T.scope_id = :scopeId AND T.entity_type = :entityType AND T.entity_id = A.canonical_entity_id
+WHERE A.alias_entity_id IN :entityIds
+UNION
+SELECT entity_id FROM aethon_sync_outbox
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id IN :entityIds
+UNION
+SELECT entity_id FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id IN :entityIds
+UNION
+SELECT canonical_entity_id FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId AND entity_type = :entityType AND canonical_entity_id IN :entityIds;
+
+-- Entities among :entityIds with an unsent row of this device that a new command may fold into.
+selectEntitiesWithUnattemptedMutations:
+SELECT DISTINCT entity_id FROM aethon_sync_outbox
+WHERE device_id = :deviceId
+  AND entity_id IN :entityIds
+  AND status = 'PENDING'
+  AND attempt_count = 0;
 
 -- Chapters of bound comic favorites whose reading progress (read, bookmarked or a page reached) the
 -- paired Core neither holds, removed, nor is about to receive. A chapter without a portable binding

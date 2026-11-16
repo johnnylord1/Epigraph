@@ -240,7 +240,13 @@ class CoreLiveEventSupervisor(
             ?.let { watcher -> { _: String -> watcher.nudge() } }
         val connection = CoreEventConnection { replaySession ->
             credentials.withAccessTokenString { token ->
-                sessionTransports.events.collect(token, replaySession, onCatalogRevision, sink)
+                sessionTransports.events.collect(
+                    accessToken = token,
+                    session = replaySession,
+                    onCatalogRevision = onCatalogRevision,
+                    sink = sink,
+                    skipOwnEchoes = capabilities.supportsSkipOwnEchoesV1,
+                )
             }
         }
         val orchestrator = CoreEventOrchestrator(network, reconnect, bootstrap, connection)

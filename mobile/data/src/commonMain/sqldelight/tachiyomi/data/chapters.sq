@@ -43,6 +43,10 @@ getChaptersById:
 SELECT * FROM chapters
 WHERE _id = :id;
 
+getChaptersByIds:
+SELECT * FROM chapters
+WHERE _id IN :ids;
+
 getChaptersByUrl:
 SELECT C.*
 FROM chapters AS C

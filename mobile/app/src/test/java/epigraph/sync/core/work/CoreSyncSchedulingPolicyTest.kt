@@ -4,6 +4,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkRequest
 import epigraph.sync.core.events.CoreBackgroundSyncReason
 import epigraph.sync.core.outbox.CoreOutboxDrainReport
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -123,6 +124,17 @@ class CoreSyncSchedulingPolicyTest {
     }
 
     @Test
+    fun `a desktop still applying the upload is polled within seconds and backs off only when stalled`() {
+        val delays = (0..12).map { scheduler.degradedRetryDelayMillis(it, desktopApplying = true) }
+
+        assertEquals(EpigraphCoreSyncWorker.DESKTOP_APPLYING_POLL_MILLIS, delays[0])
+        assertTrue(delays[0] < WorkRequest.MIN_BACKOFF_MILLIS)
+        assertEquals(2 * EpigraphCoreSyncWorker.DESKTOP_APPLYING_POLL_MILLIS, delays[1])
+        assertTrue(delays.zipWithNext().all { (a, b) -> a <= b })
+        assertTrue(scheduler.degradedRetryDelayMillis(Int.MAX_VALUE, desktopApplying = true) <= 15 * 60 * 1_000L)
+    }
+
+    @Test
     fun `degraded retry chain ends where the periodic follow-up already covers it`() {
         val scheduled = (0..12).map(scheduler::shouldScheduleDegradedRetry)
 
@@ -195,7 +207,7 @@ class CoreSyncSchedulingPolicyTest {
         var runs = 0
         val sent = scheduler.sendProgressBackfill(
             first = drained,
-            backfill = { reachable ->
+            backfill = { reachable, _ ->
                 assertTrue(reachable)
                 queued.removeFirst()
             },
@@ -218,7 +230,7 @@ class CoreSyncSchedulingPolicyTest {
         // Core did not answer: queue for the next run, send nothing.
         val queuedOnly = scheduler.sendProgressBackfill(
             first = offline,
-            backfill = { reachable ->
+            backfill = { reachable, _ ->
                 assertFalse(reachable)
                 backfills += 1
                 10
@@ -236,7 +248,7 @@ class CoreSyncSchedulingPolicyTest {
         )
         val dropped = scheduler.sendProgressBackfill(
             first = drained,
-            backfill = { backfills += 1; 10 },
+            backfill = { _, _ -> backfills += 1; 10 },
             run = { runs += 1; offline },
         )
         assertEquals(1, backfills)
@@ -248,9 +260,59 @@ class CoreSyncSchedulingPolicyTest {
         scheduler.sendProgressBackfill(
             first = drained,
             maxPasses = 3,
-            backfill = { 10 },
+            backfill = { _, _ -> 10 },
             run = { runs += 1; drained },
         )
         assertEquals(3, runs)
+    }
+
+    @Test
+    fun `progress backfill starts sending with its first queued batch`() = runTest {
+        val drained = CoreOutboxSyncOutcome.OutboxDrained(
+            CoreOutboxDrainReport(0, 0, 0, 0, 0),
+            CoreReplicaSyncOutcome.APPLIED,
+        )
+        val events = mutableListOf<String>()
+        val scans = ArrayDeque(listOf(400, 0))
+        val gate = CompletableDeferred<Unit>()
+        val sent = scheduler.sendProgressBackfill(
+            first = drained,
+            backfill = { _, onQueued ->
+                val queued = scans.removeFirst()
+                if (queued > 0) {
+                    events += "batch"
+                    onQueued()
+                    // The send runs while the scan is still going.
+                    gate.await()
+                    events += "scan end"
+                }
+                queued
+            },
+            run = {
+                events += "run"
+                gate.complete(Unit)
+                drained
+            },
+        )
+        // The overlapping send, then one for the rows queued after its drain, then a dry scan.
+        assertEquals(listOf("batch", "run", "scan end", "run"), events)
+        assertTrue(sent.sentAny)
+        assertEquals(drained, sent.outcome)
+    }
+
+    @Test
+    fun `progress backfill that queues nothing sends nothing`() = runTest {
+        val drained = CoreOutboxSyncOutcome.OutboxDrained(
+            CoreOutboxDrainReport(0, 0, 0, 0, 0),
+            CoreReplicaSyncOutcome.APPLIED,
+        )
+        var runs = 0
+        val sent = scheduler.sendProgressBackfill(
+            first = drained,
+            backfill = { _, _ -> 0 },
+            run = { runs += 1; drained },
+        )
+        assertEquals(0, runs)
+        assertFalse(sent.sentAny)
     }
 }

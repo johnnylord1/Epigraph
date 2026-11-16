@@ -69,11 +69,20 @@ class EpigraphMutationCoordinator(
                 "a local mutation batch must not contain duplicate idempotency keys"
             }
 
+            // A large batch (the progress backfill) asks once which of its entities have unsent rows,
+            // instead of once per command; most have none to fold into.
+            val mayFold = foldCandidates(mutation.envelopes)
             mutation.envelopes.forEach { envelope ->
                 val createdAt = mutation.envelopeCreatedAt[envelope.clientMutationId]
                     ?.also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
                     ?: createdAtEpochMillis
-                val (queued, queuedAt) = foldIntoUnsent(envelope, createdAt)
+                val entityKey = envelope.deviceId.value to envelope.command.entityId.value
+                val (queued, queuedAt) = if (mayFold == null || entityKey in mayFold) {
+                    foldIntoUnsent(envelope, createdAt)
+                } else {
+                    envelope to createdAt
+                }
+                mayFold?.add(entityKey)
                 aethon_syncQueries.enqueueMutation(
                     clientMutationId = queued.clientMutationId.value,
                     deviceId = queued.deviceId.value,
@@ -153,6 +162,24 @@ class EpigraphMutationCoordinator(
      * Folds [envelope] into the unsent rows of the same entity and command kind, deleting them.
      * The folded row carries the newest timestamp, which the Core uses as the event time.
      */
+    /**
+     * Device and entity pairs of [envelopes] that already have an unsent row, or null to check each
+     * command on its own (small batches). Rows queued later in the same batch are added by the caller.
+     */
+    private fun Database.foldCandidates(envelopes: List<SyncCommandEnvelope>): MutableSet<Pair<String, String>>? {
+        val foldable = envelopes.filter { OutboxFolding.isFoldable(it.command) }
+        if (foldable.size < FOLD_PRECHECK_MIN) return null
+        val candidates = HashSet<Pair<String, String>>()
+        foldable.groupBy({ it.deviceId.value }, { it.command.entityId.value }).forEach { (deviceId, entityIds) ->
+            entityIds.distinct().chunked(FOLD_PRECHECK_CHUNK).forEach { chunk ->
+                aethon_syncQueries.selectEntitiesWithUnattemptedMutations(deviceId, chunk)
+                    .executeAsList()
+                    .forEach { entityId -> candidates += deviceId to entityId }
+            }
+        }
+        return candidates
+    }
+
     private fun Database.foldIntoUnsent(
         envelope: SyncCommandEnvelope,
         createdAt: Long,
@@ -230,11 +257,35 @@ class EpigraphMutationCoordinator(
     suspend fun acknowledgeAll(acknowledgements: List<EpigraphMutationAcknowledgement>) {
         if (acknowledgements.isEmpty()) return
         databaseHandler.await(inTransaction = true) {
-            acknowledgements.forEach { acknowledgement -> settleAcknowledgement(acknowledgement) }
+            if (acknowledgements.size < ACK_BULK_MIN) {
+                acknowledgements.forEach { acknowledgement -> settleAcknowledgement(acknowledgement) }
+                return@await
+            }
+            // Same statements as settleAcknowledgement, but the reconcile and the outbox delete run
+            // once per chunk: each row is independent, so the order across rows does not matter.
+            acknowledgements.forEach { acknowledgement -> recordAcknowledgement(acknowledgement) }
+            acknowledgements.groupBy({ it.deviceId.value }, { it.clientMutationId.value }).forEach { (deviceId, ids) ->
+                ids.distinct().chunked(ACK_BULK_CHUNK).forEach { chunk ->
+                    aethon_syncQueries.reconcileReplicaWaitsWithApplied(deviceId, chunk)
+                    aethon_syncQueries.deleteAcknowledgedMutations(deviceId, chunk)
+                }
+            }
         }
     }
 
     private fun Database.settleAcknowledgement(acknowledgement: EpigraphMutationAcknowledgement) {
+        recordAcknowledgement(acknowledgement)
+        aethon_syncQueries.reconcileReplicaWaitWithApplied(
+            acknowledgement.deviceId.value,
+            acknowledgement.clientMutationId.value,
+        )
+        aethon_syncQueries.deleteAcknowledgedMutation(
+            acknowledgement.deviceId.value,
+            acknowledgement.clientMutationId.value,
+        )
+    }
+
+    private fun Database.recordAcknowledgement(acknowledgement: EpigraphMutationAcknowledgement) {
         aethon_syncQueries.upsertReceipt(
             deviceId = acknowledgement.deviceId.value,
             clientMutationId = acknowledgement.clientMutationId.value,
@@ -254,14 +305,6 @@ class EpigraphMutationCoordinator(
             eventClockJson = acknowledgement.eventClockJson,
             canonicalRecordSha256 = acknowledgement.canonicalRecordSha256,
             receivedAt = acknowledgement.receivedAtEpochMillis,
-        )
-        aethon_syncQueries.reconcileReplicaWaitWithApplied(
-            acknowledgement.deviceId.value,
-            acknowledgement.clientMutationId.value,
-        )
-        aethon_syncQueries.deleteAcknowledgedMutation(
-            acknowledgement.deviceId.value,
-            acknowledgement.clientMutationId.value,
         )
     }
 
@@ -516,16 +559,7 @@ class EpigraphMutationCoordinator(
 
         return databaseHandler.await(inTransaction = true) {
             aethon_syncQueries.recoverExpiredMutations(nowEpochMillis)
-            aethon_syncQueries.selectReadyMutations(nowEpochMillis, limit).executeAsList().also { rows ->
-                rows.forEach { row ->
-                    aethon_syncQueries.markMutationInFlight(
-                        inFlightAt = nowEpochMillis,
-                        leaseUntil = leaseUntil,
-                        deviceId = row.device_id,
-                        clientMutationId = row.client_mutation_id,
-                    )
-                }
-            }
+            aethon_syncQueries.selectReadyMutations(nowEpochMillis, limit).executeAsList().also { rows -> markInFlight(rows, nowEpochMillis, leaseUntil) }
         }
     }
 
@@ -549,19 +583,21 @@ class EpigraphMutationCoordinator(
                 scopeIds,
                 nowEpochMillis,
                 limit,
-            ).executeAsList().also { rows ->
-                rows.forEach { row ->
-                    aethon_syncQueries.markMutationInFlight(
-                        inFlightAt = nowEpochMillis,
-                        leaseUntil = leaseUntil,
-                        deviceId = row.device_id,
-                        clientMutationId = row.client_mutation_id,
-                    )
-                }
-            }
+            ).executeAsList().also { rows -> markInFlight(rows, nowEpochMillis, leaseUntil) }
         }
     }
 }
+
+/** One statement per [CLAIM_UPDATE_CHUNK] rows instead of one per claimed row. */
+private fun Database.markInFlight(rows: List<Aethon_sync_outbox>, inFlightAt: Long, leaseUntil: Long) {
+    rows.map { it.sequence }.chunked(CLAIM_UPDATE_CHUNK).forEach { sequences ->
+        aethon_syncQueries.markMutationsInFlight(inFlightAt = inFlightAt, leaseUntil = leaseUntil, sequences = sequences)
+    }
+}
+
+private const val CLAIM_UPDATE_CHUNK = 500
+private const val ACK_BULK_MIN = 8
+private const val ACK_BULK_CHUNK = 400
 
 data class LocalMutationResult<T>(
     val value: T,
@@ -662,3 +698,9 @@ private fun ReaderLocator.withPageCountCoveringPageIndex(): ReaderLocator? {
     val covering = comicPageCountCovering(pageIndex, pageCount)
     return if (covering == pageCount) null else copy(pageCount = covering)
 }
+
+/** Batches at least this large ask once which entities have unsent rows to fold into. */
+private const val FOLD_PRECHECK_MIN = 8
+
+/** Entity ids per fold pre-check query, under the SQLite bind limit. */
+private const val FOLD_PRECHECK_CHUNK = 500

@@ -6,6 +6,7 @@ import epigraph.sync.core.credentials.CoreCredentialStore
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.protocol.SuwayomiCatalogOperation
 import epigraph.sync.core.protocol.SuwayomiCatalogResponse
+import epigraph.sync.core.protocol.SuwayomiCoreContentReference
 import epigraph.sync.core.session.CoreEndpointResolver
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.suwayomi.CoreChapterNodes
@@ -29,12 +30,33 @@ data class CoreWorkKey(val sourceId: Long, val url: String)
  */
 class CoreChapterList(val chapters: List<SChapter>, val nodes: CoreChapterNodes)
 
+/** A desktop title's chapter count and how many of them are unread. */
+data class CoreChapterCounts(val total: Long, val unread: Long)
+
+/** The chapter counts of a desktop library, by Suwayomi manga ID, read in one Core session. */
+class CoreLibraryChapterCounts(
+    private val serverId: String,
+    private val profileId: String,
+    private val byMangaId: Map<Long, CoreChapterCounts>,
+) {
+    /** The counts of [manga] when this desktop library lists it. */
+    fun of(manga: SuwayomiCoreContentReference.Manga): CoreChapterCounts? =
+        if ((manga.serverId == null || manga.serverId == serverId) && manga.profileId == profileId) {
+            byMangaId[manga.mangaId]
+        } else {
+            null
+        }
+}
+
 /** Reads, within one authorized Core session, the chapter lists the desktop already holds. */
 interface CoreChapterCatalogReader {
     /** The desktop library by exact source key. Suwayomi IDs are used for this session only. */
     suspend fun libraryIds(): Map<CoreWorkKey, Long>
 
     suspend fun chapters(suwayomiMangaId: Long): CoreChapterList
+
+    /** Chapter counts of the whole desktop library; null when this reader cannot read them. */
+    suspend fun libraryChapterCounts(): CoreLibraryChapterCounts? = null
 }
 
 interface CoreChapterCatalog {
@@ -83,6 +105,18 @@ internal class GatewayCoreChapterCatalogReader(
             CoreWorkKey(sourceId, url) to id
         }.toMap()
 
+    override suspend fun libraryChapterCounts(): CoreLibraryChapterCounts {
+        val counts = pages(SuwayomiCatalogOperation.LIBRARY, mangaId = null, withCounts = true).mapNotNull { node ->
+            val id = node.long("id")?.takeIf { it > 0 } ?: return@mapNotNull null
+            // A Core that predates the counts sends none; such a title is checked by its chapter list.
+            val total = ((node["chapters"] as? JsonObject)?.get("totalCount") as? JsonPrimitive)?.longOrNull
+                ?: return@mapNotNull null
+            val unread = node.long("unreadCount") ?: return@mapNotNull null
+            id to CoreChapterCounts(total, unread)
+        }.toMap()
+        return CoreLibraryChapterCounts(session.serverId, session.profileId, counts)
+    }
+
     override suspend fun chapters(suwayomiMangaId: Long): CoreChapterList {
         val nodes = pages(SuwayomiCatalogOperation.CHAPTERS, suwayomiMangaId)
         // Suwayomi numbers chapters oldest first; the library expects the newest at position 0.
@@ -106,12 +140,21 @@ internal class GatewayCoreChapterCatalogReader(
         return CoreChapterList(chapters, CoreChapterNodes(session.serverId, session.profileId, suwayomiMangaId, nodes))
     }
 
-    private suspend fun pages(operation: SuwayomiCatalogOperation, mangaId: Long?): List<JsonObject> {
+    private suspend fun pages(
+        operation: SuwayomiCatalogOperation,
+        mangaId: Long?,
+        withCounts: Boolean = false,
+    ): List<JsonObject> {
         val nodes = ArrayList<JsonObject>()
         var offset = 0L
         var expectedTotal: Long? = null
         repeat(MAX_PAGES) {
-            val page = when (val result = gateway.catalog(session, operation, PAGE_SIZE, offset, mangaId)) {
+            val read = if (withCounts) {
+                gateway.libraryWithCounts(session, PAGE_SIZE, offset)
+            } else {
+                gateway.catalog(session, operation, PAGE_SIZE, offset, mangaId)
+            }
+            val page = when (val result = read) {
                 is CoreHttpResult.Success -> result.value
                 is CoreHttpResult.Failure ->
                     throw CoreChapterCatalogException("Core catalog failed with HTTP ${result.statusCode}")

@@ -80,6 +80,16 @@ data class CoreCapabilities(
      * never has to fit one bounded response.
      */
     val supportsPagedSnapshotV1: Boolean = false,
+    /**
+     * `/v1/mutations` accepts a `Content-Encoding: gzip` body. A first sync uploads thousands of
+     * records whose JSON compresses about tenfold, and on a busy Wi-Fi the bytes are the wait.
+     */
+    val supportsGzipRequestBodiesV1: Boolean = false,
+    /**
+     * `/v1/events?skipOwnEchoes=true` leaves out the merges this device just had applied, which it
+     * confirms from their acknowledgement instead of downloading each one again.
+     */
+    val supportsSkipOwnEchoesV1: Boolean = false,
 )
 
 @Serializable

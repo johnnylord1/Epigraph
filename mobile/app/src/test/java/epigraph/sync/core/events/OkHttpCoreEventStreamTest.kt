@@ -81,6 +81,20 @@ class OkHttpCoreEventStreamTest {
     }
 
     @Test
+    fun `own echoes are skipped only on opt-in`() = runTest {
+        val interceptor = RecordingInterceptor { request ->
+            response(request, 200, changeEvent(8), "text/event-stream")
+        }
+        val session = { CoreReplaySession.afterSnapshot(7, CoreReplayCoverage.Filtered("books:global")) }
+
+        stream(interceptor).collect("secret", session(), skipOwnEchoes = true) { _, _ -> }
+        stream(interceptor).collect("secret", session()) { _, _ -> }
+
+        assertEquals("true", interceptor.requests[0].url.queryParameter("skipOwnEchoes"))
+        assertEquals(null, interceptor.requests[1].url.queryParameter("skipOwnEchoes"))
+    }
+
+    @Test
     fun `silent half-open stream times out into a reconnect after the applied cursor`() = runTest {
         val interceptor = RecordingInterceptor { request ->
             val body = object : okio.Source {

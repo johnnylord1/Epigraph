@@ -71,6 +71,9 @@ fun appModule(app: Application) = module {
             //     RequerySQLiteOpenHelperFactory()
             // },
             factory = RequerySQLiteOpenHelperFactory(),
+            // Sync applies thousands of rows through a few dozen distinct statements; the default
+            // cache of 20 evicts them in turn and re-prepares each statement on every row.
+            cacheSize = 64,
             callback = object : AndroidSqliteDriver.Callback(Database.Schema) {
                 override fun onOpen(db: SupportSQLiteDatabase) {
                     super.onOpen(db)

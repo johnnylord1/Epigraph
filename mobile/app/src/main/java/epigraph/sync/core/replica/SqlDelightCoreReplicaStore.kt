@@ -30,8 +30,10 @@ class SqlDelightCoreReplicaStore(
     override suspend fun <T> transaction(block: suspend CoreReplicaTransaction.() -> T): T =
         databaseHandler.await(inTransaction = true) {
             // The batch only adds a context element, so the block stays on the transaction thread.
-            withContext(CoreProjectionBatch()) {
+            val batch = CoreProjectionBatch()
+            withContext(batch) {
                 SqlDelightCoreReplicaTransaction(this@await, aethon_syncQueries, projection, clock).block()
+                    .also { batch.flush() }
             }
         }
 
@@ -114,6 +116,111 @@ class SqlDelightCoreReplicaStore(
     }
 
     /**
+     * Confirms this device's applied writes from the records Core acknowledged them with, all in
+     * one transaction, exactly as their echo from the change feed would: the mirror takes the
+     * record, the domain tables are projected unless newer local work holds the entity, and the
+     * replica wait the acknowledgement created is settled. The echo arriving later is a no-op.
+     */
+    suspend fun confirmOwnWrites(records: List<CoreConfirmedRecord>) {
+        if (records.isEmpty()) return
+        records.forEach { record ->
+            requireKey(record.key)
+            require(record.serverVersion >= 0 && record.lamport >= 0) { "record versions must not be negative" }
+        }
+        databaseHandler.await(inTransaction = true) {
+            val batch = CoreProjectionBatch()
+            withContext(batch) {
+                val queries = aethon_syncQueries
+                val transaction = SqlDelightCoreReplicaTransaction(this@await, queries, projection, clock)
+                // Everything a record-by-record confirm would look up, read once per chunk instead.
+                val applied = records.map { it.serverVersion }.distinct().chunked(BULK_CHUNK)
+                    .flatMapTo(HashSet()) { queries.selectAppliedCoreReplicaInboxEvents(it).executeAsList() }
+                val held = HashMap<CoreReplicaKey, Long>()
+                val tombstoned = HashSet<CoreReplicaKey>()
+                val groups = records.groupBy({ it.key.scopeId to it.key.entityType }, { it.key.entityId })
+                groups.forEach { (group, entityIds) ->
+                    val (scopeId, entityType) = group
+                    entityIds.distinct().chunked(BULK_CHUNK).forEach { chunk ->
+                        queries.selectCoreReplicaRecordVersionsByIds(scopeId, entityType, chunk).executeAsList()
+                            .forEach { row ->
+                                held.merge(CoreReplicaKey(scopeId, entityType, row.entity_id), row.server_version, ::maxOf)
+                            }
+                        queries.selectCoreReplicaTombstoneVersionsByIds(scopeId, entityType, chunk).executeAsList()
+                            .forEach { row ->
+                                val key = CoreReplicaKey(scopeId, entityType, row.entity_id)
+                                held.merge(key, row.server_version, ::maxOf)
+                                tombstoned += key
+                            }
+                        if (projection != null) {
+                            val outbox = queries.selectOutboxEntitiesBlockingReplica(scopeId, entityType, chunk)
+                                .executeAsList()
+                                .toHashSet()
+                            val required = HashMap<String, Long>()
+                            queries.selectReplicaWaitVersionsForEntities(scopeId, entityType, chunk, chunk)
+                                .executeAsList()
+                                .forEach { row ->
+                                    required.merge(row.entity_id, row.required_server_version, ::maxOf)
+                                    row.canonical_entity_id?.let { id ->
+                                        required.merge(id, row.required_server_version, ::maxOf)
+                                    }
+                                }
+                            batch.preloadBlockers(scopeId, entityType, chunk, outbox, required)
+                        }
+                    }
+                }
+                projection?.preload(this@await, records)
+                var maxLamport = -1L
+                records.forEach { record ->
+                    // Its echo already arrived and was applied; only the wait may remain.
+                    if (!applied.add(record.serverVersion)) return@forEach
+                    // A newer version already in the mirror settles this write too.
+                    if (record.serverVersion >= (held[record.key] ?: NO_VERSION)) {
+                        if (tombstoned.remove(record.key)) {
+                            queries.deleteCoreReplicaTombstone(
+                                record.key.scopeId,
+                                record.key.entityType,
+                                record.key.entityId,
+                            )
+                        }
+                        val canonicalRecord = CoreReplicaPayloadHasher.canonicalJson(record.record)
+                        queries.upsertCoreReplicaRecord(
+                            scopeId = record.key.scopeId,
+                            entityType = record.key.entityType,
+                            entityId = record.key.entityId,
+                            serverVersion = record.serverVersion,
+                            lamport = record.lamport,
+                            recordJson = canonicalRecord,
+                            payloadSha256 = CoreReplicaPayloadHasher.sha256(canonicalRecord),
+                        )
+                        held[record.key] = record.serverVersion
+                        maxLamport = maxOf(maxLamport, record.lamport)
+                        projection?.upsert(this@await, record)
+                    }
+                    // The echo from the live stream or /v1/changes is then skipped as already applied.
+                    transaction.recordAppliedInboxEvent(
+                        CoreReplicaInboxEvent(
+                            globalEventId = record.serverVersion,
+                            scopeId = record.key.scopeId,
+                            entityType = record.key.entityType,
+                            entityId = record.key.entityId,
+                            operation = "merge",
+                        ),
+                    )
+                }
+                batch.flush()
+                if (maxLamport >= 0) queries.advanceCoreLamport(maxLamport)
+                // The waits these acknowledgements created, settled against what the mirror now holds.
+                groups.forEach { (group, entityIds) ->
+                    val (scopeId, entityType) = group
+                    entityIds.distinct().chunked(BULK_CHUNK).forEach { chunk ->
+                        queries.reconcileReplicaWaitsForEntities(scopeId, entityType, chunk, chunk)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Projects the confirmed record already held for [key]. A local write the Core superseded never
      * comes back as a change, and the newer record it lost to may have arrived while that write was
      * still pending, when projecting it would have undone the pending edit.
@@ -144,6 +251,8 @@ class SqlDelightCoreReplicaStore(
     }
 
     private companion object {
+        const val NO_VERSION = -1L
+        const val BULK_CHUNK = 400
         const val ALL_COVERAGE_TYPE = "ALL"
         const val FILTERED_COVERAGE_TYPE = "FILTERED"
         const val ALL_COVERAGE_KEY = "ALL"
@@ -428,6 +537,11 @@ private class SqlDelightCoreReplicaTransaction(
 
     private fun reconcileReplicaWait(record: CoreConfirmedRecord) {
         reconcileReplicaWait(record.key, record.serverVersion)
+    }
+
+    fun settleReplicaWait(record: CoreConfirmedRecord) {
+        requireKey(record.key)
+        reconcileReplicaWait(record)
     }
 
     private fun reconcileReplicaWait(tombstone: CoreConfirmedTombstone) {

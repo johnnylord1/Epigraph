@@ -210,6 +210,22 @@ class EpigraphCoreHttpClientTest {
     }
 
     @Test
+    fun `a library read asks for counts only when its reader uses them`() = runTest {
+        val asked = mutableListOf<String?>()
+        val fake = FakeCoreInterceptor { request ->
+            assertEquals("library", request.url.queryParameter("operation"))
+            asked += request.url.queryParameter("withoutCounts")
+            response(request, 200, SUWAYOMI_CATALOG_JSON)
+        }
+        val client = coreClient(fake)
+
+        client.suwayomiCatalog("comics-token", "main", SuwayomiCatalogOperation.LIBRARY)
+        client.suwayomiCatalog("comics-token", "main", SuwayomiCatalogOperation.LIBRARY, withCounts = true)
+
+        assertEquals(listOf("true", null), asked)
+    }
+
+    @Test
     fun `suwayomi content uses the typed profile scoped boundary`() = runTest {
         val fake = FakeCoreInterceptor { request ->
             assertEquals("/v1/suwayomi/content", request.url.encodedPath)

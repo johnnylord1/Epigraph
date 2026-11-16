@@ -127,12 +127,31 @@ class EpigraphCoreDomainProjection(
             }
     }
 
+    override suspend fun preload(database: Database, records: List<CoreConfirmedRecord>) {
+        val batch = currentCoroutineContext()[CoreProjectionBatch] ?: return
+        records.asSequence()
+            .filter { it.key.entityType == "comic.chapter_state" }
+            .mapNotNull { record ->
+                (record.record as? JsonObject)?.get("portableChapterRef")?.let { element ->
+                    runCatching { json.decodeFromJsonElement<PortableChapterRef.Comic>(element) }.getOrNull()
+                }
+            }
+            .map(PortableIdentityV3::chapterId)
+            .distinct()
+            .chunked(PRELOAD_CHUNK)
+            .forEach { chunk ->
+                val rows = database.aethon_syncQueries.selectPortableChapterBindingsByIds(chunk).executeAsList()
+                    .associateBy { it.portable_chapter_id }
+                chunk.forEach { id -> batch.preloadChapter(id, rows[id]) }
+            }
+    }
+
     override suspend fun upsert(database: Database, record: CoreConfirmedRecord) {
         val batch = currentCoroutineContext()[CoreProjectionBatch]
         val readerState = record.key.entityType == "comic.chapter_state" || record.key.entityType == "comic.history"
         // Any other record may bind a work or rewrite an identity the batch remembers.
         if (!readerState) batch?.clear()
-        if (database.hasBlockingLocalMutation(record.key, record.serverVersion)) return
+        if (database.hasBlockingLocalMutation(record.key, record.serverVersion, batch)) return
         val obj = record.record as? JsonObject ?: return
         when (record.key.entityType) {
             "comic.entry" -> projectComicEntry(database, record.key.entityId, obj)
@@ -870,8 +889,42 @@ class EpigraphCoreDomainProjection(
                 store.upsertWork(workBinding)
             }
             batch?.works?.put(portableWorkId, workBinding)
-            markPortableStateMembership(database, record, requireNotNull(portableWorkId))
-            var chapterBinding = store.chapter(requireNotNull(portableChapterId))
+            if (batch?.memberships?.add(record.originServerId.orEmpty() to portableWorkId) != false) {
+                markPortableStateMembership(database, record, portableWorkId)
+            }
+            requireNotNull(portableChapterId)
+            val preloadedChapter = batch?.takePreloadedChapter(portableChapterId)
+            val preloadedRow = preloadedChapter?.row
+            var chapterBinding = when {
+                preloadedChapter == null -> store.chapter(portableChapterId)
+                preloadedRow == null -> null
+                preloadedRow.portable_work_id == portableWorkId -> store.chapterRecord(preloadedRow, portableWork)
+                else -> store.chapter(portableChapterId)
+            }
+            if (record.echoesLocalState &&
+                workBinding.resolution.state == PortableResolutionState.BOUND &&
+                chapterBinding?.resolution?.state == PortableResolutionState.BOUND
+            ) {
+                // Both bindings exist and the bound local chapter already holds exactly this
+                // state: only the work-level progress row needs the confirmed revision. That row
+                // keeps the newest revision, so a batch writes it once per work.
+                val apply = {
+                    applyComicProgress(
+                        database = database,
+                        comicId = portableWorkId,
+                        chapterEntityId = portableChapterId,
+                        localChapterId = null,
+                        record = obj,
+                        serverRevision = record.serverVersion,
+                        updatedAt = obj.long("updatedAtMs") ?: now(obj),
+                        batch = batch,
+                    )
+                }
+                if (batch != null) batch.deferProgress(portableWorkId, record.serverVersion, apply) else apply()
+                return
+            }
+            // The slow path may bind chapters, so bindings read before it may be stale.
+            batch?.dropPreloadedChapters()
             if (chapterBinding == null) {
                 chapterBinding = PortableChapterBindingRecord(
                     portableChapterId = portableChapterId,
@@ -2177,10 +2230,17 @@ class EpigraphCoreDomainProjection(
             )
     }
 
-    private fun Database.hasBlockingLocalMutation(key: CoreReplicaKey, observedServerVersion: Long): Boolean {
+    private fun Database.hasBlockingLocalMutation(
+        key: CoreReplicaKey,
+        observedServerVersion: Long,
+        batch: CoreProjectionBatch? = null,
+    ): Boolean {
         val canonicalEntityId = when (key.entityType) {
             "book.progress" -> key.entityId.removePrefix("book.progress::")
             else -> key.entityId
+        }
+        if (canonicalEntityId == key.entityId) {
+            batch?.preloadedBlocking(key, observedServerVersion)?.let { return it }
         }
         return aethon_syncQueries.hasBlockingMutationForObservedVersion(
             scopeId = key.scopeId,
@@ -2680,6 +2740,7 @@ class EpigraphCoreDomainProjection(
     )
 
     private companion object {
+        const val PRELOAD_CHUNK = 400
         val SHA_256 = Regex("[0-9a-f]{64}")
         const val MAX_COVER_ASSET_BYTES = 8L * 1024L * 1024L
         val COVER_MIME_TYPES = setOf("image/jpeg", "image/png", "image/webp")
@@ -2737,13 +2798,86 @@ internal class CoreProjectionBatch : AbstractCoroutineContextElement(Key) {
 
     val works = HashMap<String, PortableWorkBindingRecord>()
     val identities = HashMap<String, Identity>()
+
+    /** Works whose state membership was already marked for a given server in this batch. */
+    val memberships = HashSet<Pair<String, String>>()
     private val workIds = HashMap<PortableWorkRef.Comic, String>()
 
     /** Work ids are pure digests of the reference, so they never go stale. */
     fun workId(ref: PortableWorkRef.Comic): String = workIds.getOrPut(ref) { PortableIdentityV3.workId(ref) }
 
+    private class DeferredProgress(val serverRevision: Long, val apply: () -> Unit)
+
+    /** Work-level progress writes held until [flush], newest revision per work. */
+    private val deferredProgress = LinkedHashMap<String, DeferredProgress>()
+
+    fun deferProgress(workId: String, serverRevision: Long, apply: () -> Unit) {
+        val held = deferredProgress[workId]
+        if (held == null || serverRevision >= held.serverRevision) {
+            deferredProgress[workId] = DeferredProgress(serverRevision, apply)
+        }
+    }
+
+    /** Writes the deferred progress; must run before the batch's transaction ends. */
+    fun flush() {
+        while (deferredProgress.isNotEmpty()) {
+            val pending = deferredProgress.values.toList()
+            deferredProgress.clear()
+            pending.forEach { it.apply() }
+        }
+    }
+
+    /** A chapter binding read in bulk before projecting; [row] is null when none exists. */
+    class PreloadedChapter(val row: tachiyomi.data.Aethon_portable_chapter_binding?)
+
+    private val preloadedChapters = HashMap<String, PreloadedChapter>()
+
+    fun preloadChapter(portableChapterId: String, row: tachiyomi.data.Aethon_portable_chapter_binding?) {
+        preloadedChapters[portableChapterId] = PreloadedChapter(row)
+    }
+
+    /** Each preloaded binding answers one lookup; a second one reads the database again. */
+    fun takePreloadedChapter(portableChapterId: String): PreloadedChapter? =
+        preloadedChapters.remove(portableChapterId)
+
+    fun dropPreloadedChapters() = preloadedChapters.clear()
+
+    /** Local work that would hold back a remote record, read in bulk for a set of keys. */
+    private val blockerKeys = HashSet<CoreReplicaKey>()
+    private val outboxBlocked = HashSet<CoreReplicaKey>()
+    private val waitVersions = HashMap<CoreReplicaKey, Long>()
+
+    fun preloadBlockers(
+        scopeId: String,
+        entityType: String,
+        entityIds: Collection<String>,
+        outboxEntityIds: Set<String>,
+        requiredVersions: Map<String, Long>,
+    ) {
+        entityIds.forEach { id ->
+            val key = CoreReplicaKey(scopeId, entityType, id)
+            blockerKeys += key
+            if (id in outboxEntityIds) outboxBlocked += key else outboxBlocked -= key
+            val required = requiredVersions[id]
+            if (required != null) waitVersions[key] = required else waitVersions.remove(key)
+        }
+    }
+
+    /** Whether local work holds [key] back at [observedServerVersion], or null when not preloaded. */
+    fun preloadedBlocking(key: CoreReplicaKey, observedServerVersion: Long): Boolean? {
+        if (key !in blockerKeys) return null
+        return key in outboxBlocked || (waitVersions[key] ?: -1L) > observedServerVersion
+    }
+
     fun clear() {
+        // Deferred writes land before anything that may rebind the works they target.
+        flush()
+        preloadedChapters.clear()
+        blockerKeys.clear()
+        outboxBlocked.clear()
+        waitVersions.clear()
         works.clear()
         identities.clear()
+        memberships.clear()
     }
 }

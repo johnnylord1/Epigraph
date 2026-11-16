@@ -28,6 +28,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import yokai.util.koin.get
 
@@ -106,7 +109,8 @@ class EpigraphCoreSyncWorker(
                     val pass = attempts
                     drained = runOnce(
                         deferProgress = {
-                            deferProgressBackfill(pass, passGeneration, WAKE_GENERATION.get())
+                            deferProgressBackfill(pass, passGeneration, WAKE_GENERATION.get()) &&
+                                outbox.localChangesPending()
                         },
                     )
                     attempts += 1
@@ -128,7 +132,7 @@ class EpigraphCoreSyncWorker(
                 if (execution.sentBackfill || execution.madeProgress) DEGRADED_RETRY_STREAK.set(0)
                 // Saturates once past the cap, so the counter can never wrap negative.
                 val streak = DEGRADED_RETRY_STREAK.getAndUpdate { if (it > MAX_DEGRADED_RETRY_SHIFT) it else it + 1 }
-                if (shouldScheduleDegradedRetry(streak)) scheduleDegradedRetry(streak)
+                if (shouldScheduleDegradedRetry(streak)) scheduleDegradedRetry(streak, execution.desktopApplying)
             } else {
                 DEGRADED_RETRY_STREAK.set(0)
                 LAST_DEGRADED_PENDING.set(NO_DEGRADED_PENDING)
@@ -177,9 +181,14 @@ class EpigraphCoreSyncWorker(
 
     /**
      * [includeProgress] adds the reading-progress backfill, which scans every read chapter of the library;
-     * [checkWithCore] lets it ask the desktop which chapters it already holds.
+     * [checkWithCore] lets it ask the desktop which chapters it already holds; [onProgressQueued] runs
+     * after each batch of progress it queues.
      */
-    private suspend fun repairLibraries(includeProgress: Boolean, checkWithCore: Boolean): Int {
+    private suspend fun repairLibraries(
+        includeProgress: Boolean,
+        checkWithCore: Boolean,
+        onProgressQueued: () -> Unit = {},
+    ): Int {
         // First, so the outbox and replica passes never meet a title that is in the library twice.
         val displaced = runCatching { get<DisplacedComicRowRepair>().repair() }
             .onFailure { failure ->
@@ -203,6 +212,7 @@ class EpigraphCoreSyncWorker(
             val held = get<CoreHeldChapterProgressFilter>()
             get<EpigraphReaderProgressRouter>().backfillComicProgress(
                 filter = if (checkWithCore) held else held.cachedOnly,
+                onBatchQueued = onProgressQueued,
             )
         }
             .onSuccess { queued ->
@@ -215,8 +225,12 @@ class EpigraphCoreSyncWorker(
         return displaced + novels + comics + progress
     }
 
-    /** [deferProgress] says, after the drain, that a newer wake will run another pass of this worker. */
-    private suspend fun runOnce(deferProgress: () -> Boolean): WorkerExecution {
+    /**
+     * [deferProgress] says, after the drain, that a newer wake will run another pass of this worker
+     * for a local change still waiting to be sent. Wakes from rows this pass queued and already sent
+     * (the library repairs) do not defer it: that pass would only repeat the exchange first.
+     */
+    private suspend fun runOnce(deferProgress: suspend () -> Boolean): WorkerExecution {
         // Backfill favorites recorded on this device before pairing (or by older builds) before
         // counting/draining the outbox, so the catalog read sees them. The repairs are idempotent and
         // no-ops until paired. Reading progress is not part of the catalog and its backfill scans every
@@ -247,7 +261,9 @@ class EpigraphCoreSyncWorker(
                 // retry seconds or minutes later.
                 val sent = sendProgressBackfill(
                     first = first,
-                    backfill = { reachable -> repairLibraries(includeProgress = true, checkWithCore = reachable) },
+                    backfill = { reachable, onQueued ->
+                        repairLibraries(includeProgress = true, checkWithCore = reachable, onProgressQueued = onQueued)
+                    },
                     run = {
                         runner.run(
                             nowEpochMillis = System.currentTimeMillis(),
@@ -309,12 +325,16 @@ class EpigraphCoreSyncWorker(
                     // Core answered and the outbox drain already ran; only the desktop's comic
                     // side is degraded. Finishing this unique work keeps later OUTBOX_PENDING
                     // wakes (KEEP) from waiting behind WorkManager's exponential backoff.
-                    val previousPending = LAST_DEGRADED_PENDING.getAndSet(outcome.pendingCount)
+                    // While the desktop applies this device's upload, nothing is left here, so its
+                    // own queue is what shows the sync moving.
+                    val pending = outcome.desktopPendingCount ?: outcome.pendingCount
+                    val previousPending = LAST_DEGRADED_PENDING.getAndSet(pending)
                     WorkerExecution(
                         Result.success(retryData),
                         degradedRetry = true,
                         sentBackfill = sentBackfill,
-                        madeProgress = degradedRetryMadeProgress(previousPending, outcome.pendingCount),
+                        madeProgress = degradedRetryMadeProgress(previousPending, pending),
+                        desktopApplying = outcome.desktopPendingCount != null,
                     )
                 }
             }
@@ -355,10 +375,10 @@ class EpigraphCoreSyncWorker(
         enqueueDelayed(applicationContext, target - now)
     }
 
-    private fun scheduleDegradedRetry(streak: Int) {
+    private fun scheduleDegradedRetry(streak: Int, desktopApplying: Boolean) {
         val request = OneTimeWorkRequestBuilder<EpigraphCoreSyncWorker>()
             .setConstraints(NETWORK_CONSTRAINTS)
-            .setInitialDelay(degradedRetryDelayMillis(streak), TimeUnit.MILLISECONDS)
+            .setInitialDelay(degradedRetryDelayMillis(streak, desktopApplying), TimeUnit.MILLISECONDS)
             .setBackoffCriteria(
                 BackoffPolicy.EXPONENTIAL,
                 WorkRequest.MIN_BACKOFF_MILLIS,
@@ -392,6 +412,8 @@ class EpigraphCoreSyncWorker(
         val sentBackfill: Boolean = false,
         /** Fewer rows pending than after the previous degraded run: the degraded chain starts over. */
         val madeProgress: Boolean = false,
+        /** The desktop answered that it is still applying uploaded rows, not that it is degraded. */
+        val desktopApplying: Boolean = false,
     )
 
     companion object {
@@ -435,6 +457,7 @@ class EpigraphCoreSyncWorker(
         /** Consecutive comic-side retries in this process; any other outcome resets it. */
         private val DEGRADED_RETRY_STREAK = AtomicInteger(0)
         private const val MAX_DEGRADED_RETRY_SHIFT = 7
+        internal const val DESKTOP_APPLYING_POLL_MILLIS = 2_000L
 
         /** Pending count after the last degraded run in this process; any other outcome clears it. */
         private const val NO_DEGRADED_PENDING = -1L
@@ -615,12 +638,15 @@ class EpigraphCoreSyncWorker(
         /**
          * Queues the progress backfill and sends it, again and again while Core answers and the
          * backfill still finds rows, up to [maxPasses]. The first backfill also runs when Core did not
-         * answer, so the next run has the progress queued, but nothing is sent then.
+         * answer, so the next run has the progress queued, but nothing is sent then. While Core
+         * answers, sending starts with the first batch the backfill queues (it calls the callback it is
+         * given): scanning a large library took as long as sending it. A run after the scan sends what
+         * the overlapping one left.
          */
         internal suspend fun sendProgressBackfill(
             first: CoreOutboxSyncOutcome,
             maxPasses: Int = MAX_BACKFILL_PASSES,
-            backfill: suspend (reachable: Boolean) -> Int,
+            backfill: suspend (reachable: Boolean, onQueued: () -> Unit) -> Int,
             run: suspend () -> CoreOutboxSyncOutcome,
         ): BackfillSend {
             require(maxPasses > 0)
@@ -629,8 +655,30 @@ class EpigraphCoreSyncWorker(
             repeat(maxPasses) { pass ->
                 val reachable = coreAnswered(outcome)
                 if (pass > 0 && !reachable) return BackfillSend(outcome, sentAny)
-                val queued = backfill(reachable)
-                if (!reachable || queued <= 0) return BackfillSend(outcome, sentAny)
+                if (!reachable) {
+                    backfill(false) {}
+                    return BackfillSend(outcome, sentAny)
+                }
+                val firstBatch = CompletableDeferred<Unit>()
+                val (queued, overlapped) = coroutineScope {
+                    val sending = async {
+                        firstBatch.await()
+                        run()
+                    }
+                    val queued = try {
+                        backfill(true) { firstBatch.complete(Unit) }
+                    } catch (failure: Throwable) {
+                        sending.cancel()
+                        throw failure
+                    }
+                    if (firstBatch.isCompleted) queued to sending.await() else queued.also { sending.cancel() } to null
+                }
+                if (overlapped != null) {
+                    sentAny = true
+                    outcome = overlapped
+                    if (!coreAnswered(outcome)) return BackfillSend(outcome, sentAny)
+                }
+                if (queued <= 0) return BackfillSend(outcome, sentAny)
                 sentAny = true
                 outcome = run()
             }
@@ -653,9 +701,13 @@ class EpigraphCoreSyncWorker(
          * the periodic reconciliation instead of five hours, so a desktop whose Suwayomi comes back
          * is noticed within 15 minutes even without any other wake.
          */
-        internal fun degradedRetryDelayMillis(streak: Int): Long {
+        internal fun degradedRetryDelayMillis(streak: Int, desktopApplying: Boolean = false): Long {
             require(streak >= 0)
-            return (WorkRequest.MIN_BACKOFF_MILLIS shl streak.coerceAtMost(MAX_DEGRADED_RETRY_SHIFT))
+            // A desktop working through a first sync finishes within seconds of the last batch;
+            // starting at 10 s would show "applying" for up to a minute after it is done. Its queue
+            // shrinking resets the streak, so a stalled desktop still backs off.
+            val base = if (desktopApplying) DESKTOP_APPLYING_POLL_MILLIS else WorkRequest.MIN_BACKOFF_MILLIS
+            return (base shl streak.coerceAtMost(MAX_DEGRADED_RETRY_SHIFT))
                 .coerceAtMost(PERIODIC_RECONCILIATION_MILLIS)
         }
 

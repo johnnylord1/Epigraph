@@ -38,6 +38,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
 import okio.Buffer
+import okio.GzipSink
+import okio.buffer
 
 /**
  * Result of an HTTP exchange with epigraph-syncd.
@@ -264,16 +266,25 @@ class EpigraphCoreHttpClient internal constructor(
     suspend fun mutations(
         accessToken: String,
         request: CoreMutationsRequest,
+        gzipBody: Boolean = false,
     ): CoreHttpResult<CoreMutationsResponse> {
         require(request.requestId.isNotBlank()) { "requestId must not be blank" }
         require(request.mutations.isNotEmpty()) { "mutations must not be empty" }
-        val body = json.encodeToString(CoreMutationsRequest.serializer(), request)
-            .toRequestBody(JSON_MEDIA_TYPE)
-        return execute(
-            protectedRequestBuilder(endpoint("v1/mutations"), accessToken)
-                .post(body)
-                .build(),
-        )
+        val encoded = json.encodeToString(CoreMutationsRequest.serializer(), request)
+        val builder = protectedRequestBuilder(endpoint("v1/mutations"), accessToken)
+        if (gzipBody) {
+            builder.header(CONTENT_ENCODING_HEADER, GZIP_ENCODING)
+                .post(gzip(encoded).toRequestBody(JSON_MEDIA_TYPE))
+        } else {
+            builder.post(encoded.toRequestBody(JSON_MEDIA_TYPE))
+        }
+        return execute(builder.build())
+    }
+
+    private fun gzip(text: String): ByteArray {
+        val buffer = Buffer()
+        GzipSink(buffer).buffer().use { it.writeUtf8(text) }
+        return buffer.readByteArray()
     }
 
     /**
@@ -354,6 +365,7 @@ class EpigraphCoreHttpClient internal constructor(
         pageSize: Long = DEFAULT_CATALOG_PAGE_SIZE,
         offset: Long = 0,
         mangaId: Long? = null,
+        withCounts: Boolean = false,
     ): CoreHttpResult<SuwayomiCatalogResponse> {
         val canonicalProfileId = canonicalProfileId(profileId)
         require(pageSize in 1..MAX_CATALOG_PAGE_SIZE) {
@@ -382,9 +394,9 @@ class EpigraphCoreHttpClient internal constructor(
             .addQueryParameter("offset", offset.toString())
         mangaId?.let { urlBuilder.addQueryParameter("mangaId", it.toString()) }
         // Chapter, unread and download counts are most of the cost of a library read on the
-        // desktop, and no library reader here uses them. A Core that predates the parameter
+        // desktop, and only [withCounts] readers use them. A Core that predates the parameter
         // ignores it and still sends them.
-        if (operation == SuwayomiCatalogOperation.LIBRARY) {
+        if (operation == SuwayomiCatalogOperation.LIBRARY && !withCounts) {
             urlBuilder.addQueryParameter("withoutCounts", "true")
         }
         return execute(
@@ -666,6 +678,8 @@ class EpigraphCoreHttpClient internal constructor(
         const val MAX_THUMBNAIL_BYTES = 16 * 1024 * 1024
         const val DEFAULT_MAX_JSON_RESPONSE_BYTES = 16L * 1024L * 1024L
         const val MAX_ERROR_RESPONSE_BYTES = 64L * 1024L
+        const val CONTENT_ENCODING_HEADER = "Content-Encoding"
+        const val GZIP_ENCODING = "gzip"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         val DEFAULT_JSON = Json {
             // syncd evolves capabilities and records additively within a wire protocol version.

@@ -1,5 +1,6 @@
 package epigraph.sync.core.pairing.transport
 
+import co.touchlab.kermit.Logger
 import epigraph.sync.core.pairing.BootstrapPayloadResponse
 import epigraph.sync.core.pairing.PairingClaimRequest
 import epigraph.sync.core.pairing.PairingClaimResponse
@@ -241,6 +242,12 @@ class OkHttpPairingTransport internal constructor(
 
         fun transportFailure(error: Throwable): PairingTransportException {
             if (error is PairingTransportException) return error
+            // Only exception types: messages can carry the pairing URL and its one-time code.
+            Logger.w {
+                "Pairing transport failed: " +
+                    generateSequence(error as Throwable?) { it.cause }
+                        .joinToString(" <- ") { it::class.java.simpleName }
+            }
             val tlsFailure = generateSequence(error as Throwable?) { it.cause }
                 .any {
                     it is SSLPeerUnverifiedException ||

@@ -33,6 +33,13 @@ interface SuwayomiMutationGateway {
         mangaId: Long? = null,
     ): CoreHttpResult<SuwayomiCatalogResponse>
 
+    /** A [catalog] library page with each title's chapter and unread counts. */
+    suspend fun libraryWithCounts(
+        session: CoreCredentialSession,
+        pageSize: Long,
+        offset: Long,
+    ): CoreHttpResult<SuwayomiCatalogResponse> = catalog(session, SuwayomiCatalogOperation.LIBRARY, pageSize, offset)
+
 }
 
 class SuwayomiCoreProxyClient(
@@ -84,6 +91,27 @@ class SuwayomiCoreProxyClient(
                 pageSize = pageSize,
                 offset = offset,
                 mangaId = mangaId,
+            )
+        }
+    }
+
+    override
+    suspend fun libraryWithCounts(
+        session: CoreCredentialSession,
+        pageSize: Long,
+        offset: Long,
+    ): CoreHttpResult<SuwayomiCatalogResponse> {
+        require("comics:profile:${session.profileId}" in session.scopes) {
+            "paired session does not grant the comics scope"
+        }
+        return session.withAccessTokenString { accessToken ->
+            http.suwayomiCatalog(
+                accessToken = accessToken,
+                profileId = session.profileId,
+                operation = SuwayomiCatalogOperation.LIBRARY,
+                pageSize = pageSize,
+                offset = offset,
+                withCounts = true,
             )
         }
     }
