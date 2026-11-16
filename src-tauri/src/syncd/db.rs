@@ -334,6 +334,14 @@ pub(crate) async fn begin_write(
     pool.begin_with("BEGIN IMMEDIATE").await
 }
 
+/// Copies committed WAL frames into the database without waiting on readers or writers.
+pub async fn checkpoint_wal(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+    sqlx::query("PRAGMA wal_checkpoint(PASSIVE);")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn connect(config: &SyncdConfig) -> anyhow::Result<sqlx::SqlitePool> {
     std::fs::create_dir_all(&config.data_dir).with_context(|| {
         format!(
@@ -362,6 +370,26 @@ pub async fn connect(config: &SyncdConfig) -> anyhow::Result<sqlx::SqlitePool> {
                     .execute(&mut *connection)
                     .await?;
                 sqlx::query("PRAGMA synchronous = NORMAL;")
+                    .execute(&mut *connection)
+                    .await?;
+                // A first sync writes tens of thousands of rows across several indexed tables;
+                // the 2 MB default page cache evicts index pages between rows of one batch.
+                sqlx::query("PRAGMA cache_size = -32000;")
+                    .execute(&mut *connection)
+                    .await?;
+                sqlx::query("PRAGMA temp_store = MEMORY;")
+                    .execute(&mut *connection)
+                    .await?;
+                // A checkpoint copies the WAL into the database and syncs it to disk; run on a
+                // commit it stalls the writer that crossed the threshold, so a first sync paid
+                // for one every few batches. The checkpoint task does it once ingest pauses; this
+                // threshold (256 MB of pages, about 15,000 first-sync mutations) only bounds the
+                // WAL if ingest never pauses.
+                sqlx::query("PRAGMA wal_autocheckpoint = 65536;")
+                    .execute(&mut *connection)
+                    .await?;
+                // The WAL file is reused after a checkpoint; past this size it is truncated.
+                sqlx::query("PRAGMA journal_size_limit = 67108864;")
                     .execute(&mut *connection)
                     .await?;
                 Ok(())
@@ -4824,7 +4852,21 @@ async fn superseding_event_clock_in_tx(
     incoming: Option<&EventClock>,
     authenticated_device_id: &str,
 ) -> anyhow::Result<Option<EventClock>> {
-    let current = sqlx::query_as::<_, EntityEventClockRow>(
+    let current = load_event_clock_in_tx(tx, scope_id, entity_type, entity_id).await?;
+    Ok(superseding_event_clock(
+        current,
+        incoming,
+        authenticated_device_id,
+    ))
+}
+
+async fn load_event_clock_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+) -> anyhow::Result<Option<EntityEventClockRow>> {
+    Ok(sqlx::query_as::<_, EntityEventClockRow>(
         r#"
         SELECT physical_ms, logical, device_generation_id, authenticated_device_id
         FROM entity_event_clocks
@@ -4835,17 +4877,23 @@ async fn superseding_event_clock_in_tx(
     .bind(entity_type)
     .bind(entity_id)
     .fetch_optional(&mut **tx)
-    .await?;
-    let Some(current) = current else {
-        return Ok(None);
-    };
+    .await?)
+}
+
+/// The stored clock when it wins over `incoming`, so the incoming write must not apply.
+fn superseding_event_clock(
+    current: Option<EntityEventClockRow>,
+    incoming: Option<&EventClock>,
+    authenticated_device_id: &str,
+) -> Option<EventClock> {
+    let current = current?;
     let winning = EventClock {
         physical_ms: current.physical_ms,
         logical: current.logical,
         device_generation_id: current.device_generation_id.clone(),
     };
     let Some(incoming) = incoming else {
-        return Ok(Some(winning));
+        return Some(winning);
     };
     let incoming_order = (
         incoming.physical_ms,
@@ -4862,7 +4910,7 @@ async fn superseding_event_clock_in_tx(
                 .device_generation_id
                 .cmp(&current.device_generation_id)
         });
-    Ok((incoming_order != Ordering::Greater).then_some(winning))
+    (incoming_order != Ordering::Greater).then_some(winning)
 }
 
 async fn upsert_event_clock_in_tx(
@@ -4916,8 +4964,16 @@ async fn superseded_server_version_in_tx(
 async fn current_server_version_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> anyhow::Result<i64> {
+    // A batch transaction appends to change_log before it advances server_runtime, so the
+    // newest appended version also counts.
     Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT current_server_version FROM server_runtime WHERE singleton_id = 1",
+        r#"
+        SELECT MAX(
+            current_server_version,
+            COALESCE((SELECT MAX(server_version) FROM change_log), 0)
+        )
+        FROM server_runtime WHERE singleton_id = 1
+        "#,
     )
     .fetch_one(&mut **tx)
     .await?)
@@ -6237,15 +6293,412 @@ async fn apply_comic_sync_state_mutation_inner(
         event_clock,
         retention_window,
         enqueue_projection,
+        None,
+        true,
     )
     .await?;
     tx.commit().await?;
     Ok(outcome)
 }
 
+/// What one comic state merge reads before it writes, loaded for a whole batch at once.
+#[derive(Debug, Default)]
+pub struct PrefetchedComicState {
+    current: Option<ComicSyncStateRow>,
+    clock: Option<EntityEventClockRow>,
+    tombstone: Option<TombstoneRow>,
+    /// Whether the projection outbox holds an unfinished row for this entity.
+    pending_projection: bool,
+    local_server_id: Option<String>,
+}
+
+/// The rows a batch of comic state merges reads, loaded with a few queries inside the batch's
+/// write transaction instead of several per mutation. Each entry is handed out once: a second
+/// merge of the same entity in the batch reads what the first one wrote from the database.
+#[derive(Debug, Default)]
+pub struct ComicStatePrefetch {
+    entries: std::collections::HashMap<(String, String, String), PrefetchedComicState>,
+    local_server_id: Option<String>,
+    writes: BufferedComicStateWrites,
+}
+
+impl ComicStatePrefetch {
+    /// Forgets what was read. The buffered writes must already be flushed into their batch.
+    pub fn clear(&mut self) {
+        debug_assert!(
+            self.writes.is_empty(),
+            "comic state writes were not flushed"
+        );
+        self.entries.clear();
+    }
+
+    fn take(
+        &mut self,
+        scope_id: &str,
+        entity_type: &str,
+        entity_id: &str,
+    ) -> Option<PrefetchedComicState> {
+        let mut entry = self.entries.remove(&(
+            scope_id.to_string(),
+            entity_type.to_string(),
+            entity_id.to_string(),
+        ))?;
+        entry.local_server_id = self.local_server_id.clone();
+        Some(entry)
+    }
+}
+
+/// The rows of applied comic state merges, written by [`flush_comic_state_writes_in_tx`] with a
+/// few multi-row statements instead of several statements per merge. Only merges whose every
+/// read came from the prefetch are buffered; anything else in the batch transaction flushes
+/// them first, so it reads and numbers its change after them.
+#[derive(Debug, Default)]
+struct BufferedComicStateWrites {
+    /// The server version of the last buffered change; the next one takes the following one.
+    last_server_version: Option<i64>,
+    changes: Vec<BufferedChange>,
+    receipts: Vec<BufferedReceipt>,
+    states: Vec<BufferedState>,
+    projections: Vec<BufferedProjection>,
+    clocks: Vec<BufferedClock>,
+}
+
+impl BufferedComicStateWrites {
+    fn is_empty(&self) -> bool {
+        self.changes.is_empty()
+    }
+}
+
+#[derive(Debug)]
+struct BufferedChange {
+    server_version: i64,
+    scope_id: String,
+    profile_id: String,
+    entity_type: String,
+    entity_id: String,
+    lamport: i64,
+    device_id: String,
+    patch_json: String,
+    replay_until_ms: i64,
+    applied_at_ms: i64,
+}
+
+#[derive(Debug)]
+struct BufferedReceipt {
+    device_id: String,
+    client_mutation_id: String,
+    mutation_hash: String,
+    mutation_json: String,
+    result_json: String,
+    server_version: i64,
+    created_at_ms: i64,
+}
+
+#[derive(Debug)]
+struct BufferedState {
+    scope_id: String,
+    entity_type: String,
+    entity_id: String,
+    record_json: String,
+    updated_at_ms: i64,
+    device_id: String,
+    lamport: i64,
+    server_version: i64,
+}
+
+#[derive(Debug)]
+struct BufferedProjection {
+    operation_id: String,
+    profile_id: String,
+    operation_name: &'static str,
+    variables_json: String,
+    entity_type: String,
+    entity_id: String,
+    server_version: i64,
+    now: i64,
+}
+
+#[derive(Debug)]
+struct BufferedClock {
+    scope_id: String,
+    entity_type: String,
+    entity_id: String,
+    physical_ms: i64,
+    logical: i64,
+    device_generation_id: String,
+    device_id: String,
+    updated_at_ms: i64,
+}
+
+/// Rows per multi-row statement: well under SQLite's bound parameter limit.
+const BUFFERED_ROWS_PER_STATEMENT: usize = 200;
+
+/// Writes the merges buffered in `prefetch` into `tx`, in the order they were applied.
+pub async fn flush_comic_state_writes_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    prefetch: &mut ComicStatePrefetch,
+) -> anyhow::Result<()> {
+    let writes = std::mem::take(&mut prefetch.writes);
+    for rows in writes.changes.chunks(BUFFERED_ROWS_PER_STATEMENT) {
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "INSERT INTO change_log (server_version, scope_id, profile_id, entity_type, \
+             entity_id, op, lamport, changed_by_device_id, patch_json, replay_until_ms, \
+             applied_at_ms) ",
+        );
+        query.push_values(rows, |mut row, change| {
+            row.push_bind(change.server_version)
+                .push_bind(&change.scope_id)
+                .push_bind(&change.profile_id)
+                .push_bind(&change.entity_type)
+                .push_bind(&change.entity_id)
+                .push_bind("merge")
+                .push_bind(change.lamport)
+                .push_bind(&change.device_id)
+                .push_bind(&change.patch_json)
+                .push_bind(change.replay_until_ms)
+                .push_bind(change.applied_at_ms);
+        });
+        query.build().execute(&mut **tx).await?;
+    }
+    for rows in writes.receipts.chunks(BUFFERED_ROWS_PER_STATEMENT) {
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "INSERT INTO mutation_receipts (device_id, client_mutation_id, mutation_hash, \
+             mutation_json, result_json, applied_server_version, created_at_ms) ",
+        );
+        query.push_values(rows, |mut row, receipt| {
+            row.push_bind(&receipt.device_id)
+                .push_bind(&receipt.client_mutation_id)
+                .push_bind(&receipt.mutation_hash)
+                .push_bind(&receipt.mutation_json)
+                .push_bind(&receipt.result_json)
+                .push_bind(receipt.server_version)
+                .push_bind(receipt.created_at_ms);
+        });
+        query.build().execute(&mut **tx).await?;
+    }
+    for rows in writes.states.chunks(BUFFERED_ROWS_PER_STATEMENT) {
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "INSERT INTO comic_sync_state (scope_id, entity_type, entity_id, record_json, \
+             record_updated_at_ms, record_updated_by_device_id, record_lamport, \
+             record_server_version) ",
+        );
+        query.push_values(rows, |mut row, state| {
+            row.push_bind(&state.scope_id)
+                .push_bind(&state.entity_type)
+                .push_bind(&state.entity_id)
+                .push_bind(&state.record_json)
+                .push_bind(state.updated_at_ms)
+                .push_bind(&state.device_id)
+                .push_bind(state.lamport)
+                .push_bind(state.server_version);
+        });
+        query.push(
+            " ON CONFLICT(scope_id, entity_type, entity_id) DO UPDATE SET \
+             record_json = excluded.record_json, \
+             record_updated_at_ms = excluded.record_updated_at_ms, \
+             record_updated_by_device_id = excluded.record_updated_by_device_id, \
+             record_lamport = excluded.record_lamport, \
+             record_server_version = excluded.record_server_version",
+        );
+        query.build().execute(&mut **tx).await?;
+    }
+    for rows in writes.projections.chunks(BUFFERED_ROWS_PER_STATEMENT) {
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "INSERT OR IGNORE INTO suwayomi_projection_outbox (operation_id, profile_id, \
+             operation_name, variables_json, entity_type, entity_id, source_server_version, \
+             next_attempt_at_ms, created_at_ms, updated_at_ms) ",
+        );
+        query.push_values(rows, |mut row, projection| {
+            row.push_bind(&projection.operation_id)
+                .push_bind(&projection.profile_id)
+                .push_bind(projection.operation_name)
+                .push_bind(&projection.variables_json)
+                .push_bind(&projection.entity_type)
+                .push_bind(&projection.entity_id)
+                .push_bind(projection.server_version)
+                .push_bind(projection.now)
+                .push_bind(projection.now)
+                .push_bind(projection.now);
+        });
+        query.build().execute(&mut **tx).await?;
+    }
+    for rows in writes.clocks.chunks(BUFFERED_ROWS_PER_STATEMENT) {
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "INSERT INTO entity_event_clocks (scope_id, entity_type, entity_id, physical_ms, \
+             logical, device_generation_id, authenticated_device_id, updated_at_ms) ",
+        );
+        query.push_values(rows, |mut row, clock| {
+            row.push_bind(&clock.scope_id)
+                .push_bind(&clock.entity_type)
+                .push_bind(&clock.entity_id)
+                .push_bind(clock.physical_ms)
+                .push_bind(clock.logical)
+                .push_bind(&clock.device_generation_id)
+                .push_bind(&clock.device_id)
+                .push_bind(clock.updated_at_ms);
+        });
+        query.push(
+            " ON CONFLICT(scope_id, entity_type, entity_id) DO UPDATE SET \
+             physical_ms = excluded.physical_ms, \
+             logical = excluded.logical, \
+             device_generation_id = excluded.device_generation_id, \
+             authenticated_device_id = excluded.authenticated_device_id, \
+             updated_at_ms = excluded.updated_at_ms",
+        );
+        query.build().execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
+/// The last change_log version AUTOINCREMENT handed out, read inside the write transaction.
+async fn last_change_log_version_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> anyhow::Result<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT MAX(
+            COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'change_log'), 0),
+            COALESCE((SELECT MAX(server_version) FROM change_log), 0)
+        )
+        "#,
+    )
+    .fetch_one(&mut **tx)
+    .await?)
+}
+
+/// Loads, inside `tx`, everything [`apply_comic_sync_state_mutation_in_batch`] reads for `keys`
+/// (scope id, entity type, entity id). The caller holds the batch's write transaction, so no
+/// other writer can change these rows before the batch uses them.
+pub async fn prefetch_comic_sync_state_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    keys: &[(String, String, String)],
+) -> anyhow::Result<ComicStatePrefetch> {
+    let mut prefetch = ComicStatePrefetch {
+        local_server_id: local_server_id_in_tx(tx).await?,
+        ..ComicStatePrefetch::default()
+    };
+    let mut groups: std::collections::BTreeMap<(&str, &str), Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for (scope_id, entity_type, entity_id) in keys {
+        groups
+            .entry((scope_id.as_str(), entity_type.as_str()))
+            .or_default()
+            .push(entity_id.as_str());
+        prefetch
+            .entries
+            .entry((scope_id.clone(), entity_type.clone(), entity_id.clone()))
+            .or_default();
+    }
+    for ((scope_id, entity_type), entity_ids) in groups {
+        let ids_json = serde_json::to_string(&entity_ids)?;
+        let key = |entity_id: &str| {
+            (
+                scope_id.to_string(),
+                entity_type.to_string(),
+                entity_id.to_string(),
+            )
+        };
+        let rows = sqlx::query_as::<_, ComicSyncStateRow>(
+            r#"
+            SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
+            FROM comic_sync_state
+            WHERE scope_id = ? AND entity_type = ?
+              AND entity_id IN (SELECT value FROM json_each(?))
+            "#,
+        )
+        .bind(scope_id)
+        .bind(entity_type)
+        .bind(&ids_json)
+        .fetch_all(&mut **tx)
+        .await?;
+        for row in rows {
+            if let Some(entry) = prefetch.entries.get_mut(&key(&row.entity_id)) {
+                entry.current = Some(row);
+            }
+        }
+        let clocks = sqlx::query_as::<_, (String, i64, i64, String, String)>(
+            r#"
+            SELECT entity_id, physical_ms, logical, device_generation_id, authenticated_device_id
+            FROM entity_event_clocks
+            WHERE scope_id = ? AND entity_type = ?
+              AND entity_id IN (SELECT value FROM json_each(?))
+            "#,
+        )
+        .bind(scope_id)
+        .bind(entity_type)
+        .bind(&ids_json)
+        .fetch_all(&mut **tx)
+        .await?;
+        for (entity_id, physical_ms, logical, device_generation_id, authenticated_device_id) in
+            clocks
+        {
+            if let Some(entry) = prefetch.entries.get_mut(&key(&entity_id)) {
+                entry.clock = Some(EntityEventClockRow {
+                    physical_ms,
+                    logical,
+                    device_generation_id,
+                    authenticated_device_id,
+                });
+            }
+        }
+        let tombstones = sqlx::query_as::<_, TombstoneRow>(
+            r#"
+            SELECT
+                scope_id,
+                profile_id,
+                entity_type,
+                entity_id,
+                deleted_by_device_id,
+                lamport,
+                deleted_at_ms,
+                server_version,
+                retain_until_ms,
+                reason_code
+            FROM tombstones
+            WHERE scope_id = ? AND entity_type = ?
+              AND entity_id IN (SELECT value FROM json_each(?))
+            "#,
+        )
+        .bind(scope_id)
+        .bind(entity_type)
+        .bind(&ids_json)
+        .fetch_all(&mut **tx)
+        .await?;
+        for tombstone in tombstones {
+            if let Some(entry) = prefetch.entries.get_mut(&key(&tombstone.entity_id)) {
+                entry.tombstone = Some(tombstone);
+            }
+        }
+        if let Some(profile_id) = scope_id.strip_prefix("comics:profile:") {
+            let pending: Vec<String> = sqlx::query_scalar(
+                r#"
+                SELECT DISTINCT entity_id FROM suwayomi_projection_outbox
+                WHERE profile_id = ? AND entity_type = ?
+                  AND entity_id IN (SELECT value FROM json_each(?))
+                  AND status IN ('pending', 'retry', 'blocked')
+                "#,
+            )
+            .bind(profile_id)
+            .bind(entity_type)
+            .bind(&ids_json)
+            .fetch_all(&mut **tx)
+            .await?;
+            for entity_id in pending {
+                if let Some(entry) = prefetch.entries.get_mut(&key(&entity_id)) {
+                    entry.pending_projection = true;
+                }
+            }
+        }
+    }
+    Ok(prefetch)
+}
+
 /// Applies a client comic state merge inside a write transaction the caller already holds.
-/// A savepoint isolates this mutation, so a rejected one rolls back without touching the
-/// others of the batch. The caller commits the batch, then broadcasts its envelopes.
+/// Every rejection is decided before the first write, so a rejected mutation leaves the batch
+/// untouched without a savepoint; any later failure fails the whole request and its batch.
+/// A merge whose reads all came from `prefetch` is only buffered there: the caller writes the
+/// buffer with [`flush_comic_state_writes_in_tx`], advances server_runtime with
+/// [`advance_server_version_in_tx`] and commits the batch, then broadcasts its envelopes.
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_comic_sync_state_mutation_in_batch(
     batch: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -6257,23 +6710,178 @@ pub async fn apply_comic_sync_state_mutation_in_batch(
     client_lamport: i64,
     event_clock: Option<&EventClock>,
     retention_window: Duration,
+    prefetch: &mut ComicStatePrefetch,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
-    let mut savepoint = sqlx::Acquire::begin(&mut **batch).await?;
-    let outcome = apply_comic_sync_state_mutation_in_tx(
-        &mut savepoint,
+    // A pending projection or a tombstone needs reads and writes the buffer does not cover.
+    let prefetched = match prefetch.take(scope_id, entity_type, entity_id) {
+        Some(entry) if !entry.pending_projection && entry.tombstone.is_none() => entry,
+        prefetched => {
+            flush_comic_state_writes_in_tx(batch, prefetch).await?;
+            return apply_comic_sync_state_mutation_in_tx(
+                batch,
+                session,
+                scope_id,
+                entity_type,
+                entity_id,
+                record,
+                client_lamport,
+                event_clock,
+                retention_window,
+                true,
+                prefetched,
+                false,
+            )
+            .await;
+        }
+    };
+    let PrefetchedComicState {
+        current,
+        clock: current_clock,
+        local_server_id,
+        ..
+    } = prefetched;
+    if let Some(winning_clock) =
+        superseding_event_clock(current_clock, event_clock, &session.device_id)
+    {
+        let server_version = match current.as_ref() {
+            Some(row) => row.record_server_version,
+            None => {
+                flush_comic_state_writes_in_tx(batch, prefetch).await?;
+                current_server_version_in_tx(batch).await?
+            }
+        };
+        let record = current
+            .as_ref()
+            .map(|row| serde_json::from_str(&row.record_json))
+            .transpose()?
+            .unwrap_or(Value::Null);
+        let applied_lamport = current
+            .as_ref()
+            .map(|row| row.record_lamport)
+            .unwrap_or_default();
+        return Ok(CausalMutationWriteOutcome::Superseded {
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        });
+    }
+    let applied_lamport = current
+        .as_ref()
+        .map(|row| next_lamport(row.record_lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    // Chapter mutations are partial: null leaves that field unchanged. Persist the resulting
+    // state in both the log and the row, so replay, bootstrap and later hydration all agree.
+    let record = merged_comic_state_record(entity_type, record, current.as_ref())?;
+
+    let server_version = match prefetch.writes.last_server_version {
+        Some(last) => last + 1,
+        None => last_change_log_version_in_tx(batch).await? + 1,
+    };
+    let applied_at_ms = now_ms();
+    let record_json = serde_json::to_string(&record)?;
+    let receipt = applied_receipt(
         session,
         scope_id,
         entity_type,
         entity_id,
+        "merge",
+        applied_lamport,
+        Some(&record),
+        server_version,
+    )?;
+    let projections = match scope_id.strip_prefix("comics:profile:") {
+        Some(profile_id) => comic_state_projections(
+            profile_id,
+            entity_type,
+            entity_id,
+            &record,
+            false,
+            local_server_id.as_deref(),
+        )
+        .into_iter()
+        .enumerate()
+        .map(|(projection_index, (operation_name, variables))| {
+            Ok(BufferedProjection {
+                operation_id: format!(
+                    "comic-state:{profile_id}:{entity_type}:{entity_id}:{server_version}:{projection_index}"
+                ),
+                profile_id: profile_id.to_string(),
+                operation_name,
+                variables_json: serde_json::to_string(&variables)?,
+                entity_type: entity_type.to_string(),
+                entity_id: entity_id.to_string(),
+                server_version,
+                now: applied_at_ms,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+
+    let writes = &mut prefetch.writes;
+    writes.last_server_version = Some(server_version);
+    writes.changes.push(BufferedChange {
+        server_version,
+        scope_id: scope_id.to_string(),
+        profile_id: session.profile_id.clone(),
+        entity_type: entity_type.to_string(),
+        entity_id: entity_id.to_string(),
+        lamport: applied_lamport,
+        device_id: session.device_id.clone(),
+        patch_json: record_json.clone(),
+        replay_until_ms: applied_at_ms + retention_window.as_millis() as i64,
+        applied_at_ms,
+    });
+    if let Some((context, result_json)) = receipt {
+        writes.receipts.push(BufferedReceipt {
+            device_id: context.device_id.clone(),
+            client_mutation_id: context.client_mutation_id.clone(),
+            mutation_hash: context.mutation_hash.clone(),
+            mutation_json: context.mutation_json.clone(),
+            result_json,
+            server_version,
+            created_at_ms: applied_at_ms,
+        });
+    }
+    writes.states.push(BufferedState {
+        scope_id: scope_id.to_string(),
+        entity_type: entity_type.to_string(),
+        entity_id: entity_id.to_string(),
+        record_json,
+        updated_at_ms: applied_at_ms,
+        device_id: session.device_id.clone(),
+        lamport: applied_lamport,
+        server_version,
+    });
+    writes.projections.extend(projections);
+    if let Some(clock) = event_clock {
+        writes.clocks.push(BufferedClock {
+            scope_id: scope_id.to_string(),
+            entity_type: entity_type.to_string(),
+            entity_id: entity_id.to_string(),
+            physical_ms: clock.physical_ms,
+            logical: clock.logical,
+            device_generation_id: clock.device_generation_id.clone(),
+            device_id: session.device_id.clone(),
+            updated_at_ms: applied_at_ms,
+        });
+    }
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: entity_type.to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: applied_lamport,
+            patch: Some(record.clone()),
+            applied_at_ms,
+        },
         record,
-        client_lamport,
-        event_clock,
-        retention_window,
-        true,
-    )
-    .await?;
-    savepoint.commit().await?;
-    Ok(outcome)
+        applied_lamport,
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6288,28 +6896,39 @@ async fn apply_comic_sync_state_mutation_in_tx(
     event_clock: Option<&EventClock>,
     retention_window: Duration,
     enqueue_projection: bool,
+    prefetched: Option<PrefetchedComicState>,
+    update_runtime: bool,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
-    let current = sqlx::query_as::<_, ComicSyncStateRow>(
-        r#"
-        SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
-        FROM comic_sync_state
-        WHERE scope_id = ? AND entity_type = ? AND entity_id = ?
-        "#,
-    )
-    .bind(scope_id)
-    .bind(entity_type)
-    .bind(entity_id)
-    .fetch_optional(&mut **tx)
-    .await?;
-    if let Some(winning_clock) = superseding_event_clock_in_tx(
-        tx,
-        scope_id,
-        entity_type,
-        entity_id,
-        event_clock,
-        &session.device_id,
-    )
-    .await?
+    let (current, current_clock, tombstone, projection_hint) = match prefetched {
+        Some(prefetched) => (
+            prefetched.current,
+            prefetched.clock,
+            prefetched.tombstone,
+            Some(ProjectionHint {
+                local_server_id: prefetched.local_server_id,
+                pending: prefetched.pending_projection,
+            }),
+        ),
+        None => (
+            sqlx::query_as::<_, ComicSyncStateRow>(
+                r#"
+                SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
+                FROM comic_sync_state
+                WHERE scope_id = ? AND entity_type = ? AND entity_id = ?
+                "#,
+            )
+            .bind(scope_id)
+            .bind(entity_type)
+            .bind(entity_id)
+            .fetch_optional(&mut **tx)
+            .await?,
+            load_event_clock_in_tx(tx, scope_id, entity_type, entity_id).await?,
+            load_tombstone_in_tx(tx, scope_id, entity_type, entity_id).await?,
+            None,
+        ),
+    };
+    if let Some(winning_clock) =
+        superseding_event_clock(current_clock, event_clock, &session.device_id)
     {
         let server_version = superseded_server_version_in_tx(
             tx,
@@ -6332,7 +6951,6 @@ async fn apply_comic_sync_state_mutation_in_tx(
             applied_lamport,
         });
     }
-    let tombstone = load_tombstone_in_tx(tx, scope_id, entity_type, entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
@@ -6342,21 +6960,9 @@ async fn apply_comic_sync_state_mutation_in_tx(
         .unwrap_or(client_lamport);
     // Chapter mutations are partial: null leaves that field unchanged. Persist the resulting
     // state in both the log and the row, so replay, bootstrap and later hydration all agree.
-    let mut merged_record = record.clone();
-    if entity_type == "comic.chapter_state" {
-        if let Some(previous) = current.as_ref() {
-            let previous: Value = serde_json::from_str(&previous.record_json)?;
-            for field in ["read", "bookmarked", "lastPageRead", "lastReadAtMs"] {
-                if merged_record.get(field).is_none_or(Value::is_null) {
-                    if let Some(value) = previous.get(field).filter(|value| !value.is_null()) {
-                        merged_record[field] = value.clone();
-                    }
-                }
-            }
-        }
-    }
+    let merged_record = merged_comic_state_record(entity_type, record, current.as_ref())?;
     let record = &merged_record;
-    let (server_version, applied_at_ms) = append_change_log_in_tx(
+    let (server_version, applied_at_ms) = append_change_log_with_runtime_in_tx(
         tx,
         scope_id,
         Some(session.profile_id.as_str()),
@@ -6367,6 +6973,7 @@ async fn apply_comic_sync_state_mutation_in_tx(
         session,
         Some(record),
         retention_window,
+        update_runtime,
     )
     .await?;
     sqlx::query(
@@ -6403,6 +7010,7 @@ async fn apply_comic_sync_state_mutation_in_tx(
             false,
             server_version,
             applied_at_ms,
+            projection_hint.as_ref(),
         )
         .await?;
     }
@@ -6436,6 +7044,28 @@ async fn apply_comic_sync_state_mutation_in_tx(
         record: record.clone(),
         applied_lamport,
     }))
+}
+
+/// Chapter mutations are partial: null leaves that field as `current` has it.
+fn merged_comic_state_record(
+    entity_type: &str,
+    record: &Value,
+    current: Option<&ComicSyncStateRow>,
+) -> anyhow::Result<Value> {
+    let mut merged_record = record.clone();
+    if entity_type == "comic.chapter_state" {
+        if let Some(previous) = current {
+            let previous: Value = serde_json::from_str(&previous.record_json)?;
+            for field in ["read", "bookmarked", "lastPageRead", "lastReadAtMs"] {
+                if merged_record.get(field).is_none_or(Value::is_null) {
+                    if let Some(value) = previous.get(field).filter(|value| !value.is_null()) {
+                        merged_record[field] = value.clone();
+                    }
+                }
+            }
+        }
+    }
+    Ok(merged_record)
 }
 
 pub async fn delete_comic_sync_state_mutation(
@@ -6614,6 +7244,7 @@ async fn delete_comic_sync_state_mutation_inner(
             true,
             server_version,
             applied_at_ms,
+            None,
         )
         .await?;
     }
@@ -7138,6 +7769,14 @@ fn comic_delete_projection_record_from_id(entity_type: &str, entity_id: &str) ->
     }
 }
 
+/// What a prefetched batch already knows about an entity's projection.
+struct ProjectionHint {
+    local_server_id: Option<String>,
+    /// Whether the outbox holds an unfinished projection of this entity that a new one supersedes.
+    pending: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn enqueue_comic_state_projection_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     scope_id: &str,
@@ -7147,15 +7786,51 @@ async fn enqueue_comic_state_projection_in_tx(
     deleting: bool,
     server_version: i64,
     now: i64,
+    hint: Option<&ProjectionHint>,
 ) -> anyhow::Result<()> {
     let Some(profile_id) = scope_id.strip_prefix("comics:profile:") else {
         return Ok(());
     };
-    let local_server_id = local_server_id_in_tx(tx).await?;
-    let projections: Vec<(&str, Value)> = match entity_type {
+    let local_server_id = match hint {
+        Some(hint) => hint.local_server_id.clone(),
+        None => local_server_id_in_tx(tx).await?,
+    };
+    let no_pending = hint.is_some_and(|hint| !hint.pending);
+    let projections = comic_state_projections(
+        profile_id,
+        entity_type,
+        entity_id,
+        record,
+        deleting,
+        local_server_id.as_deref(),
+    );
+    enqueue_comic_projections_in_tx(
+        tx,
+        profile_id,
+        entity_type,
+        entity_id,
+        projections,
+        server_version,
+        now,
+        no_pending,
+    )
+    .await
+}
+
+/// The Suwayomi operations that project a comic state change of `profile_id`; empty when the
+/// record cannot be projected.
+fn comic_state_projections(
+    profile_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    record: &Value,
+    deleting: bool,
+    local_server_id: Option<&str>,
+) -> Vec<(&'static str, Value)> {
+    match entity_type {
         "comic.entry" => {
             let Some(comic_id) = record.get("comicId").and_then(Value::as_str) else {
-                return Ok(());
+                return Vec::new();
             };
             let variables = if let Some(work) = record
                 .get("portableWorkRef")
@@ -7167,10 +7842,13 @@ async fn enqueue_comic_state_projection_in_tx(
                 }
                 variables
             } else {
-                let Some(manga_id) =
-                    suwayomi_numeric_id_for_profile(comic_id, local_server_id.as_deref(), profile_id, ":manga:")
-                else {
-                    return Ok(());
+                let Some(manga_id) = suwayomi_numeric_id_for_profile(
+                    comic_id,
+                    local_server_id,
+                    profile_id,
+                    ":manga:",
+                ) else {
+                    return Vec::new();
                 };
                 json!({ "id": manga_id, "inLibrary": !deleting })
             };
@@ -7179,29 +7857,23 @@ async fn enqueue_comic_state_projection_in_tx(
         "comic.category_assignment" => {
             let Some(comic_id) = record.get("comicId").and_then(Value::as_str) else {
                 if deleting && entity_id.starts_with(COMIC_CATEGORY_ASSIGNMENT_ID_PREFIX) {
-                    return enqueue_comic_projections_in_tx(
-                        tx,
-                        profile_id,
-                        entity_type,
-                        entity_id,
-                        vec![(
-                            REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION,
-                            json!({ "assignmentId": entity_id }),
-                        )],
-                        server_version,
-                        now,
-                    )
-                    .await;
+                    return vec![(
+                        REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION,
+                        json!({ "assignmentId": entity_id }),
+                    )];
                 }
-                return Ok(());
+                return Vec::new();
             };
             let Some(category_id) = record.get("categoryId").and_then(Value::as_str) else {
-                return Ok(());
+                return Vec::new();
             };
-            let Some(category_id) =
-                suwayomi_numeric_id_for_profile(category_id, local_server_id.as_deref(), profile_id, ":category:")
-            else {
-                return Ok(());
+            let Some(category_id) = suwayomi_numeric_id_for_profile(
+                category_id,
+                local_server_id,
+                profile_id,
+                ":category:",
+            ) else {
+                return Vec::new();
             };
             let (add_to, remove_from) = if deleting {
                 (Vec::<i64>::new(), vec![category_id])
@@ -7218,10 +7890,13 @@ async fn enqueue_comic_state_projection_in_tx(
                     "removeFrom": remove_from,
                 })
             } else {
-                let Some(manga_id) =
-                    suwayomi_numeric_id_for_profile(comic_id, local_server_id.as_deref(), profile_id, ":manga:")
-                else {
-                    return Ok(());
+                let Some(manga_id) = suwayomi_numeric_id_for_profile(
+                    comic_id,
+                    local_server_id,
+                    profile_id,
+                    ":manga:",
+                ) else {
+                    return Vec::new();
                 };
                 json!({
                     "mangaId": manga_id,
@@ -7245,24 +7920,30 @@ async fn enqueue_comic_state_projection_in_tx(
                 }),
                 (None, None) => {
                     let Some(comic_id) = record.get("comicId").and_then(Value::as_str) else {
-                        return Ok(());
+                        return Vec::new();
                     };
                     let Some(chapter_id) = record.get("chapterId").and_then(Value::as_str) else {
-                        return Ok(());
+                        return Vec::new();
                     };
-                    let Some(manga_id) =
-                        suwayomi_numeric_id_for_profile(comic_id, local_server_id.as_deref(), profile_id, ":manga:")
-                    else {
-                        return Ok(());
+                    let Some(manga_id) = suwayomi_numeric_id_for_profile(
+                        comic_id,
+                        local_server_id,
+                        profile_id,
+                        ":manga:",
+                    ) else {
+                        return Vec::new();
                     };
-                    let Some(chapter_id) =
-                        suwayomi_numeric_id_for_profile(chapter_id, local_server_id.as_deref(), profile_id, ":chapter:")
-                    else {
-                        return Ok(());
+                    let Some(chapter_id) = suwayomi_numeric_id_for_profile(
+                        chapter_id,
+                        local_server_id,
+                        profile_id,
+                        ":chapter:",
+                    ) else {
+                        return Vec::new();
                     };
                     json!({ "mangaId": manga_id, "ids": [chapter_id] })
                 }
-                _ => return Ok(()),
+                _ => return Vec::new(),
             };
             variables["isRead"] = record.get("read").cloned().unwrap_or(Value::Null);
             variables["isBookmarked"] = record.get("bookmarked").cloned().unwrap_or(Value::Null);
@@ -7271,12 +7952,15 @@ async fn enqueue_comic_state_projection_in_tx(
         }
         "comic.category" => {
             let Some(category_id) = record.get("categoryId").and_then(Value::as_str) else {
-                return Ok(());
+                return Vec::new();
             };
-            let Some(category_id) =
-                suwayomi_numeric_id_for_profile(category_id, local_server_id.as_deref(), profile_id, ":category:")
-            else {
-                return Ok(());
+            let Some(category_id) = suwayomi_numeric_id_for_profile(
+                category_id,
+                local_server_id,
+                profile_id,
+                ":category:",
+            ) else {
+                return Vec::new();
             };
             if deleting {
                 vec![("DeleteCategory", json!({ "id": category_id }))]
@@ -7296,17 +7980,7 @@ async fn enqueue_comic_state_projection_in_tx(
             }
         }
         _ => Vec::new(),
-    };
-    enqueue_comic_projections_in_tx(
-        tx,
-        profile_id,
-        entity_type,
-        entity_id,
-        projections,
-        server_version,
-        now,
-    )
-    .await
+    }
 }
 
 async fn enqueue_comic_projections_in_tx(
@@ -7317,6 +7991,9 @@ async fn enqueue_comic_projections_in_tx(
     projections: Vec<(&str, Value)>,
     server_version: i64,
     now: i64,
+    // The caller read, inside this transaction, that no unfinished projection of this entity
+    // exists, so there is nothing to supersede or merge.
+    known_no_pending: bool,
 ) -> anyhow::Result<()> {
     if projections.is_empty() {
         return Ok(());
@@ -7325,9 +8002,10 @@ async fn enqueue_comic_projections_in_tx(
     // Chapter progress records are patches whose null fields mean "unchanged", so a superseded
     // projection's values still apply unless the newer record sets them; otherwise a read flag
     // followed quickly by a page-only update would never reach Suwayomi.
-    if projections
-        .iter()
-        .any(|(operation_name, _)| *operation_name == "UpdateChaptersProgress")
+    if !known_no_pending
+        && projections
+            .iter()
+            .any(|(operation_name, _)| *operation_name == "UpdateChaptersProgress")
     {
         let superseded: Vec<String> = sqlx::query_scalar(
             r#"
@@ -7360,19 +8038,21 @@ async fn enqueue_comic_projections_in_tx(
             }
         }
     }
-    sqlx::query(
-        r#"
-        DELETE FROM suwayomi_projection_outbox
-        WHERE profile_id = ? AND entity_type = ? AND entity_id = ?
-          AND status IN ('pending', 'retry', 'blocked') AND source_server_version < ?
-        "#,
-    )
-    .bind(profile_id)
-    .bind(entity_type)
-    .bind(entity_id)
-    .bind(server_version)
-    .execute(&mut **tx)
-    .await?;
+    if !known_no_pending {
+        sqlx::query(
+            r#"
+            DELETE FROM suwayomi_projection_outbox
+            WHERE profile_id = ? AND entity_type = ? AND entity_id = ?
+              AND status IN ('pending', 'retry', 'blocked') AND source_server_version < ?
+            "#,
+        )
+        .bind(profile_id)
+        .bind(entity_type)
+        .bind(entity_id)
+        .bind(server_version)
+        .execute(&mut **tx)
+        .await?;
+    }
     for (projection_index, (operation_name, variables)) in projections.into_iter().enumerate() {
         sqlx::query(
             r#"
@@ -7456,6 +8136,7 @@ pub async fn reproject_comic_chapter_states(
             false,
             server_version,
             now,
+            None,
         )
         .await?;
         queued += 1;
@@ -8121,6 +8802,54 @@ async fn delete_with_tombstone(
     })
 }
 
+/// The receipt of the active mutation that `session` applied as this change, checked against it.
+#[allow(clippy::too_many_arguments)]
+fn applied_receipt<'a>(
+    session: &'a AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    op: &str,
+    lamport: i64,
+    patch: Option<&Value>,
+    server_version: i64,
+) -> anyhow::Result<Option<(&'a MutationReceiptContext, String)>> {
+    let Some(context) = session.mutation_receipt.as_ref() else {
+        return Ok(None);
+    };
+    let persisted_entity_id = context
+        .canonical_entity_id
+        .as_deref()
+        .unwrap_or(context.entity_id.as_str());
+    if context.device_id != session.device_id
+        || context.entity_type.as_str() != entity_type
+        || persisted_entity_id != entity_id
+        || context.scope_id != scope_id
+        || match context.op {
+            MutationOperation::Merge => op != "merge",
+            MutationOperation::Delete => op != "delete",
+        }
+    {
+        bail!("active mutation receipt context does not match the persisted change");
+    }
+    let result = MutationResult {
+        client_mutation_id: context.client_mutation_id.clone(),
+        entity_type: context.entity_type,
+        entity_id: context.entity_id.clone(),
+        canonical_entity_id: context.canonical_entity_id.clone(),
+        scope_id: context.scope_id.clone(),
+        op: context.op,
+        status: MutationResultStatus::Applied,
+        applied_server_version: Some(server_version),
+        applied_lamport: Some(lamport),
+        event_clock: context.event_clock.clone(),
+        record: Some(patch.cloned().unwrap_or(Value::Null)),
+        error: None,
+    };
+    Ok(Some((context, serde_json::to_string(&result)?)))
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn append_change_log_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     scope_id: &str,
@@ -8132,6 +8861,59 @@ async fn append_change_log_in_tx(
     session: &AuthenticatedSession,
     patch: Option<&Value>,
     retention_window: Duration,
+) -> anyhow::Result<(i64, i64)> {
+    append_change_log_with_runtime_in_tx(
+        tx,
+        scope_id,
+        profile_id,
+        entity_type,
+        entity_id,
+        op,
+        lamport,
+        session,
+        patch,
+        retention_window,
+        true,
+    )
+    .await
+}
+
+/// Raises the published server version to `server_version` inside a batch transaction whose
+/// change log appends skipped that update; it never lowers it.
+pub async fn advance_server_version_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    server_version: i64,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE server_runtime
+        SET current_server_version = MAX(current_server_version, ?),
+            updated_at_ms = ?
+        WHERE singleton_id = 1
+        "#,
+    )
+    .bind(server_version)
+    .bind(now_ms())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn append_change_log_with_runtime_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_id: &str,
+    profile_id: Option<&str>,
+    entity_type: &str,
+    entity_id: &str,
+    op: &str,
+    lamport: i64,
+    session: &AuthenticatedSession,
+    patch: Option<&Value>,
+    retention_window: Duration,
+    // A batch updates server_runtime once, through [`advance_server_version_in_tx`], before it
+    // commits.
+    update_runtime: bool,
 ) -> anyhow::Result<(i64, i64)> {
     let applied_at_ms = now_ms();
     let replay_until_ms = applied_at_ms + retention_window.as_millis() as i64;
@@ -8167,51 +8949,31 @@ async fn append_change_log_in_tx(
     .await?;
     let server_version = result.last_insert_rowid();
 
-    sqlx::query(
-        r#"
-        UPDATE server_runtime
-        SET current_server_version = ?,
-            updated_at_ms = ?
-        WHERE singleton_id = 1
-        "#,
-    )
-    .bind(server_version)
-    .bind(applied_at_ms)
-    .execute(&mut **tx)
-    .await?;
+    if update_runtime {
+        sqlx::query(
+            r#"
+            UPDATE server_runtime
+            SET current_server_version = ?,
+                updated_at_ms = ?
+            WHERE singleton_id = 1
+            "#,
+        )
+        .bind(server_version)
+        .bind(applied_at_ms)
+        .execute(&mut **tx)
+        .await?;
+    }
 
-    if let Some(context) = session.mutation_receipt.as_ref() {
-        let persisted_entity_id = context
-            .canonical_entity_id
-            .as_deref()
-            .unwrap_or(context.entity_id.as_str());
-        if context.device_id != session.device_id
-            || context.entity_type.as_str() != entity_type
-            || persisted_entity_id != entity_id
-            || context.scope_id != scope_id
-            || match context.op {
-                MutationOperation::Merge => op != "merge",
-                MutationOperation::Delete => op != "delete",
-            }
-        {
-            bail!("active mutation receipt context does not match the persisted change");
-        }
-
-        let result = MutationResult {
-            client_mutation_id: context.client_mutation_id.clone(),
-            entity_type: context.entity_type,
-            entity_id: context.entity_id.clone(),
-            canonical_entity_id: context.canonical_entity_id.clone(),
-            scope_id: context.scope_id.clone(),
-            op: context.op,
-            status: MutationResultStatus::Applied,
-            applied_server_version: Some(server_version),
-            applied_lamport: Some(lamport),
-            event_clock: context.event_clock.clone(),
-            record: Some(patch.cloned().unwrap_or(Value::Null)),
-            error: None,
-        };
-        let result_json = serde_json::to_string(&result)?;
+    if let Some((context, result_json)) = applied_receipt(
+        session,
+        scope_id,
+        entity_type,
+        entity_id,
+        op,
+        lamport,
+        patch,
+        server_version,
+    )? {
         sqlx::query(
             r#"
             INSERT INTO mutation_receipts (

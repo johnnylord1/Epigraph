@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{get, post, put};
 use axum::{Extension, Router};
@@ -77,6 +78,7 @@ pub async fn run() -> anyhow::Result<()> {
         mutation_gate: Arc::new(Mutex::new(())),
         tls_cert_sha256: tls.fingerprint_sha256.clone(),
         device_presence: Default::default(),
+        own_echoes: Default::default(),
     });
 
     for instance in super::suwayomi_process::attach_owned_instances() {
@@ -106,6 +108,7 @@ pub async fn run() -> anyhow::Result<()> {
     }
     let (shutdown, shutdown_receiver) = ShutdownCoordinator::channel();
     spawn_gc_task(state.clone(), shutdown.subscribe());
+    spawn_wal_checkpoint_task(state.clone(), shutdown.subscribe());
     super::suwayomi_projection::spawn_projection_task(state.clone(), shutdown.subscribe());
     super::suwayomi_hydration::spawn_hydration_task(state.clone(), shutdown.subscribe());
     super::suwayomi_progress_mirror::spawn_progress_mirror_task(
@@ -175,11 +178,18 @@ pub async fn run() -> anyhow::Result<()> {
     serve_result
 }
 
+const MAX_MUTATIONS_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
     let protected = Router::new()
         .route("/v1/events", get(events::get_events))
         .route("/v1/changes", get(events::get_changes))
-        .route("/v1/mutations", post(mutations::post_mutations))
+        // A gzip batch of a first sync inflates past axum's 2 MiB default; the gzip layer already
+        // caps inflated bodies at the same 16 MiB.
+        .route(
+            "/v1/mutations",
+            post(mutations::post_mutations).layer(DefaultBodyLimit::max(MAX_MUTATIONS_BODY_BYTES)),
+        )
         .route("/v1/snapshot", get(snapshot::get_snapshot))
         .route("/v1/sync/status", get(status::get_sync_status))
         .route(
@@ -311,6 +321,7 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         )
         .route("/v1/pairing/claim", post(pairing::post_pairing_claim))
         .merge(protected)
+        .layer(middleware::from_fn(super::compression::gzip_sync_bodies))
         .with_state(state.clone());
 
     if std::env::var("EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES").as_deref() == Ok("1") {
@@ -349,6 +360,36 @@ fn spawn_gc_task(
                 _ = ticker.tick() => {
                     if let Err(error) = db::prune_expired_rows(&state.pool, db::now_ms()).await {
                         tracing::warn!(error = %error, "failed to prune expired syncd rows");
+                    }
+                }
+                changed = shutdown.changed() => {
+                    if changed.is_err() || shutdown.borrow().is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Checkpoints the WAL off the request path, so commits never wait on SQLite's automatic
+/// checkpoint during a large sync. A checkpoint syncs the database file to disk, which slows the
+/// commits running beside it, so it waits for a bulk ingest to pause.
+fn spawn_wal_checkpoint_task(
+    state: Arc<AppState>,
+    mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
+) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(2));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    if super::suwayomi_projection::bulk_ingest_ongoing() {
+                        continue;
+                    }
+                    if let Err(error) = db::checkpoint_wal(&state.pool).await {
+                        tracing::debug!(error = %error, "syncd WAL checkpoint failed");
                     }
                 }
                 changed = shutdown.changed() => {
@@ -572,6 +613,7 @@ mod tests {
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
             device_presence: Default::default(),
+            own_echoes: Default::default(),
         });
         (temp, state)
     }
@@ -975,6 +1017,8 @@ mod tests {
         assert_eq!(payload["supportsSyncStatusV1"], true);
         assert_eq!(payload["supportsSessionEndV1"], true);
         assert_eq!(payload["supportsPagedSnapshotV1"], true);
+        assert_eq!(payload["supportsGzipRequestBodiesV1"], true);
+        assert_eq!(payload["supportsSkipOwnEchoesV1"], true);
         assert_eq!(payload["supportsComicDeleteProjectionWithoutRecord"], true);
         assert_eq!(payload["supportsSuwayomiCategoryCreate"], true);
         assert_eq!(payload["supportsSuwayomiExtensionInstall"], true);
@@ -1287,6 +1331,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gzip_mutation_bodies_are_inflated_and_replies_compressed() {
+        use std::io::{Read, Write};
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["books:global"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state);
+        let gzip = |bytes: &[u8]| {
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(bytes).unwrap();
+            encoder.finish().unwrap()
+        };
+        let send = |body: Vec<u8>| {
+            app.clone().oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/mutations")
+                    .header(CLIENT_VERSION_HEADER, "0.1.0")
+                    .header(CLIENT_PROTOCOL_HEADER, "1")
+                    .header("authorization", "Bearer secret-token")
+                    .header("content-type", "application/json")
+                    .header("content-encoding", "gzip")
+                    .header("accept-encoding", "gzip")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+        };
+
+        let response = send(gzip(complete_book_mutations().to_string().as_bytes()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-encoding"], "gzip");
+        let compressed = response.into_body().collect().await.unwrap().to_bytes();
+        let mut inflated = String::new();
+        flate2::read::GzDecoder::new(&compressed[..])
+            .read_to_string(&mut inflated)
+            .unwrap();
+        let payload: Value = serde_json::from_str(&inflated).unwrap();
+        assert!(
+            payload["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|result| result["status"] == "applied"),
+            "{payload}"
+        );
+
+        // A large batch inflates past axum's 2 MiB default body limit and is still accepted.
+        let mut large = " ".repeat(3 * 1024 * 1024);
+        large.push_str(&complete_book_mutations().to_string());
+        let response = send(gzip(large.as_bytes())).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let corrupt = send(b"not gzip".to_vec()).await.unwrap();
+        assert_eq!(corrupt.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn snapshot_returns_every_supported_book_entity() {
         let (_temp, state) = build_state_for_http().await;
         ensure_test_token(
@@ -1350,9 +1460,11 @@ mod tests {
             ]
         );
         assert_eq!(entities[0]["record"]["title"], "Book One");
-        assert!(entities.iter().all(|entity| entity["serverVersion"]
-            .as_i64()
-            .is_some_and(|version| version <= 7)));
+        assert!(entities.iter().all(|entity| {
+            entity["serverVersion"]
+                .as_i64()
+                .is_some_and(|version| version <= 7)
+        }));
     }
 
     #[tokio::test]

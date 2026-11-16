@@ -53,6 +53,7 @@ async-stream = "0.3"
 axum = { version = "0.7", features = ["http2", "macros", "ws"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 http-body-util = "0.1"
+flate2 = "1.1"
 futures-util = "0.3"
 fs2 = "0.4"
 rcgen = { version = "0.13", features = ["x509-parser"] }

@@ -36,6 +36,8 @@ pub struct AppState {
     pub mutation_gate: Arc<Mutex<()>>,
     pub tls_cert_sha256: String,
     pub device_presence: super::device_presence::DevicePresence,
+    /// Merges each device just had applied, so its live stream can leave out their echo.
+    pub own_echoes: super::own_echoes::OwnEchoes,
 }
 
 pub type SharedAppState = Arc<AppState>;
@@ -322,6 +324,13 @@ pub struct CapabilitiesResponse {
     /// `/v1/snapshot?pageSize=` returns the scope in pages ordered by entity type and id, each with
     /// a `nextCursor` until the last, so bounded clients never need the whole scope in one response.
     pub supports_paged_snapshot_v1: bool,
+    /// Sync requests may carry `Content-Encoding: gzip` bodies, and JSON sync responses are gzipped
+    /// for clients that send `Accept-Encoding: gzip`. A first sync moves megabytes of progress
+    /// records that compress about tenfold, which matters on a slow or mesh Wi-Fi link.
+    pub supports_gzip_request_bodies_v1: bool,
+    /// `/v1/events?skipOwnEchoes=true` leaves out the merges the device itself just had applied;
+    /// it confirms them from their acknowledgement. `/v1/changes` and replays still return them.
+    pub supports_skip_own_echoes_v1: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,

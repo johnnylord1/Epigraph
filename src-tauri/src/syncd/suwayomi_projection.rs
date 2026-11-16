@@ -263,9 +263,14 @@ pub fn spawn_projection_task(
         let mut import = ImportWatch::default();
         let mut bulk_progress = BulkProgressWatch::default();
         let mut catalog_notice = CatalogNotice::default();
+        let mut ingest_yield = IngestYield::default();
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
+                    // The next tick, 2 s away, checks again; the ingest's own wakes end sooner.
+                    if ingest_yield.holds_now() {
+                        continue;
+                    }
                     // An update keeps the runtime down while it holds the maintenance lease, and
                     // hands it back healthy when it releases it. Writes that failed meanwhile are
                     // due then, not after a backoff that grew with the length of the update.
@@ -535,6 +540,63 @@ static PROJECTION_WAKE: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 pub fn wake_projection() {
     PROJECTION_WAKE.notify_one();
+}
+
+/// A device sending its backlog (a first sync carries thousands of mutations) and the projection
+/// both write the same database, and passes that start between its batches made each batch wait
+/// seconds for the writer. While such a backlog arrives the projection holds its passes, so the
+/// device finishes in a few round trips and the projection catches up right after.
+const BULK_INGEST_MIN_MUTATIONS: usize = 100;
+/// Ingest counts as ongoing until this long after the last bulk batch arrived or committed.
+const INGEST_QUIET_MS: i64 = 2_000;
+/// The longest the projection holds its passes for an ingest that never pauses.
+const MAX_INGEST_DEFERRAL: Duration = Duration::from_secs(10);
+
+static LAST_BULK_INGEST_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// Records a batch of `mutations` arriving or committing; only a bulk batch holds the projection,
+/// so a device's single changes still reach Suwayomi at once.
+pub fn note_ingest(mutations: usize) {
+    if mutations >= BULK_INGEST_MIN_MUTATIONS {
+        LAST_BULK_INGEST_MS.store(super::db::now_ms(), Ordering::Relaxed);
+    }
+}
+
+/// Whether a bulk batch arrived or committed within the last [`INGEST_QUIET_MS`].
+pub fn bulk_ingest_ongoing() -> bool {
+    let last_ingest_ms = LAST_BULK_INGEST_MS.load(Ordering::Relaxed);
+    last_ingest_ms > 0 && super::db::now_ms().saturating_sub(last_ingest_ms) < INGEST_QUIET_MS
+}
+
+/// Whether the projection holds its pass for an ongoing bulk ingest.
+#[derive(Default)]
+struct IngestYield {
+    since: Option<Instant>,
+}
+
+impl IngestYield {
+    fn holds(&mut self, last_ingest_ms: i64, now_ms: i64, now: Instant) -> bool {
+        let ongoing = last_ingest_ms > 0 && now_ms.saturating_sub(last_ingest_ms) < INGEST_QUIET_MS;
+        if !ongoing {
+            self.since = None;
+            return false;
+        }
+        let since = *self.since.get_or_insert(now);
+        if now.duration_since(since) >= MAX_INGEST_DEFERRAL {
+            // One pass goes through, then the projection holds again.
+            self.since = None;
+            return false;
+        }
+        true
+    }
+
+    fn holds_now(&mut self) -> bool {
+        self.holds(
+            LAST_BULK_INGEST_MS.load(Ordering::Relaxed),
+            super::db::now_ms(),
+            Instant::now(),
+        )
+    }
 }
 
 /// Applies up to `MAX_BATCH` ready projections (each with the rows grouped behind it) and returns
@@ -1186,7 +1248,7 @@ async fn apply_projection_with(
     {
         Ok(data) => data,
         Err(AppError::BadRequest(_) | AppError::Forbidden(_)) => {
-            return ProjectionOutcome::Blocked("command_rejected")
+            return ProjectionOutcome::Blocked("command_rejected");
         }
         Err(error) => return failed_command_outcome(&error, row.attempt_count),
     };
@@ -3154,6 +3216,34 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(500), ticker.tick())
             .await
             .expect("the woken loop drains without waiting out the tick");
+    }
+
+    #[test]
+    fn projection_holds_its_passes_while_a_bulk_ingest_arrives() {
+        let start = Instant::now();
+        let mut ingest = IngestYield::default();
+        // Nothing ingested yet, or only long ago: passes run.
+        assert!(!ingest.holds(0, 50_000, start));
+        assert!(!ingest.holds(40_000, 50_000, start));
+        // A bulk batch just arrived: the pass waits.
+        assert!(ingest.holds(49_500, 50_000, start));
+        assert!(ingest.holds(55_000, 56_000, start + Duration::from_secs(6)));
+        // An ingest that never pauses lets one pass through every ten seconds.
+        assert!(!ingest.holds(59_900, 60_000, start + Duration::from_secs(10)));
+        assert!(ingest.holds(61_900, 62_000, start + Duration::from_secs(12)));
+        // Once the device stops sending, the projection resumes at once.
+        assert!(!ingest.holds(61_900, 64_000, start + Duration::from_secs(14)));
+        assert!(ingest.since.is_none());
+    }
+
+    #[test]
+    fn single_changes_do_not_hold_the_projection() {
+        LAST_BULK_INGEST_MS.store(0, Ordering::Relaxed);
+        note_ingest(BULK_INGEST_MIN_MUTATIONS - 1);
+        assert_eq!(LAST_BULK_INGEST_MS.load(Ordering::Relaxed), 0);
+        note_ingest(BULK_INGEST_MIN_MUTATIONS);
+        assert!(LAST_BULK_INGEST_MS.load(Ordering::Relaxed) > 0);
+        LAST_BULK_INGEST_MS.store(0, Ordering::Relaxed);
     }
 
     #[tokio::test]

@@ -24,6 +24,10 @@ pub struct EventsQuery {
     /// the stream sends them only on request.
     #[serde(default)]
     pub catalog_events: bool,
+    /// The client confirms its applied merges from the acknowledgement, so the live stream leaves
+    /// out their echo (`supportsSkipOwnEchoesV1`).
+    #[serde(default)]
+    pub skip_own_echoes: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +65,7 @@ pub async fn get_events(
         receiver,
         catalog,
         session.token_id,
+        query.skip_own_echoes.then_some(session.device_id),
         presence,
         shutdown.subscribe(),
     );
@@ -122,6 +127,7 @@ fn sse_stream(
     mut receiver: tokio::sync::broadcast::Receiver<ChangeEnvelope>,
     mut catalog: Option<tokio::sync::broadcast::Receiver<String>>,
     token_id: String,
+    own_echoes_of: Option<String>,
     presence: StreamLease,
     mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
@@ -161,6 +167,14 @@ fn sse_stream(
                                 continue;
                             }
                             if !replay.allowed_scopes.contains(&envelope.scope_id) {
+                                continue;
+                            }
+                            if own_echoes_of
+                                .as_deref()
+                                .is_some_and(|device_id| state.own_echoes.take(device_id, envelope.server_version))
+                            {
+                                // The device already holds this record from its acknowledgement.
+                                last_sent_version = envelope.server_version;
                                 continue;
                             }
                             if !token_still_grants(&state, &token_id, &replay.allowed_scopes).await {

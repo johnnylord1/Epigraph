@@ -1,6 +1,7 @@
 pub mod app;
 pub mod autostart;
 pub mod catalog_revision;
+pub mod compression;
 pub mod config;
 pub mod db;
 pub mod device_presence;
@@ -13,6 +14,7 @@ pub mod middleware;
 pub mod models;
 pub mod myanimelist_oauth;
 pub mod network;
+pub mod own_echoes;
 pub mod pairing_pin;
 pub mod replay;
 pub mod routes;

@@ -27,8 +27,9 @@ use crate::syncd::{suwayomi_tracking_mirror, tracking};
 
 const MAX_COMIC_TITLE_HINT_CHARS: usize = 512;
 /// Upper bound on comic state merges applied under one write lock before committing, so a
-/// large request never holds the database long enough to stall other writers.
-const MAX_BATCHED_COMIC_STATE_MUTATIONS: usize = 250;
+/// large request never holds the database long enough to stall other writers. A full batch
+/// holds it for about 150 ms; each commit costs a WAL frame write, so fewer is faster.
+const MAX_BATCHED_COMIC_STATE_MUTATIONS: usize = 1000;
 
 type MutationBatch = Option<sqlx::Transaction<'static, sqlx::Sqlite>>;
 
@@ -65,6 +66,8 @@ pub async fn post_mutations(
         }
     }
 
+    // Noted before waiting on the gate, so a projection pass does not start in between.
+    crate::syncd::suwayomi_projection::note_ingest(request.mutations.len());
     let _mutation_guard = state.mutation_gate.lock().await;
 
     let mut results = Vec::with_capacity(request.mutations.len());
@@ -95,27 +98,75 @@ pub async fn post_mutations(
             })?
     };
 
-    for mutation in request.mutations {
+    // What each comic state merge of a batch reads is loaded once, when its batch opens.
+    let batchable_flags: Vec<bool> = request.mutations.iter().map(is_batchable).collect();
+    let prefetch_keys: Vec<Option<(String, String, String)>> = request
+        .mutations
+        .iter()
+        .map(|mutation| {
+            let base = mutation.base();
+            matches!(
+                mutation,
+                MutationInput::ComicEntry { .. }
+                    | MutationInput::ComicCategory { .. }
+                    | MutationInput::ComicCategoryAssignment { .. }
+                    | MutationInput::ComicChapterState { .. }
+            )
+            .then(|| base.op == MutationOperation::Merge)
+            .filter(|merge| *merge)
+            .map(|_| {
+                (
+                    base.scope_id.clone(),
+                    mutation.entity_type().as_str().to_string(),
+                    base.entity_id.clone(),
+                )
+            })
+        })
+        .collect();
+    let mut prefetch = db::ComicStatePrefetch::default();
+
+    for (index, mutation) in request.mutations.into_iter().enumerate() {
         let entity_type = mutation.entity_type();
         let base = mutation.base();
-        let batchable = matches!(
-            &mutation,
-            MutationInput::ComicEntry { base, .. }
-                | MutationInput::ComicCategory { base, .. }
-                | MutationInput::ComicCategoryAssignment { base, .. }
-                | MutationInput::ComicChapterState { base, .. }
-                | MutationInput::ComicHistory { base, .. }
-                if base.op == MutationOperation::Merge
-        );
+        let batchable = batchable_flags[index];
         // A repeated clientMutationId must see the receipt its first copy wrote.
         if !batchable
             || batched >= MAX_BATCHED_COMIC_STATE_MUTATIONS
             || receipt_contexts.contains_key(&base.client_mutation_id)
         {
-            flush_mutation_batch(&state, &mut batch, &mut pending_broadcasts).await?;
+            flush_mutation_batch(
+                &state,
+                &session.device_id,
+                &mut batch,
+                &mut prefetch,
+                &mut pending_broadcasts,
+            )
+            .await?;
             batched = 0;
+            // Rows read for the previous batch may since have changed.
+            prefetch.clear();
         }
         if batchable {
+            if batch.is_none() {
+                let mut tx = db::begin_write(&state.pool).await.map_err(|error| {
+                    AppError::Internal(format!("Failed to start comic state mutations: {error}"))
+                })?;
+                let run: Vec<(String, String, String)> = (index..batchable_flags.len())
+                    .take_while(|&next| batchable_flags[next])
+                    .take(MAX_BATCHED_COMIC_STATE_MUTATIONS)
+                    .filter_map(|next| prefetch_keys[next].clone())
+                    .collect();
+                if !run.is_empty() {
+                    prefetch = db::prefetch_comic_sync_state_in_tx(&mut tx, &run)
+                        .await
+                        .map_err(|error| {
+                            AppError::Internal(format!(
+                                "Failed to load comic state for mutations: {error}"
+                            ))
+                        })?;
+                }
+                batch = Some(tx);
+            }
             batched += 1;
         }
         if base.client_mutation_id.trim().is_empty() {
@@ -1771,6 +1822,7 @@ pub async fn post_mutations(
                 match persist_comic_sync_state(
                     &state,
                     &mut batch,
+                    &mut prefetch,
                     &session,
                     &mutation,
                     base,
@@ -1796,6 +1848,7 @@ pub async fn post_mutations(
                 match persist_comic_sync_state(
                     &state,
                     &mut batch,
+                    &mut prefetch,
                     &session,
                     &mutation,
                     base,
@@ -1821,6 +1874,7 @@ pub async fn post_mutations(
                 match persist_comic_sync_state(
                     &state,
                     &mut batch,
+                    &mut prefetch,
                     &session,
                     &mutation,
                     base,
@@ -1846,6 +1900,7 @@ pub async fn post_mutations(
                 match persist_comic_sync_state(
                     &state,
                     &mut batch,
+                    &mut prefetch,
                     &session,
                     &mutation,
                     base,
@@ -1889,6 +1944,14 @@ pub async fn post_mutations(
                         })?);
                     }
                     let tx = batch.as_mut().expect("batch transaction was just opened");
+                    // History merges read and number their change after the buffered ones.
+                    db::flush_comic_state_writes_in_tx(tx, &mut prefetch)
+                        .await
+                        .map_err(|error| {
+                            AppError::Internal(format!(
+                                "Failed to write comic state mutations: {error}"
+                            ))
+                        })?;
                     match db::apply_comic_history_mutation_in_batch(
                         tx,
                         &session,
@@ -2061,6 +2124,11 @@ pub async fn post_mutations(
         if batch.is_some() {
             pending_broadcasts.push(outcome.envelope.clone());
         } else {
+            if base.op == MutationOperation::Merge {
+                state
+                    .own_echoes
+                    .remember(&session.device_id, [outcome.envelope.server_version]);
+            }
             let _ = state.change_sender.send(outcome.envelope.clone());
         }
         results.push(MutationResult {
@@ -2080,7 +2148,14 @@ pub async fn post_mutations(
         });
     }
 
-    flush_mutation_batch(&state, &mut batch, &mut pending_broadcasts).await?;
+    flush_mutation_batch(
+        &state,
+        &session.device_id,
+        &mut batch,
+        &mut prefetch,
+        &mut pending_broadcasts,
+    )
+    .await?;
 
     for result in &mut results {
         if result.status == MutationResultStatus::Applied || is_transient_rejection(result) {
@@ -2113,6 +2188,7 @@ pub async fn post_mutations(
         }
     }
 
+    crate::syncd::suwayomi_projection::note_ingest(results.len());
     if results
         .iter()
         .any(|result| result.status == MutationResultStatus::Applied)
@@ -2152,23 +2228,63 @@ enum ComicSyncRouteOutcome {
 
 async fn flush_mutation_batch(
     state: &SharedAppState,
+    device_id: &str,
     batch: &mut MutationBatch,
+    prefetch: &mut db::ComicStatePrefetch,
     pending_broadcasts: &mut Vec<crate::syncd::models::ChangeEnvelope>,
 ) -> Result<(), AppError> {
-    if let Some(tx) = batch.take() {
+    if let Some(mut tx) = batch.take() {
+        db::flush_comic_state_writes_in_tx(&mut tx, prefetch)
+            .await
+            .map_err(|error| {
+                AppError::Internal(format!("Failed to write comic state mutations: {error}"))
+            })?;
+        // Batched comic state merges leave server_runtime to this one update.
+        if let Some(latest) = pending_broadcasts
+            .iter()
+            .map(|envelope| envelope.server_version)
+            .max()
+        {
+            db::advance_server_version_in_tx(&mut tx, latest)
+                .await
+                .map_err(|error| {
+                    AppError::Internal(format!("Failed to record server version: {error}"))
+                })?;
+        }
         tx.commit().await.map_err(|error| {
             AppError::Internal(format!("Failed to commit comic state mutations: {error}"))
         })?;
     }
+    // Every batched mutation is a merge of the requesting device, committed just above.
+    state.own_echoes.remember(
+        device_id,
+        pending_broadcasts
+            .iter()
+            .map(|envelope| envelope.server_version),
+    );
     for envelope in pending_broadcasts.drain(..) {
         let _ = state.change_sender.send(envelope);
     }
     Ok(())
 }
 
+/// Comic state and history merges share one write transaction per run of them.
+fn is_batchable(mutation: &MutationInput) -> bool {
+    matches!(
+        mutation,
+        MutationInput::ComicEntry { base, .. }
+            | MutationInput::ComicCategory { base, .. }
+            | MutationInput::ComicCategoryAssignment { base, .. }
+            | MutationInput::ComicChapterState { base, .. }
+            | MutationInput::ComicHistory { base, .. }
+            if base.op == MutationOperation::Merge
+    )
+}
+
 async fn persist_comic_sync_state<T: Serialize>(
     state: &SharedAppState,
     batch: &mut MutationBatch,
+    prefetch: &mut db::ComicStatePrefetch,
     session: &AuthenticatedSession,
     mutation: &MutationInput,
     base: &MutationBase,
@@ -2211,6 +2327,7 @@ async fn persist_comic_sync_state<T: Serialize>(
                 base.lamport,
                 base.event_clock.as_ref(),
                 state.config.retention_window,
+                prefetch,
             )
             .await
         }
@@ -4335,6 +4452,7 @@ mod tests {
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
             device_presence: Default::default(),
+            own_echoes: Default::default(),
         })
     }
 
@@ -7488,6 +7606,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn live_stream_skips_own_echoes_only_when_asked() {
+        let (_temp, state) = build_state().await;
+        ensure_test_token(
+            &state.pool,
+            "device-secondary",
+            "main",
+            &token_hash("secondary-token"),
+            &["comics:profile:main"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state);
+        let skipping = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/events?scopeId=comics:profile:main&skipOwnEchoes=true",
+                "main-token",
+                Some(0),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(skipping.status(), StatusCode::OK);
+        let echoing = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/events?scopeId=comics:profile:main",
+                "main-token",
+                Some(0),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(echoing.status(), StatusCode::OK);
+
+        // A batched history merge and an unbatched bookmark merge of this device...
+        let own = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                comic_state_batch("own-echoes"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(own.status(), StatusCode::OK);
+        // ...then a merge of another device, which every stream still receives.
+        let mut other = comic_state_batch("other-device-echo");
+        other["mutations"].as_array_mut().unwrap().truncate(1);
+        other["mutations"][0]["clientMutationId"] = json!("other-device-history");
+        let other = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "secondary-token", other))
+            .await
+            .unwrap();
+        assert_eq!(other.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(other).await["results"][0]["appliedServerVersion"],
+            3
+        );
+
+        let skipped = collect_sse_change_events(skipping, 1).await;
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0]["serverVersion"], 3);
+        let echoed = collect_sse_change_events(echoing, 3).await;
+        let versions: Vec<_> = echoed
+            .iter()
+            .map(|event| event["serverVersion"].clone())
+            .collect();
+        assert_eq!(versions, vec![json!(1), json!(2), json!(3)]);
+    }
+
+    #[tokio::test]
     async fn rejects_comic_state_in_wrong_or_foreign_profile_scope() {
         let (_temp, state) = build_state().await;
         let app = build_test_router(state);
@@ -8857,15 +9046,28 @@ mod tests {
     }
 
     /// A first sync's upload as the phone sends it: per work, its chapters' states then its
-    /// history, in requests of 250. Run with `--ignored --nocapture` to see the rate.
+    /// history, about 13,000 mutations in requests of 1000. Run with `--ignored --nocapture`
+    /// to see the rate.
     #[tokio::test]
     #[ignore]
     async fn bench_first_sync_upload_ingest() {
         let (_temp, state) = build_state().await;
         let app = build_test_router(state.clone());
+        // Like the running syncd, checkpoint the WAL in the background.
+        let checkpoint_pool = state.pool.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if !crate::syncd::suwayomi_projection::bulk_ingest_ongoing() {
+                    let _ = db::checkpoint_wal(&checkpoint_pool).await;
+                }
+            }
+        });
         let mut mutations = Vec::new();
         let mut n = 0_i64;
-        for work_index in 0..100 {
+        let works = 620;
+        let request_size = 1000;
+        for work_index in 0..works {
             let work = PortableWorkRefV3::comic("10002", &format!("/series/{work_index}"));
             let comic_id = canonical_portable_work_id(&work);
             for chapter_index in 0..20 {
@@ -8926,7 +9128,7 @@ mod tests {
         }
         let total = mutations.len();
         let started = std::time::Instant::now();
-        for (index, chunk) in mutations.chunks(250).enumerate() {
+        for (index, chunk) in mutations.chunks(request_size).enumerate() {
             let chunk_started = std::time::Instant::now();
             let response = app
                 .clone()

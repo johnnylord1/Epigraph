@@ -335,6 +335,7 @@ mod tests {
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
             device_presence: Default::default(),
+            own_echoes: Default::default(),
         })
     }
 
@@ -466,6 +467,7 @@ mod tests {
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
             device_presence: Default::default(),
+            own_echoes: Default::default(),
         });
 
         let session = authenticate_token(&state, "secret-token").await.unwrap();
@@ -540,6 +542,7 @@ mod tests {
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
             device_presence: Default::default(),
+            own_echoes: Default::default(),
         });
 
         let error = authenticate_token(&state, "secret-token")

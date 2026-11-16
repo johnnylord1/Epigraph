@@ -780,6 +780,7 @@ mod tests {
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "test".to_string(),
             device_presence: Default::default(),
+            own_echoes: Default::default(),
         });
         for id in 7..=13 {
             let reference = PortableWorkRefV3::Comic {

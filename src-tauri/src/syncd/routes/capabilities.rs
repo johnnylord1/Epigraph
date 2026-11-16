@@ -51,6 +51,8 @@ pub async fn get_capabilities(
         supports_session_end_v1: true,
         supports_catalog_revision_events_v1: true,
         supports_paged_snapshot_v1: true,
+        supports_gzip_request_bodies_v1: true,
+        supports_skip_own_echoes_v1: true,
         snapshot_schema_version: SNAPSHOT_SCHEMA_VERSION,
         snapshot_entity_types: SNAPSHOT_ENTITY_TYPES
             .iter()
