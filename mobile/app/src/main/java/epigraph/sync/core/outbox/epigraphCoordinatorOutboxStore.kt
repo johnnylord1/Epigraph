@@ -16,6 +16,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -30,21 +31,23 @@ class EpigraphCoordinatorOutboxStore(
     /** Projects the confirmed record already held for an entity whose local write lost. */
     private val projectHeldRecord: (suspend (CoreReplicaKey) -> Unit)? = null,
     /**
-     * Confirms applied writes from the records Core returned with them, in one transaction. Core
+     * Confirms applied writes from the records Core returned with them, in the transaction that
+     * settles their outbox rows. Core
      * returns the same record it appends to its change feed, so the replica need not wait for this
      * device's own changes to come back over the network; a later echo of them is a no-op.
      */
     private val confirmOwnWrites: (suspend (List<CoreConfirmedRecord>) -> Unit)? = null,
     /**
-     * Where acknowledged writes are confirmed locally. Null confirms them inline. Production confirms
-     * them here, one response after another, while the next batch is on the network: the outbox rows
-     * are settled already, and projecting thousands of records took as long as sending them.
+     * Where [acknowledgeAllInBackground] settles and confirms responses. Null settles them inline.
+     * Production settles them here, one response after another, while the next batch is on the
+     * network: projecting thousands of records took as long as sending them.
      */
     private val confirmationScope: CoroutineScope? = null,
 ) : CoreOutboxStore {
     private val unsentFolded = AtomicBoolean(false)
     private val confirmationOrder = Mutex()
-    private var confirmationTail: Job? = null
+    private var acknowledgementTail: Job? = null
+    private val acknowledgementFailure = AtomicReference<Throwable?>(null)
 
     /** Queues written before folding existed still hold one row per page turn; fold them once. */
     private suspend fun foldUnsentOnce() {
@@ -131,49 +134,70 @@ class EpigraphCoordinatorOutboxStore(
         receivedAtEpochMillis: Long,
     ) {
         if (acknowledged.isEmpty()) return
-        coordinator.acknowledgeAll(
-            acknowledged.map { (record, result) -> acknowledgement(record, result, receivedAtEpochMillis) },
-        )
-        val confirmed = if (confirmOwnWrites != null) acknowledged.mapNotNull(::confirmedRecord) else emptyList()
-        // A superseded write is not echoed back; the newer value it lost to replaces the local edit.
-        val superseded = acknowledged
-            .filter { (_, result) -> result.status == CoreMutationResultStatus.SUPERSEDED }
-            .map { (record, result) -> CoreReplicaKey(record.scopeId, record.entityType, result.entityId) }
-        if (confirmed.isEmpty() && superseded.isEmpty()) return
-        val scope = confirmationScope
-        if (scope == null) {
-            confirmLocally(confirmed, superseded)
-            return
-        }
-        confirmationOrder.withLock {
-            // Responses are confirmed in the order Core applied them.
-            val previous = confirmationTail
-            confirmationTail = scope.launch {
-                previous?.join()
-                confirmLocally(confirmed, superseded)
-            }
-        }
-    }
-
-    override suspend fun awaitConfirmations() {
-        confirmationOrder.withLock { confirmationTail }?.join()
-    }
-
-    private suspend fun confirmLocally(confirmed: List<CoreConfirmedRecord>, superseded: List<CoreReplicaKey>) {
-        confirmOwnWrites?.let { confirm ->
-            // Short transactions, so the next batch's claim and acknowledgement are not held up.
-            confirmed.chunked(CONFIRMATION_CHUNK).forEach { chunk ->
+        val confirm = confirmOwnWrites
+        if (confirm == null) {
+            coordinator.acknowledgeAll(
+                acknowledged.map { (record, result) -> acknowledgement(record, result, receivedAtEpochMillis) },
+            )
+        } else {
+            // Short transactions, so the next batch's claim is not held up behind a whole response.
+            acknowledged.chunked(CONFIRMATION_CHUNK).forEach { chunk ->
+                val acknowledgements = chunk.map { (record, result) ->
+                    acknowledgement(record, result, receivedAtEpochMillis)
+                }
+                val confirmed = chunk.mapNotNull(::confirmedRecord)
                 try {
-                    confirm(chunk)
+                    coordinator.acknowledgeAndConfirm(acknowledgements) {
+                        if (confirmed.isNotEmpty()) confirm(confirmed)
+                    }
                 } catch (error: CancellationException) {
                     throw error
                 } catch (_: Exception) {
-                    // The change feed still delivers these writes and settles them the old way.
+                    // Settle the rows without the confirmation; the change feed still delivers
+                    // these writes and settles their waits the old way.
+                    coordinator.acknowledgeAll(acknowledgements)
                 }
             }
         }
-        superseded.forEach { key -> projectHeldRecord?.invoke(key) }
+        // A superseded write is not echoed back; the newer value it lost to replaces the local edit.
+        acknowledged
+            .filter { (_, result) -> result.status == CoreMutationResultStatus.SUPERSEDED }
+            .forEach { (record, result) ->
+                projectHeldRecord?.invoke(CoreReplicaKey(record.scopeId, record.entityType, result.entityId))
+            }
     }
+
+    override suspend fun acknowledgeAllInBackground(
+        acknowledged: List<CoreOutboxAcknowledgedRecord>,
+        receivedAtEpochMillis: Long,
+    ) {
+        val scope = confirmationScope
+        if (scope == null || acknowledged.isEmpty()) return acknowledgeAll(acknowledged, receivedAtEpochMillis)
+        confirmationOrder.withLock {
+            // Settled in the order Core answered, each after the one before it.
+            val previous = acknowledgementTail
+            acknowledgementTail = scope.launch {
+                previous?.join()
+                try {
+                    acknowledgeAll(acknowledged, receivedAtEpochMillis)
+                } catch (error: CancellationException) {
+                    acknowledgementFailure.compareAndSet(null, error)
+                    throw error
+                } catch (error: Exception) {
+                    // The rows stay leased and pending; the next await reports it and a later
+                    // drain resends them after the lease, which Core dedupes.
+                    acknowledgementFailure.compareAndSet(null, error)
+                }
+            }
+        }
+    }
+
+    override suspend fun awaitAcknowledgements() {
+        confirmationOrder.withLock { acknowledgementTail }?.join()
+        acknowledgementFailure.getAndSet(null)?.let { throw it }
+    }
+
+    override suspend fun awaitConfirmations() = awaitAcknowledgements()
 
     private fun confirmedRecord(acknowledged: CoreOutboxAcknowledgedRecord): CoreConfirmedRecord? {
         val (_, result, originServerId, sentPatch) = acknowledged
@@ -237,6 +261,6 @@ class EpigraphCoordinatorOutboxStore(
     }
 
     private companion object {
-        const val CONFIRMATION_CHUNK = 100
+        const val CONFIRMATION_CHUNK = 500
     }
 }

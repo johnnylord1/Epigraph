@@ -610,7 +610,8 @@ class SuwayomiCatalogSync(
 
     internal companion object {
         const val SUPPORTED_SCHEMA_VERSION = 1
-        const val DEFAULT_PAGE_SIZE = 100L
+        /** The Core's limit: each page is a round trip, which a mesh Wi-Fi makes the cost. */
+        const val DEFAULT_PAGE_SIZE = 250L
         const val MAX_PAGE_SIZE = 250L
         const val MAX_ITEMS = 50_000
         const val PARALLEL_PAGE_READS = 4

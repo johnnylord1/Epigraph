@@ -482,6 +482,11 @@ selectIdentityByLocalReference:
 SELECT * FROM aethon_content_identity
 WHERE content_type = :contentType AND local_reference = :localReference;
 
+-- Every identity of a batch of local titles, for passes that would otherwise look them up one by one.
+selectIdentitiesByLocalReferences:
+SELECT * FROM aethon_content_identity
+WHERE content_type IN ('NOVEL', 'MANGA') AND local_reference IN :localReferences;
+
 selectNovelSourceIds:
 SELECT DISTINCT mangas.source FROM aethon_content_identity AS identity
 JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
@@ -637,6 +642,9 @@ ON CONFLICT(portable_chapter_id) DO UPDATE SET
 selectPortableChapterBinding:
 SELECT * FROM aethon_portable_chapter_binding WHERE portable_chapter_id = :portableChapterId;
 
+selectPortableWorkBindingsByIds:
+SELECT * FROM aethon_portable_work_binding WHERE portable_id IN :portableIds;
+
 selectPortableChapterBindingsByIds:
 SELECT * FROM aethon_portable_chapter_binding WHERE portable_chapter_id IN :portableChapterIds;
 
@@ -645,6 +653,12 @@ SELECT * FROM aethon_portable_chapter_binding
 WHERE local_reference = :localReference AND resolution_state = 'BOUND'
 ORDER BY updated_at DESC
 LIMIT 1;
+
+-- Newest first, as selectPortableWorkBindingByLocalReference picks one per reference.
+selectPortableWorkBindingsByLocalReferences:
+SELECT * FROM aethon_portable_work_binding
+WHERE local_reference IN :localReferences AND resolution_state = 'BOUND'
+ORDER BY updated_at DESC;
 
 -- Newest first, as selectPortableChapterBindingByLocalReference picks one per reference.
 selectPortableChapterBindingsByLocalReferences:
@@ -1289,32 +1303,43 @@ LIMIT :limit;
 -- its own order: all its rows share one entity type, and the drain re-sorts a claim by sequence.
 -- A book entry waits for its file and cover: the Core refuses for good an entry that names a file it
 -- does not have yet, and only a few files go up per batch.
+-- The filter and sort run over sequence numbers only; sorting whole rows, payloads included, made
+-- every claim on a large queue copy the entire outbox through a temporary B-tree.
 selectReadyMutationsForScopes:
 SELECT * FROM aethon_sync_outbox
-WHERE scope_id IN :scopeIds
+WHERE sequence IN (
+SELECT ready.sequence FROM aethon_sync_outbox AS ready
+WHERE ready.scope_id IN :scopeIds
   AND (
-    (status IN ('PENDING', 'ERROR') AND next_attempt_at <= :now)
-    OR (status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now)
+    (ready.status IN ('PENDING', 'ERROR') AND ready.next_attempt_at <= :now)
+    OR (ready.status = 'IN_FLIGHT' AND ready.lease_until IS NOT NULL AND ready.lease_until <= :now)
   )
   AND (
-    entity_type <> 'book.entry'
-    OR operation <> 'upsert_book_entry'
+    ready.entity_type <> 'book.entry'
+    OR ready.operation <> 'upsert_book_entry'
     OR NOT EXISTS (
         SELECT 1 FROM aethon_entity_asset
         JOIN aethon_asset_manifest USING(sha256)
-        WHERE aethon_entity_asset.entity_id = aethon_sync_outbox.entity_id
+        WHERE aethon_entity_asset.entity_id = ready.entity_id
             AND aethon_asset_manifest.state = 'PENDING_UPLOAD'
             AND aethon_asset_manifest.local_uri IS NOT NULL
             AND aethon_asset_manifest.remote_available = 0
     )
   )
+ORDER BY ready.entity_type IN (
+    'comic.chapter_state', 'comic.history', 'comic.page_bookmark',
+    'novel.progress', 'novel.history', 'novel.bookmark',
+    'book.progress', 'book.history', 'book.bookmark', 'book.highlight'
+  ) ASC,
+  ready.sequence ASC
+LIMIT :limit
+)
 ORDER BY entity_type IN (
     'comic.chapter_state', 'comic.history', 'comic.page_bookmark',
     'novel.progress', 'novel.history', 'novel.bookmark',
     'book.progress', 'book.history', 'book.bookmark', 'book.highlight'
   ) ASC,
-  sequence ASC
-LIMIT :limit;
+  sequence ASC;
 
 -- Rows the first-run screen waits for: everything except reading state and rows held as blocked.
 pendingLibraryMutationCountForScopes:
@@ -1899,6 +1924,12 @@ SELECT EXISTS(
     SELECT 1 FROM aethon_core_replica_inbox WHERE global_event_id = :globalEventId
 );
 
+-- Applied events above a replay cursor, so /v1/changes can leave them out.
+selectCoreReplicaInboxEventsAfter:
+SELECT global_event_id FROM aethon_core_replica_inbox
+WHERE global_event_id > :afterVersion
+ORDER BY global_event_id;
+
 -- isCoreReplicaInboxEventApplied for many events at once.
 selectAppliedCoreReplicaInboxEvents:
 SELECT global_event_id FROM aethon_core_replica_inbox WHERE global_event_id IN :globalEventIds;
@@ -2126,10 +2157,14 @@ SELECT canonical_entity_id FROM aethon_sync_replica_wait
 WHERE scope_id = :scopeId AND entity_type = :entityType AND canonical_entity_id IN :entityIds;
 
 -- Entities among :entityIds with an unsent row of this device that a new command may fold into.
+-- Scope and type first, so it reads aethon_sync_outbox_entity_index rather than every row of the
+-- device: a backfill asked this once per batch while its own rows filled the queue.
 selectEntitiesWithUnattemptedMutations:
 SELECT DISTINCT entity_id FROM aethon_sync_outbox
-WHERE device_id = :deviceId
+WHERE scope_id = :scopeId
+  AND entity_type = :entityType
   AND entity_id IN :entityIds
+  AND device_id = :deviceId
   AND status = 'PENDING'
   AND attempt_count = 0;
 
@@ -2165,7 +2200,9 @@ WHERE W.ecosystem = 'SUWAYOMI' AND W.resolution_state = 'BOUND'
       WHERE O.scope_id = :scopeId AND O.entity_type = 'comic.chapter_state'
         AND O.entity_id = 'comic.chapter_state::' || W.portable_id || '::' || PC.portable_chapter_id
   ))
-ORDER BY last_read_at, C._id;
+-- Title by title, each in reading order: confirming a run of one title's chapters writes its
+-- reader position once, where chapters interleaved across titles rewrote it once per chapter.
+ORDER BY C.manga_id, last_read_at, C._id;
 
 -- The most recently read chapter of each bound comic favorite whose reader position the paired
 -- Core neither holds, removed, nor is about to receive.

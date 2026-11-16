@@ -1669,6 +1669,34 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `an echoed category assignment is not projected again`() = runTest {
+        val providerKey = "/title/echoed-assignment"
+        projection.upsert(database, verifiedCoreEntryRecord(providerKey = providerKey))
+        val rowId = database.mangasQueries.findFavorites().executeAsOne()._id
+        val entry = portableEntryRecord(PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey(providerKey)))
+        projection.upsert(database, entry)
+        projection.upsert(database, comicCategoryRecord())
+        val assignment = CoreConfirmedRecord(
+            key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.category_assignment", ASSIGNMENT_ID),
+            serverVersion = 3,
+            lamport = 3,
+            record = buildJsonObject {
+                put("comicId", entry.key.entityId)
+                put("categoryId", CATEGORY_ID)
+            },
+        )
+
+        projection.upsert(database, assignment.copy(echoesLocalState = true))
+        assertEquals(emptyList<String>(), database.categoriesQueries.findAllByMangaId(rowId).executeAsList().map { it.name })
+
+        projection.upsert(database, assignment)
+        assertEquals(
+            listOf(CATEGORY_NAME),
+            database.categoriesQueries.findAllByMangaId(rowId).executeAsList().map { it.name },
+        )
+    }
+
+    @Test
     fun `portable removal and categories reach the row another identity owns`() = runTest {
         val providerKey = "/title/shared"
         projection.upsert(database, verifiedCoreEntryRecord(providerKey = providerKey))
@@ -1736,6 +1764,101 @@ class EpigraphCoreDomainProjectionTest {
         assertEquals(42, row.source)
         assertEquals(providerKey, row.url)
         assertTrue(row.favorite)
+    }
+
+    @Test
+    fun `an echoed library entry of a bound title leaves the row alone unless it changes the favorite`() = runTest {
+        val providerKey = "/title/echoed"
+        val nativeId = insertMangaRow(source = 42, url = providerKey)
+        val ref = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey(providerKey))
+        val portableId = PortableIdentityV3.workId(ref)
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = portableId,
+            contentType = "MANGA",
+            localReference = nativeId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = portableId,
+                ref = ref,
+                localReference = nativeId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = null,
+                providerLabelHint = null,
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
+        // The title differs only to show whether the entry was projected.
+        fun entry(inLibrary: Boolean, echoes: Boolean) = portableEntryRecord(ref).let { base ->
+            base.copy(
+                record = buildJsonObject {
+                    (base.record as JsonObject).forEach { (key, value) -> put(key, value) }
+                    put("inLibrary", inLibrary)
+                    put("title", "Renamed")
+                },
+                echoesLocalState = echoes,
+            )
+        }
+
+        projection.upsert(database, entry(inLibrary = true, echoes = true))
+        assertEquals("Title $providerKey", database.mangasQueries.findById(nativeId).executeAsOne().title)
+
+        projection.upsert(database, entry(inLibrary = false, echoes = true))
+        val removed = database.mangasQueries.findById(nativeId).executeAsOne()
+        assertFalse(removed.favorite)
+        assertEquals("Renamed", removed.title)
+
+        projection.upsert(database, entry(inLibrary = true, echoes = false))
+        assertTrue(database.mangasQueries.findById(nativeId).executeAsOne().favorite)
+    }
+
+    @Test
+    fun `an echoed library entry of a title the catalog owns keeps its alias and only changes the favorite`() = runTest {
+        val providerKey = "/title/catalog-owned"
+        val nativeId = insertMangaRow(source = 42, url = providerKey)
+        val ref = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey(providerKey))
+        val portableId = PortableIdentityV3.workId(ref)
+        val catalogId = "suwayomi:server:desktop:profile:main:manga:7"
+        // The shape a catalog sync leaves: the catalog identity owns the row, the portable one is
+        // parked on itself and aliased to it.
+        database.aethon_syncQueries.upsertIdentity(portableId, "MANGA", portableId, 1, 1)
+        database.aethon_syncQueries.upsertIdentity(catalogId, "MANGA", nativeId.toString(), 1, 1)
+        database.aethon_syncQueries.upsertEntityAlias(portableId, catalogId, 1)
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = portableId,
+                ref = ref,
+                localReference = nativeId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = null,
+                providerLabelHint = null,
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
+        fun entry(inLibrary: Boolean) = portableEntryRecord(ref).let { base ->
+            base.copy(
+                record = buildJsonObject {
+                    (base.record as JsonObject).forEach { (key, value) -> put(key, value) }
+                    put("inLibrary", inLibrary)
+                },
+                echoesLocalState = true,
+            )
+        }
+
+        projection.upsert(database, entry(inLibrary = true))
+        assertTrue(database.mangasQueries.findById(nativeId).executeAsOne().favorite)
+
+        projection.upsert(database, entry(inLibrary = false))
+        assertFalse(database.mangasQueries.findById(nativeId).executeAsOne().favorite)
+        assertEquals(catalogId, database.aethon_syncQueries.selectCanonicalEntityId(portableId).executeAsOne())
+        assertEquals(
+            nativeId.toString(),
+            database.aethon_syncQueries.selectIdentityByEntityId(catalogId).executeAsOne().local_reference,
+        )
     }
 
     @Test

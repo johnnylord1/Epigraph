@@ -175,6 +175,8 @@ class EpigraphCoreHttpClient internal constructor(
         accessToken: String,
         sinceVersion: Long,
         scopeId: String? = null,
+        /** `a-b,c` ranges this device already applied; only for `supportsHeldVersionsV1`. */
+        heldVersions: String? = null,
     ): CoreHttpResult<CoreChangesResponse> {
         require(sinceVersion >= 0) { "sinceVersion must not be negative" }
         require(scopeId == null || scopeId.isNotBlank()) { "scopeId must not be blank" }
@@ -182,6 +184,7 @@ class EpigraphCoreHttpClient internal constructor(
             .newBuilder()
             .addQueryParameter("sinceVersion", sinceVersion.toString())
         scopeId?.let { urlBuilder.addQueryParameter("scopeId", it) }
+        heldVersions?.takeIf { it.isNotEmpty() }?.let { urlBuilder.addQueryParameter("heldVersions", it) }
         return execute(
             protectedRequestBuilder(urlBuilder.build(), accessToken)
                 .get()

@@ -90,6 +90,39 @@ interface CoreReplicaStore {
 /** Reads the last durable cursor without exposing the confirmed rows to the transport layer. */
 interface CoreReplicaCheckpointReader {
     suspend fun latestCheckpoint(coverage: CoreReplayCoverage): CoreReplayCheckpoint?
+
+    /** Inbox versions above [afterVersion], ascending: changes already applied, which replay skips. */
+    suspend fun appliedVersionsAfter(afterVersion: Long): List<Long> = emptyList()
+}
+
+/** Encodes applied versions as the `heldVersions` ranges of `/v1/changes`. */
+object CoreHeldVersions {
+    /** Well under the Core's limit, so the query string stays a few kilobytes. */
+    const val MAX_RANGES = 256
+
+    /**
+     * [ascending] must be sorted. Only the first [maxRanges] runs are sent; a later version is
+     * downloaded and skipped on arrival, as without this option.
+     */
+    fun encode(ascending: List<Long>, maxRanges: Int = MAX_RANGES): String {
+        val out = StringBuilder()
+        var ranges = 0
+        var index = 0
+        while (index < ascending.size && ranges < maxRanges) {
+            val start = ascending[index]
+            var end = start
+            while (index + 1 < ascending.size && ascending[index + 1] == end + 1) {
+                index++
+                end = ascending[index]
+            }
+            index++
+            if (ranges > 0) out.append(',')
+            out.append(start)
+            if (end != start) out.append('-').append(end)
+            ranges++
+        }
+        return out.toString()
+    }
 }
 
 /**

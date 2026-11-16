@@ -360,6 +360,9 @@ class SqlDelightPortableBindingStore(
     }
 
     /** Maps a chapter binding row read in bulk; [knownWork] spares looking its work up. */
+    /** Maps a row read in bulk, e.g. by [selectPortableWorkBindingsByLocalReferences]. */
+    fun workRecord(row: tachiyomi.data.Aethon_portable_work_binding): PortableWorkBindingRecord = mapWork(row)
+
     fun chapterRecord(
         row: tachiyomi.data.Aethon_portable_chapter_binding,
         knownWork: PortableWorkRef? = null,

@@ -67,6 +67,20 @@ interface CoreOutboxStore {
     }
 
     /**
+     * Settles like [acknowledgeAll], but a store may do it in the background while the next batch
+     * is on the network. The rows stay leased, so no claim takes them again, and pending, so nothing
+     * reports them synced, until they are settled. [awaitAcknowledgements] waits for that and
+     * rethrows a failure; a row left unsettled is resent after its lease, and Core dedupes it.
+     */
+    suspend fun acknowledgeAllInBackground(
+        acknowledged: List<CoreOutboxAcknowledgedRecord>,
+        receivedAtEpochMillis: Long,
+    ) = acknowledgeAll(acknowledged, receivedAtEpochMillis)
+
+    /** Waits for every settlement [acknowledgeAllInBackground] started, rethrowing a failure. */
+    suspend fun awaitAcknowledgements() {}
+
+    /**
      * Waits until every acknowledged write is confirmed locally too. A store may confirm them in the
      * background, while the next batch is on the network; the outbox rows are settled already.
      */
@@ -279,8 +293,17 @@ class CoreOutboxDrainer(
             ahead?.releaseNow()
             prepare(authorization, capabilities, nowEpochMillis)
         }
-        if (current.ready.isEmpty()) return current.report(Settlement())
-        if (!current.full) return current.report(send(current))
+        // The last batch of a backlog settles everything before returning: the caller counts the
+        // outbox next, and a row still settling in the background would read as left behind.
+        if (current.ready.isEmpty()) {
+            store.awaitAcknowledgements()
+            return current.report(Settlement())
+        }
+        if (!current.full) {
+            val settled = send(current)
+            store.awaitAcknowledgements()
+            return current.report(settled)
+        }
 
         // A full batch means more rows wait. Claiming and adapting them is local work that would
         // otherwise idle while this request is on the network, so it runs alongside it.
@@ -560,7 +583,8 @@ class CoreOutboxDrainer(
                 }
             }
         }
-        store.acknowledgeAll(acknowledged, nowEpochMillis)
+        // Settling a large response takes about as long as the request; the next one goes out meanwhile.
+        store.acknowledgeAllInBackground(acknowledged, nowEpochMillis)
         return Settlement(ready.size, acknowledged.size, retries, blocked)
     }
 

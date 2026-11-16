@@ -76,6 +76,7 @@ class EpigraphCoreHttpClientTest {
         client.snapshot("one-time-token", "novels:profile:main profile")
         client.changes("one-time-token", 7, "novels:profile:main profile")
         client.changes("one-time-token", 42)
+        client.changes("one-time-token", 42, heldVersions = "43-50,52")
 
         val snapshotRequest = fake.requests[0]
         assertEquals("Bearer one-time-token", snapshotRequest.header("Authorization"))
@@ -89,6 +90,9 @@ class EpigraphCoreHttpClientTest {
         val globalChanges = fake.requests[2]
         assertEquals("42", globalChanges.url.queryParameter("sinceVersion"))
         assertFalse(globalChanges.url.queryParameterNames.contains("scopeId"))
+        assertFalse(globalChanges.url.queryParameterNames.contains("heldVersions"))
+
+        assertEquals("43-50,52", fake.requests[3].url.queryParameter("heldVersions"))
     }
 
     @Test

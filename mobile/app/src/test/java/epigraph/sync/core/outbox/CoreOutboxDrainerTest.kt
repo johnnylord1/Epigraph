@@ -402,6 +402,34 @@ class CoreOutboxDrainerTest {
         assertTrue(store.failed.isEmpty(), "nothing was left prepared after an empty claim")
     }
 
+    @Test
+    fun `responses settle in the background and the last batch waits for all of them`() = runTest {
+        val store = BackgroundAckStore((1L..3L).map { claim(it) })
+        val drainer = drainer(store, acknowledgeAll(), countingLamports(), CoreOutboxDrainConfig(claimLimit = 2))
+        val authorization = authorization()
+
+        drainer.drain(authorization, capabilities(), NOW).also { assertEquals(2, it.acknowledged) }
+        // The full batch returns while its response is still settling.
+        assertEquals(listOf("queued:mutation-1,mutation-2"), store.events)
+        assertTrue(store.acknowledged.isEmpty())
+
+        drainer.drain(authorization, capabilities(), NOW).also { assertEquals(1, it.acknowledged) }
+        assertEquals(listOf("queued:mutation-1,mutation-2", "queued:mutation-3", "await"), store.events)
+        assertEquals(listOf("mutation-1", "mutation-2", "mutation-3"), store.acknowledged)
+    }
+
+    @Test
+    fun `a background settlement failure surfaces from the drain that waits for it`() = runTest {
+        val store = BackgroundAckStore((1L..3L).map { claim(it) }, failure = IllegalStateException("disk full"))
+        val drainer = drainer(store, acknowledgeAll(), countingLamports(), CoreOutboxDrainConfig(claimLimit = 2))
+
+        val authorization = authorization()
+        drainer.drain(authorization, capabilities(), NOW)
+        val error = runCatching { drainer.drain(authorization, capabilities(), NOW) }.exceptionOrNull()
+        assertEquals("disk full", error?.message)
+        assertTrue(store.acknowledged.isEmpty(), "failed rows stay pending for a resend")
+    }
+
     private fun drainer(
         store: CoreOutboxStore,
         gateway: CoreMutationGateway,
@@ -600,6 +628,52 @@ class CoreOutboxDrainerTest {
         ) {
             failed += Failure(identity, errorCode, nextAttemptAtEpochMillis)
         }
+    }
+
+    /** Holds background settlements until the drain waits for them, as the coordinator store does. */
+    private class BackgroundAckStore(
+        claims: List<ClaimedCoreOutboxRecord>,
+        private val failure: Exception? = null,
+    ) : CoreOutboxStore {
+        private val ready = ArrayDeque(claims)
+        private val queued = mutableListOf<List<CoreOutboxAcknowledgedRecord>>()
+        val events = mutableListOf<String>()
+        val acknowledged = mutableListOf<String>()
+
+        override suspend fun claimReady(
+            nowEpochMillis: Long,
+            leaseDurationMillis: Long,
+            limit: Long,
+        ): List<ClaimedCoreOutboxRecord> = List(minOf(limit.toInt(), ready.size)) { ready.removeFirst() }
+
+        override suspend fun acknowledge(
+            record: CoreOutboxRecord,
+            result: CoreMutationResult,
+            receivedAtEpochMillis: Long,
+        ) {
+            acknowledged += record.clientMutationId
+        }
+
+        override suspend fun acknowledgeAllInBackground(
+            acknowledged: List<CoreOutboxAcknowledgedRecord>,
+            receivedAtEpochMillis: Long,
+        ) {
+            events += "queued:" + acknowledged.joinToString(",") { it.record.clientMutationId }
+            queued += acknowledged
+        }
+
+        override suspend fun awaitAcknowledgements() {
+            events += "await"
+            failure?.let { queued.clear(); throw it }
+            queued.flatten().forEach { acknowledged += it.record.clientMutationId }
+            queued.clear()
+        }
+
+        override suspend fun markFailed(
+            identity: CoreOutboxIdentity,
+            errorCode: String,
+            nextAttemptAtEpochMillis: Long,
+        ) = Unit
     }
 
     private data class Failure(

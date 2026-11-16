@@ -90,6 +90,11 @@ data class CoreCapabilities(
      * confirms from their acknowledgement instead of downloading each one again.
      */
     val supportsSkipOwnEchoesV1: Boolean = false,
+    /**
+     * `/v1/changes?heldVersions=a-b,c` leaves out the versions this device already applied, so a
+     * first sync does not download its own upload back after confirming it from the acknowledgements.
+     */
+    val supportsHeldVersionsV1: Boolean = false,
 )
 
 @Serializable

@@ -534,9 +534,12 @@ class EpigraphReaderProgressRouter(
                 val workLookups = WorkLookupCache()
                 // Chapters and their bindings for the whole batch in a few queries: one query per
                 // chapter and lookup held the database for seconds per batch on a large library.
-                workLookups.preload(this, batch.map { it.chapterId })
+                workLookups.preload(this, batch.map { it.chapterId }, batch.map { it.mangaId })
                 val resolvedRows = batch.mapNotNull { row ->
-                    if (novelByManga.getOrPut(row.mangaId) { isNovelWork(row.mangaId) } != false) return@mapNotNull null
+                    val novel = novelByManga.getOrPut(row.mangaId) {
+                        workLookups.isNovel(row.mangaId) { isNovelWork(row.mangaId) }
+                    }
+                    if (novel != false) return@mapNotNull null
                     val readAt = row.readAt.coerceAtLeast(0)
                     val envelope = if (history) {
                         backfillHistoryEnvelope(row, scopes, now, workLookups)
@@ -899,7 +902,32 @@ class EpigraphReaderProgressRouter(
         var preloaded = false
             private set
 
-        fun preload(database: Database, chapterIds: List<Long>) {
+        fun preload(database: Database, chapterIds: List<Long>, mangaIds: List<Long> = emptyList()) {
+            // Titles first: a batch ordered by read time spans hundreds of titles, so a lookup per
+            // title still cost one query per chapter.
+            val store = SqlDelightPortableBindingStore(database)
+            mangaIds.distinct().chunked(PRELOAD_CHUNK).forEach { chunk ->
+                val references = chunk.map(Long::toString)
+                chunk.forEach { works[it] = null }
+                // Newest first: the first bound row of a title is the one a single lookup returns.
+                database.aethon_syncQueries.selectPortableWorkBindingsByLocalReferences(references)
+                    .executeAsList()
+                    .forEach { row ->
+                        val mangaId = row.local_reference?.toLongOrNull() ?: return@forEach
+                        if (works[mangaId] == null) works[mangaId] = store.workRecord(row)
+                    }
+                chunk.forEach { mangaId ->
+                    identities[NOVEL_IDENTITY to mangaId] = null
+                    identities[MANGA_IDENTITY to mangaId] = null
+                }
+                database.aethon_syncQueries.selectIdentitiesByLocalReferences(references).executeAsList()
+                    .forEach { row ->
+                        val mangaId = row.local_reference.toLongOrNull() ?: return@forEach
+                        if (row.content_type == NOVEL_IDENTITY || row.content_type == MANGA_IDENTITY) {
+                            identities[row.content_type to mangaId] = row
+                        }
+                    }
+            }
             chapterIds.distinct().chunked(PRELOAD_CHUNK).forEach { chunk ->
                 database.chaptersQueries.getChaptersByIds(chunk).executeAsList()
                     .forEach { chapters[it._id] = it }
@@ -912,6 +940,19 @@ class EpigraphReaderProgressRouter(
                     .forEach { row -> legacyBindings.putIfAbsent(row.local_chapter_id, row) }
             }
             preloaded = true
+        }
+
+        /** Same answer as [isNovelWork], from the titles [preload] read; [load] otherwise. */
+        fun isNovel(localMangaId: Long, load: () -> Boolean?): Boolean? {
+            if (localMangaId !in works) return load()
+            val bound = works[localMangaId]?.takeIf { it.resolution.state == PortableResolutionState.BOUND }?.ref
+            if (bound is PortableWorkRef.Novel) return true
+            if (bound is PortableWorkRef.Comic) return false
+            return when {
+                identities[NOVEL_IDENTITY to localMangaId] != null -> true
+                identities[MANGA_IDENTITY to localMangaId] != null -> false
+                else -> null
+            }
         }
 
         fun chapter(chapterId: Long): Chapters? = chapters[chapterId]
@@ -966,6 +1007,8 @@ class EpigraphReaderProgressRouter(
          */
         const val BACKFILL_BATCH = 500
         const val PRELOAD_CHUNK = 500
+        const val NOVEL_IDENTITY = "NOVEL"
+        const val MANGA_IDENTITY = "MANGA"
         const val KNOWN_TO_CORE_CHUNK = 100
         const val BACKFILL_MAX_COMMANDS = 100_000
 

@@ -170,9 +170,14 @@ class EpigraphMutationCoordinator(
         val foldable = envelopes.filter { OutboxFolding.isFoldable(it.command) }
         if (foldable.size < FOLD_PRECHECK_MIN) return null
         val candidates = HashSet<Pair<String, String>>()
-        foldable.groupBy({ it.deviceId.value }, { it.command.entityId.value }).forEach { (deviceId, entityIds) ->
+        // A row folds only into one of the same scope and type (foldIntoUnsent), so ask per pair.
+        foldable.groupBy(
+            { Triple(it.deviceId.value, it.scopeId.value, it.entityType.value) },
+            { it.command.entityId.value },
+        ).forEach { (key, entityIds) ->
+            val (deviceId, scopeId, entityType) = key
             entityIds.distinct().chunked(FOLD_PRECHECK_CHUNK).forEach { chunk ->
-                aethon_syncQueries.selectEntitiesWithUnattemptedMutations(deviceId, chunk)
+                aethon_syncQueries.selectEntitiesWithUnattemptedMutations(scopeId, entityType, chunk, deviceId)
                     .executeAsList()
                     .forEach { entityId -> candidates += deviceId to entityId }
             }
@@ -273,6 +278,80 @@ class EpigraphMutationCoordinator(
         }
     }
 
+    /**
+     * Settles one Core response and confirms it in the same transaction. The outbox rows go first,
+     * so [confirm] does not read them as newer local work, and a replica wait is created only for a
+     * write the mirror does not hold yet once [confirm] has run: the rest are already settled, and
+     * writing a wait just to delete it was most of the cost of a large first sync.
+     */
+    suspend fun acknowledgeAndConfirm(
+        acknowledgements: List<EpigraphMutationAcknowledgement>,
+        confirm: suspend () -> Unit,
+    ) {
+        if (acknowledgements.isEmpty()) return
+        databaseHandler.await(inTransaction = true) {
+            acknowledgements.forEach { acknowledgement ->
+                aethon_syncQueries.upsertReceipt(
+                    deviceId = acknowledgement.deviceId.value,
+                    clientMutationId = acknowledgement.clientMutationId.value,
+                    canonicalEntityId = acknowledgement.canonicalEntityId?.value,
+                    receivedAt = acknowledgement.receivedAtEpochMillis,
+                )
+            }
+            val byDevice = acknowledgements.groupBy({ it.deviceId.value }, { it.clientMutationId.value })
+            byDevice.forEach { (deviceId, ids) ->
+                ids.distinct().chunked(ACK_BULK_CHUNK).forEach { chunk ->
+                    aethon_syncQueries.deleteAcknowledgedMutations(deviceId, chunk)
+                }
+            }
+            confirm()
+            val held = heldVersions(acknowledgements)
+            acknowledgements.forEach { acknowledgement ->
+                val settled = sequenceOf(acknowledgement.entityId, acknowledgement.canonicalEntityId)
+                    .filterNotNull()
+                    .any { id ->
+                        val version = held[Triple(acknowledgement.scopeId.value, acknowledgement.entityType, id.value)]
+                        version != null && version >= acknowledgement.requiredServerVersion
+                    }
+                if (!settled) upsertReplicaWait(acknowledgement)
+            }
+            // A wait an earlier attempt at the same write left behind.
+            byDevice.forEach { (deviceId, ids) ->
+                ids.distinct().chunked(ACK_BULK_CHUNK).forEach { chunk ->
+                    aethon_syncQueries.reconcileReplicaWaitsWithApplied(deviceId, chunk)
+                }
+            }
+        }
+    }
+
+    /** The newest version the mirror holds, as a record or a tombstone, for each acknowledged id. */
+    private fun Database.heldVersions(
+        acknowledgements: List<EpigraphMutationAcknowledgement>,
+    ): Map<Triple<String, String, String>, Long> {
+        val held = HashMap<Triple<String, String, String>, Long>()
+        acknowledgements
+            .groupBy({ it.scopeId.value to it.entityType }) { it }
+            .forEach { (group, rows) ->
+                val (scopeId, entityType) = group
+                rows.flatMap { listOfNotNull(it.entityId.value, it.canonicalEntityId?.value) }
+                    .distinct()
+                    .chunked(ACK_BULK_CHUNK)
+                    .forEach { chunk ->
+                        aethon_syncQueries.selectCoreReplicaRecordVersionsByIds(scopeId, entityType, chunk)
+                            .executeAsList()
+                            .forEach { row ->
+                                held.merge(Triple(scopeId, entityType, row.entity_id), row.server_version, ::maxOf)
+                            }
+                        aethon_syncQueries.selectCoreReplicaTombstoneVersionsByIds(scopeId, entityType, chunk)
+                            .executeAsList()
+                            .forEach { row ->
+                                held.merge(Triple(scopeId, entityType, row.entity_id), row.server_version, ::maxOf)
+                            }
+                    }
+            }
+        return held
+    }
+
     private fun Database.settleAcknowledgement(acknowledgement: EpigraphMutationAcknowledgement) {
         recordAcknowledgement(acknowledgement)
         aethon_syncQueries.reconcileReplicaWaitWithApplied(
@@ -292,6 +371,10 @@ class EpigraphMutationCoordinator(
             canonicalEntityId = acknowledgement.canonicalEntityId?.value,
             receivedAt = acknowledgement.receivedAtEpochMillis,
         )
+        upsertReplicaWait(acknowledgement)
+    }
+
+    private fun Database.upsertReplicaWait(acknowledgement: EpigraphMutationAcknowledgement) {
         aethon_syncQueries.upsertReplicaWait(
             deviceId = acknowledgement.deviceId.value,
             clientMutationId = acknowledgement.clientMutationId.value,

@@ -526,6 +526,75 @@ class EpigraphMutationCoordinatorTest {
         assertEquals(0, coordinator.pendingCount())
     }
 
+    private fun comicAck(deviceId: DeviceId, mutationId: String, entityId: String, version: Long) =
+        EpigraphMutationAcknowledgement(
+            deviceId = deviceId,
+            clientMutationId = ClientMutationId(mutationId),
+            scopeId = SyncScopeId("comics:profile:main"),
+            entityType = "comic.entry",
+            entityId = EpigraphEntityId(entityId),
+            canonicalEntityId = null,
+            resultStatus = "APPLIED",
+            requiredServerVersion = version,
+            appliedLamport = 1,
+            eventClockJson = null,
+            canonicalRecordSha256 = null,
+            receivedAtEpochMillis = 120,
+        )
+
+    @Test
+    fun `rows confirmed with their ack leave no wait while the others still wait`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        listOf("a", "b").forEach { coordinator.mutateLocal(envelope(deviceId, ClientMutationId(it)), 100) { Unit } }
+        coordinator.claimReady(100, leaseDurationMillis = 1_000, limit = 10)
+
+        coordinator.acknowledgeAndConfirm(
+            listOf(comicAck(deviceId, "a", "manga:confirmed", 5), comicAck(deviceId, "b", "manga:pending", 6)),
+        ) {
+            // The confirmation writes only the first record into the replica mirror.
+            database.aethon_syncQueries.upsertCoreReplicaRecord(
+                scopeId = "comics:profile:main",
+                entityType = "comic.entry",
+                entityId = "manga:confirmed",
+                serverVersion = 5,
+                lamport = 1,
+                recordJson = "{}",
+                payloadSha256 = "a".repeat(64),
+            )
+        }
+
+        assertEquals(0, coordinator.pendingCount())
+        assertEquals(1, database.aethon_syncQueries.replicaWaitCount().executeAsOne())
+        assertEquals(
+            6,
+            database.aethon_syncQueries.selectReplicaWait(deviceId.value, "b").executeAsOne().required_server_version,
+        )
+        // The UI keeps counting the write the replica has not reached.
+        assertEquals(1, coordinator.unsettledCount())
+    }
+
+    @Test
+    fun `a failed confirmation leaves its rows unacknowledged`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        coordinator.mutateLocal(envelope(deviceId, ClientMutationId("a")), 100) { Unit }
+        coordinator.claimReady(100, leaseDurationMillis = 1_000, limit = 10)
+
+        runCatching {
+            coordinator.acknowledgeAndConfirm(listOf(comicAck(deviceId, "a", "manga:x", 5))) {
+                error("projection failed")
+            }
+        }
+
+        assertEquals(1, coordinator.pendingCount())
+        assertEquals(0, database.aethon_syncQueries.replicaWaitCount().executeAsOne())
+        assertEquals(null, database.aethon_syncQueries.selectReceipt(deviceId.value, "a").executeAsOneOrNull())
+
+        // The plain acknowledgement then settles them and waits for the change feed.
+        coordinator.acknowledgeAll(listOf(comicAck(deviceId, "a", "manga:x", 5)))
+        assertEquals(0, coordinator.pendingCount())
+        assertEquals(1, database.aethon_syncQueries.replicaWaitCount().executeAsOne())
+    }
+
     @Test
     fun `local progress remains writable after a newer remote revision`() = runTest {
         database.aethon_syncQueries.upsertIdentity(

@@ -129,6 +129,26 @@ class EpigraphCoreDomainProjection(
 
     override suspend fun preload(database: Database, records: List<CoreConfirmedRecord>) {
         val batch = currentCoroutineContext()[CoreProjectionBatch] ?: return
+        // Work bindings, so a batch spanning hundreds of titles does not look each one up.
+        val works = records.asSequence()
+            .filter { it.key.entityType == "comic.chapter_state" || it.key.entityType == "comic.history" }
+            .mapNotNull { record ->
+                (record.record as? JsonObject)?.get("portableWorkRef")?.let { element ->
+                    runCatching { json.decodeFromJsonElement<PortableWorkRef.Comic>(element) }.getOrNull()
+                }
+            }
+            .distinct()
+            .associateBy(batch::workId)
+        if (works.isNotEmpty()) {
+            val store = SqlDelightPortableBindingStore(database)
+            works.keys.chunked(PRELOAD_CHUNK).forEach { chunk ->
+                database.aethon_syncQueries.selectPortableWorkBindingsByIds(chunk).executeAsList().forEach { row ->
+                    val binding = store.workRecord(row)
+                    // Only a row a lookup by reference would also return answers for it.
+                    if (binding.ref == works[row.portable_id]) batch.works.putIfAbsent(row.portable_id, binding)
+                }
+            }
+        }
         records.asSequence()
             .filter { it.key.entityType == "comic.chapter_state" }
             .mapNotNull { record ->
@@ -154,9 +174,15 @@ class EpigraphCoreDomainProjection(
         if (database.hasBlockingLocalMutation(record.key, record.serverVersion, batch)) return
         val obj = record.record as? JsonObject ?: return
         when (record.key.entityType) {
-            "comic.entry" -> projectComicEntry(database, record.key.entityId, obj)
+            "comic.entry" -> if (!(record.echoesLocalState && echoesBoundComicEntry(database, record.key.entityId, obj))) {
+                projectComicEntry(database, record.key.entityId, obj)
+            }
             "comic.category" -> projectCategory(database, record.key.entityId, obj, "MANGA")
-            "comic.category_assignment" -> projectComicAssignment(database, obj, assigned = true)
+            // This phone's own assignment, read from the category row it would insert again: on a
+            // first sync resolving the title and category cost several lookups per favorite.
+            "comic.category_assignment" -> if (!record.echoesLocalState) {
+                projectComicAssignment(database, obj, assigned = true)
+            }
             "comic.chapter_state" -> projectComicChapterState(database, record, batch)
             "comic.history" -> projectComicHistory(database, record, obj, batch)
             // Page bookmarks remain in the confirmed Core mirror until the reader exposes a
@@ -457,7 +483,37 @@ class EpigraphCoreDomainProjection(
         ).executeAsList().singleOrNull()
     }
 
+    /**
+     * This phone's own library entry, confirmed unchanged, for a work whose portable binding,
+     * identity (its own, or the catalog identity it is an alias of) and favorite flag already say
+     * what the entry says. Projecting it would rewrite the row, or the alias, with the values it
+     * was read from: about twenty statements per title on a first sync.
+     */
+    private fun echoesBoundComicEntry(database: Database, entityId: String, record: JsonObject): Boolean {
+        if (!record.carries("portableWorkRef")) return false
+        val ref = portableComicReference(record) ?: return false
+        if (PortableIdentityV3.workId(ref) != entityId) return false
+        if ((record.string("comicId") ?: record.string("mangaId") ?: entityId) != entityId) return false
+        val binding = SqlDelightPortableBindingStore(database).work(ref) ?: return false
+        if (binding.resolution.state != PortableResolutionState.BOUND) return false
+        val localId = binding.localReference?.toLongOrNull()?.takeIf { it > 0 } ?: return false
+        val owner = database.aethon_syncQueries
+            .selectIdentityByLocalReference(contentType = "MANGA", localReference = localId.toString())
+            .executeAsOneOrNull()
+            ?.entity_id
+            ?: return false
+        val ownsRow = owner == entityId ||
+            localMangaId(database, entityId) == null &&
+            database.aethon_syncQueries.selectCanonicalEntityId(entityId).executeAsOneOrNull() == owner
+        if (!ownsRow) return false
+        val manga = database.mangasQueries.findById(localId).executeAsOneOrNull() ?: return false
+        val sameWork = manga.source == ref.sourceId.toLong() && manga.url == ref.mangaKey.value ||
+            manga.source == EpigraphCoreSource.ID
+        return sameWork && record.boolean("inLibrary")?.let { it == manga.favorite } ?: true
+    }
+
     /** Projects a Core comic entry into the existing local manga/library row. */
+
     private fun projectComicEntry(database: Database, entityId: String, record: JsonObject) {
         val comicId = record.string("comicId") ?: record.string("mangaId") ?: entityId
         val coreReference = verifiedCoreMangaReference(entityId, record)

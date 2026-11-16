@@ -28,6 +28,7 @@ import epigraph.sync.core.protocol.SuwayomiCommandRequest
 import epigraph.sync.core.protocol.SuwayomiCommandResponse
 import epigraph.sync.core.policy.EffectiveSyncPolicy
 import epigraph.sync.core.policy.SyncPolicyResolver
+import epigraph.sync.core.replica.CoreHeldVersions
 import epigraph.sync.core.replica.CoreReplicaApplier
 import epigraph.sync.core.replica.CoreReplicaCheckpointReader
 import epigraph.sync.core.replica.CoreReplicaCheckpointResetter
@@ -397,7 +398,14 @@ class SnapshotCoreReplicaSync(
                     val coverage = CoreReplayCoverage.Filtered(scopeId)
                     val checkpoint = checkpoints.latestCheckpoint(coverage)
                     val response = checkpoint?.let {
-                        http.changes(accessToken, it.lastGlobalEventId, scopeId)
+                        // Mostly this device's own first-sync upload, already confirmed from the
+                        // acknowledgements: megabytes that would only be skipped on arrival.
+                        val held = if (capabilities.supportsHeldVersionsV1) {
+                            CoreHeldVersions.encode(checkpoints.appliedVersionsAfter(it.lastGlobalEventId))
+                        } else {
+                            null
+                        }
+                        http.changes(accessToken, it.lastGlobalEventId, scopeId, held)
                     }
                     // A Core whose change log was rewound publishes versions below cursors this
                     // phone already holds. Every new change would then look already applied, so the

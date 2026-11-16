@@ -40,6 +40,15 @@ WHERE profile_id = :profileId
 ORDER BY sequence ASC
 LIMIT :limit;
 
+hasClaimableForProfile:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_suwayomi_mutation_queue
+    WHERE status IN ('PENDING', 'ERROR') AND next_attempt_at <= :now AND profile_id = :profileId
+) OR EXISTS(
+    SELECT 1 FROM aethon_suwayomi_mutation_queue
+    WHERE status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now
+);
+
 pendingCount:
 SELECT COUNT(*) FROM aethon_suwayomi_mutation_queue
 WHERE status IN ('PENDING', 'IN_FLIGHT', 'ERROR');

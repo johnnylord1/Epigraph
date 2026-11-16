@@ -83,7 +83,18 @@ class SuwayomiMutationQueueDrainer(
         )
     }
 
-    private suspend fun claim(now: Long, profileId: String): List<Aethon_suwayomi_mutation_queue> = database.await(inTransaction = true) {
+    private suspend fun claim(now: Long, profileId: String): List<Aethon_suwayomi_mutation_queue> {
+        // Usually empty: a read does not wait behind the outbox confirmations for the writer.
+        val claimable = database.await {
+            aethon_suwayomi_mutation_queueQueries.hasClaimableForProfile(now, profileId).executeAsOne()
+        }
+        return if (claimable) claimInTransaction(now, profileId) else emptyList()
+    }
+
+    private suspend fun claimInTransaction(
+        now: Long,
+        profileId: String,
+    ): List<Aethon_suwayomi_mutation_queue> = database.await(inTransaction = true) {
         aethon_suwayomi_mutation_queueQueries.recoverExpired(now)
         aethon_suwayomi_mutation_queueQueries
             .selectReadyForProfile(profileId, now, MAX_BATCH.toLong())

@@ -37,6 +37,11 @@ class SqlDelightCoreReplicaStore(
             }
         }
 
+    override suspend fun appliedVersionsAfter(afterVersion: Long): List<Long> =
+        databaseHandler.await {
+            aethon_syncQueries.selectCoreReplicaInboxEventsAfter(afterVersion).executeAsList()
+        }
+
     override suspend fun latestCheckpoint(coverage: CoreReplayCoverage): CoreReplayCheckpoint? =
         databaseHandler.await {
             val key = coverageKey(coverage)
