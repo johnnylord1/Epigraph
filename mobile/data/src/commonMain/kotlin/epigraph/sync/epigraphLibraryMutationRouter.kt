@@ -103,6 +103,38 @@ class EpigraphLibraryMutationRouter(
     ): LibraryMembershipMutationResult {
         val currentScopes = scopeProvider.current()
         return coordinator.mutateLocalBatch(createdAtEpochMillis) {
+            membershipChange(mutation, currentScopes, createdAtEpochMillis)
+        }
+    }
+
+    /**
+     * Applies several membership changes in one transaction, as a repair of many favorites does.
+     * Each change reads what the ones before it wrote, exactly as consecutive [setMembership] calls
+     * would, but the outbox rows land together and the database commits once. One failing change
+     * rolls the whole batch back; callers that need the others to land retry them one by one.
+     */
+    suspend fun setMemberships(
+        mutations: List<LibraryMembershipMutation>,
+        createdAtEpochMillis: Long,
+    ): List<LibraryMembershipMutationResult> {
+        if (mutations.isEmpty()) return emptyList()
+        val currentScopes = scopeProvider.current()
+        return coordinator.mutateLocalBatch(createdAtEpochMillis) {
+            val changes = mutations.map { membershipChange(it, currentScopes, createdAtEpochMillis) }
+            LocalMutationResult(
+                value = changes.map { it.value },
+                envelopes = changes.flatMap { it.envelopes },
+                suwayomiMutations = changes.flatMap { it.suwayomiMutations },
+                wakesSync = changes.any { it.wakesSync },
+            )
+        }
+    }
+
+    private suspend fun yokai.data.Database.membershipChange(
+        mutation: LibraryMembershipMutation,
+        currentScopes: EpigraphSyncScopes,
+        createdAtEpochMillis: Long,
+    ): LocalMutationResult<LibraryMembershipMutationResult> {
         val manga = mangasQueries.findById(mutation.localMangaId).executeAsOneOrNull()
             ?: error("manga ${mutation.localMangaId} does not exist")
 
@@ -454,7 +486,7 @@ class EpigraphLibraryMutationRouter(
             emptyList()
         }
 
-        LocalMutationResult(
+        return LocalMutationResult(
             value = LibraryMembershipMutationResult(
                 changed = identityProvisioned || membershipChanged ||
                     removedCategoryIds.isNotEmpty() || addedCategoryIds.isNotEmpty(),
@@ -470,7 +502,6 @@ class EpigraphLibraryMutationRouter(
             wakesSync = !isNovel && mutation.origin.emitsOutbox &&
                 addedCategoryIds.any { it !in categoryEntities },
         )
-        }
     }
 
     /** Books and novels share the folder: a desktop Books category bound for books keeps its one id. */

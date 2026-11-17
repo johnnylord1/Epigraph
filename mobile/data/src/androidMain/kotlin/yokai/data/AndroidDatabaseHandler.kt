@@ -21,7 +21,7 @@ import yokai.data.util.mapToFirstOrNull
 
 class AndroidDatabaseHandler(
     val db: Database,
-    private val driver: SqlDriver,
+    override val driver: SqlDriver,
     val queryDispatcher: CoroutineDispatcher = Dispatchers.IO,
     val transactionDispatcher: CoroutineDispatcher = queryDispatcher
 ) : DatabaseHandler {

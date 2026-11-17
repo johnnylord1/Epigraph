@@ -266,6 +266,44 @@ class EpigraphLibraryMutationRouterTest {
     }
 
     @Test
+    fun `a batch of first favorites commits together and rolls back together`() = runTest {
+        val first = insertManga(favorite = false, url = "/comic/1")
+        val second = insertManga(favorite = false, url = "/comic/2")
+        val router = router(sequentialMutationIds())
+        fun favorite(mangaId: Long, key: String) = LibraryMembershipMutation(
+            localMangaId = mangaId,
+            inLibrary = true,
+            categoryIds = emptySet(),
+            origin = EpigraphMutationOrigin.LOCAL_USER,
+            portableWorkRef = PortableWorkRef.Comic(DecimalSourceId("1"), ProviderOwnedKey(key)),
+        )
+
+        val failure = runCatching {
+            router.setMemberships(listOf(favorite(first, "/comic/1"), favorite(9_999, "/comic/9")), 100)
+        }.exceptionOrNull()
+        assertNotNull(failure)
+        assertFalse(database.mangasQueries.findById(first).executeAsOne().favorite)
+        assertEquals(0, database.aethon_syncQueries.pendingMutationCount().executeAsOne())
+
+        val results = router.setMemberships(
+            listOf(favorite(first, "/comic/1"), favorite(second, "/comic/2")),
+            createdAtEpochMillis = 100,
+        )
+
+        assertEquals(listOf(1, 1), results.map { it.emittedCommandCount })
+        assertTrue(database.mangasQueries.findById(first).executeAsOne().favorite)
+        assertTrue(database.mangasQueries.findById(second).executeAsOne().favorite)
+        val commands = coordinator.claimReady(100, 1_000, 10)
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command as SyncCommand.SetLibraryMembership }
+        assertEquals(
+            listOf("/comic/1", "/comic/2").map {
+                PortableIdentityV3.workId(PortableWorkRef.Comic(DecimalSourceId("1"), ProviderOwnedKey(it)))
+            },
+            commands.map { it.entityId.value },
+        )
+    }
+
+    @Test
     fun `remote replay and source refresh apply without echo`() = runTest {
         val mangaId = insertManga(favorite = false)
         val categoryId = insertCategory("Remote", sort = 0)
@@ -799,10 +837,10 @@ class EpigraphLibraryMutationRouterTest {
         return ClientMutationIdFactory { ClientMutationId("mutation-${++sequence}") }
     }
 
-    private fun insertManga(favorite: Boolean): Long {
+    private fun insertManga(favorite: Boolean, url: String = "/comic/1"): Long {
         database.mangasQueries.insert(
             source = 1,
-            url = "/comic/1",
+            url = url,
             artist = null,
             author = null,
             description = null,

@@ -66,30 +66,38 @@ class LocalNovelLibraryOutboxRepair(
             }
         }
 
+        val mutations = candidates.mapNotNull { candidate ->
+            val source = novelSources[candidate.sourceId] ?: return@mapNotNull null
+            candidate.mangaId to LibraryMembershipMutation(
+                localMangaId = candidate.mangaId,
+                inLibrary = true,
+                categoryIds = candidate.categoryIds,
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+                portableWorkRef = PortableWorkRef.Novel(
+                    pluginId = source.pluginId,
+                    novelKey = ProviderOwnedKey(candidate.providerKey),
+                ).takeUnless { candidate.republish },
+                republish = candidate.republish,
+            )
+        }
+        // One transaction for the whole repair; a failing entry rolls it back and each is tried alone.
+        try {
+            return router.setMemberships(mutations.map { it.second }, System.currentTimeMillis())
+                .sumOf { it.emittedCommandCount }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            Logger.w(failure) { "Unable to repair ${mutations.size} local novel library bindings together" }
+        }
         var emitted = 0
-        candidates.forEach { candidate ->
-            val source = novelSources[candidate.sourceId] ?: return@forEach
+        mutations.forEach { (mangaId, mutation) ->
             try {
-                val result = router.setMembership(
-                    mutation = LibraryMembershipMutation(
-                        localMangaId = candidate.mangaId,
-                        inLibrary = true,
-                        categoryIds = candidate.categoryIds,
-                        origin = EpigraphMutationOrigin.LOCAL_USER,
-                        portableWorkRef = PortableWorkRef.Novel(
-                            pluginId = source.pluginId,
-                            novelKey = ProviderOwnedKey(candidate.providerKey),
-                        ).takeUnless { candidate.republish },
-                        republish = candidate.republish,
-                    ),
-                    createdAtEpochMillis = System.currentTimeMillis(),
-                )
-                emitted += result.emittedCommandCount
+                emitted += router.setMembership(mutation, System.currentTimeMillis()).emittedCommandCount
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
                 Logger.w(failure) {
-                    "Unable to repair local novel library binding for manga=${candidate.mangaId}"
+                    "Unable to repair local novel library binding for manga=$mangaId"
                 }
             }
         }

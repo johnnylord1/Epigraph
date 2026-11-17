@@ -11,6 +11,7 @@ import epigraph.sync.core.http.EpigraphCoreHttpClient
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.pairing.BootstrapBundleParser
 import epigraph.sync.core.pairing.transport.EpigraphCoreTlsClientFactory
+import epigraph.sync.core.protocol.CoreSessionResponse
 import eu.kanade.tachiyomi.BuildConfig
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
@@ -20,9 +21,14 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
+/**
+ * [probedSession] is the `GET /v1/session` answer that just proved this endpoint, so its caller need
+ * not ask again; null when the endpoint was reused from an earlier probe.
+ */
 data class CoreEndpoint(
     val origin: String,
     val discovered: Boolean,
+    val probedSession: CoreSessionResponse? = null,
 )
 
 fun interface CoreEndpointResolver {
@@ -63,7 +69,7 @@ class AndroidCoreEndpointResolver(
                 tokenId = session.tokenId,
                 serverId = session.serverId,
                 tlsCertSha256 = session.tlsCertSha256,
-                endpoint = endpoint,
+                endpoint = endpoint.copy(probedSession = null),
                 probedAtMs = SystemClock.elapsedRealtime(),
             )
         }
@@ -73,7 +79,7 @@ class AndroidCoreEndpointResolver(
         val candidates = pairedEndpointCandidates(session)
         if (BuildConfig.DEBUG) Log.d(LOG_TAG, "endpoint candidates: ${candidates.joinToString()}")
         candidates.forEachIndexed { index, origin ->
-            if (probe(origin, session)) return CoreEndpoint(origin, discovered = false)
+            probe(origin, session)?.let { answer -> return CoreEndpoint(origin, discovered = false, answer) }
             Log.w(LOG_TAG, "paired endpoint probe failed: candidate=${index + 1}")
         }
         require(session.serverId != LEGACY_UNBOUND_SERVER_ID) {
@@ -82,11 +88,14 @@ class AndroidCoreEndpointResolver(
         val discovered = withTimeoutOrNull(DISCOVERY_TIMEOUT_MS) {
             discover(session)
         } ?: error("Paired Epigraph Core endpoint was not discovered")
-        check(probe(discovered, session)) { "Discovered Epigraph Core endpoint failed authentication" }
-        return CoreEndpoint(discovered, discovered = true)
+        val answer = checkNotNull(probe(discovered, session)) {
+            "Discovered Epigraph Core endpoint failed authentication"
+        }
+        return CoreEndpoint(discovered, discovered = true, answer)
     }
 
-    private suspend fun probe(origin: String, session: CoreCredentialSession): Boolean =
+    /** The session the Core at [origin] answered with, when it is the paired one; otherwise null. */
+    private suspend fun probe(origin: String, session: CoreCredentialSession): CoreSessionResponse? =
         try {
             val client = EpigraphCoreHttpClient(
                 tlsClients.create(session.tlsCertSha256),
@@ -107,7 +116,7 @@ class AndroidCoreEndpointResolver(
                         if (!identityMatches) {
                             Log.w(LOG_TAG, "paired endpoint identity mismatch")
                         }
-                        identityMatches
+                        response.value.takeIf { identityMatches }
                     }
                     is CoreHttpResult.Failure -> {
                         if (response.statusCode == 401 || response.statusCode == 403) {
@@ -122,7 +131,7 @@ class AndroidCoreEndpointResolver(
                             "paired endpoint rejected session: status=${response.statusCode} " +
                                 "code=${response.errorEnvelope?.error?.code ?: "none"}",
                         )
-                        false
+                        null
                     }
                 }
             }
@@ -141,7 +150,7 @@ class AndroidCoreEndpointResolver(
                 "paired endpoint transport failed: ${error::class.simpleName}: ${error.message}",
             )
             Log.w(LOG_TAG, "paired endpoint transport stack: ${Log.getStackTraceString(error)}")
-            false
+            null
         }
 
     private fun Throwable.hasFingerprintMismatch(): Boolean =

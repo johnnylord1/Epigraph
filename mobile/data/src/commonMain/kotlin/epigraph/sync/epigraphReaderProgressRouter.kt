@@ -484,12 +484,16 @@ class EpigraphReaderProgressRouter(
      * titles without a bound portable identity wait for it. [filter] holds chapters back for this
      * run, such as progress the desktop's Suwayomi already holds and would only receive as an echo.
      * [onBatchQueued] runs after each committed batch, so sending can start before the scan ends.
-     * Returns the number of commands queued.
+     * With [stage], each batch's commands go to it (dated when the change happened) instead of the
+     * durable outbox: they carry no local edit, only state the domain tables keep, so a command
+     * lost before Core holds it is found again by the next backfill. [stage] returns how many it
+     * took. Returns the number of commands queued.
      */
     suspend fun backfillComicProgress(
         maxCommands: Int = BACKFILL_MAX_COMMANDS,
         filter: ComicProgressBackfillFilter = ComicProgressBackfillFilter.NONE,
         onBatchQueued: () -> Unit = {},
+        stage: (suspend (List<Pair<SyncCommandEnvelope, Long>>) -> Int)? = null,
     ): Int {
         val scopes = pairedScopes() ?: return 0
         val comicScope = scopes.comics.value
@@ -527,7 +531,7 @@ class EpigraphReaderProgressRouter(
         for ((batch, history) in batches) {
             if (emitted >= maxCommands) break
             val now = clock().also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
-            val queued = coordinator.mutateLocalBatch(now) {
+            val build: suspend Database.() -> LocalMutationResult<Int> = {
                 val novelByManga = mutableMapOf<Long, Boolean?>()
                 // Work bindings and identities are per title, and a batch walks many chapters of the
                 // same title; they are not written here, so one lookup per title serves the batch.
@@ -548,6 +552,7 @@ class EpigraphReaderProgressRouter(
                     }
                     envelope?.let { it to readAt }
                 }
+                SqlDelightPortableBindingStore(this).upsertChapters(coordinator.driver, workLookups.takeNewChapterBindings())
                 // A chapter that had no portable binding yet was listed without checking Core.
                 val dated = if (history) resolvedRows else withoutKnownToCore(resolvedRows)
                 LocalMutationResult(
@@ -555,6 +560,17 @@ class EpigraphReaderProgressRouter(
                     envelopes = dated.map { it.first },
                     envelopeCreatedAt = dated.associate { (envelope, readAt) -> envelope.clientMutationId to readAt },
                 )
+            }
+            val queued = if (stage == null) {
+                coordinator.mutateLocalBatch(now, build)
+            } else {
+                // Still a write transaction: resolving a chapter may bind its portable identity.
+                val collected = coordinator.collectLocalBatch(build)
+                if (collected.envelopes.isEmpty()) {
+                    0
+                } else {
+                    stage(collected.envelopes.map { it to (collected.envelopeCreatedAt[it.clientMutationId] ?: now) })
+                }
             }
             emitted += queued
             if (queued > 0) onBatchQueued()
@@ -687,17 +703,18 @@ class EpigraphReaderProgressRouter(
             else -> null
         }
         if (portableWorkBinding != null && portableChapter != null && existingPortableChapter == null) {
-            portableStore.upsertChapter(
-                PortableChapterBindingRecord(
-                    portableChapterId = PortableIdentityV3.chapterId(portableChapter),
-                    portableWorkId = portableWorkBinding.portableId,
-                    ref = portableChapter,
-                    localReference = localChapterId.toString(),
-                    resolution = PortableResolution(PortableResolutionState.BOUND),
-                    attemptCount = 0,
-                    updatedAt = createdAt,
-                ),
+            val binding = PortableChapterBindingRecord(
+                portableChapterId = PortableIdentityV3.chapterId(portableChapter),
+                portableWorkId = portableWorkBinding.portableId,
+                ref = portableChapter,
+                localReference = localChapterId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                attemptCount = 0,
+                updatedAt = createdAt,
             )
+            // Lookups answered from a preload never read a binding back, so the batch writes them
+            // together once it has resolved every chapter.
+            if (workLookups?.preloaded == true) workLookups.addNewChapterBinding(binding) else portableStore.upsertChapter(binding)
         }
         val portableReady = portableWorkBinding != null && portableWork != null && portableChapter != null
         val identityType = if (novel) "NOVEL" else "MANGA"
@@ -954,6 +971,16 @@ class EpigraphReaderProgressRouter(
                 else -> null
             }
         }
+
+        private val newChapterBindings = ArrayList<PortableChapterBindingRecord>()
+
+        fun addNewChapterBinding(binding: PortableChapterBindingRecord) {
+            newChapterBindings += binding
+        }
+
+        /** The chapter bindings resolving this batch created, to write before it commits. */
+        fun takeNewChapterBindings(): List<PortableChapterBindingRecord> =
+            newChapterBindings.toList().also { newChapterBindings.clear() }
 
         fun chapter(chapterId: Long): Chapters? = chapters[chapterId]
         fun portableChapter(chapterId: Long): Aethon_portable_chapter_binding? = portableChapters[chapterId]

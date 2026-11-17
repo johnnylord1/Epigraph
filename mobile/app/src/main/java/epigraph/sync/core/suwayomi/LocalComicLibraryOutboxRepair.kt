@@ -88,34 +88,44 @@ class LocalComicLibraryOutboxRepair(
                     .mapTo(linkedSetOf()) { it._id }
             }
         }
+        val mutations = publishable.map { candidate ->
+            candidate.mangaId to LibraryMembershipMutation(
+                localMangaId = candidate.mangaId,
+                inLibrary = true,
+                categoryIds = categoryIds.getValue(candidate.mangaId),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+                portableWorkRef = if (candidate.republish) {
+                    null
+                } else {
+                    PortableWorkRef.Comic(
+                        sourceId = DecimalSourceId(candidate.sourceId.toString()),
+                        mangaKey = ProviderOwnedKey(candidate.providerKey),
+                    )
+                },
+                republish = candidate.republish,
+                unboundWorkRef = candidate.unboundWork,
+            )
+        }
+        // A first sync can repair hundreds of favorites: one transaction for all of them instead of
+        // one each. If any of them cannot be written, the batch rolls back and each is tried alone so
+        // the others still reach the Core.
+        try {
+            return router.setMemberships(mutations.map { it.second }, System.currentTimeMillis())
+                .sumOf { it.emittedCommandCount }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            Logger.w(failure) { "Unable to publish ${mutations.size} local comic library entries together" }
+        }
         var emitted = 0
-        publishable.forEach { candidate ->
+        mutations.forEach { (mangaId, mutation) ->
             try {
-                val result = router.setMembership(
-                    mutation = LibraryMembershipMutation(
-                        localMangaId = candidate.mangaId,
-                        inLibrary = true,
-                        categoryIds = categoryIds.getValue(candidate.mangaId),
-                        origin = EpigraphMutationOrigin.LOCAL_USER,
-                        portableWorkRef = if (candidate.republish) {
-                            null
-                        } else {
-                            PortableWorkRef.Comic(
-                                sourceId = DecimalSourceId(candidate.sourceId.toString()),
-                                mangaKey = ProviderOwnedKey(candidate.providerKey),
-                            )
-                        },
-                        republish = candidate.republish,
-                        unboundWorkRef = candidate.unboundWork,
-                    ),
-                    createdAtEpochMillis = System.currentTimeMillis(),
-                )
-                emitted += result.emittedCommandCount
+                emitted += router.setMembership(mutation, System.currentTimeMillis()).emittedCommandCount
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
                 Logger.w(failure) {
-                    "Unable to publish local comic library entry for manga=${candidate.mangaId}"
+                    "Unable to publish local comic library entry for manga=$mangaId"
                 }
             }
         }

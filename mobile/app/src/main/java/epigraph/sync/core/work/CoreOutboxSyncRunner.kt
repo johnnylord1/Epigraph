@@ -17,6 +17,7 @@ import epigraph.sync.core.outbox.CoreOutboxDrainer
 import epigraph.sync.core.outbox.CoreOutboxRetryPlanner
 import epigraph.sync.core.outbox.CoreOutboxStore
 import epigraph.sync.core.outbox.CoreRequestIdSource
+import epigraph.sync.core.outbox.CoreStagedOutbox
 import epigraph.sync.core.outbox.CoreV1OutboxAdapter
 import epigraph.sync.core.outbox.CredentialCoreAccessTokenLease
 import epigraph.sync.core.pairing.AndroidPairingDeviceProvider
@@ -48,6 +49,7 @@ import eu.kanade.tachiyomi.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import yokai.data.DatabaseHandler
@@ -88,25 +90,29 @@ interface CorePendingOutbox {
 class CoordinatorPendingOutbox(
     private val coordinator: EpigraphMutationCoordinator,
     private val database: DatabaseHandler,
+    /** Backfill commands held in memory: pending like outbox rows until Core acknowledges them. */
+    private val staged: CoreStagedOutbox? = null,
 ) : CorePendingOutbox {
-    override suspend fun count(): Long = coordinator.pendingCount() + database.await {
+    private fun stagedCount(scopeIds: Set<String>? = null): Long = staged?.count(scopeIds) ?: 0
+
+    override suspend fun count(): Long = stagedCount() + coordinator.pendingCount() + database.await {
         aethon_suwayomi_mutation_queueQueries.pendingCount().executeAsOne() +
             aethon_syncQueries.pendingAssetUploadCount().executeAsOne() +
             aethon_syncQueries.pendingBookCoverDownloadCount().executeAsOne()
     }
 
-    override suspend fun localChangesPending(): Boolean = coordinator.pendingCount() > 0 || database.await {
+    override suspend fun localChangesPending(): Boolean = stagedCount() > 0 || coordinator.pendingCount() > 0 || database.await {
         aethon_suwayomi_mutation_queueQueries.pendingCount().executeAsOne() > 0
     }
 
-    override suspend fun unsettledCount(): Long = coordinator.unsettledCount() + database.await {
+    override suspend fun unsettledCount(): Long = stagedCount() + coordinator.unsettledCount() + database.await {
         aethon_suwayomi_mutation_queueQueries.pendingCount().executeAsOne() +
             aethon_syncQueries.pendingAssetUploadCount().executeAsOne() +
             aethon_syncQueries.pendingBookCoverDownloadCount().executeAsOne()
     }
 
     override suspend fun countActive(policy: EffectiveSyncPolicy): Long =
-        coordinator.pendingCount(policy.selectedScopes) + database.await {
+        stagedCount(policy.selectedScopes) + coordinator.pendingCount(policy.selectedScopes) + database.await {
             (if (policy.syncComics) {
                 aethon_suwayomi_mutation_queueQueries.pendingCount().executeAsOne()
             } else {
@@ -136,7 +142,7 @@ class CoordinatorPendingOutbox(
     }
 
     override suspend fun unsettledCountActive(policy: EffectiveSyncPolicy): Long =
-        coordinator.unsettledCount(policy.selectedScopes) + database.await {
+        stagedCount(policy.selectedScopes) + coordinator.unsettledCount(policy.selectedScopes) + database.await {
             (if (policy.syncComics) {
                 aethon_suwayomi_mutation_queueQueries.pendingCount().executeAsOne()
             } else {
@@ -245,6 +251,18 @@ fun interface CoreNegotiatedSessionHook {
  * so work queued here is reported and drained by the next run. Best effort, like
  * [CoreNegotiatedSessionHook].
  */
+/**
+ * Rows a run queues once its replica pass has recorded what the Core already holds, such as the
+ * reading-progress backfill. The same run sends them while they are being queued.
+ */
+fun interface CoreRunBackfill {
+    /**
+     * Queues one pass, calling [onQueued] after each batch it queues, and returns how many rows it
+     * queued; null when it must not run in this run.
+     */
+    suspend fun queue(onQueued: () -> Unit): Int?
+}
+
 fun interface CoreReplicaAppliedHook {
     suspend fun onReplicaApplied(nowEpochMillis: Long)
 }
@@ -276,8 +294,10 @@ class PinnedCoreOutboxSyncConnectionFactory(
         return object : CoreOutboxSyncConnection {
             override val openedOrigin: String = endpoint.origin
 
+            // The probe that just proved this endpoint asked the same question with the same token.
             override suspend fun sessionMetadata(): CoreHttpResult<epigraph.sync.core.protocol.CoreSessionResponse> =
-                credentials.withAccessTokenString(http::session)
+                endpoint.probedSession?.let { CoreHttpResult.Success(it) }
+                    ?: credentials.withAccessTokenString(http::session)
 
             override suspend fun capabilities(): CoreHttpResult<CoreCapabilities> = http.capabilities()
 
@@ -772,14 +792,17 @@ class CoreOutboxSyncRunner(
      */
     private val clock: (() -> Long)? = null,
 ) {
+    /** [backfill] runs after the replica pass, when the Core answered this run; see [CoreRunBackfill]. */
     suspend fun run(
         nowEpochMillis: Long,
         synchronizeReplica: Boolean = true,
-    ): CoreOutboxSyncOutcome = run(nowEpochMillis, synchronizeReplica, restartAfterLegacyUpgrade = true)
+        backfill: CoreRunBackfill? = null,
+    ): CoreOutboxSyncOutcome = run(nowEpochMillis, synchronizeReplica, backfill, restartAfterLegacyUpgrade = true)
 
     private suspend fun run(
         nowEpochMillis: Long,
         synchronizeReplica: Boolean,
+        backfill: CoreRunBackfill?,
         restartAfterLegacyUpgrade: Boolean,
     ): CoreOutboxSyncOutcome {
         require(nowEpochMillis >= 0) { "sync timestamp must be epoch milliseconds" }
@@ -878,7 +901,7 @@ class CoreOutboxSyncRunner(
                         // The credential was just bound to the real desktop id. Restart with it so
                         // nothing in this run is written under legacy_unbound ids (that duplicated
                         // every comic folder).
-                        return run(nowEpochMillis, synchronizeReplica, restartAfterLegacyUpgrade = false)
+                        return run(nowEpochMillis, synchronizeReplica, backfill, restartAfterLegacyUpgrade = false)
                     }
                 }
                 is CoreHttpResult.Failure -> {
@@ -997,45 +1020,50 @@ class CoreOutboxSyncRunner(
                 }
             }
 
-            val drain = try {
-                reportLibraryUploaded()
+            val drainBatch: suspend () -> CoreDrainBatch = {
+                val batchNow = clock?.invoke()?.coerceAtLeast(nowEpochMillis) ?: nowEpochMillis
+                val started = System.nanoTime()
+                val assets = if (policy.transferBookAssets) {
+                    connection.drainBookAssets(batchNow)
+                } else {
+                    BookAssetDrainReport(0, 0, 0, 0)
+                }
+                val coreStarted = System.nanoTime()
+                val core = connection.drain(authorization, capabilities, batchNow)
+                val coreEnded = System.nanoTime()
+                val suwayomi = if (policy.syncComics) {
+                    connection.drainSuwayomi(
+                        batchNow,
+                        canonicalProjectionEnabled =
+                            EpigraphCoreCompatibilityEvaluator.supportsCanonicalComicProjection(capabilities),
+                    )
+                } else {
+                    SuwayomiMutationDrainReport(0, 0, 0, 0, 0)
+                }
+                if (BuildConfig.DEBUG) {
+                    val ended = System.nanoTime()
+                    runCatching {
+                        Log.d(
+                            "EpigraphCoreSync",
+                            "drain batch: core=${core.acknowledged}/${core.claimed} " +
+                                "in ${(coreEnded - coreStarted) / 1_000_000}ms, assets ${(coreStarted - started) / 1_000_000}ms, suw ${(ended - coreEnded) / 1_000_000}ms, " +
+                                "total ${(ended - started) / 1_000_000}ms",
+                        )
+                    }
+                }
+                CoreDrainBatch(assets = assets, suwayomi = suwayomi, core = core)
+            }
+            val drainAll: suspend () -> CoreDrainLoopResult = {
                 drainCoreBacklog(
                     countPending = { pendingOutbox.countActive(policy) },
                     onBatchWithMorePending = reportLibraryUploaded,
-                    drainBatch = {
-                        val batchNow = clock?.invoke()?.coerceAtLeast(nowEpochMillis) ?: nowEpochMillis
-                        val started = System.nanoTime()
-                        val assets = if (policy.transferBookAssets) {
-                            connection.drainBookAssets(batchNow)
-                        } else {
-                            BookAssetDrainReport(0, 0, 0, 0)
-                        }
-                        val coreStarted = System.nanoTime()
-                        val core = connection.drain(authorization, capabilities, batchNow)
-                        val coreEnded = System.nanoTime()
-                        val suwayomi = if (policy.syncComics) {
-                            connection.drainSuwayomi(
-                                batchNow,
-                                canonicalProjectionEnabled =
-                                    EpigraphCoreCompatibilityEvaluator.supportsCanonicalComicProjection(capabilities),
-                            )
-                        } else {
-                            SuwayomiMutationDrainReport(0, 0, 0, 0, 0)
-                        }
-                        if (BuildConfig.DEBUG) {
-                            val ended = System.nanoTime()
-                            runCatching {
-                                Log.d(
-                                    "EpigraphCoreSync",
-                                    "drain batch: core=${core.acknowledged}/${core.claimed} " +
-                                        "in ${(coreEnded - coreStarted) / 1_000_000}ms, assets ${(coreStarted - started) / 1_000_000}ms, suw ${(ended - coreEnded) / 1_000_000}ms, " +
-                                        "total ${(ended - started) / 1_000_000}ms",
-                                )
-                            }
-                        }
-                        CoreDrainBatch(assets = assets, suwayomi = suwayomi, core = core)
-                    },
-                ).also {
+                    drainBatch = drainBatch,
+                )
+            }
+
+            var drain = try {
+                reportLibraryUploaded()
+                drainAll().also {
                     // The replica pass below reads what these confirmations write.
                     connection.awaitConfirmations()
                 }
@@ -1080,6 +1108,30 @@ class CoreOutboxSyncRunner(
                         reportCoreSyncFailure("replica.hook", failure)
                     }
                 }
+            }
+            // Only after the replica pass, which records what the Core already holds: queued before
+            // it, a first sync's backfill would send the desktop its own reading state back.
+            if (
+                backfill != null &&
+                (replicaOutcome == CoreReplicaSyncOutcome.APPLIED || replicaOutcome == CoreReplicaSyncOutcome.DEFERRED) &&
+                !(drain.transientFailure && drain.pendingCount > 0)
+            ) {
+                val sent = try {
+                    drainWhileQueueing(MAX_BACKFILL_PASSES, backfill::queue, drainAll).also {
+                        connection.awaitConfirmations()
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    reportCoreSyncFailure("connection.backfill", failure)
+                    return CoreOutboxSyncOutcome.Retry(
+                        pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) },
+                        CoreOutboxRetryReason.CONNECTION,
+                    )
+                } finally {
+                    withContext(NonCancellable) { runCatching { connection.releasePrepared() } }
+                }
+                if (sent != null) drain = drain.then(sent)
             }
             val unsettledAfter = pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) }
             val uploadsLeft = uploadsStillToSend(unsettledAfter, pendingOutbox.blockedCountActive(policy))
@@ -1204,6 +1256,12 @@ class CoreOutboxSyncRunner(
 
     private companion object {
         val EMPTY_REPORT = CoreOutboxDrainReport(0, 0, 0, 0, 0)
+
+        /**
+         * Backfill passes per run. The first pass queues the whole library; later ones only pick up
+         * rows that became publishable meanwhile, such as titles the first pass bound.
+         */
+        const val MAX_BACKFILL_PASSES = 5
     }
 }
 
@@ -1251,6 +1309,58 @@ internal suspend fun drainCoreBacklog(
         }
         onBatchWithMorePending()
     }
+}
+
+/** This drain followed by [next], as one result: [next] says what is left. */
+internal fun CoreDrainLoopResult.then(next: CoreDrainLoopResult) = CoreDrainLoopResult(
+    report = report + next.report,
+    pendingCount = next.pendingCount,
+    transientFailure = transientFailure || next.transientFailure,
+    coreTransientFailure = coreTransientFailure || next.coreTransientFailure,
+)
+
+/**
+ * Runs [queue] pass after pass, up to [maxPasses] while a pass still queues rows, and [drain]s
+ * while each pass is still queueing: after each batch it queued, and once more when it ends.
+ * Draining stops for the rest of the call once the Core fails a drain without confirming a row, so a
+ * desktop that went away is not asked again for every queued batch; what was queued stays for the
+ * next run. Null when nothing was drained.
+ */
+internal suspend fun drainWhileQueueing(
+    maxPasses: Int,
+    queue: suspend (onQueued: () -> Unit) -> Int?,
+    drain: suspend () -> CoreDrainLoopResult,
+): CoreDrainLoopResult? {
+    require(maxPasses > 0)
+    var total: CoreDrainLoopResult? = null
+    var failing = false
+    repeat(maxPasses) {
+        val queued = Channel<Unit>(Channel.CONFLATED)
+        val passQueued = coroutineScope {
+            val sending = async {
+                for (signal in queued) {
+                    if (failing) continue
+                    val result = drain()
+                    total = total?.then(result) ?: result
+                    if (result.coreTransientFailure && result.report.acknowledged == 0) failing = true
+                }
+            }
+            val count = try {
+                queue { queued.trySend(Unit) }
+            } catch (failure: Throwable) {
+                queued.close()
+                sending.cancel()
+                throw failure
+            }
+            // Sends what the pass queued after the last drain had started.
+            if (count != null && count > 0) queued.trySend(Unit)
+            queued.close()
+            sending.await()
+            count
+        }
+        if (passQueued == null || passQueued <= 0 || failing) return total
+    }
+    return total
 }
 
 private operator fun CoreOutboxDrainReport.plus(other: CoreOutboxDrainReport) = CoreOutboxDrainReport(

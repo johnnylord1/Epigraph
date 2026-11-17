@@ -1,5 +1,6 @@
 package epigraph.sync
 
+import app.cash.sqldelight.db.SqlDriver
 import epigraph.contract.EpigraphEntityId
 import epigraph.contract.EpigraphIdentityRules
 import epigraph.contract.ClientMutationId
@@ -34,6 +35,12 @@ class EpigraphMutationCoordinator(
     /** Best-effort notification used by Android to wake the Core worker immediately. */
     private val onLocalMutationEnqueued: (() -> Unit)? = null,
 ) {
+    /**
+     * The driver behind this coordinator's transactions, for a statement SQLDelight cannot
+     * generate. Use it only inside one of them, such as a [collectLocalBatch] block.
+     */
+    internal val driver: SqlDriver get() = databaseHandler.driver
+
     /** Read-only access for sync-aware domain routers; never writes an outbox row. */
     suspend fun <T> readLocal(query: Database.() -> T): T = databaseHandler.await {
         query()
@@ -117,6 +124,29 @@ class EpigraphMutationCoordinator(
         }
         return transactionResult.first
     }
+
+    /**
+     * Runs [domainMutation] in a write transaction and returns its commands without queueing them,
+     * for a caller that sends them itself: the progress backfill, whose commands publish state the
+     * domain tables already keep rather than a local edit (see [EpigraphReaderProgressRouter]).
+     * Anything they must not lose goes through [mutateLocalBatch] instead.
+     */
+    suspend fun <T> collectLocalBatch(
+        domainMutation: suspend Database.() -> LocalMutationResult<T>,
+    ): LocalMutationResult<T> = databaseHandler.await(inTransaction = true) {
+        domainMutation().also { mutation ->
+            require(mutation.suwayomiMutations.isEmpty()) { "collected batches cannot carry Suwayomi intents" }
+            val keys = mutation.envelopes.map { it.deviceId.value to it.clientMutationId.value }
+            require(keys.distinct().size == keys.size) {
+                "a local mutation batch must not contain duplicate idempotency keys"
+            }
+        }
+    }
+
+    /** The command exactly as an outbox row stores it. */
+    fun encodeQueued(envelope: SyncCommandEnvelope): String = json.encodeToString(envelope)
+
+    fun decodeQueued(payloadJson: String): SyncCommandEnvelope = json.decodeFromString(payloadJson)
 
     suspend fun applyRemoteEvent(
         scopeId: SyncScopeId,
@@ -628,6 +658,15 @@ class EpigraphMutationCoordinator(
             aethon_syncQueries.unsettledMutationCountForScopes(scopeIds).executeAsOne()
         }
     }
+
+    /**
+     * Whether a durable row may be claimable at [nowEpochMillis], counting rows whose lease ran out.
+     * A read, so it never waits behind a writer; a claim that finds nothing need not open a write
+     * transaction just to learn it.
+     */
+    suspend fun mayHaveReadyMutations(nowEpochMillis: Long): Boolean =
+        databaseHandler.await { aethon_syncQueries.nextMutationAttemptAt().executeAsOne().MIN }
+            ?.let { it <= nowEpochMillis } == true
 
     suspend fun claimReady(
         nowEpochMillis: Long,

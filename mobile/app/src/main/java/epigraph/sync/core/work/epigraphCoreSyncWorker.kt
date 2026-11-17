@@ -3,9 +3,11 @@ package epigraph.sync.core.work
 import epigraph.sync.core.events.CoreBackgroundSyncReason
 import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.novels.LocalNovelLibraryOutboxRepair
+import epigraph.sync.core.outbox.CoreStagedOutbox
 import epigraph.sync.core.suwayomi.CoreHeldChapterProgressFilter
 import epigraph.sync.core.suwayomi.DisplacedComicRowRepair
 import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
+import epigraph.sync.EpigraphMutationCoordinator
 import epigraph.sync.EpigraphReaderProgressRouter
 import android.content.Context
 import android.net.ConnectivityManager
@@ -29,9 +31,11 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 import yokai.util.koin.get
 
 class WorkManagerCoreBackgroundSyncScheduler(
@@ -210,9 +214,15 @@ class EpigraphCoreSyncWorker(
         val started = System.nanoTime()
         val progress = runCatching {
             val held = get<CoreHeldChapterProgressFilter>()
+            val staged = get<CoreStagedOutbox>()
+            val coordinator = get<EpigraphMutationCoordinator>()
             get<EpigraphReaderProgressRouter>().backfillComicProgress(
                 filter = if (checkWithCore) held else held.cachedOnly,
                 onBatchQueued = onProgressQueued,
+                // Sent from memory while Core answers: queueing thousands of rows in the outbox
+                // first held the database writer for most of a first sync. Otherwise they wait in
+                // the outbox for the next run.
+                stage = if (checkWithCore) { dated -> staged.stage(coordinator, dated) } else null,
             )
         }
             .onSuccess { queued ->
@@ -223,6 +233,16 @@ class EpigraphCoreSyncWorker(
             }
             .getOrDefault(0)
         return displaced + novels + comics + progress
+    }
+
+    /**
+     * Hands the backfill commands Core did not acknowledge in this run to the durable outbox,
+     * which retries them; queueing them wakes the next run.
+     */
+    private suspend fun flushStagedProgress() {
+        runCatching { get<CoreStagedOutbox>().flushTo(get<EpigraphMutationCoordinator>(), System.currentTimeMillis()) }
+            .onSuccess { moved -> if (moved > 0) Log.d(LOG_TAG, "moved $moved unsent progress commands to the outbox") }
+            .onFailure { failure -> Log.w(LOG_TAG, "could not queue unsent progress commands", failure) }
     }
 
     /**
@@ -242,9 +262,28 @@ class EpigraphCoreSyncWorker(
         val outcome = try {
             val runner = get<CoreOutboxSyncRunner>()
             phase = CoreSyncPhase.EXCHANGE
+            // The run asks for the backfill once its replica pass shows what the desktop holds and
+            // sends it while it is queued, over the same session: a second run only repeated the
+            // handshake, manifests and replica pass first.
+            var backfillAsked = false
+            var backfillDeferred = false
+            var backfillQueued = 0
             val first = runner.run(
                 nowEpochMillis = System.currentTimeMillis(),
                 synchronizeReplica = true,
+                backfill = { onQueued ->
+                    if (!backfillAsked) {
+                        backfillAsked = true
+                        backfillDeferred = deferProgress()
+                    }
+                    if (backfillDeferred) {
+                        null
+                    } else {
+                        phase = CoreSyncPhase.READING_PROGRESS
+                        repairLibraries(includeProgress = true, checkWithCore = true, onProgressQueued = onQueued)
+                            .also { backfillQueued += it }
+                    }
+                },
             )
             // The first snapshot from a newly paired or rewound Core shows which local favorites and
             // reading progress it lacks; publish them in this run instead of waiting for the next wake.
@@ -253,7 +292,10 @@ class EpigraphCoreSyncWorker(
             // waiting for it to settle held each batch of reading progress for up to 15 minutes.
             // A desktop change that arrived during this pass waits for it to end; the next pass runs
             // the backfill instead, so it no longer delays that change by the length of a library scan.
-            if (deferProgress()) {
+            if (backfillAsked) {
+                sentBackfill = backfillQueued > 0
+                first
+            } else if (deferProgress()) {
                 first
             } else {
                 phase = CoreSyncPhase.READING_PROGRESS
@@ -275,8 +317,10 @@ class EpigraphCoreSyncWorker(
                 sent.outcome
             }
         } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) { flushStagedProgress() }
             throw cancelled
         } catch (failure: Throwable) {
+            flushStagedProgress()
             Log.w(
                 LOG_TAG,
                 "worker failed before producing an outcome: ${failure::class.simpleName ?: "UnknownFailure"}",
@@ -293,6 +337,7 @@ class EpigraphCoreSyncWorker(
             )
             return WorkerExecution(Result.retry(), usesWorkManagerBackoff = true)
         }
+        flushStagedProgress()
         recordRun(outcome.toLastRun(System.currentTimeMillis()))
         return when (outcome) {
             is CoreOutboxSyncOutcome.OutboxDrained -> WorkerExecution(Result.success(

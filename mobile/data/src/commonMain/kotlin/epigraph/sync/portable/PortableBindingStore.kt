@@ -1,5 +1,6 @@
 package epigraph.sync.portable
 
+import app.cash.sqldelight.db.SqlDriver
 import epigraph.contract.ComicDependency
 import epigraph.contract.DecimalSourceId
 import epigraph.contract.ExtensionStoreReference
@@ -345,6 +346,59 @@ class SqlDelightPortableBindingStore(
         )
     }
 
+    /**
+     * [upsertChapter] for many records at once, [CHAPTER_ROWS_PER_STATEMENT] rows per statement, in
+     * order, so a later record for the same chapter wins as before. [driver] must be the one behind
+     * this store's database, called inside its transaction: a first backfill binds thousands of
+     * chapters, and one statement each held the write lock for seconds.
+     */
+    fun upsertChapters(driver: SqlDriver, records: List<PortableChapterBindingRecord>) {
+        if (records.isEmpty()) return
+        records.forEach { record ->
+            requireIdentifier(record.portableChapterId, "portable chapter ID")
+            requireIdentifier(record.portableWorkId, "portable work ID")
+            requireRecord(
+                record.portableChapterId,
+                record.localReference,
+                record.resolution,
+                record.attemptCount,
+                record.updatedAt,
+            )
+        }
+        records.chunked(CHAPTER_ROWS_PER_STATEMENT).forEach { chunk ->
+            val sql = buildString {
+                append("INSERT INTO aethon_portable_chapter_binding(")
+                append("portable_chapter_id, portable_work_id, provider_key, local_reference, ")
+                append("resolution_state, resolution_reason, attempt_count, updated_at) VALUES ")
+                chunk.indices.forEach { index -> append(if (index == 0) "(?,?,?,?,?,?,?,?)" else ",(?,?,?,?,?,?,?,?)") }
+                append(" ON CONFLICT(portable_chapter_id) DO UPDATE SET ")
+                append("local_reference = COALESCE(excluded.local_reference, aethon_portable_chapter_binding.local_reference), ")
+                append("resolution_state = excluded.resolution_state, resolution_reason = excluded.resolution_reason, ")
+                append("attempt_count = excluded.attempt_count, updated_at = excluded.updated_at")
+            }
+            driver.execute(null, sql, chunk.size * CHAPTER_COLUMNS) {
+                chunk.forEachIndexed { index, record ->
+                    val at = index * CHAPTER_COLUMNS
+                    bindString(at, record.portableChapterId)
+                    bindString(at + 1, record.portableWorkId)
+                    bindString(
+                        at + 2,
+                        when (val ref = record.ref) {
+                            is PortableChapterRef.Comic -> ref.chapterKey.value
+                            is PortableChapterRef.Novel -> ref.chapterKey.value
+                        },
+                    )
+                    bindString(at + 3, record.localReference)
+                    bindString(at + 4, record.resolution.state.name)
+                    bindString(at + 5, record.resolution.reason?.name)
+                    bindLong(at + 6, record.attemptCount)
+                    bindLong(at + 7, record.updatedAt)
+                }
+            }
+        }
+        driver.notifyListeners("aethon_portable_chapter_binding")
+    }
+
     override fun chapter(portableChapterId: String): PortableChapterBindingRecord? {
         requireIdentifier(portableChapterId, "portable chapter ID")
         return database.aethon_syncQueries.selectPortableChapterBinding(portableChapterId)
@@ -459,6 +513,9 @@ class SqlDelightPortableBindingStore(
 
     private companion object {
         const val MAX_IDENTIFIER_LENGTH = 512
+        // 100 rows of 8 columns stay under SQLite's historical limit of 999 bound parameters.
+        const val CHAPTER_ROWS_PER_STATEMENT = 100
+        const val CHAPTER_COLUMNS = 8
         const val MAX_HINT_LENGTH = 512
         const val MAX_BATCH_SIZE = 1_000L
     }

@@ -4,6 +4,7 @@ import epigraph.sync.core.credentials.CoreCredentialSession
 import epigraph.sync.core.http.EpigraphCoreHttpClient
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.protocol.CoreCapabilities
+import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.core.protocol.CoreMutationDisposition
 import epigraph.sync.core.protocol.CoreMutationInput
 import epigraph.sync.core.protocol.CoreMutationReceiptPolicy
@@ -13,6 +14,7 @@ import epigraph.sync.core.protocol.CoreMutationsResponse
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -309,21 +311,60 @@ class CoreOutboxDrainer(
         // otherwise idle while this request is on the network, so it runs alongside it.
         return coroutineScope {
             val next = async { prepare(authorization, capabilities, nowEpochMillis) }
-            val settled = try {
-                send(current)
-            } catch (failure: Throwable) {
-                withContext(NonCancellable) { next.awaitOrNull()?.releaseNow() }
+            // ATOMIC: once claimed, a send always starts, so a cancellation still releases its rows.
+            val first = async(start = CoroutineStart.ATOMIC) { runCatching { send(current) } }
+            val upcoming = next.awaitOrNull()
+            if (upcoming == null || !canOverlap(current, upcoming)) {
+                val settled = first.await().getOrElse { failure ->
+                    withContext(NonCancellable) { upcoming?.releaseNow() }
+                    throw failure
+                }
+                when {
+                    upcoming == null || upcoming.claimed == 0 -> Unit
+                    // The caller stops after a batch that settles nothing, so the rows must not stay leased.
+                    settled.acknowledged + settled.blocked == 0 -> upcoming.releaseNow()
+                    else -> prepared.getAndSet(upcoming)?.releaseNow()
+                }
+                return@coroutineScope current.report(settled)
+            }
+
+            // Both batches hold only order-free records with no record in common, so the Core may
+            // apply them in either order: the second goes out without waiting for the first answer.
+            val second = async(start = CoroutineStart.ATOMIC) { runCatching { send(upcoming) } }
+            val following = if (upcoming.full) async { prepare(authorization, capabilities, nowEpochMillis) } else null
+            val firstSettled = first.await()
+            val secondSettled = second.await()
+            val failure = firstSettled.exceptionOrNull() ?: secondSettled.exceptionOrNull()
+            if (failure != null) {
+                withContext(NonCancellable) { following?.awaitOrNull()?.releaseNow() }
                 throw failure
             }
-            val upcoming = next.awaitOrNull()
+            val a = firstSettled.getOrThrow()
+            val b = secondSettled.getOrThrow()
+            val after = following?.awaitOrNull()
             when {
-                upcoming == null || upcoming.claimed == 0 -> Unit
-                // The caller stops after a batch that settles nothing, so the rows must not stay leased.
-                settled.acknowledged + settled.blocked == 0 -> upcoming.releaseNow()
-                else -> prepared.getAndSet(upcoming)?.releaseNow()
+                // The second batch was the last one: settle everything before the caller counts.
+                following == null -> store.awaitAcknowledgements()
+                after == null || after.claimed == 0 -> Unit
+                a.acknowledged + a.blocked + b.acknowledged + b.blocked == 0 -> after.releaseNow()
+                else -> prepared.getAndSet(after)?.releaseNow()
             }
-            current.report(settled)
+            current.report(a) + upcoming.report(b)
         }
+    }
+
+    /**
+     * Two batches may be on the network together only when their order cannot matter: each holds
+     * reader-state records that depend on nothing but their entry (sent and answered before them, in
+     * outbox order), and no record appears in both. Anything else goes out one batch at a time.
+     */
+    private fun canOverlap(current: Prepared, upcoming: Prepared): Boolean {
+        if (current.ready.isEmpty() || upcoming.ready.isEmpty()) return false
+        if (current.authorization !== upcoming.authorization) return false
+        val orderFree = { claim: ReadyClaim -> claim.mutation.entityType in ORDER_FREE_ENTITY_TYPES }
+        if (!current.ready.all(orderFree) || !upcoming.ready.all(orderFree)) return false
+        val keys = current.ready.mapTo(HashSet()) { it.mutation.recordKey() }
+        return upcoming.ready.none { it.mutation.recordKey() in keys }
     }
 
     private suspend fun Deferred<Prepared>.awaitOrNull(): Prepared? = try {
@@ -643,6 +684,29 @@ private fun List<ClaimedCoreOutboxRecord>.hasDuplicateClaims(): Boolean =
         map { it.record.identity() }.distinct().size != size
 
 private fun CoreOutboxRecord.identity() = CoreOutboxIdentity(deviceId, clientMutationId)
+
+private fun CoreMutationInput.recordKey() = Triple(scopeId, entityType, entityId)
+
+private operator fun CoreOutboxDrainReport.plus(other: CoreOutboxDrainReport) = CoreOutboxDrainReport(
+    claimed + other.claimed,
+    submitted + other.submitted,
+    acknowledged + other.acknowledged,
+    retryScheduled + other.retryScheduled,
+    blocked + other.blocked,
+)
+
+/**
+ * Reader state the Core applies per record, resolving only its entry. Entries, categories and
+ * assignments refer to one another, so they always go out in outbox order.
+ */
+private val ORDER_FREE_ENTITY_TYPES = setOf(
+    EpigraphCoreEntityType.COMIC_CHAPTER_STATE,
+    EpigraphCoreEntityType.COMIC_HISTORY,
+    EpigraphCoreEntityType.NOVEL_CHAPTER,
+    EpigraphCoreEntityType.NOVEL_PROGRESS,
+    EpigraphCoreEntityType.NOVEL_HISTORY,
+    EpigraphCoreEntityType.BOOK_PROGRESS,
+)
 
 private fun CoreMutationsResponse.matches(request: CoreMutationsRequest): Boolean {
     if (requestId != request.requestId) return false

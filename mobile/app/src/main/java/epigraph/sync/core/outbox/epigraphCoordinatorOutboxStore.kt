@@ -43,6 +43,11 @@ class EpigraphCoordinatorOutboxStore(
      * network: projecting thousands of records took as long as sending them.
      */
     private val confirmationScope: CoroutineScope? = null,
+    /**
+     * Backfill commands kept in memory (see [CoreStagedOutbox]). Claimed only when no durable
+     * row is ready, so a batch never mixes the two and a local edit is never held behind them.
+     */
+    private val staged: CoreStagedOutbox? = null,
 ) : CoreOutboxStore {
     private val unsentFolded = AtomicBoolean(false)
     private val confirmationOrder = Mutex()
@@ -70,11 +75,12 @@ class EpigraphCoordinatorOutboxStore(
         limit: Long,
     ): List<ClaimedCoreOutboxRecord> {
         foldUnsentOnce()
+        stagedWithoutDurable(nowEpochMillis, limit, scopeIds = null)?.let { return it }
         return coordinator.claimReady(
             nowEpochMillis = nowEpochMillis,
             leaseDurationMillis = leaseDurationMillis,
             limit = limit,
-        ).map { row ->
+        ).ifEmpty { return staged?.claim(limit, scopeIds = null).orEmpty() }.map { row ->
             ClaimedCoreOutboxRecord(
                 sequence = row.sequence,
                 // claimReady returns the selected row image, then increments it while taking the lease.
@@ -100,12 +106,13 @@ class EpigraphCoordinatorOutboxStore(
         scopeIds: Set<String>,
     ): List<ClaimedCoreOutboxRecord> {
         foldUnsentOnce()
+        stagedWithoutDurable(nowEpochMillis, limit, scopeIds)?.let { return it }
         return coordinator.claimReadyForScopes(
             nowEpochMillis = nowEpochMillis,
             leaseDurationMillis = leaseDurationMillis,
             limit = limit,
             scopeIds = scopeIds,
-        ).map { row ->
+        ).ifEmpty { return staged?.claim(limit, scopeIds).orEmpty() }.map { row ->
             ClaimedCoreOutboxRecord(
                 sequence = row.sequence,
                 attemptCount = Math.addExact(row.attempt_count, 1),
@@ -123,6 +130,21 @@ class EpigraphCoordinatorOutboxStore(
         }
     }
 
+    /**
+     * Staged rows when no durable row is ready. While the progress backfill stages, its write
+     * transactions follow each other; a claim that opened its own one waited behind each of them
+     * for rows it would not find, so it reads first and leaves the outbox alone.
+     */
+    private suspend fun stagedWithoutDurable(
+        nowEpochMillis: Long,
+        limit: Long,
+        scopeIds: Set<String>?,
+    ): List<ClaimedCoreOutboxRecord>? {
+        val queue = staged ?: return null
+        if (!queue.hasReady() || coordinator.mayHaveReadyMutations(nowEpochMillis)) return null
+        return queue.claim(limit, scopeIds).ifEmpty { null }
+    }
+
     override suspend fun acknowledge(
         record: CoreOutboxRecord,
         result: CoreMutationResult,
@@ -134,6 +156,14 @@ class EpigraphCoordinatorOutboxStore(
         receivedAtEpochMillis: Long,
     ) {
         if (acknowledged.isEmpty()) return
+        val stagedRows = staged
+            ?.let { queue -> acknowledged.filter { queue.isLeased(it.record.identity()) } }
+            .orEmpty()
+        if (stagedRows.isNotEmpty()) {
+            acknowledgeStaged(stagedRows)
+            if (stagedRows.size == acknowledged.size) return
+            return acknowledgeAll(acknowledged - stagedRows.toSet(), receivedAtEpochMillis)
+        }
         val confirm = confirmOwnWrites
         if (confirm == null) {
             coordinator.acknowledgeAll(
@@ -160,6 +190,32 @@ class EpigraphCoordinatorOutboxStore(
             }
         }
         // A superseded write is not echoed back; the newer value it lost to replaces the local edit.
+        acknowledged
+            .filter { (_, result) -> result.status == CoreMutationResultStatus.SUPERSEDED }
+            .forEach { (record, result) ->
+                projectHeldRecord?.invoke(CoreReplicaKey(record.scopeId, record.entityType, result.entityId))
+            }
+    }
+
+    /**
+     * A staged command has no outbox row, receipt or wait to settle: confirming the record Core
+     * returned into the replica is all that is left, and what keeps the next backfill from
+     * sending it again.
+     */
+    private suspend fun acknowledgeStaged(acknowledged: List<CoreOutboxAcknowledgedRecord>) {
+        val queue = checkNotNull(staged)
+        val confirm = confirmOwnWrites
+        acknowledged.chunked(CONFIRMATION_CHUNK).forEach { chunk ->
+            val confirmed = chunk.mapNotNull(::confirmedRecord)
+            try {
+                if (confirm != null && confirmed.isNotEmpty()) confirm(confirmed)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                // Core holds these writes; the change feed delivers them to the replica.
+            }
+            chunk.forEach { queue.settle(it.record.identity()) }
+        }
         acknowledged
             .filter { (_, result) -> result.status == CoreMutationResultStatus.SUPERSEDED }
             .forEach { (record, result) ->
@@ -252,6 +308,13 @@ class EpigraphCoordinatorOutboxStore(
         errorCode: String,
         nextAttemptAtEpochMillis: Long,
     ) {
+        val queue = staged
+        if (queue != null && queue.isLeased(identity)) {
+            // Claimed but never sent: claim it again. Anything else goes to the durable outbox,
+            // which keeps the retry schedule and the block.
+            if (errorCode == NOT_SENT) queue.release(identity) else queue.fail(identity)
+            return
+        }
         coordinator.markFailed(
             deviceId = DeviceId(identity.deviceId),
             clientMutationId = ClientMutationId(identity.clientMutationId),
@@ -262,5 +325,8 @@ class EpigraphCoordinatorOutboxStore(
 
     private companion object {
         const val CONFIRMATION_CHUNK = 500
+        const val NOT_SENT = "drain_not_sent"
     }
 }
+
+private fun CoreOutboxRecord.identity() = CoreOutboxIdentity(deviceId, clientMutationId)

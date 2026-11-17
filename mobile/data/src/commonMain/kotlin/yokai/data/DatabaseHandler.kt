@@ -3,9 +3,17 @@ package yokai.data
 import app.cash.paging.PagingSource
 import app.cash.sqldelight.ExecutableQuery
 import app.cash.sqldelight.Query
+import app.cash.sqldelight.db.SqlDriver
 import kotlinx.coroutines.flow.Flow
 
 interface DatabaseHandler {
+    /**
+     * The driver behind [await], for a statement SQLDelight cannot generate, such as a multi-row
+     * VALUES list. Use it only inside [await], so the statement runs on that call's connection
+     * and transaction.
+     */
+    val driver: SqlDriver
+
     suspend fun <T> await(inTransaction: Boolean = false, block: suspend Database.() -> T): T
 
     suspend fun <T : Any> awaitList(

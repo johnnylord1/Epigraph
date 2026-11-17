@@ -430,6 +430,70 @@ class CoreOutboxDrainerTest {
         assertTrue(store.acknowledged.isEmpty(), "failed rows stay pending for a resend")
     }
 
+    @Test
+    fun `order free batches with no record in common are on the network together`() = runTest {
+        val store = LeasingStore((1L..5L).map { orderFree(it) })
+        val gateway = InFlightGateway()
+        val drainer = drainer(store, gateway, countingLamports(), CoreOutboxDrainConfig(claimLimit = 2))
+        val authorization = authorization(setOf(NOVEL_SCOPE))
+        val capabilities = capabilities(EpigraphCoreEntityType.NOVEL_HISTORY)
+
+        assertEquals(CoreOutboxDrainReport(4, 4, 4, 0, 0), drainer.drain(authorization, capabilities, NOW))
+        assertEquals(2, gateway.maxInFlight)
+        // The batch after the pair was prepared while both were on the network.
+        assertEquals(
+            listOf(listOf("mutation-1", "mutation-2"), listOf("mutation-3", "mutation-4"), listOf("mutation-5")),
+            store.claimCalls,
+        )
+        assertEquals(CoreOutboxDrainReport(1, 1, 1, 0, 0), drainer.drain(authorization, capabilities, NOW))
+        assertEquals((1L..5L).map { "mutation-$it" }, store.acknowledged.sorted())
+        assertTrue(store.failed.isEmpty())
+    }
+
+    @Test
+    fun `batches that share a record or hold ordered records go out one at a time`() = runTest {
+        val shared = LeasingStore(
+            (1L..4L).map { orderFree(it, entity = if (it == 3L) "entity-1" else "entity-$it") },
+        )
+        val sharedGateway = InFlightGateway()
+        val sharedDrainer = drainer(shared, sharedGateway, countingLamports(), CoreOutboxDrainConfig(claimLimit = 2))
+        val novels = authorization(setOf(NOVEL_SCOPE))
+        repeat(3) { sharedDrainer.drain(novels, capabilities(EpigraphCoreEntityType.NOVEL_HISTORY), NOW) }
+        assertEquals(1, sharedGateway.maxInFlight)
+        assertEquals(listOf(listOf("mutation-1", "mutation-2"), listOf("mutation-3", "mutation-4")), sharedGateway.sent)
+
+        val ordered = LeasingStore((1L..4L).map { claim(it) })
+        val orderedGateway = InFlightGateway()
+        val orderedDrainer = drainer(ordered, orderedGateway, countingLamports(), CoreOutboxDrainConfig(claimLimit = 2))
+        val books = authorization()
+        repeat(3) { orderedDrainer.drain(books, capabilities(), NOW) }
+        assertEquals(1, orderedGateway.maxInFlight)
+        assertEquals(listOf("mutation-1", "mutation-2", "mutation-3", "mutation-4"), ordered.acknowledged)
+    }
+
+    @Test
+    fun `a failed request of an overlapped pair releases only its own rows`() = runTest {
+        val store = LeasingStore((1L..6L).map { orderFree(it) })
+        val gateway = InFlightGateway(failing = setOf("mutation-3"))
+        val drainer = drainer(store, gateway, countingLamports(), CoreOutboxDrainConfig(claimLimit = 2))
+        val novels = authorization(setOf(NOVEL_SCOPE))
+
+        assertEquals(
+            CoreOutboxDrainReport(4, 4, 2, 2, 0),
+            drainer.drain(novels, capabilities(EpigraphCoreEntityType.NOVEL_HISTORY), NOW),
+        )
+        assertEquals(listOf("mutation-1", "mutation-2"), store.acknowledged)
+        assertEquals(setOf("mutation-3", "mutation-4"), store.failed.map { it.identity.clientMutationId }.toSet())
+        assertTrue(store.failed.all { it.errorCode == "core_transport_failure" })
+        // Something settled, so the batch prepared behind the pair is kept for the next drain.
+        drainer.drain(novels, capabilities(EpigraphCoreEntityType.NOVEL_HISTORY), NOW)
+        assertEquals(listOf("mutation-1", "mutation-2", "mutation-5", "mutation-6"), store.acknowledged)
+    }
+
+    /** A history row, which the Core applies in any order: deletable, so the fixture stays simple. */
+    private fun orderFree(sequence: Long, entity: String = "entity-$sequence") =
+        claim(sequence, EpigraphCoreEntityType.NOVEL_HISTORY, NOVEL_SCOPE, entity)
+
     private fun drainer(
         store: CoreOutboxStore,
         gateway: CoreMutationGateway,
@@ -472,9 +536,10 @@ class CoreOutboxDrainerTest {
         sequence: Long,
         entityType: String = EpigraphCoreEntityType.BOOK_CATEGORY,
         scopeId: String = BOOK_SCOPE,
+        entity: String = "entity-$sequence",
     ): ClaimedCoreOutboxRecord {
         val mutationId = "mutation-$sequence"
-        val entityId = EpigraphEntityId("entity-$sequence")
+        val entityId = EpigraphEntityId(entity)
         val command = SyncCommand.DeleteEntity(entityId)
         val envelope = SyncCommandEnvelope(
             protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
@@ -565,6 +630,33 @@ class CoreOutboxDrainerTest {
             accessToken: String,
             request: CoreMutationsRequest,
         ): CoreHttpResult<CoreMutationsResponse> = block(accessToken, request)
+    }
+
+    /** Answers after a short network delay and records how many requests overlapped. */
+    private inner class InFlightGateway(
+        private val failing: Set<String> = emptySet(),
+    ) : CoreMutationGateway {
+        private var inFlight = 0
+        var maxInFlight = 0
+        val sent = mutableListOf<List<String>>()
+
+        override suspend fun submit(
+            accessToken: String,
+            request: CoreMutationsRequest,
+        ): CoreHttpResult<CoreMutationsResponse> {
+            sent += request.ids()
+            inFlight += 1
+            maxInFlight = maxOf(maxInFlight, inFlight)
+            try {
+                kotlinx.coroutines.delay(100)
+            } finally {
+                inFlight -= 1
+            }
+            if (request.ids().any { it in failing }) throw IOException("dropped")
+            return CoreHttpResult.Success(
+                response(request, *request.mutations.indices.map { result(request, it + 1) }.toTypedArray()),
+            )
+        }
     }
 
     private class FakeStore(
@@ -685,6 +777,7 @@ class CoreOutboxDrainerTest {
     private companion object {
         const val DEVICE_ID = "android-phone"
         const val BOOK_SCOPE = "books:global"
+        const val NOVEL_SCOPE = "novels:profile:main"
         const val COMIC_SCOPE = "comics:profile:main"
         const val SECRET = "secret-token-never-render"
         const val NOW = 1_000L

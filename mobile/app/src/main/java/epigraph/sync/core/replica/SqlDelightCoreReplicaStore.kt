@@ -136,7 +136,6 @@ class SqlDelightCoreReplicaStore(
             val batch = CoreProjectionBatch()
             withContext(batch) {
                 val queries = aethon_syncQueries
-                val transaction = SqlDelightCoreReplicaTransaction(this@await, queries, projection, clock)
                 // Everything a record-by-record confirm would look up, read once per chunk instead.
                 val applied = records.map { it.serverVersion }.distinct().chunked(BULK_CHUNK)
                     .flatMapTo(HashSet()) { queries.selectAppliedCoreReplicaInboxEvents(it).executeAsList() }
@@ -175,6 +174,10 @@ class SqlDelightCoreReplicaStore(
                 }
                 projection?.preload(this@await, records)
                 var maxLamport = -1L
+                val appliedAt = clock().also { require(it >= 0) { "clock must not return a negative epoch" } }
+                val mirrored = ArrayList<CoreConfirmedRecord>(records.size)
+                val recordRows = ArrayList<CoreReplicaBulkWrites.RecordRow>(records.size)
+                val inboxRows = ArrayList<CoreReplicaBulkWrites.InboxRow>(records.size)
                 records.forEach { record ->
                     // Its echo already arrived and was applied; only the wait may remain.
                     if (!applied.add(record.serverVersion)) return@forEach
@@ -188,10 +191,8 @@ class SqlDelightCoreReplicaStore(
                             )
                         }
                         val canonicalRecord = CoreReplicaPayloadHasher.canonicalJson(record.record)
-                        queries.upsertCoreReplicaRecord(
-                            scopeId = record.key.scopeId,
-                            entityType = record.key.entityType,
-                            entityId = record.key.entityId,
+                        recordRows += CoreReplicaBulkWrites.RecordRow(
+                            key = record.key,
                             serverVersion = record.serverVersion,
                             lamport = record.lamport,
                             recordJson = canonicalRecord,
@@ -199,19 +200,23 @@ class SqlDelightCoreReplicaStore(
                         )
                         held[record.key] = record.serverVersion
                         maxLamport = maxOf(maxLamport, record.lamport)
-                        projection?.upsert(this@await, record)
+                        mirrored += record
                     }
                     // The echo from the live stream or /v1/changes is then skipped as already applied.
-                    transaction.recordAppliedInboxEvent(
-                        CoreReplicaInboxEvent(
-                            globalEventId = record.serverVersion,
-                            scopeId = record.key.scopeId,
-                            entityType = record.key.entityType,
-                            entityId = record.key.entityId,
-                            operation = "merge",
-                        ),
+                    val event = CoreReplicaInboxEvent(
+                        globalEventId = record.serverVersion,
+                        scopeId = record.key.scopeId,
+                        entityType = record.key.entityType,
+                        entityId = record.key.entityId,
+                        operation = "merge",
                     )
+                    inboxRows += CoreReplicaBulkWrites.InboxRow(event, CoreReplicaPayloadHasher.inbox(event), appliedAt)
                 }
+                // The mirror is written before any record is projected: a history record reads the
+                // chapter state the mirror holds for its chapter, which may be in this same batch.
+                CoreReplicaBulkWrites.upsertRecords(databaseHandler.driver, recordRows)
+                if (projection != null) mirrored.forEach { record -> projection.upsert(this@await, record) }
+                CoreReplicaBulkWrites.insertInboxEvents(databaseHandler.driver, inboxRows)
                 batch.flush()
                 if (maxLamport >= 0) queries.advanceCoreLamport(maxLamport)
                 // The waits these acknowledgements created, settled against what the mirror now holds.

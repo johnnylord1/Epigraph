@@ -55,6 +55,7 @@ import epigraph.sync.core.outbox.CoreLamportSource
 import epigraph.sync.core.outbox.CoreOutboxRetryPlanner
 import epigraph.sync.core.outbox.CoreOutboxStore
 import epigraph.sync.core.outbox.CoreRequestIdSource
+import epigraph.sync.core.outbox.CoreStagedOutbox
 import epigraph.sync.core.outbox.CoreV1OutboxAdapter
 import epigraph.sync.core.outbox.ExponentialCoreOutboxRetryPlanner
 import epigraph.sync.core.outbox.UuidCoreRequestIdSource
@@ -403,8 +404,10 @@ fun epigraphSyncModule(app: Application) = module {
             projectHeldRecord = { key -> get<SqlDelightCoreReplicaStore>().projectHeldRecord(key) },
             confirmOwnWrites = { records -> get<SqlDelightCoreReplicaStore>().confirmOwnWrites(records) },
             confirmationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            staged = get(),
         )
     }
+    single { CoreStagedOutbox() }
     single { CoreV1OutboxAdapter() }
     single<CoreLamportSource> { SqlDelightCoreLamportSource(get()) }
     single<CoreRequestIdSource> { UuidCoreRequestIdSource() }
@@ -415,7 +418,7 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single<CoreDeviceIdentityProvider> { AndroidCoreDeviceIdentityProvider(get()) }
     single { SuwayomiMutationQueueDrainer(get()) }
-    single<CorePendingOutbox> { CoordinatorPendingOutbox(get(), get()) }
+    single<CorePendingOutbox> { CoordinatorPendingOutbox(get(), get(), get()) }
     single<CoreSyncWakeStore> { SqlDelightCoreSyncWakeStore(get()) }
     single {
         val sources = lazy { get<SourceManager>() }
