@@ -1387,7 +1387,7 @@ fn planned_chapter_state_updated_at(
 ) -> Option<i64> {
     let current = observed.progress_state();
     if let Some(row) = stored {
-        if stored_progress_state(&row.record_json) == Some(current) {
+        if record_matches_observed(&row.record_json, current) {
             return None;
         }
     }
@@ -1473,7 +1473,7 @@ fn agreeing_record_at_ms(
     stored: Option<&StoredChapterStateRow>,
 ) -> Option<i64> {
     stored
-        .filter(|row| stored_progress_state(&row.record_json) == Some(observed.progress_state()))
+        .filter(|row| record_matches_observed(&row.record_json, observed.progress_state()))
         .map(|row| row.record_updated_at_ms)
 }
 
@@ -2201,13 +2201,38 @@ fn stored_progress_state(raw: &str) -> Option<ChapterProgressState> {
     })
 }
 
+/// Whether writing what Suwayomi shows would leave `stored_json` as it is. Suwayomi reports page
+/// 0 both for a chapter never opened and for one whose page it does not keep (the projection drops
+/// the page while the page count is unknown), and the mirror writes that as an absent page, which
+/// the merge leaves as stored. Comparing it to a stored page would rewrite the same record on
+/// every scan and push it to every device.
+fn record_matches_observed(stored_json: &str, observed: ChapterProgressState) -> bool {
+    let Some(stored) = stored_progress_state(stored_json) else {
+        return false;
+    };
+    stored == page_kept_unless_observed(observed, stored)
+}
+
+fn page_kept_unless_observed(
+    observed: ChapterProgressState,
+    stored: ChapterProgressState,
+) -> ChapterProgressState {
+    if observed.last_page_read > 0 {
+        observed
+    } else {
+        ChapterProgressState {
+            last_page_read: stored.last_page_read,
+            ..observed
+        }
+    }
+}
+
+/// An incoming record without a page leaves the stored page as it is; see
+/// [`record_matches_observed`].
 fn chapter_state_semantically_equal(stored_json: &str, incoming_json: &str) -> bool {
-    match (
-        stored_progress_state(stored_json),
-        stored_progress_state(incoming_json),
-    ) {
-        (Some(stored), Some(incoming)) => stored == incoming,
-        _ => false,
+    match stored_progress_state(incoming_json) {
+        Some(incoming) => record_matches_observed(stored_json, incoming),
+        None => false,
     }
 }
 
@@ -2471,6 +2496,19 @@ mod tests {
             r#"{"read":true,"bookmarked":false,"lastPageRead":0}"#,
             r#"{"read":true,"bookmarked":false,"lastPageRead":null}"#,
         ));
+        // An incoming record without a page keeps the stored one, so it changes nothing.
+        assert!(chapter_state_semantically_equal(
+            r#"{"read":true,"bookmarked":false,"lastPageRead":11}"#,
+            r#"{"read":true,"bookmarked":false,"lastPageRead":null}"#,
+        ));
+        assert!(!chapter_state_semantically_equal(
+            r#"{"read":true,"bookmarked":false,"lastPageRead":11}"#,
+            r#"{"read":false,"bookmarked":false,"lastPageRead":null}"#,
+        ));
+        assert!(!chapter_state_semantically_equal(
+            r#"{"read":true,"bookmarked":false,"lastPageRead":11}"#,
+            r#"{"read":true,"bookmarked":false,"lastPageRead":4}"#,
+        ));
     }
 
     #[test]
@@ -2605,6 +2643,32 @@ mod tests {
         );
         assert_eq!(planned.legacy, None);
         assert_eq!(planned.identity, Some(3_000));
+    }
+
+    #[test]
+    fn a_page_suwayomi_does_not_keep_is_not_rewritten_on_every_scan() {
+        // Suwayomi shows page 0 for a read chapter whose page count is unknown, while the record
+        // keeps the page the phone read. Writing that would change nothing, since the record
+        // carries no page and the merge keeps the stored one, but used to be redone on every scan.
+        let observed = chapter(51_656, true, 0);
+        let stored = json!({ "read": true, "bookmarked": false, "lastPageRead": 11, "updatedAtMs": 2_000 });
+        for device in [MIRROR_DEVICE_ID, "phone-1"] {
+            let row = stored_row(device, 2_000, stored.clone());
+            assert_eq!(
+                planned_chapter_state_updated_at(&observed, None, None, Some(&row), 5_000),
+                None
+            );
+            assert!(planned_record(&observed, None, Some(3_000), Some(&row), 5_000).is_none());
+            assert_eq!(agreeing_record_at_ms(&observed, Some(&row)), Some(2_000));
+        }
+        // A real change still goes out, and a page Suwayomi does show still counts.
+        let row = stored_row(MIRROR_DEVICE_ID, 2_000, stored);
+        let unread = chapter(51_656, false, 0);
+        let unread = planned_record(&unread, None, Some(3_000), Some(&row), 5_000).unwrap();
+        assert_eq!(unread["read"], json!(false));
+        let paged = chapter(51_656, true, 4);
+        let paged = planned_record(&paged, None, Some(3_000), Some(&row), 5_000).unwrap();
+        assert_eq!(paged["lastPageRead"], json!(4));
     }
 
     #[test]
