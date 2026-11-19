@@ -139,6 +139,27 @@ class EpigraphMutationCoordinatorTest {
     }
 
     @Test
+    fun `a local edit is stamped on the Core clock once, as its row is written`() = runTest {
+        val skewed = EpigraphMutationCoordinator(
+            AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            coreTime = { it + 27_500 },
+        )
+        val edit = envelope(DeviceId("phone-a"), ClientMutationId("edit"))
+        val dated = envelope(DeviceId("phone-a"), ClientMutationId("dated"))
+
+        skewed.mutateLocal(edit, createdAtEpochMillis = 1_000) { Unit }
+        // A row moved back from the staged outbox keeps the clock it was already sent with.
+        skewed.mutateLocalBatch(createdAtEpochMillis = 2_000) {
+            LocalMutationResult(Unit, listOf(dated), envelopeCreatedAt = mapOf(dated.clientMutationId to 1_500L))
+        }
+
+        val claimed = skewed.claimReady(nowEpochMillis = 2_000, leaseDurationMillis = 1_000, limit = 10)
+            .associateBy { it.client_mutation_id }
+        assertEquals(28_500, claimed.getValue("edit").created_at)
+        assertEquals(1_500, claimed.getValue("dated").created_at)
+    }
+
+    @Test
     fun `expired in flight mutation is claimable after process death`() = runTest {
         coordinator.mutateLocal(envelope(DeviceId("phone-a"), ClientMutationId("leased")), 100) { Unit }
         assertEquals(1, coordinator.claimReady(100, leaseDurationMillis = 50, limit = 10).size)

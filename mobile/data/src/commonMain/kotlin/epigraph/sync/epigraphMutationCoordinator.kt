@@ -34,6 +34,11 @@ class EpigraphMutationCoordinator(
     },
     /** Best-effort notification used by Android to wake the Core worker immediately. */
     private val onLocalMutationEnqueued: (() -> Unit)? = null,
+    /**
+     * Moves a local edit's time onto the paired Core's clock, which settles concurrent edits by
+     * time. Applied once, as the row is written, so every resend carries the same clock.
+     */
+    private val coreTime: (Long) -> Long = { it },
 ) {
     /**
      * The driver behind this coordinator's transactions, for a statement SQLDelight cannot
@@ -82,7 +87,7 @@ class EpigraphMutationCoordinator(
             mutation.envelopes.forEach { envelope ->
                 val createdAt = mutation.envelopeCreatedAt[envelope.clientMutationId]
                     ?.also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
-                    ?: createdAtEpochMillis
+                    ?: coreTime(createdAtEpochMillis)
                 val entityKey = envelope.deviceId.value to envelope.command.entityId.value
                 val (queued, queuedAt) = if (mayFold == null || entityKey in mayFold) {
                     foldIntoUnsent(envelope, createdAt)

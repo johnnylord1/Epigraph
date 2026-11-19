@@ -4,6 +4,7 @@ import epigraph.sync.core.credentials.CoreCredentialSession
 import epigraph.sync.core.assets.CoreAssetHttpClient
 import epigraph.sync.core.assets.OkHttpCoreAssetHttpClient
 import epigraph.sync.core.events.OkHttpCoreEventStream
+import epigraph.sync.core.http.CoreServerClock
 import epigraph.sync.core.http.EpigraphCoreHttpClient
 import epigraph.sync.core.pairing.transport.EpigraphCoreTlsClientFactory
 import epigraph.sync.core.suwayomi.SuwayomiCoreProxyClient
@@ -25,6 +26,7 @@ data class CoreSessionTransports(
 class CoreSessionTransportFactory(
     private val tlsClients: EpigraphCoreTlsClientFactory,
     private val clientVersion: String,
+    private val serverClock: CoreServerClock? = null,
 ) {
     fun create(
         credentials: CoreCredentialSession,
@@ -35,7 +37,7 @@ class CoreSessionTransportFactory(
             "Stored Epigraph Core endpoint is not an HTTPS origin"
         }
         val client = tlsClients.create(credentials.tlsCertSha256)
-        val http = EpigraphCoreHttpClient(client, origin, clientVersion)
+        val http = EpigraphCoreHttpClient(client, origin, clientVersion, serverClock = serverClock)
         return CoreSessionTransports(
             http = http,
             assets = OkHttpCoreAssetHttpClient(client, origin),

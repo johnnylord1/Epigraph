@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.util.Log
 import epigraph.sync.core.credentials.CoreCredentialSession
 import epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID
+import epigraph.sync.core.http.CoreServerClock
 import epigraph.sync.core.http.EpigraphCoreHttpClient
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.pairing.BootstrapBundleParser
@@ -39,6 +40,7 @@ class AndroidCoreEndpointResolver(
     context: Context,
     private val tlsClients: EpigraphCoreTlsClientFactory,
     private val clientVersion: String,
+    private val serverClock: CoreServerClock? = null,
 ) : CoreEndpointResolver {
     private val nsd = context.applicationContext.getSystemService(NsdManager::class.java)
 
@@ -101,6 +103,7 @@ class AndroidCoreEndpointResolver(
                 tlsClients.create(session.tlsCertSha256),
                 origin.toHttpUrl(),
                 clientVersion,
+                serverClock = serverClock,
             )
             session.withAccessTokenString { token ->
                 when (val response = client.session(token)) {

@@ -35,6 +35,7 @@ import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
 import okio.Buffer
@@ -77,13 +78,15 @@ class EpigraphCoreHttpClient internal constructor(
     private val json: Json,
     preserveInterceptorsForTests: Boolean,
     private val maxJsonResponseBytes: Long = DEFAULT_MAX_JSON_RESPONSE_BYTES,
+    private val serverClock: CoreServerClock? = null,
 ) {
     constructor(
         client: OkHttpClient,
         baseUrl: HttpUrl,
         clientVersion: String,
         json: Json = DEFAULT_JSON,
-    ) : this(client, baseUrl, clientVersion, json, false)
+        serverClock: CoreServerClock? = null,
+    ) : this(client, baseUrl, clientVersion, json, false, serverClock = serverClock)
 
     // Never forward pairing tokens to a redirected origin.
     private val client = client.newBuilder()
@@ -562,6 +565,7 @@ class EpigraphCoreHttpClient internal constructor(
 
     private suspend inline fun <reified T> execute(request: Request): CoreHttpResult<T> {
         return client.newCall(request).await().use { response ->
+            observeServerTime(response)
             val responseBody = readUtf8Bounded(response.body, maxJsonResponseBytes)
                 ?: return@use CoreHttpResult.Failure(413, null)
             if (response.isSuccessful) {
@@ -594,6 +598,7 @@ class EpigraphCoreHttpClient internal constructor(
 
     private suspend fun executeBytes(request: Request): CoreHttpResult<ByteArray> {
         return client.newCall(request).await().use { response ->
+            observeServerTime(response)
             if (response.isSuccessful) {
                 val body = response.body
                 val buffer = Buffer()
@@ -621,6 +626,14 @@ class EpigraphCoreHttpClient internal constructor(
                 )
             }
         }
+    }
+
+    private fun observeServerTime(response: Response) {
+        serverClock?.observeHeader(
+            response.header(CoreServerClock.HEADER),
+            response.sentRequestAtMillis,
+            response.receivedResponseAtMillis,
+        )
     }
 
     private fun readUtf8Bounded(body: ResponseBody, maxBytes: Long): String? {

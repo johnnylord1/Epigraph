@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
+import epigraph.sync.core.http.CoreServerClock
 import eu.kanade.tachiyomi.source.SourceManager
 import epigraph.contract.ClientMutationId
 import epigraph.contract.DeviceId
@@ -247,9 +248,16 @@ fun epigraphSyncModule(app: Application) = module {
             syncPause = get(),
         )
     }
-    single { CoreSessionTransportFactory(get(), BuildConfig.VERSION_NAME) }
+    single {
+        val preferences = app.getSharedPreferences(CORE_SERVER_CLOCK_PREFERENCES, Context.MODE_PRIVATE)
+        CoreServerClock(
+            initialOffsetMs = preferences.getLong(CORE_SERVER_CLOCK_OFFSET_KEY, 0L),
+            persist = { preferences.edit().putLong(CORE_SERVER_CLOCK_OFFSET_KEY, it).apply() },
+        )
+    }
+    single { CoreSessionTransportFactory(get(), BuildConfig.VERSION_NAME, get()) }
     single<CoreEndpointResolver> {
-        AndroidCoreEndpointResolver(app, get(), BuildConfig.VERSION_NAME)
+        AndroidCoreEndpointResolver(app, get(), BuildConfig.VERSION_NAME, get())
     }
     single {
         BookAssetCoordinator(
@@ -327,9 +335,14 @@ fun epigraphSyncModule(app: Application) = module {
     single { CoreSuwayomiProjectionStatusSource(get(), get()) }
 
     single {
-        EpigraphMutationCoordinator(get()) {
-            get<CoreBackgroundSyncScheduler>().enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
-        }
+        val serverClock = get<CoreServerClock>()
+        EpigraphMutationCoordinator(
+            databaseHandler = get(),
+            onLocalMutationEnqueued = {
+                get<CoreBackgroundSyncScheduler>().enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
+            },
+            coreTime = serverClock::toCoreTime,
+        )
     }
     single {
         EpigraphReaderProgressRouter(
@@ -409,7 +422,10 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single { CoreStagedOutbox() }
     single { CoreV1OutboxAdapter() }
-    single<CoreLamportSource> { SqlDelightCoreLamportSource(get()) }
+    single<CoreLamportSource> {
+        val serverClock = get<CoreServerClock>()
+        SqlDelightCoreLamportSource(get(), serverClock::nowMs)
+    }
     single<CoreRequestIdSource> { UuidCoreRequestIdSource() }
     single<CoreOutboxRetryPlanner> { ExponentialCoreOutboxRetryPlanner() }
     single { CoreOutboxDrainerFactory(get(), get(), get(), get(), get()) }
@@ -597,6 +613,8 @@ fun epigraphSyncModule(app: Application) = module {
 }
 
 private const val CORE_COVER_QUEUE_PREFERENCES = "aethon_core_cover_queue_v1"
+private const val CORE_SERVER_CLOCK_PREFERENCES = "epigraph_core_server_clock_v1"
+private const val CORE_SERVER_CLOCK_OFFSET_KEY = "offset_ms"
 private const val CORE_COVER_QUEUE_CURSOR = "next_missing_cover"
 
 private const val PAIRING_HTTP_CLIENT = "epigraphCorePairingHttp"
