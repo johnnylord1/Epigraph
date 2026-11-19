@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.Json
+import app.cash.sqldelight.db.SqlDriver
 import tachiyomi.data.Aethon_syncQueries
 import yokai.data.DatabaseHandler
 
@@ -30,9 +31,9 @@ class SqlDelightCoreReplicaStore(
     override suspend fun <T> transaction(block: suspend CoreReplicaTransaction.() -> T): T =
         databaseHandler.await(inTransaction = true) {
             // The batch only adds a context element, so the block stays on the transaction thread.
-            val batch = CoreProjectionBatch()
+            val batch = CoreProjectionBatch(databaseHandler.driver)
             withContext(batch) {
-                SqlDelightCoreReplicaTransaction(this@await, aethon_syncQueries, projection, clock).block()
+                SqlDelightCoreReplicaTransaction(this@await, databaseHandler.driver, aethon_syncQueries, projection, clock).block()
                     .also { batch.flush() }
             }
         }
@@ -133,7 +134,7 @@ class SqlDelightCoreReplicaStore(
             require(record.serverVersion >= 0 && record.lamport >= 0) { "record versions must not be negative" }
         }
         databaseHandler.await(inTransaction = true) {
-            val batch = CoreProjectionBatch()
+            val batch = CoreProjectionBatch(databaseHandler.driver)
             withContext(batch) {
                 val queries = aethon_syncQueries
                 // Everything a record-by-record confirm would look up, read once per chunk instead.
@@ -310,6 +311,7 @@ class SqlDelightCoreLamportSource(
 
 private class SqlDelightCoreReplicaTransaction(
     private val database: yokai.data.Database,
+    private val driver: SqlDriver,
     private val queries: Aethon_syncQueries,
     private val projection: CoreReplicaProjection?,
     private val clock: () -> Long,
@@ -360,7 +362,24 @@ private class SqlDelightCoreReplicaTransaction(
         }
         queries.deleteCoreReplicaRecordsByScope(scopeId)
         queries.deleteCoreReplicaTombstonesByScope(scopeId)
-        records.forEach(::writeRecord)
+        // A comic snapshot holds tens of thousands of records: one multi-row statement per hundred
+        // instead of a statement and a Lamport write per record.
+        records.chunked(BULK_RECORDS).forEach { chunk ->
+            CoreReplicaBulkWrites.upsertRecords(
+                driver,
+                chunk.map { record ->
+                    val canonicalRecord = CoreReplicaPayloadHasher.canonicalJson(record.record)
+                    CoreReplicaBulkWrites.RecordRow(
+                        key = record.key,
+                        serverVersion = record.serverVersion,
+                        lamport = record.lamport,
+                        recordJson = canonicalRecord,
+                        payloadSha256 = CoreReplicaPayloadHasher.sha256(canonicalRecord),
+                    )
+                },
+            )
+        }
+        records.maxOfOrNull { it.lamport }?.let(queries::advanceCoreLamport)
         tombstones.forEach(::writeTombstone)
     }
 
@@ -377,7 +396,13 @@ private class SqlDelightCoreReplicaTransaction(
             records,
             tombstones,
         )
-        records.forEach(::reconcileReplicaWait)
+        // The mirror now holds exactly these versions, so settling each wait against the mirror
+        // is settling it against the record the snapshot delivered.
+        records.groupBy({ it.key.entityType }, { it.key.entityId }).forEach { (entityType, entityIds) ->
+            entityIds.distinct().chunked(BULK_IDS).forEach { chunk ->
+                queries.reconcileReplicaWaitsForEntities(scopeId, entityType, chunk, chunk)
+            }
+        }
         tombstones.forEach(::reconcileReplicaWait)
         pendingPreviousRecords = emptyList()
         pendingPreviousTombstones = emptyList()
@@ -584,6 +609,8 @@ private class SqlDelightCoreReplicaTransaction(
 
     private companion object {
         const val NO_VERSION = -1L
+        const val BULK_RECORDS = 1000
+        const val BULK_IDS = 400
         const val MERGE = "merge"
         const val DELETE = "delete"
         const val ALL = "ALL"

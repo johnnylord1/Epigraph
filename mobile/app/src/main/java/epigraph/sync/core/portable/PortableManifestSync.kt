@@ -268,7 +268,8 @@ class PortableManifestSync(
         }
         val requiresUserAction = hydrationReport?.dependenciesRequiringUserAction.orZero() > 0
         val hydrationComplete = hydrationReport == null ||
-            (hydrationReport.pendingWorks == 0 && hydrationReport.pendingChapters == 0 && !requiresUserAction)
+            (hydrationReport.pendingWorks == 0 && hydrationReport.pendingChapters == 0 &&
+                !hydrationReport.chaptersRemaining && !requiresUserAction)
         val phase = if (omittedCount == 0L && hydrationComplete) {
             PortableBootstrapPhase.COMPLETED
         } else {

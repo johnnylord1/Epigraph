@@ -264,6 +264,131 @@ class PortableHydrationCoordinatorTest {
         assertEquals("210", store.chapters.single().localReference)
     }
 
+    @Test
+    fun `every pending chapter is bound in one pass, not only the first page`() = runTest {
+        val boundWork = work("bound", "5", "fixture.bound").copy(
+            localReference = "2",
+            resolution = ready(PortableResolutionState.BOUND),
+        )
+        val waitingWork = work("waiting", "6", "fixture.waiting")
+        val chapters = (1..7).map { index ->
+            // Chapter 3 belongs to a work that is not bound yet and must stay pending.
+            val owner = if (index == 3) waitingWork else boundWork
+            PortableChapterBindingRecord(
+                portableChapterId = "chapter-%02d".format(index),
+                portableWorkId = owner.portableId,
+                ref = PortableChapterRef.Comic(owner.ref as PortableWorkRef.Comic, ProviderOwnedKey("/c/$index")),
+                localReference = null,
+                resolution = PortableResolution(PortableResolutionState.PENDING_PROVIDER),
+                attemptCount = 0,
+                updatedAt = 1,
+            )
+        }
+        val store = PagingStore(chapters, listOf(boundWork, waitingWork))
+        val comics = FakeProvider(
+            ecosystem = PortableEcosystem.SUWAYOMI,
+            chapterResolution = { ref ->
+                val key = (ref as PortableChapterRef.Comic).chapterKey.value
+                ChapterResolution(ref, ready(PortableResolutionState.BOUND), "local-$key")
+            },
+        )
+
+        val report = PortableHydrationCoordinator(
+            store,
+            comics,
+            FakeProvider(PortableEcosystem.LNREADER),
+        ).hydrate("server", "main", 100, workLimit = 2)
+
+        assertEquals(6, report.boundChapters)
+        assertEquals(1, report.pendingChapters)
+        assertEquals(false, report.chaptersRemaining)
+        assertEquals(chapters.map { it.portableChapterId }.toSet(), store.persisted.keys)
+        assertEquals(PortableResolutionState.PENDING_PROVIDER, store.persisted.getValue("chapter-03").resolution.state)
+        assertEquals("local-/c/7", store.persisted.getValue("chapter-07").localReference)
+    }
+
+    @Test
+    fun `a backlog beyond the page budget is reported as remaining`() = runTest {
+        val boundWork = work("bound", "5", "fixture.bound").copy(
+            localReference = "2",
+            resolution = ready(PortableResolutionState.BOUND),
+        )
+        val chapters = (1..205).map { index ->
+            PortableChapterBindingRecord(
+                portableChapterId = "chapter-%03d".format(index),
+                portableWorkId = boundWork.portableId,
+                ref = PortableChapterRef.Comic(boundWork.ref as PortableWorkRef.Comic, ProviderOwnedKey("/c/$index")),
+                localReference = null,
+                resolution = PortableResolution(PortableResolutionState.PENDING_PROVIDER),
+                attemptCount = 0,
+                updatedAt = 1,
+            )
+        }
+        val store = PagingStore(chapters, listOf(boundWork))
+        val comics = FakeProvider(
+            ecosystem = PortableEcosystem.SUWAYOMI,
+            chapterResolution = { ref -> ChapterResolution(ref, ready(PortableResolutionState.BOUND), "x") },
+        )
+
+        val report = PortableHydrationCoordinator(
+            store,
+            comics,
+            FakeProvider(PortableEcosystem.LNREADER),
+        ).hydrate("server", "main", 100, workLimit = 1)
+
+        assertEquals(0, report.pendingChapters)
+        assertEquals(true, report.chaptersRemaining)
+        assertEquals(200, store.persisted.size)
+    }
+
+    /** Serves pending chapters in (updatedAt, id) order, as the SQL store does. */
+    private class PagingStore(
+        initial: List<PortableChapterBindingRecord>,
+        private val works: List<PortableWorkBindingRecord>,
+    ) : PortableHydrationStore {
+        private val rows = initial.associateByTo(LinkedHashMap()) { it.portableChapterId }
+        val persisted = LinkedHashMap<String, PortableChapterBindingRecord>()
+
+        private fun pending() = rows.values
+            .filter { it.resolution.state != PortableResolutionState.BOUND }
+            .sortedWith(compareBy({ it.updatedAt }, { it.portableChapterId }))
+
+        private fun page(chapters: List<PortableChapterBindingRecord>) = PortableHydrationSnapshot(
+            comics = emptyList(),
+            novels = emptyList(),
+            works = emptyList(),
+            chapters = chapters,
+            chapterWorks = works.filter { work -> chapters.any { it.portableWorkId == work.portableId } },
+        )
+
+        override suspend fun load(serverId: String, profileId: String, limit: Long) =
+            page(pending().take(limit.toInt()))
+
+        override suspend fun loadChapters(
+            serverId: String,
+            profileId: String,
+            after: PortableChapterCursor,
+            limit: Long,
+        ) = page(
+            pending().filter {
+                it.updatedAt > after.updatedAt ||
+                    (it.updatedAt == after.updatedAt && it.portableChapterId > after.portableChapterId)
+            }.take(limit.toInt()),
+        )
+
+        override suspend fun persist(
+            comicDependencies: List<PortableComicDependencyRecord>,
+            novelDependencies: List<PortableNovelDependencyRecord>,
+            works: List<PortableWorkBindingRecord>,
+            chapters: List<PortableChapterBindingRecord>,
+        ) {
+            chapters.forEach {
+                rows[it.portableChapterId] = it
+                persisted[it.portableChapterId] = it
+            }
+        }
+    }
+
     private class FakeStore(
         private val snapshot: PortableHydrationSnapshot,
     ) : PortableHydrationStore {

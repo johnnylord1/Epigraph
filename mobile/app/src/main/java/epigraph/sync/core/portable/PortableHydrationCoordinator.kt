@@ -45,10 +45,27 @@ data class PortableHydrationReport(
     val pendingWorks: Int,
     val boundChapters: Int = 0,
     val pendingChapters: Int = 0,
+    /** True when the pass stopped at its page budget with chapters it never examined. */
+    val chaptersRemaining: Boolean = false,
 )
+
+/** Position after the last pending chapter of a page, in the store's (updatedAt, id) order. */
+data class PortableChapterCursor(val updatedAt: Long, val portableChapterId: String)
 
 interface PortableHydrationStore {
     suspend fun load(serverId: String, profileId: String, limit: Long): PortableHydrationSnapshot
+
+    /**
+     * The pending chapters after [after], with every work that owns one. A restored library can
+     * hold thousands of chapters waiting for their work; one page per cycle would leave the rest
+     * without the Core's state while the bootstrap reports complete.
+     */
+    suspend fun loadChapters(
+        serverId: String,
+        profileId: String,
+        after: PortableChapterCursor,
+        limit: Long,
+    ): PortableHydrationSnapshot = PortableHydrationSnapshot(emptyList(), emptyList(), emptyList())
 
     suspend fun persist(
         comicDependencies: List<PortableComicDependencyRecord>,
@@ -83,6 +100,33 @@ class SqlDelightPortableHydrationStore(
                     .toList(),
             )
         }
+
+    override suspend fun loadChapters(
+        serverId: String,
+        profileId: String,
+        after: PortableChapterCursor,
+        limit: Long,
+    ): PortableHydrationSnapshot = database.await(inTransaction = false) {
+        val bindings = SqlDelightPortableBindingStore(this)
+        val chapters = bindings.pendingChaptersAfter(
+            serverId,
+            profileId,
+            after.updatedAt,
+            after.portableChapterId,
+            limit,
+        )
+        PortableHydrationSnapshot(
+            comics = emptyList(),
+            novels = emptyList(),
+            works = emptyList(),
+            chapters = chapters,
+            chapterWorks = chapters.asSequence()
+                .map(PortableChapterBindingRecord::portableWorkId)
+                .distinct()
+                .mapNotNull { bindings.work(it) }
+                .toList(),
+        )
+    }
 
     override suspend fun persist(
         comicDependencies: List<PortableComicDependencyRecord>,
@@ -359,6 +403,39 @@ class PortableHydrationCoordinator(
             .associateBy(PortableWorkBindingRecord::portableId)
         val chapterUpdates = resolveChapters(snapshot.chapters, worksById, nowEpochMillis)
         store.persist(comicDependencies, novelDependencies, updates, chapterUpdates)
+        var boundChapters = chapterUpdates.count { it.resolution.state == PortableResolutionState.BOUND }
+        var pendingChapters = chapterUpdates.size - boundChapters
+        // Walk the remaining pending chapters by cursor. A chapter left pending above is stamped
+        // with now and may reappear later in the order, so each id is examined once per pass.
+        val examined = snapshot.chapters.mapTo(HashSet(), PortableChapterBindingRecord::portableChapterId)
+        val boundUpdates = updates.associateBy(PortableWorkBindingRecord::portableId)
+        var page = snapshot.chapters
+        var pages = 1
+        var chaptersRemaining = false
+        while (page.size >= workLimit) {
+            if (pages >= MAX_CHAPTER_PAGES) {
+                chaptersRemaining = true
+                break
+            }
+            val last = page.last()
+            val next = store.loadChapters(
+                serverId,
+                profileId,
+                PortableChapterCursor(last.updatedAt, last.portableChapterId),
+                workLimit,
+            )
+            pages++
+            page = next.chapters
+            val fresh = page.filter { examined.add(it.portableChapterId) }
+            if (fresh.isEmpty()) continue
+            // Works bound by this pass win over the rows read for the page.
+            val pageWorks = next.chapterWorks.associateBy(PortableWorkBindingRecord::portableId) + boundUpdates
+            val pageUpdates = resolveChapters(fresh, pageWorks, nowEpochMillis)
+            store.persist(emptyList(), emptyList(), emptyList(), pageUpdates)
+            val bound = pageUpdates.count { it.resolution.state == PortableResolutionState.BOUND }
+            boundChapters += bound
+            pendingChapters += pageUpdates.size - bound
+        }
         return PortableHydrationReport(
             examinedDependencies = comicDependencies.size + novelDependencies.size,
             dependenciesRequiringUserAction = (comicDependencies.asSequence().map { it.resolution } +
@@ -367,8 +444,9 @@ class PortableHydrationCoordinator(
             examinedWorks = snapshot.works.size,
             boundWorks = updates.count { it.resolution.state == PortableResolutionState.BOUND },
             pendingWorks = updates.count { it.resolution.state != PortableResolutionState.BOUND },
-            boundChapters = chapterUpdates.count { it.resolution.state == PortableResolutionState.BOUND },
-            pendingChapters = chapterUpdates.count { it.resolution.state != PortableResolutionState.BOUND },
+            boundChapters = boundChapters,
+            pendingChapters = pendingChapters,
+            chaptersRemaining = chaptersRemaining,
         )
     }
 
@@ -651,6 +729,8 @@ class PortableHydrationCoordinator(
         const val MAX_SOURCE_QUEUES = 8
         const val DEFAULT_WORK_LIMIT = 1_000L
         const val MAX_WORK_LIMIT = 1_000L
+        /** 200 pages of 1000 chapters; a larger backlog continues on the next cycle. */
+        const val MAX_CHAPTER_PAGES = 200
     }
 }
 

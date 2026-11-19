@@ -12,6 +12,7 @@ import epigraph.contract.PortableIdentityV3
 import epigraph.contract.PortableResolution
 import epigraph.contract.PortableResolutionState
 import epigraph.contract.PortableWorkRef
+import app.cash.sqldelight.db.SqlDriver
 import epigraph.sync.portable.PortableChapterBindingRecord
 import epigraph.sync.portable.PortableWorkBindingRecord
 import epigraph.sync.portable.SqlDelightPortableBindingStore
@@ -83,8 +84,27 @@ class EpigraphCoreDomainProjection(
             .forEach { stale -> removeStale(database, stale.key, null) }
 
         // Entries/categories/chapters must exist before progress and assignments are applied.
-        records.sortedWith(compareBy({ phase(it.key.entityType) }, { it.key.entityId }))
-            .forEach { upsert(database, it) }
+        val sorted = records.sortedWith(compareBy({ phase(it.key.entityType) }, { it.key.entityId }))
+        val batch = currentCoroutineContext()[CoreProjectionBatch]
+        var index = 0
+        while (index < sorted.size) {
+            if (batch == null || !sorted[index].isReaderState()) {
+                upsert(database, sorted[index++])
+                continue
+            }
+            // Reader state never clears the batch, so a run of one type is read in bulk once: the
+            // local work that would hold each record back, and the bindings it projects onto.
+            val entityType = sorted[index].key.entityType
+            var end = index
+            while (end < sorted.size && sorted[end].key.entityType == entityType) end++
+            val run = sorted.subList(index, end)
+            preloadBlockers(database, batch, run)
+            preload(database, run)
+            run.forEach { upsert(database, it) }
+            // History reads the progress chapter states leave, as it did before they were deferred.
+            batch.flush()
+            index = end
+        }
         // Keyed once: a linear search per tombstone made large snapshots quadratic inside the
         // transaction that every other database write waits on.
         val previousByKey = previousRecords.associateBy { it.key }
@@ -125,6 +145,30 @@ class EpigraphCoreDomainProjection(
                     database.aethon_syncQueries.deleteReaderProgress(comicId)
                 }
             }
+    }
+
+    private fun CoreConfirmedRecord.isReaderState(): Boolean =
+        key.entityType == "comic.chapter_state" || key.entityType == "comic.history"
+
+    /** [hasBlockingLocalMutation] for every record of [records], read per chunk instead of per record. */
+    private fun preloadBlockers(database: Database, batch: CoreProjectionBatch, records: List<CoreConfirmedRecord>) {
+        val queries = database.aethon_syncQueries
+        records.groupBy({ it.key.scopeId to it.key.entityType }, { it.key.entityId }).forEach { (group, ids) ->
+            val (scopeId, entityType) = group
+            ids.distinct().chunked(PRELOAD_CHUNK).forEach { chunk ->
+                val outbox = queries.selectOutboxEntitiesBlockingReplica(scopeId, entityType, chunk)
+                    .executeAsList()
+                    .toHashSet()
+                val required = HashMap<String, Long>()
+                queries.selectReplicaWaitVersionsForEntities(scopeId, entityType, chunk, chunk)
+                    .executeAsList()
+                    .forEach { row ->
+                        required.merge(row.entity_id, row.required_server_version, ::maxOf)
+                        row.canonical_entity_id?.let { id -> required.merge(id, row.required_server_version, ::maxOf) }
+                    }
+                batch.preloadBlockers(scopeId, entityType, chunk, outbox, required)
+            }
+        }
     }
 
     override suspend fun preload(database: Database, records: List<CoreConfirmedRecord>) {
@@ -737,8 +781,8 @@ class EpigraphCoreDomainProjection(
                 .getChaptersByMangaId(stalePortableBinding._id, 0)
                 .executeAsList()
                 .forEach { chapter ->
-                    val current = database.chaptersQueries
-                        .getChaptersByUrlAndMangaId(chapter.url, localId, 0)
+                    val current = database.aethon_syncQueries
+                        .selectLocalChaptersByUrlAndManga(chapter.url, localId)
                         .executeAsList()
                         .firstOrNull()
                     if (current == null) {
@@ -878,6 +922,9 @@ class EpigraphCoreDomainProjection(
         work: PortableWorkBindingRecord,
         chapter: PortableChapterBindingRecord,
         updatedAt: Long,
+        batch: CoreProjectionBatch?,
+        /** Whether the batch may hold the binding write until it flushes. */
+        deferWrite: Boolean = false,
     ): PortableChapterBindingRecord {
         if (chapter.resolution.state == PortableResolutionState.BOUND ||
             work.resolution.state != PortableResolutionState.BOUND
@@ -886,16 +933,25 @@ class EpigraphCoreDomainProjection(
         }
         val ref = chapter.ref as? PortableChapterRef.Comic ?: return chapter
         val mangaId = work.localReference?.toLongOrNull() ?: return chapter
-        val local = database.chaptersQueries
-            .getChaptersByUrlAndMangaId(ref.chapterKey.value, mangaId, 0)
-            .executeAsList()
-            .firstOrNull() ?: return chapter
+        // A miss in the batch's url map is read again: a chapter inserted later in this
+        // transaction is not in a map taken before it.
+        val localId = batch?.localChapterId(mangaId, ref.chapterKey.value) { id ->
+            database.aethon_syncQueries.selectLocalChapterUrlsByManga(id).executeAsList()
+                .asSequence()
+                .map { it.url to it._id }
+        }
+            ?: database.aethon_syncQueries
+                .selectLocalChaptersByUrlAndManga(ref.chapterKey.value, mangaId)
+                .executeAsList()
+                .firstOrNull()
+                ?._id
+            ?: return chapter
         val bound = chapter.copy(
-            localReference = local._id.toString(),
+            localReference = localId.toString(),
             resolution = PortableResolution(PortableResolutionState.BOUND),
             updatedAt = updatedAt,
         )
-        store.upsertChapter(bound)
+        if (!(deferWrite && batch?.deferChapterBinding(store, bound) == true)) store.upsertChapter(bound)
         return bound
     }
 
@@ -951,7 +1007,10 @@ class EpigraphCoreDomainProjection(
             requireNotNull(portableChapterId)
             val preloadedChapter = batch?.takePreloadedChapter(portableChapterId)
             val preloadedRow = preloadedChapter?.row
+            // A binding this batch still holds is newer than anything read before it.
+            val heldChapter = batch?.pendingChapterBinding(portableChapterId)
             var chapterBinding = when {
+                heldChapter != null -> heldChapter
                 preloadedChapter == null -> store.chapter(portableChapterId)
                 preloadedRow == null -> null
                 preloadedRow.portable_work_id == portableWorkId -> store.chapterRecord(preloadedRow, portableWork)
@@ -979,8 +1038,9 @@ class EpigraphCoreDomainProjection(
                 if (batch != null) batch.deferProgress(portableWorkId, record.serverVersion, apply) else apply()
                 return
             }
-            // The slow path may bind chapters, so bindings read before it may be stale.
-            batch?.dropPreloadedChapters()
+            // The slow path writes only this chapter's binding, and each preloaded binding answers
+            // a single lookup, so the other preloaded bindings stay current.
+            val created = chapterBinding == null
             if (chapterBinding == null) {
                 chapterBinding = PortableChapterBindingRecord(
                     portableChapterId = portableChapterId,
@@ -991,11 +1051,17 @@ class EpigraphCoreDomainProjection(
                     attemptCount = 0,
                     updatedAt = obj.long("updatedAtMs") ?: now(obj),
                 )
-                store.upsertChapter(chapterBinding)
             }
+            val pending = chapterBinding
+            // Binding writes the row itself; a chapter it cannot bind yet is written as pending.
+            // A batch writes these rows in bulk when it flushes: a first sync binds thousands.
             chapterBinding = bindFetchedLocalChapter(
-                database, store, workBinding, chapterBinding, obj.long("updatedAtMs") ?: now(obj),
+                database, store, workBinding, pending, obj.long("updatedAtMs") ?: now(obj), batch,
+                deferWrite = true,
             )
+            if (created && chapterBinding === pending && batch?.deferChapterBinding(store, pending) != true) {
+                store.upsertChapter(pending)
+            }
             applyComicProgress(
                 database = database,
                 comicId = portableWorkId,
@@ -1006,7 +1072,24 @@ class EpigraphCoreDomainProjection(
                 serverRevision = record.serverVersion,
                 updatedAt = obj.long("updatedAtMs") ?: now(obj),
                 batch = batch,
+                projectWork = batch == null,
             )
+            if (batch != null) {
+                // The work-level row keeps only its newest revision, so a batch writes it once
+                // per work, as the fast path does, instead of once per chapter.
+                batch.deferProgress(portableWorkId, record.serverVersion) {
+                    applyComicProgress(
+                        database = database,
+                        comicId = portableWorkId,
+                        chapterEntityId = portableChapterId,
+                        localChapterId = null,
+                        record = obj,
+                        serverRevision = record.serverVersion,
+                        updatedAt = obj.long("updatedAtMs") ?: now(obj),
+                        batch = batch,
+                    )
+                }
+            }
             removeLegacySyntheticComicChapter(
                 database = database,
                 record = obj,
@@ -1101,8 +1184,8 @@ class EpigraphCoreDomainProjection(
                 localMangaId(database, "suwayomi:server:$serverId:profile:$profileId:manga:$it")
             }
             ?: return null
-        return database.chaptersQueries
-            .getChaptersByUrlAndMangaId(url, mangaId, 0)
+        return database.aethon_syncQueries
+            .selectLocalChaptersByUrlAndManga(url, mangaId)
             .executeAsList()
             .firstOrNull()
             ?._id
@@ -1205,7 +1288,9 @@ class EpigraphCoreDomainProjection(
             }
             batch?.works?.put(portableWorkId, workBinding)
             markPortableStateMembership(database, recordKey, requireNotNull(portableWorkId))
-            var chapterBinding = store.chapter(requireNotNull(portableChapterId))
+            // A chapter state earlier in this batch may still hold its binding unwritten.
+            var chapterBinding = batch?.pendingChapterBinding(requireNotNull(portableChapterId))
+                ?: store.chapter(requireNotNull(portableChapterId))
             if (chapterBinding == null) {
                 chapterBinding = PortableChapterBindingRecord(
                     portableChapterId = portableChapterId,
@@ -1219,7 +1304,7 @@ class EpigraphCoreDomainProjection(
                 store.upsertChapter(chapterBinding)
             }
             chapterBinding = bindFetchedLocalChapter(
-                database, store, workBinding, chapterBinding, record.long("readAtMs") ?: now(record),
+                database, store, workBinding, chapterBinding, record.long("readAtMs") ?: now(record), batch,
             )
             val localChapterId = chapterBinding.localReference?.toLongOrNull()
                 ?: coreBackedLocalChapterId(database, recordKey.key.scopeId, workBinding, portableChapterId)
@@ -1274,7 +1359,67 @@ class EpigraphCoreDomainProjection(
         serverRevision: Long,
         updatedAt: Long,
         batch: CoreProjectionBatch? = null,
+        /** False when the caller writes the work-level identity and progress row itself. */
+        projectWork: Boolean = true,
     ) {
+        if (projectWork) {
+            val progression =
+                projectComicWorkProgress(database, comicId, chapterEntityId, record, serverRevision, updatedAt, batch)
+            localChapterId?.let { applyComicChapterState(database, it, record) { progression } }
+        } else {
+            localChapterId ?: return
+            // Most states carry their page and read state, so the stored progress is rarely read.
+            val progression by lazy(LazyThreadSafetyMode.NONE) {
+                comicProgression(database, comicId, chapterEntityId, record)
+            }
+            applyComicChapterState(database, localChapterId, record) { progression }
+        }
+    }
+
+    /**
+     * The progression [record] carries, or the stored one when it belongs to this same chapter:
+     * the progress row is keyed by the work, and a finished chapter must not finish another one.
+     */
+    private fun comicProgression(
+        database: Database,
+        comicId: String,
+        chapterEntityId: String?,
+        record: JsonObject,
+    ): Double {
+        val own = record.double("progressPercent") ?: record.double("progress")
+        if (own != null) return own.coerceIn(0.0, 1.0)
+        val resolvedChapterEntityId = resolvedChapterEntityId(database, chapterEntityId)
+        val recordChapterId = record.string("chapterId")
+        return (
+            database.aethon_syncQueries
+                .selectReaderProgress(comicId)
+                .executeAsOneOrNull()
+                ?.takeIf { previous ->
+                    (resolvedChapterEntityId != null && previous.chapter_entity_id == resolvedChapterEntityId) ||
+                        (recordChapterId != null && previous.locatorChapterId() == recordChapterId)
+                }
+                ?.progression
+                ?: 0.0
+            ).coerceIn(0.0, 1.0)
+    }
+
+    // chapter_entity_id must reference an existing chapter binding; pending portable chapters
+    // have none, so the progress row stays keyed by the work until the chapter binds locally.
+    private fun resolvedChapterEntityId(database: Database, chapterEntityId: String?): String? =
+        chapterEntityId?.let {
+            database.aethon_syncQueries.selectChapterBindingByEntityId(it).executeAsOneOrNull()?.chapter_entity_id
+        }
+
+    /** Writes the work-level identity and progress row; returns the progression it stored. */
+    private fun projectComicWorkProgress(
+        database: Database,
+        comicId: String,
+        chapterEntityId: String?,
+        record: JsonObject,
+        serverRevision: Long,
+        updatedAt: Long,
+        batch: CoreProjectionBatch?,
+    ): Double {
         // Reader progress is keyed by the work identity. Ensure the identity row exists even for
         // pending portable works that have no local manga yet: local_reference falls back to the
         // portable id until an entry projection or hydration binds a real local manga id.
@@ -1292,28 +1437,8 @@ class EpigraphCoreDomainProjection(
             updatedAt = updatedAt,
         )
         batch?.identities?.put(comicId, CoreProjectionBatch.Identity(localReference, createdAt))
-        // chapter_entity_id must reference an existing chapter binding; pending portable chapters
-        // have none, so the progress row stays keyed by the work until the chapter binds locally.
-        val resolvedChapterEntityId = chapterEntityId?.let {
-            database.aethon_syncQueries.selectChapterBindingByEntityId(it).executeAsOneOrNull()?.chapter_entity_id
-        }
-        // The progress row is keyed by the work, so its progression may belong to another chapter.
-        // Only the same chapter's progression carries over, or a finished chapter would finish this one.
-        val recordChapterId = record.string("chapterId")
-        val progression = (
-            record.double("progressPercent")
-                ?: record.double("progress")
-                ?: database.aethon_syncQueries
-                    .selectReaderProgress(comicId)
-                    .executeAsOneOrNull()
-                    ?.takeIf { previous ->
-                        (resolvedChapterEntityId != null && previous.chapter_entity_id == resolvedChapterEntityId) ||
-                            (recordChapterId != null && previous.locatorChapterId() == recordChapterId)
-                    }
-                    ?.progression
-                ?: 0.0
-            )
-            .coerceIn(0.0, 1.0)
+        val resolvedChapterEntityId = resolvedChapterEntityId(database, chapterEntityId)
+        val progression = comicProgression(database, comicId, chapterEntityId, record)
         database.aethon_syncQueries.upsertRemoteReaderProgress(
             entityId = comicId,
             chapterEntityId = resolvedChapterEntityId,
@@ -1323,12 +1448,21 @@ class EpigraphCoreDomainProjection(
             serverRevision = serverRevision,
             updatedAt = updatedAt,
         )
+        return progression
+    }
 
-        localChapterId?.let { chapterId ->
+    private fun applyComicChapterState(
+        database: Database,
+        chapterId: Long,
+        record: JsonObject,
+        /** Read only when [record] lacks the page or read state it would fill in. */
+        progression: () -> Double,
+    ) {
+        run {
             val pageIndex = record.long("pageIndex") ?: record.long("lastPageRead")
             val pageCount = record.long("pageCount")
             val lastPageRead = pageIndex ?: if (pageCount != null) {
-                (progression * pageCount).toLong().coerceAtMost(pageCount)
+                (progression() * pageCount).toLong().coerceAtMost(pageCount)
             } else {
                 null
             }
@@ -1337,27 +1471,19 @@ class EpigraphCoreDomainProjection(
             }
             // Page indexes count from zero: reaching the last page finishes the chapter, as in the
             // reader and in Suwayomi. History alone never marks a finished chapter unread again.
-            val finished = progression >= 1.0 ||
-                (pageIndex != null && pageCount != null && pageCount > 0 && pageIndex >= pageCount - 1)
-            val read = record.boolean("read") ?: true.takeIf { finished }
+            val read = record.boolean("read") ?: true.takeIf {
+                (pageIndex != null && pageCount != null && pageCount > 0 && pageIndex >= pageCount - 1) ||
+                    progression() >= 1.0
+            }
             val bookmark = record.boolean("bookmark") ?: record.boolean("bookmarked")
-            database.chaptersQueries.update(
+            database.aethon_syncQueries.updateChapterReaderStateIfChanged(
                 chapterId = chapterId,
-                mangaId = null,
-                url = null,
-                name = null,
-                scanlator = null,
                 read = read,
                 bookmark = bookmark,
                 // Peers publish page zero as an absent page, so an unread mark without one resets
                 // progress the way a local "mark as unread" does.
                 lastPageRead = lastPageRead ?: 0L.takeIf { read == false },
                 pagesLeft = pagesLeft,
-                chapterNumber = null,
-                sourceOrder = null,
-                dateFetch = null,
-                dateUpload = null,
-                memo = null,
             )
         }
     }
@@ -1863,8 +1989,8 @@ class EpigraphCoreDomainProjection(
             ?.local_chapter_id
         // The chapter the plugin listed here is the oldest row with this url. Earlier syncs could bind
         // a twin of it; the state moves back onto the plugin's row and the unread twin goes away.
-        val sameUrlIds = database.chaptersQueries
-            .getChaptersByUrlAndMangaId(path, mangaId, 0)
+        val sameUrlIds = database.aethon_syncQueries
+            .selectLocalChaptersByUrlAndManga(path, mangaId)
             .executeAsList()
             .map { it._id }
         val listedChapterId = sameUrlIds.minOrNull()
@@ -2106,8 +2232,8 @@ class EpigraphCoreDomainProjection(
             ?.localReference?.toLongOrNull()?.takeIf { it > 0 }
             ?: novelLocalMangaId(database, novelId)
             ?: return
-        val chapterId = database.chaptersQueries
-            .getChaptersByUrlAndMangaId(chapterKey, mangaId, 0)
+        val chapterId = database.aethon_syncQueries
+            .selectLocalChaptersByUrlAndManga(chapterKey, mangaId)
             .executeAsList()
             .firstOrNull()
             ?._id
@@ -2624,7 +2750,7 @@ class EpigraphCoreDomainProjection(
         val chapter = boundId?.let { database.chaptersQueries.getChaptersById(it).executeAsOneOrNull() } ?: return null
         val mangaId = novelLocalMangaId(database, novelId) ?: return boundId
         if (chapter.manga_id == mangaId) return boundId
-        return database.chaptersQueries.getChaptersByUrlAndMangaId(chapter.url, mangaId, 0)
+        return database.aethon_syncQueries.selectLocalChaptersByUrlAndManga(chapter.url, mangaId)
             .executeAsList().minByOrNull { it._id }?._id ?: boundId
     }
 
@@ -2847,7 +2973,10 @@ internal fun novelHistoryChapter(record: JsonObject): Pair<String, String>? {
  * transaction's coroutine context, so nothing survives the transaction, and the projection clears
  * it before any record or deletion that could bind a work or rewrite an identity it holds.
  */
-internal class CoreProjectionBatch : AbstractCoroutineContextElement(Key) {
+internal class CoreProjectionBatch(
+    /** The driver behind the transaction's database; without it binding writes are not held. */
+    private val driver: SqlDriver? = null,
+) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<CoreProjectionBatch>
 
     data class Identity(val localReference: String, val createdAt: Long)
@@ -2874,9 +3003,43 @@ internal class CoreProjectionBatch : AbstractCoroutineContextElement(Key) {
         }
     }
 
-    /** Writes the deferred progress; must run before the batch's transaction ends. */
+    /** Chapter binding writes held until [flush], in order, and the latest one per chapter. */
+    private val heldChapterWrites = ArrayList<PortableChapterBindingRecord>()
+    private val heldChapters = HashMap<String, PortableChapterBindingRecord>()
+    private var chapterStore: SqlDelightPortableBindingStore? = null
+
+    /**
+     * Holds [record]'s write until [flush], which writes them in bulk; false when this batch
+     * cannot, and the caller writes it now. Until then [pendingChapterBinding] answers for it.
+     */
+    fun deferChapterBinding(store: SqlDelightPortableBindingStore, record: PortableChapterBindingRecord): Boolean {
+        if (driver == null) return false
+        chapterStore = store
+        heldChapterWrites += record
+        val held = heldChapters[record.portableChapterId]
+        // The row keeps its local reference when a later write carries none.
+        heldChapters[record.portableChapterId] =
+            if (record.localReference == null && held?.localReference != null) {
+                record.copy(localReference = held.localReference)
+            } else {
+                record
+            }
+        return true
+    }
+
+    /** The binding this batch holds unwritten for [portableChapterId], if any. */
+    fun pendingChapterBinding(portableChapterId: String): PortableChapterBindingRecord? =
+        heldChapters[portableChapterId]
+
+    /** Writes the held bindings, then the deferred progress; must run before the transaction ends. */
     fun flush() {
-        while (deferredProgress.isNotEmpty()) {
+        while (heldChapterWrites.isNotEmpty() || deferredProgress.isNotEmpty()) {
+            if (heldChapterWrites.isNotEmpty()) {
+                val records = heldChapterWrites.toList()
+                heldChapterWrites.clear()
+                heldChapters.clear()
+                requireNotNull(chapterStore).upsertChapters(requireNotNull(driver), records)
+            }
             val pending = deferredProgress.values.toList()
             deferredProgress.clear()
             pending.forEach { it.apply() }
@@ -2896,7 +3059,18 @@ internal class CoreProjectionBatch : AbstractCoroutineContextElement(Key) {
     fun takePreloadedChapter(portableChapterId: String): PreloadedChapter? =
         preloadedChapters.remove(portableChapterId)
 
-    fun dropPreloadedChapters() = preloadedChapters.clear()
+
+    /**
+     * Local chapter ids by url for each title, read once per title. Reader-state records only
+     * bind existing chapters, and anything that could rename or delete one clears the batch, so
+     * a hit stays valid; a miss may be a chapter inserted since the read and is not an answer.
+     */
+    private val localChapterUrls = HashMap<Long, Map<String, Long>>()
+
+    fun localChapterId(mangaId: Long, url: String, read: (Long) -> Sequence<Pair<String, Long>>): Long? =
+        localChapterUrls.getOrPut(mangaId) {
+            HashMap<String, Long>().also { urls -> read(mangaId).forEach { (u, id) -> urls.putIfAbsent(u, id) } }
+        }[url]
 
     /** Local work that would hold back a remote record, read in bulk for a set of keys. */
     private val blockerKeys = HashSet<CoreReplicaKey>()
@@ -2929,6 +3103,7 @@ internal class CoreProjectionBatch : AbstractCoroutineContextElement(Key) {
         // Deferred writes land before anything that may rebind the works they target.
         flush()
         preloadedChapters.clear()
+        localChapterUrls.clear()
         blockerKeys.clear()
         outboxBlocked.clear()
         waitVersions.clear()

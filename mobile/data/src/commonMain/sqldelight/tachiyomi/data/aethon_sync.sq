@@ -624,6 +624,20 @@ WHERE membership.server_id = :serverId
 ORDER BY chapter.updated_at, chapter.portable_chapter_id
 LIMIT :limit;
 
+-- The next page after a (updated_at, portable_chapter_id) cursor, so one pass walks every pending chapter.
+selectPendingPortableChapterIdsForManifestAfter:
+SELECT chapter.portable_chapter_id
+FROM aethon_portable_chapter_binding AS chapter
+JOIN aethon_portable_manifest_work AS membership
+  ON membership.portable_id = chapter.portable_work_id
+WHERE membership.server_id = :serverId
+  AND membership.profile_id = :profileId
+  AND chapter.resolution_state <> 'BOUND'
+  AND (chapter.updated_at > :afterUpdatedAt
+    OR (chapter.updated_at = :afterUpdatedAt AND chapter.portable_chapter_id > :afterChapterId))
+ORDER BY chapter.updated_at, chapter.portable_chapter_id
+LIMIT :limit;
+
 upsertPortableChapterBinding:
 INSERT INTO aethon_portable_chapter_binding(
     portable_chapter_id, portable_work_id, provider_key, local_reference,
@@ -2342,3 +2356,31 @@ WHERE c._id > 0
       )
   )
 ORDER BY c.sort, c._id;
+
+-- Sync projection lookup of a local chapter by its url. It reads the table directly because the
+-- scanlator filter of getChaptersByUrlAndMangaId joins scanlators_view, which is recomputed for the
+-- whole library on every call: a first sync makes tens of thousands of these lookups.
+selectLocalChaptersByUrlAndManga:
+SELECT * FROM chapters WHERE url = :url AND manga_id = :mangaId;
+
+-- Every local chapter url of a title, read once per title while a sync projects its reader states:
+-- a url lookup per state scans the title's chapters, which grows with the square of the chapter
+-- count on long series.
+selectLocalChapterUrlsByManga:
+SELECT _id, url FROM chapters WHERE manga_id = :mangaId ORDER BY _id;
+
+-- Reader state a sync projects onto a local chapter, written only when it changes it: a first
+-- sync projects tens of thousands of states that the device, restored from the same backup,
+-- already holds.
+updateChapterReaderStateIfChanged:
+UPDATE chapters SET
+    read = coalesce(:read, read),
+    bookmark = coalesce(:bookmark, bookmark),
+    last_page_read = coalesce(:lastPageRead, last_page_read),
+    pages_left = coalesce(:pagesLeft, pages_left)
+WHERE _id = :chapterId AND (
+    read IS NOT coalesce(:read, read) OR
+    bookmark IS NOT coalesce(:bookmark, bookmark) OR
+    last_page_read IS NOT coalesce(:lastPageRead, last_page_read) OR
+    pages_left IS NOT coalesce(:pagesLeft, pages_left)
+);

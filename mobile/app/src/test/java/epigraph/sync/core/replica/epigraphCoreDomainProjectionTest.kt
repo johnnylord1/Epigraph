@@ -1092,6 +1092,9 @@ class EpigraphCoreDomainProjectionTest {
                 )
             }
             assertEquals(mangaId.toString(), batch.works[workId]?.localReference)
+            // The work's progress row, and the identity it reads, is written once when the batch flushes.
+            assertNull(batch.identities[workId])
+            batch.flush()
             // The progress identity of a portable work keeps its portable id as the local reference.
             assertEquals(workId, batch.identities[workId]?.localReference)
 
@@ -1104,6 +1107,85 @@ class EpigraphCoreDomainProjectionTest {
             assertTrue(database.chaptersQueries.getChaptersById(id).executeAsOne().read)
         }
         assertEquals(workId, database.aethon_syncQueries.selectIdentityByEntityId(workId).executeAsOne().local_reference)
+    }
+
+    @Test
+    fun `a batch holds chapter bindings until it flushes and reads them back meanwhile`() = runTest {
+        val mangaId = insertTrackingManga(42, "/series/300")
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = "/series/300/1",
+            name = "1",
+            scanlator = null,
+            read = false,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 0,
+            chapterNumber = 1.0,
+            sourceOrder = 0,
+            dateFetch = 0,
+            dateUpload = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        val work = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey("/series/300"))
+        val workId = PortableIdentityV3.workId(work)
+        val store = SqlDelightPortableBindingStore(database)
+        store.upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = null,
+                providerLabelHint = null,
+                attemptCount = 1,
+                updatedAt = 1,
+            ),
+        )
+        val bound = PortableChapterRef.Comic(work, ProviderOwnedKey("/series/300/1"))
+        // Not fetched on this phone yet, so it stays pending.
+        val missing = PortableChapterRef.Comic(work, ProviderOwnedKey("/series/300/2"))
+        fun state(chapter: PortableChapterRef.Comic, version: Long, read: Boolean): CoreConfirmedRecord {
+            val chapterId = PortableIdentityV3.chapterId(chapter)
+            return CoreConfirmedRecord(
+                key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.chapter_state", "comic.chapter_state::$workId::$chapterId"),
+                serverVersion = version,
+                lamport = version,
+                originServerId = ORIGIN_SERVER_ID,
+                record = buildJsonObject {
+                    put("comicId", workId)
+                    put("chapterId", chapterId)
+                    put("read", read)
+                    put("updatedAtMs", 1_000L + version)
+                    put("portableWorkRef", Json.encodeToJsonElement(work))
+                    put("portableChapterRef", Json.encodeToJsonElement(chapter))
+                },
+            )
+        }
+        val boundId = PortableIdentityV3.chapterId(bound)
+        val missingId = PortableIdentityV3.chapterId(missing)
+        val batch = CoreProjectionBatch(driver)
+
+        withContext(batch) {
+            projection.upsert(database, state(bound, 10, read = true))
+            projection.upsert(database, state(missing, 11, read = true))
+            assertNull(store.chapter(boundId))
+            assertEquals(PortableResolutionState.BOUND, batch.pendingChapterBinding(boundId)?.resolution?.state)
+            assertEquals(localChapterId.toString(), batch.pendingChapterBinding(boundId)?.localReference)
+            // A later state of the same chapter in the batch projects onto the held binding.
+            projection.upsert(database, state(bound, 12, read = false))
+            assertFalse(database.chaptersQueries.getChaptersById(localChapterId).executeAsOne().read)
+
+            projection.upsert(database, categoryRecord(COMIC_SCOPE_ID, "comic.category", "comic-cat-held", "Held", 1))
+            assertNull(batch.pendingChapterBinding(boundId))
+        }
+
+        val boundRow = requireNotNull(store.chapter(boundId))
+        assertEquals(PortableResolutionState.BOUND, boundRow.resolution.state)
+        assertEquals(localChapterId.toString(), boundRow.localReference)
+        assertEquals(PortableResolutionState.PENDING_PROVIDER, store.chapter(missingId)?.resolution?.state)
+        assertEquals(12L, database.aethon_syncQueries.selectReaderProgress(workId).executeAsOne().server_revision)
     }
 
     @Test

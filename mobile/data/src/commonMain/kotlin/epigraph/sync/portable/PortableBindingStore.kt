@@ -309,6 +309,21 @@ class SqlDelightPortableBindingStore(
             .mapNotNull { portableChapterId -> chapter(portableChapterId) }
     }
 
+    /** Pending chapters ordered after [afterUpdatedAt]/[afterChapterId], the next page of [pendingChapters]. */
+    fun pendingChaptersAfter(
+        serverId: String,
+        profileId: String,
+        afterUpdatedAt: Long,
+        afterChapterId: String,
+        limit: Long,
+    ): List<PortableChapterBindingRecord> {
+        require(limit in 1..MAX_BATCH_SIZE) { "portable chapter batch limit is out of range" }
+        return database.aethon_syncQueries
+            .selectPendingPortableChapterIdsForManifestAfter(serverId, profileId, afterUpdatedAt, afterChapterId, limit)
+            .executeAsList()
+            .mapNotNull { portableChapterId -> chapter(portableChapterId) }
+    }
+
     /** Every work binding at once, for passes that would otherwise look rows up one by one. */
     fun allWorks(): List<PortableWorkBindingRecord> =
         database.aethon_syncQueries.selectAllPortableWorkBindings().executeAsList().map(::mapWork)

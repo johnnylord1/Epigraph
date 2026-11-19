@@ -186,6 +186,54 @@ class SqlDelightPortableHydrationStoreTest {
     }
 
     @Test
+    fun `pending chapters page by cursor in update order`() = runTest {
+        val ref = PortableWorkRef.Comic(DecimalSourceId("77"), ProviderOwnedKey("/series/paged"))
+        val work = PortableWorkBindingRecord(
+            portableId = PortableIdentityV3.workId(ref),
+            ref = ref,
+            localReference = "9",
+            resolution = PortableResolution(PortableResolutionState.BOUND),
+            titleHint = null,
+            providerLabelHint = null,
+            attemptCount = 1,
+            updatedAt = 1,
+        )
+        val bindings = epigraph.sync.portable.SqlDelightPortableBindingStore(database)
+        bindings.upsertWork(work)
+        bindings.markManifestMembership("server", "main", work.portableId, 1)
+        // (updatedAt, id): b@1, d@1, a@2, e@3 pending; c@1 is bound and never listed.
+        listOf("a" to 2L, "b" to 1L, "c" to 1L, "d" to 1L, "e" to 3L).forEach { (id, updatedAt) ->
+            bindings.upsertChapter(
+                PortableChapterBindingRecord(
+                    portableChapterId = "chapter-$id",
+                    portableWorkId = work.portableId,
+                    ref = PortableChapterRef.Comic(ref, ProviderOwnedKey("/series/paged/$id")),
+                    localReference = if (id == "c") "30" else null,
+                    resolution = PortableResolution(
+                        if (id == "c") PortableResolutionState.BOUND else PortableResolutionState.PENDING_PROVIDER,
+                    ),
+                    attemptCount = 0,
+                    updatedAt = updatedAt,
+                ),
+            )
+        }
+        val store = SqlDelightPortableHydrationStore(handler)
+
+        val first = store.load("server", "main", 2)
+        val last = first.chapters.last()
+        val second = store.loadChapters("server", "main", PortableChapterCursor(last.updatedAt, last.portableChapterId), 2)
+
+        assertEquals(listOf("chapter-b", "chapter-d"), first.chapters.map { it.portableChapterId })
+        assertEquals(listOf("chapter-a", "chapter-e"), second.chapters.map { it.portableChapterId })
+        assertEquals(listOf(work.portableId), second.chapterWorks.map { it.portableId })
+        assertEquals(
+            emptyList<String>(),
+            store.loadChapters("server", "main", PortableChapterCursor(3, "chapter-e"), 2).chapters
+                .map { it.portableChapterId },
+        )
+    }
+
+    @Test
     fun `bound comic whose local row still uses another source is hydrated again`() = runTest {
         database.mangasQueries.insert(
             source = epigraph.sync.core.suwayomi.EpigraphCoreSource.ID,
