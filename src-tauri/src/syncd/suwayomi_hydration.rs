@@ -11,14 +11,16 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 
 use super::lifecycle::{wait_for_shutdown_request, ShutdownRequest};
-use super::models::{AppError, AuthenticatedSession, PortableWorkBindingRow, SharedAppState};
+use super::models::{
+    AppError, AuthenticatedSession, ErrorDetail, PortableWorkBindingRow, SharedAppState,
+};
 use super::routes::suwayomi_catalog;
 use super::{catalog_revision, db, landed_works, suwayomi_projection};
 
@@ -28,11 +30,15 @@ const MAX_PARALLEL_SOURCES: usize = 5;
 const PASS_INTERVAL: Duration = Duration::from_secs(15);
 const BASE_RETRY: Duration = Duration::from_secs(60);
 const MAX_RETRY: Duration = Duration::from_secs(30 * 60);
+/// How long one source keeps its slot in a pass. A large library on one slow source would
+/// otherwise hold the pass, and every other source's next turn, until its last work.
+const QUEUE_BUDGET: Duration = Duration::from_secs(120);
+/// A source that failed again waits this long before its next turn, doubling up to the cap.
+const SOURCE_BASE_COOLDOWN: Duration = Duration::from_secs(30);
+const SOURCE_MAX_COOLDOWN: Duration = Duration::from_secs(15 * 60);
 const WORK_PAGE_SIZE: i64 = 500;
 const MAX_WORK_PAGES: usize = 40;
 const PENDING_WORK_BATCH_SIZE: usize = 100;
-const CHAPTER_PAGE_SIZE: i64 = 250;
-const MAX_CHAPTER_PAGES: usize = 80;
 
 const UNHYDRATED_COMICS_QUERY: &str = r#"
   query EpigraphUnhydratedComics($first: Int!, $offset: Int!) {
@@ -51,18 +57,16 @@ const PENDING_CHAPTER_HYDRATION_QUERY: &str = r#"
   }
 "#;
 
-const STAND_IN_CHAPTERS_QUERY: &str = r#"
-  query EpigraphStandInChapters($mangaId: Int!, $first: Int!, $offset: Int!) {
-    chapters(condition: { mangaId: $mangaId }, first: $first, offset: $offset) {
-      pageInfo { hasNextPage }
-      nodes { url isRead isBookmarked lastPageRead }
-    }
-  }
-"#;
-
 const FETCH_CHAPTERS_MUTATION: &str = r#"
   mutation EpigraphHydrateChapters($mangaId: Int!) {
     fetchChapters(input: { mangaId: $mangaId }) { chapters { url } }
+  }
+"#;
+
+/// The chapters Suwayomi holds for a work, read from its own database without asking the source.
+const LOCAL_CHAPTER_URLS_QUERY: &str = r#"
+  query EpigraphHydrationLocalChapters($id: Int!) {
+    manga(id: $id) { chapters { nodes { url } } }
   }
 "#;
 
@@ -77,6 +81,12 @@ const FETCH_MANGA_MUTATION: &str = r#"
 const RUNTIME_PROBE_QUERY: &str = "query EpigraphHydrationProbe { __typename }";
 
 static PENDING: AtomicI64 = AtomicI64::new(0);
+
+/// Works whose chapter fetch failed here, by profile, and since when.
+static UNSETTLED_FETCHES: std::sync::Mutex<BTreeMap<(String, i64), Instant>> =
+    std::sync::Mutex::new(BTreeMap::new());
+/// How long a failed chapter fetch is watched for Suwayomi finishing it after all.
+const UNSETTLED_FETCH_WATCH: Duration = Duration::from_secs(10 * 60);
 
 /// Library works still waiting for their details and chapter list, as of the last pass.
 pub fn pending_count() -> i64 {
@@ -94,13 +104,14 @@ pub fn spawn_hydration_task(
                 tracing::warn!(error = %error, "failed to read when synced comics are due again");
                 RetryBook::default()
             });
+        let mut sources = SourceBreakers::default();
         let mut ticker = tokio::time::interval(PASS_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
                     tokio::select! {
-                        result = hydrate_profiles(&state, &mut retries) => {
+                        result = hydrate_profiles(&state, &mut retries, &mut sources) => {
                             if let Err(error) = result {
                                 tracing::warn!(error = %error, "failed to complete synced comics");
                             }
@@ -127,9 +138,16 @@ enum Outcome {
     Failed,
     /// The runtime stopped answering or went into maintenance: not the work's fault.
     RuntimeUnavailable,
+    /// The source refused or did not answer (rate limit, block, outage): its other works would
+    /// fail the same way, so the source steps back instead of spending them.
+    SourceUnavailable,
 }
 
-async fn hydrate_profiles(state: &SharedAppState, retries: &mut RetryBook) -> anyhow::Result<()> {
+async fn hydrate_profiles(
+    state: &SharedAppState,
+    retries: &mut RetryBook,
+    sources: &mut SourceBreakers,
+) -> anyhow::Result<()> {
     let runtime_root = crate::suwayomi_maintenance::default_runtime_root();
     if crate::suwayomi_maintenance::exclusive_file_lease_held(&runtime_root).unwrap_or(false) {
         return Ok(());
@@ -144,6 +162,8 @@ async fn hydrate_profiles(state: &SharedAppState, retries: &mut RetryBook) -> an
     .fetch_all(&state.pool)
     .await
     .context("failed to list profiles with synced comics")?;
+
+    follow_unsettled_fetches(state).await;
 
     let mut listed = Vec::new();
     for profile_id in profiles {
@@ -171,24 +191,43 @@ async fn hydrate_profiles(state: &SharedAppState, retries: &mut RetryBook) -> an
         let queues = due_queues_by_source(works, |manga_id| {
             retries.is_due(&session.profile_id, manga_id, now)
         });
+        let queues = sources.order(&session.profile_id, queues, now);
         if queues.is_empty() {
             continue;
         }
-        let results: Vec<Vec<(i64, Outcome)>> = stream::iter(queues)
+        let results: Vec<(String, Vec<(i64, Outcome)>)> = stream::iter(queues)
             .map(|queue| hydrate_queue(state, session, queue))
             .buffer_unordered(MAX_PARALLEL_SOURCES)
             .collect()
             .await;
         let mut hydrated = 0;
-        for (manga_id, outcome) in results.into_iter().flatten() {
-            match outcome {
-                Outcome::Hydrated => {
-                    retries.clear(&session.profile_id, manga_id);
-                    landed_works::record_work(&session.profile_id, manga_id);
-                    hydrated += 1;
+        for (source_id, outcomes) in results {
+            for (manga_id, outcome) in outcomes {
+                match outcome {
+                    Outcome::Hydrated => {
+                        retries.clear(&session.profile_id, manga_id);
+                        sources.clear(&session.profile_id, &source_id);
+                        landed_works::record_work(&session.profile_id, manga_id);
+                        hydrated += 1;
+                    }
+                    Outcome::Failed => retries.fail(&session.profile_id, manga_id, db::now_ms()),
+                    Outcome::SourceUnavailable => {
+                        // The work that met the failure waits on its own, so the source's next
+                        // turn starts with another work rather than the same one.
+                        retries.fail(&session.profile_id, manga_id, db::now_ms());
+                        let (failures, cooldown) =
+                            sources.fail(&session.profile_id, &source_id, db::now_ms());
+                        tracing::info!(
+                            profile = session.profile_id,
+                            source_id,
+                            manga_id,
+                            failures,
+                            cooldown_s = cooldown.as_secs(),
+                            "source unavailable; it goes to the back of the queue"
+                        );
+                    }
+                    Outcome::RuntimeUnavailable => {}
                 }
-                Outcome::Failed => retries.fail(&session.profile_id, manga_id, db::now_ms()),
-                Outcome::RuntimeUnavailable => {}
             }
         }
         save_retries(state, retries).await;
@@ -209,14 +248,20 @@ async fn save_retries(state: &SharedAppState, retries: &mut RetryBook) {
     }
 }
 
-/// One source's works, in order. Stops when the runtime goes away, leaving the rest due.
+/// One source's works, in order. Stops when the runtime or the source goes away, or when the
+/// source used its share of the pass, leaving the rest due.
 async fn hydrate_queue(
     state: &SharedAppState,
     session: &AuthenticatedSession,
     queue: Vec<UnhydratedWork>,
-) -> Vec<(i64, Outcome)> {
+) -> (String, Vec<(i64, Outcome)>) {
+    let source_id = queue.first().map(|work| work.source_id.clone()).unwrap_or_default();
+    let started = Instant::now();
     let mut outcomes = Vec::with_capacity(queue.len());
     for work in queue {
+        if started.elapsed() >= QUEUE_BUDGET {
+            break;
+        }
         let manga_id = work.manga_id;
         let outcome = match hydrate_work(state, session, manga_id, work.needs_chapters).await {
             Ok(()) => {
@@ -226,11 +271,11 @@ async fn hydrate_queue(
             Err(error) => failure_outcome(state, session, &error).await,
         };
         outcomes.push((manga_id, outcome));
-        if outcome == Outcome::RuntimeUnavailable {
+        if matches!(outcome, Outcome::RuntimeUnavailable | Outcome::SourceUnavailable) {
             break;
         }
     }
-    outcomes
+    (source_id, outcomes)
 }
 
 async fn hydrate_work(
@@ -239,14 +284,27 @@ async fn hydrate_work(
     manga_id: i64,
     needs_chapters: bool,
 ) -> Result<(), AppError> {
-    let stand_ins = chapters_with_progress(state, session, manga_id).await?;
-    let fetched = suwayomi_catalog::execute_source_fetch(
+    let fetched = match suwayomi_catalog::execute_source_fetch(
         state,
         session,
         FETCH_CHAPTERS_MUTATION,
         json!({ "mangaId": manga_id }),
     )
-    .await?;
+    .await
+    {
+        Ok(fetched) => {
+            unsettled_fetches().remove(&(session.profile_id.clone(), manga_id));
+            fetched
+        }
+        Err(error) => {
+            // A fetch that timed out here may still finish in Suwayomi and replace the chapters:
+            // their progress follows them as soon as it does, not when the source next answers
+            // in time.
+            unsettled_fetches().insert((session.profile_id.clone(), manga_id), Instant::now());
+            follow_local_chapters(state, session, manga_id).await;
+            return Err(error);
+        }
+    };
     let listed = listed_chapter_urls(fetched.pointer("/fetchChapters/chapters"));
     if needs_chapters && listed.is_empty() {
         return Err(AppError::service_unavailable(
@@ -255,24 +313,7 @@ async fn hydrate_work(
             true,
         ));
     }
-    if !listed.is_empty() {
-        rearm_chapter_retries(state, &session.profile_id, manga_id).await?;
-    }
-    let replaced: BTreeSet<String> = stand_ins.difference(&listed).cloned().collect();
-    if !replaced.is_empty() {
-        match carry_progress(state, &session.profile_id, manga_id, &replaced).await {
-            Ok(queued) => tracing::info!(
-                profile = session.profile_id,
-                manga_id,
-                replaced = replaced.len(),
-                queued,
-                "projecting progress again onto chapters the source replaced"
-            ),
-            Err(error) => {
-                tracing::warn!(error = %error, manga_id, "failed to carry progress to replaced chapters")
-            }
-        }
-    }
+    follow_listed_chapters(state, session, manga_id, &listed).await?;
     suwayomi_catalog::execute_source_fetch(
         state,
         session,
@@ -286,8 +327,73 @@ async fn hydrate_work(
     Ok(())
 }
 
+fn unsettled_fetches() -> std::sync::MutexGuard<'static, BTreeMap<(String, i64), Instant>> {
+    UNSETTLED_FETCHES.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Follows the chapters of every work whose chapter fetch failed here lately, in case Suwayomi
+/// finished it after this side stopped waiting.
+async fn follow_unsettled_fetches(state: &SharedAppState) {
+    let watched: Vec<(String, i64)> = {
+        let mut unsettled = unsettled_fetches();
+        unsettled.retain(|_, since| since.elapsed() < UNSETTLED_FETCH_WATCH);
+        unsettled.keys().cloned().collect()
+    };
+    for (profile_id, manga_id) in watched {
+        let session = suwayomi_projection::projection_session(&profile_id);
+        follow_local_chapters(state, &session, manga_id).await;
+    }
+}
+
+/// Follows the chapters Suwayomi holds for the work now, read without asking the source.
+async fn follow_local_chapters(state: &SharedAppState, session: &AuthenticatedSession, manga_id: i64) {
+    let Ok(local) = suwayomi_catalog::execute_graphql_document(
+        state,
+        session,
+        LOCAL_CHAPTER_URLS_QUERY,
+        json!({ "id": manga_id }),
+        false,
+    )
+    .await
+    else {
+        return;
+    };
+    let listed = listed_chapter_urls(local.pointer("/manga/chapters/nodes"));
+    if let Err(error) = follow_listed_chapters(state, session, manga_id, &listed).await {
+        tracing::warn!(error = ?error, manga_id, "failed to follow the chapters Suwayomi holds");
+    }
+}
+
+/// Points the work's waiting and stored progress at the chapters Suwayomi now lists for it.
+async fn follow_listed_chapters(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    manga_id: i64,
+    listed: &BTreeSet<String>,
+) -> Result<(), AppError> {
+    if listed.is_empty() {
+        return Ok(());
+    }
+    rearm_chapter_retries(state, &session.profile_id, manga_id).await?;
+    match carry_progress(state, &session.profile_id, manga_id, listed).await {
+        Ok(0) => {}
+        Ok(queued) => tracing::info!(
+            profile = session.profile_id,
+            manga_id,
+            listed = listed.len(),
+            queued,
+            "projecting progress again onto chapters the source replaced"
+        ),
+        Err(error) => {
+            tracing::warn!(error = ?error, manga_id, "failed to carry progress to replaced chapters")
+        }
+    }
+    Ok(())
+}
+
 /// A failure caused by the runtime itself (down, restarting, maintained) is not held against the
-/// work. A request that timed out while the runtime still answers is: the source was too slow.
+/// work. A request that timed out while the runtime still answers, or a source that refused, is
+/// held against the source: its other works would meet the same.
 async fn failure_outcome(
     state: &SharedAppState,
     session: &AuthenticatedSession,
@@ -309,13 +415,138 @@ async fn failure_outcome(
             .await
             .is_ok();
             if answers {
-                Outcome::Failed
+                Outcome::SourceUnavailable
             } else {
                 Outcome::RuntimeUnavailable
             }
         }
+        _ if is_source_fault(detail) => Outcome::SourceUnavailable,
         _ => Outcome::Failed,
     }
+}
+
+/// Whether the source's own answer says it refuses or cannot serve any work right now: rate
+/// limited, blocked, down, slow, or its extension is gone. A work it does not have (404) or cannot
+/// parse is that work's failure only.
+fn is_source_fault(detail: &ErrorDetail) -> bool {
+    if detail.code != "SUWAYOMI_CATALOG_QUERY_FAILED" {
+        return false;
+    }
+    let Some(upstream) = detail
+        .details
+        .as_ref()
+        .and_then(|details| details.get("upstreamError"))
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    let upstream = upstream.to_ascii_lowercase();
+    if let Some(status) = http_status(&upstream) {
+        return matches!(status, 403 | 408 | 429) || status >= 500;
+    }
+    [
+        "too many requests",
+        "rate limit",
+        "cloudflare",
+        "timeout",
+        "timed out",
+        "unable to resolve host",
+        "unknownhost",
+        "connection refused",
+        "connection reset",
+        "failed to connect",
+        "source not found",
+        "source is not installed",
+        "no source",
+        // The source needs the embedded browser (for example to pass a challenge page), which
+        // this Suwayomi runs without: every work of the source fails the same way.
+        "cef is disabled",
+        "cefexception",
+    ]
+    .iter()
+    .any(|needle| upstream.contains(needle))
+}
+
+/// The status of an "HTTP error <status>" answer, as Suwayomi's sources report it.
+fn http_status(upstream: &str) -> Option<u16> {
+    let rest = &upstream[upstream.find("http error")? + "http error".len()..];
+    let digits: String = rest
+        .trim_start_matches([' ', ':'])
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
+}
+
+/// Sources that refused or failed lately, kept in memory: a restart gives every source a fresh
+/// turn. A source that fails once goes to the back of the next pass; one that fails again waits a
+/// cooldown that doubles each time, up to a cap, before its next turn. Its first success resets
+/// it. Nothing here holds the projection, the sync or Suwayomi's own library updates: a source
+/// that steps back only stops costing them requests.
+#[derive(Default)]
+struct SourceBreakers {
+    /// Failures in a row and when the source is due again, in Unix milliseconds.
+    entries: HashMap<(String, String), (u32, i64)>,
+}
+
+impl SourceBreakers {
+    /// Records a failure; answers the failures in a row and how long the source now waits.
+    fn fail(&mut self, profile_id: &str, source_id: &str, now_ms: i64) -> (u32, Duration) {
+        let entry = self
+            .entries
+            .entry((profile_id.to_string(), source_id.to_string()))
+            .or_insert((0, now_ms));
+        entry.0 = entry.0.saturating_add(1);
+        let cooldown = source_cooldown(entry.0, source_id);
+        entry.1 = now_ms.saturating_add(cooldown.as_millis() as i64);
+        (entry.0, cooldown)
+    }
+
+    fn clear(&mut self, profile_id: &str, source_id: &str) {
+        self.entries
+            .remove(&(profile_id.to_string(), source_id.to_string()));
+    }
+
+    /// The queues of sources that are due, healthy ones first and the ones that failed most last.
+    fn order(
+        &self,
+        profile_id: &str,
+        queues: Vec<Vec<UnhydratedWork>>,
+        now_ms: i64,
+    ) -> Vec<Vec<UnhydratedWork>> {
+        let mut ranked: Vec<(u32, Vec<UnhydratedWork>)> = queues
+            .into_iter()
+            .filter_map(|queue| {
+                let source_id = queue.first()?.source_id.clone();
+                match self.entries.get(&(profile_id.to_string(), source_id)) {
+                    Some((_, due_at_ms)) if *due_at_ms > now_ms => None,
+                    Some((failures, _)) => Some((*failures, queue)),
+                    None => Some((0, queue)),
+                }
+            })
+            .collect();
+        ranked.sort_by_key(|(failures, _)| *failures);
+        ranked.into_iter().map(|(_, queue)| queue).collect()
+    }
+}
+
+/// None after a first failure (the source only moves to the back), then 30 s doubling up to the
+/// cap, each source its own 75% to 125% of it so sources that failed together come back apart.
+fn source_cooldown(failures: u32, source_id: &str) -> Duration {
+    if failures <= 1 {
+        return Duration::ZERO;
+    }
+    let shift = (failures - 2).min(10);
+    let delay = SOURCE_BASE_COOLDOWN
+        .saturating_mul(1 << shift)
+        .min(SOURCE_MAX_COOLDOWN);
+    let hash = source_id
+        .bytes()
+        .fold(0xCBF2_9CE4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01B3)
+        });
+    let permille = 750 + (hash % 501) as u32;
+    delay.saturating_mul(permille) / 1000
 }
 
 async fn list_unhydrated(
@@ -479,39 +710,12 @@ async fn rearm_chapter_retries(
     Ok(())
 }
 
-/// URLs of the work's chapters that hold any progress.
-async fn chapters_with_progress(
-    state: &SharedAppState,
-    session: &AuthenticatedSession,
-    manga_id: i64,
-) -> Result<BTreeSet<String>, AppError> {
-    let mut urls = BTreeSet::new();
-    for page in 0..MAX_CHAPTER_PAGES {
-        let data = suwayomi_catalog::execute_graphql_document(
-            state,
-            session,
-            STAND_IN_CHAPTERS_QUERY,
-            json!({
-                "mangaId": manga_id,
-                "first": CHAPTER_PAGE_SIZE,
-                "offset": page as i64 * CHAPTER_PAGE_SIZE,
-            }),
-            false,
-        )
-        .await?;
-        urls.extend(progress_chapter_urls(data.pointer("/chapters/nodes")));
-        if data.pointer("/chapters/pageInfo/hasNextPage").and_then(Value::as_bool) != Some(true) {
-            break;
-        }
-    }
-    Ok(urls)
-}
-
+/// Queues again the stored progress of the work's chapters the source does not list as `listed`.
 async fn carry_progress(
     state: &SharedAppState,
     profile_id: &str,
     manga_id: i64,
-    chapter_keys: &BTreeSet<String>,
+    listed: &BTreeSet<String>,
 ) -> anyhow::Result<usize> {
     let mut rows = sqlx::query_as::<_, PortableWorkBindingRow>(
         r#"
@@ -533,7 +737,7 @@ async fn carry_progress(
         return Ok(0);
     };
     let _writer_guard = state.mutation_gate.lock().await;
-    db::reproject_comic_chapter_states(&state.pool, profile_id, &work, chapter_keys).await
+    db::reproject_unlisted_comic_chapter_states(&state.pool, profile_id, &work, listed).await
 }
 
 fn parse_unhydrated(nodes: Option<&Value>) -> Vec<UnhydratedWork> {
@@ -557,21 +761,6 @@ fn parse_unhydrated(nodes: Option<&Value>) -> Vec<UnhydratedWork> {
                 needs_chapters: false,
             })
         })
-        .collect()
-}
-
-fn progress_chapter_urls(nodes: Option<&Value>) -> BTreeSet<String> {
-    nodes
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|node| {
-            node.get("isRead").and_then(Value::as_bool) == Some(true)
-                || node.get("isBookmarked").and_then(Value::as_bool) == Some(true)
-                || node.get("lastPageRead").and_then(Value::as_i64).unwrap_or(0) > 0
-        })
-        .filter_map(|node| node.get("url").and_then(Value::as_str))
-        .map(str::to_string)
         .collect()
 }
 
@@ -699,57 +888,16 @@ mod tests {
     use super::*;
     use crate::syncd::models::PortableWorkRefV3;
 
-    async fn pending_chapter_fixture(
-        empty_fetch: bool,
-        uninitialized: bool,
-    ) -> (
-        tempfile::TempDir,
-        SharedAppState,
-        std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        tokio::task::JoinHandle<()>,
-    ) {
+    /// Syncd state whose `main` profile reaches `router` as its Suwayomi.
+    async fn state_with_upstream(
+        router: axum::Router,
+    ) -> (tempfile::TempDir, SharedAppState, tokio::task::JoinHandle<()>) {
         use crate::syncd::config::{SyncdAdvertisedEndpointResolver, SyncdConfig};
         use crate::syncd::discovery::*;
-        use crate::syncd::models::{
-            canonical_portable_work_id, AppState, PortableResolutionStateV3,
-        };
-        use std::sync::{atomic::AtomicUsize, Arc};
+        use crate::syncd::models::AppState;
+        use std::sync::Arc;
         use tokio::sync::{broadcast, Mutex, RwLock};
 
-        let fetches = Arc::new(AtomicUsize::new(0));
-        let counted = fetches.clone();
-        let router = axum::Router::new().route("/api/graphql", axum::routing::post(
-            move |axum::Json(body): axum::Json<Value>| {
-                let counted = counted.clone();
-                async move {
-                    let query = body["query"].as_str().unwrap();
-                    let data = if query.contains("EpigraphUnhydratedComics") {
-                        json!({"mangas":{"nodes":if uninitialized {json!([{"id":7,"sourceId":"10"}])} else {json!([])},"pageInfo":{"hasNextPage":false}}})
-                    } else if query.contains("EpigraphPendingChapterHydration") {
-                        assert_eq!(body["variables"]["ids"], json!([7,8,9,10,11,12]));
-                        json!({"mangas":{"nodes":[
-                            {"id":7,"sourceId":"10","url":"/manga/7","inLibrary":true,"chapters":{"totalCount":0}},
-                            {"id":8,"sourceId":"10","url":"/manga/8","inLibrary":true,"chapters":{"totalCount":2}},
-                            {"id":9,"sourceId":"10","url":"/manga/9","inLibrary":false,"chapters":{"totalCount":0}},
-                            {"id":10,"sourceId":"99","url":"/manga/10","inLibrary":true,"chapters":{"totalCount":0}},
-                            {"id":11,"sourceId":"10","url":"/other/11","inLibrary":true,"chapters":{"totalCount":0}},
-                            {"id":12,"sourceId":"10","url":"/manga/12","inLibrary":true}
-                        ],"pageInfo":{"hasNextPage":false}}})
-                    } else if query.contains("EpigraphStandInChapters") {
-                        json!({"chapters":{"nodes":[],"pageInfo":{"hasNextPage":false}}})
-                    } else if query.contains("EpigraphHydrateChapters") {
-                        assert_eq!(body["variables"]["mangaId"], 7);
-                        counted.fetch_add(1, Ordering::Relaxed);
-                        json!({"fetchChapters":{"chapters":if empty_fetch {json!([])} else {json!([{"url":"/chapter/1"}])}}})
-                    } else if query.contains("EpigraphHydrateManga") {
-                        json!({"fetchManga":{"manga":{"id":7}}})
-                    } else {
-                        panic!("unexpected hydration query: {query}");
-                    };
-                    axum::Json(json!({"data":data}))
-                }
-            }
-        ));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
@@ -782,6 +930,54 @@ mod tests {
             device_presence: Default::default(),
             own_echoes: Default::default(),
         });
+        (temp, state, server)
+    }
+
+    async fn pending_chapter_fixture(
+        empty_fetch: bool,
+        uninitialized: bool,
+    ) -> (
+        tempfile::TempDir,
+        SharedAppState,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use crate::syncd::models::{canonical_portable_work_id, PortableResolutionStateV3};
+        use std::sync::{atomic::AtomicUsize, Arc};
+
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let counted = fetches.clone();
+        let router = axum::Router::new().route("/api/graphql", axum::routing::post(
+            move |axum::Json(body): axum::Json<Value>| {
+                let counted = counted.clone();
+                async move {
+                    let query = body["query"].as_str().unwrap();
+                    let data = if query.contains("EpigraphUnhydratedComics") {
+                        json!({"mangas":{"nodes":if uninitialized {json!([{"id":7,"sourceId":"10"}])} else {json!([])},"pageInfo":{"hasNextPage":false}}})
+                    } else if query.contains("EpigraphPendingChapterHydration") {
+                        assert_eq!(body["variables"]["ids"], json!([7,8,9,10,11,12]));
+                        json!({"mangas":{"nodes":[
+                            {"id":7,"sourceId":"10","url":"/manga/7","inLibrary":true,"chapters":{"totalCount":0}},
+                            {"id":8,"sourceId":"10","url":"/manga/8","inLibrary":true,"chapters":{"totalCount":2}},
+                            {"id":9,"sourceId":"10","url":"/manga/9","inLibrary":false,"chapters":{"totalCount":0}},
+                            {"id":10,"sourceId":"99","url":"/manga/10","inLibrary":true,"chapters":{"totalCount":0}},
+                            {"id":11,"sourceId":"10","url":"/other/11","inLibrary":true,"chapters":{"totalCount":0}},
+                            {"id":12,"sourceId":"10","url":"/manga/12","inLibrary":true}
+                        ],"pageInfo":{"hasNextPage":false}}})
+                    } else if query.contains("EpigraphHydrateChapters") {
+                        assert_eq!(body["variables"]["mangaId"], 7);
+                        counted.fetch_add(1, Ordering::Relaxed);
+                        json!({"fetchChapters":{"chapters":if empty_fetch {json!([])} else {json!([{"url":"/chapter/1"}])}}})
+                    } else if query.contains("EpigraphHydrateManga") {
+                        json!({"fetchManga":{"manga":{"id":7}}})
+                    } else {
+                        panic!("unexpected hydration query: {query}");
+                    };
+                    axum::Json(json!({"data":data}))
+                }
+            }
+        ));
+        let (temp, state, server) = state_with_upstream(router).await;
         for id in 7..=13 {
             let reference = PortableWorkRefV3::Comic {
                 source_id: "10".into(),
@@ -829,7 +1025,7 @@ mod tests {
         .await
         .unwrap();
         let mut retries = RetryBook::default();
-        hydrate_profiles(&state, &mut retries).await.unwrap();
+        hydrate_profiles(&state, &mut retries, &mut SourceBreakers::default()).await.unwrap();
         server.abort();
         assert_eq!(
             fetches.load(Ordering::Relaxed),
@@ -847,11 +1043,11 @@ mod tests {
     async fn initialized_work_with_empty_chapter_fetch_keeps_durable_backoff() {
         let (_temp, state, fetches, server) = pending_chapter_fixture(true, true).await;
         let mut retries = RetryBook::default();
-        hydrate_profiles(&state, &mut retries).await.unwrap();
+        hydrate_profiles(&state, &mut retries, &mut SourceBreakers::default()).await.unwrap();
         assert_eq!(fetches.load(Ordering::Relaxed), 1);
         let mut restarted = RetryBook::load(&state.pool, db::now_ms()).await.unwrap();
         assert!(!restarted.is_due("main", 7, db::now_ms()));
-        hydrate_profiles(&state, &mut restarted).await.unwrap();
+        hydrate_profiles(&state, &mut restarted, &mut SourceBreakers::default()).await.unwrap();
         server.abort();
         assert_eq!(
             fetches.load(Ordering::Relaxed),
@@ -884,6 +1080,81 @@ mod tests {
         assert!(parse_unhydrated(None).is_empty());
     }
 
+    fn query_failure(upstream: &str) -> ErrorDetail {
+        let AppError::ServiceUnavailable(mut detail) = AppError::service_unavailable(
+            "SUWAYOMI_CATALOG_QUERY_FAILED",
+            "failed",
+            false,
+        ) else {
+            unreachable!()
+        };
+        detail.details = Some(json!({ "upstreamError": upstream }));
+        detail
+    }
+
+    #[test]
+    fn source_refusals_are_told_apart_from_failures_of_one_work() {
+        for upstream in [
+            "HTTP error 429",
+            "HTTP error 403 at source",
+            "HTTP error 503",
+            "HTTP error 522",
+            "Failed to bypass Cloudflare",
+            "java.net.SocketTimeoutException: timeout",
+            "Read timed out",
+            "Unable to resolve host \"example.org\"",
+            "Source not found",
+            "suwayomi.tachidesk.server.util.CEFManager$CefException: CEF is disabled",
+        ] {
+            assert!(is_source_fault(&query_failure(upstream)), "{upstream}");
+        }
+        for upstream in ["HTTP error 404", "Index 0 out of bounds", "", "Chapter list is empty"] {
+            assert!(!is_source_fault(&query_failure(upstream)), "{upstream}");
+        }
+        let AppError::ServiceUnavailable(empty) = AppError::service_unavailable(
+            "SUWAYOMI_HYDRATION_CHAPTERS_EMPTY",
+            "empty",
+            true,
+        ) else {
+            unreachable!()
+        };
+        assert!(!is_source_fault(&empty));
+    }
+
+    #[test]
+    fn a_failing_source_moves_back_then_cools_down_longer_each_time() {
+        let mut sources = SourceBreakers::default();
+        let queues = || vec![vec![work(1, "a")], vec![work(2, "b")], vec![work(3, "c")]];
+        let first = |queues: &[Vec<UnhydratedWork>]| -> Vec<String> {
+            queues.iter().map(|queue| queue[0].source_id.clone()).collect()
+        };
+
+        // A first failure only moves the source to the back of the next pass.
+        assert_eq!(sources.fail("p", "a", 0), (1, Duration::ZERO));
+        assert_eq!(first(&sources.order("p", queues(), 0)), ["b", "c", "a"]);
+        // Other profiles keep their own count.
+        assert_eq!(first(&sources.order("q", queues(), 0)), ["a", "b", "c"]);
+
+        // Failing again, it sits out a cooldown that grows, then comes back last.
+        let (failures, cooldown) = sources.fail("p", "a", 0);
+        assert_eq!(failures, 2);
+        assert!((22_500..=37_500).contains(&cooldown.as_millis()), "{cooldown:?}");
+        assert_eq!(first(&sources.order("p", queues(), 1_000)), ["b", "c"]);
+        let due = cooldown.as_millis() as i64;
+        assert_eq!(first(&sources.order("p", queues(), due)), ["b", "c", "a"]);
+        let (_, longer) = sources.fail("p", "a", 0);
+        assert_eq!(longer, cooldown * 2);
+        for _ in 0..20 {
+            sources.fail("p", "a", 0);
+        }
+        assert!(source_cooldown(30, "a") <= SOURCE_MAX_COOLDOWN * 5 / 4);
+        assert!(source_cooldown(30, "a") >= SOURCE_MAX_COOLDOWN * 3 / 4);
+
+        // One success resets it.
+        sources.clear("p", "a");
+        assert_eq!(first(&sources.order("p", queues(), 1_000)), ["a", "b", "c"]);
+    }
+
     #[test]
     fn queues_one_source_at_a_time_and_skips_works_backing_off() {
         let works = [work(1, "a"), work(2, "b"), work(3, "a"), work(4, "a")];
@@ -895,19 +1166,10 @@ mod tests {
     }
 
     #[test]
-    fn only_chapters_with_progress_are_stand_ins_to_follow() {
-        let nodes = json!([
-            { "url": "/c/1", "isRead": true, "isBookmarked": false, "lastPageRead": 0 },
-            { "url": "/c/2", "isRead": false, "isBookmarked": true, "lastPageRead": 0 },
-            { "url": "/c/3", "isRead": false, "isBookmarked": false, "lastPageRead": 4 },
-            { "url": "/c/4", "isRead": false, "isBookmarked": false, "lastPageRead": 0 },
-        ]);
-        assert_eq!(
-            progress_chapter_urls(Some(&nodes)),
-            BTreeSet::from(["/c/1".to_string(), "/c/2".to_string(), "/c/3".to_string()])
-        );
-        let listed = listed_chapter_urls(Some(&json!([{ "url": "/c/1" }, { "url": "/c/9" }])));
+    fn listed_chapters_are_read_by_url() {
+        let listed = listed_chapter_urls(Some(&json!([{ "url": "/c/1" }, { "url": "/c/9" }, {}])));
         assert_eq!(listed, BTreeSet::from(["/c/1".to_string(), "/c/9".to_string()]));
+        assert!(listed_chapter_urls(None).is_empty());
     }
 
     #[test]
@@ -1008,6 +1270,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_chapter_fetch_that_failed_here_still_carries_progress_once_suwayomi_finishes_it() {
+        use crate::syncd::models::{canonical_portable_work_id, PortableResolutionStateV3};
+        use std::sync::{atomic::AtomicUsize, Arc};
+
+        // The fetch times out here while Suwayomi is still running it: right after, it still holds
+        // the stand-in; a moment later it lists the chapter under the source's new host.
+        let local_reads = Arc::new(AtomicUsize::new(0));
+        let reads = local_reads.clone();
+        let router = axum::Router::new().route(
+            "/api/graphql",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let reads = reads.clone();
+                async move {
+                    let query = body["query"].as_str().unwrap();
+                    if query.contains("EpigraphHydrateChapters") {
+                        axum::Json(json!({"errors":[{"message":"java.net.SocketTimeoutException: timeout"}]}))
+                    } else if query.contains("EpigraphHydrationLocalChapters") && body["variables"]["id"] == 70 {
+                        let url = if reads.fetch_add(1, Ordering::Relaxed) == 0 {
+                            "/manga/a/chapter-1"
+                        } else {
+                            "https://new.example/manga/a/chapter-1"
+                        };
+                        axum::Json(json!({"data":{"manga":{"chapters":{"nodes":[{"url":url}]}}}}))
+                    } else {
+                        axum::Json(json!({"data":{"manga":{"chapters":{"nodes":[]}}}}))
+                    }
+                }
+            }),
+        );
+        let (_temp, state, server) = state_with_upstream(router).await;
+        let work = PortableWorkRefV3::Comic {
+            source_id: "10".into(),
+            manga_key: "/manga/a".into(),
+        };
+        db::upsert_portable_work_binding(
+            &state.pool,
+            "main",
+            &canonical_portable_work_id(&work),
+            &work,
+            None,
+            Some("70"),
+            PortableResolutionStateV3::Bound,
+            None,
+            None,
+            None,
+            1,
+            1,
+        )
+        .await
+        .unwrap();
+        let record = json!({
+            "comicId": "comic",
+            "chapterId": "ch-1",
+            "portableWorkRef": work,
+            "portableChapterRef": { "type": "comic", "work": work, "chapterKey": "/manga/a/chapter-1" },
+            "read": true,
+            "bookmarked": null,
+            "lastPageRead": null,
+        });
+        sqlx::query(
+            r#"
+            INSERT INTO comic_sync_state (
+                scope_id, entity_type, entity_id, record_json, record_updated_at_ms,
+                record_updated_by_device_id, record_lamport, record_server_version
+            ) VALUES ('comics:profile:main', 'comic.chapter_state', 'ch-1', ?, 1, 'phone', 1, 5)
+            "#,
+        )
+        .bind(record.to_string())
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        let queued = || async {
+            sqlx::query_as::<_, (String, i64)>(
+                "SELECT entity_id, json_extract(variables_json, '$.isRead') FROM suwayomi_projection_outbox",
+            )
+            .fetch_all(&state.pool)
+            .await
+            .unwrap()
+        };
+
+        let session = suwayomi_projection::projection_session("main");
+        assert!(hydrate_work(&state, &session, 70, false).await.is_err());
+        assert!(queued().await.is_empty(), "the stand-in is still listed");
+        follow_unsettled_fetches(&state).await;
+        server.abort();
+        assert_eq!(queued().await, vec![("ch-1".to_string(), 1)]);
+        unsettled_fetches().remove(&("main".to_string(), 70));
+    }
+
+    #[tokio::test]
     async fn replaced_chapters_have_their_stored_progress_projected_again() {
         let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
@@ -1050,13 +1402,66 @@ mod tests {
             .unwrap();
         }
 
-        let keys = BTreeSet::from(["https://old.example/manga/a/1".to_string()]);
+        // Each chapter is bound to the stand-in Suwayomi held before the source replaced it.
+        let chapter_id = |chapter_work: &PortableWorkRefV3, key: &str| {
+            crate::syncd::models::canonical_portable_chapter_id(&crate::syncd::models::PortableChapterRefV3::Comic {
+                work: chapter_work.clone(),
+                chapter_key: key.to_string(),
+            })
+        };
+        let bound = [
+            chapter_id(&work, "https://old.example/manga/a/1"),
+            chapter_id(&work, "https://old.example/manga/a/2"),
+            chapter_id(&other, "https://old.example/manga/a/1"),
+        ];
+        sqlx::query(
+            r#"
+            INSERT INTO portable_work_bindings (
+                profile_id, portable_id, ecosystem, source_id, provider_key, local_reference,
+                resolution_state, record_lamport, updated_at_ms
+            ) VALUES ('p', 'work', 'SUWAYOMI', '2499283573021220255', '/manga/a', '7', 'BOUND', 0, 1)
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (index, portable_chapter_id) in bound.iter().enumerate() {
+            sqlx::query(
+                r#"
+                INSERT INTO portable_chapter_bindings (
+                    profile_id, portable_chapter_id, portable_work_id, provider_key,
+                    local_reference, resolution_state, record_lamport, updated_at_ms
+                ) VALUES ('p', ?, 'work', ?, ?, 'BOUND', 0, 1)
+                "#,
+            )
+            .bind(portable_chapter_id)
+            .bind(format!("key-{index}"))
+            .bind((100 + index).to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The source now lists the first chapter under another host and the second as it was.
+        let keys = BTreeSet::from([
+            "https://new.example/manga/a/1".to_string(),
+            "https://old.example/manga/a/2".to_string(),
+        ]);
         assert_eq!(
-            db::reproject_comic_chapter_states(&pool, "p", &work, &keys).await.unwrap(),
+            db::reproject_unlisted_comic_chapter_states(&pool, "p", &work, &keys).await.unwrap(),
             1
         );
+        // Only the replaced chapter forgets its stand-in, so its row looks the new chapter up.
+        let remaining: Vec<(String,)> =
+            sqlx::query_as("SELECT portable_chapter_id FROM portable_chapter_bindings ORDER BY 1")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let mut expected = vec![bound[1].clone(), bound[2].clone()];
+        expected.sort();
+        assert_eq!(remaining.into_iter().map(|row| row.0).collect::<Vec<_>>(), expected);
         // Idempotent: the same record is queued once.
-        db::reproject_comic_chapter_states(&pool, "p", &work, &keys).await.unwrap();
+        db::reproject_unlisted_comic_chapter_states(&pool, "p", &work, &keys).await.unwrap();
         let rows: Vec<(String, String, String, i64)> = sqlx::query_as(
             "SELECT entity_id, operation_name, variables_json, source_server_version FROM suwayomi_projection_outbox",
         )
@@ -1074,7 +1479,7 @@ mod tests {
         assert_eq!(variables["lastPageRead"], json!(3));
 
         assert_eq!(
-            db::reproject_comic_chapter_states(&pool, "p", &work, &BTreeSet::new()).await.unwrap(),
+            db::reproject_unlisted_comic_chapter_states(&pool, "p", &work, &BTreeSet::new()).await.unwrap(),
             0
         );
     }

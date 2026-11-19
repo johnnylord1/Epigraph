@@ -58,6 +58,9 @@ const STATUSES: [(&str, i64); 7] = [
     ("ON_HIATUS", 6),
 ];
 
+/// Suwayomi's `UpdateStrategy` names, in the order its backups number them.
+const UPDATE_STRATEGIES: [&str; 2] = ["ALWAYS_UPDATE", "ONLY_FETCH_ONCE"];
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportWorksVariables {
@@ -81,6 +84,14 @@ struct ImportWork {
     /// Milliseconds since the epoch.
     #[serde(default)]
     date_added: i64,
+    /// Whether the work goes into the library; absent means it does. Suwayomi keeps a work that is
+    /// already in its library there whatever this says, so `false` leaves the work as it is.
+    #[serde(default)]
+    in_library: Option<bool>,
+    /// Suwayomi's `UpdateStrategy` name. A restore overwrites the strategy of a work it already
+    /// has, so a work that is only given missing chapters passes its own.
+    #[serde(default)]
+    update_strategy: Option<String>,
     #[serde(default)]
     chapters: Vec<ImportChapter>,
 }
@@ -130,6 +141,15 @@ pub(crate) fn normalized_import(variables: Value) -> Result<Value, AppError> {
         {
             return Err(AppError::BadRequest(
                 "title must be a work title of at most 512 bytes.".to_string(),
+            ));
+        }
+        if work
+            .update_strategy
+            .as_deref()
+            .is_some_and(|strategy| !UPDATE_STRATEGIES.contains(&strategy))
+        {
+            return Err(AppError::BadRequest(
+                "updateStrategy must be ALWAYS_UPDATE or ONLY_FETCH_ONCE.".to_string(),
             ));
         }
         let texts = [&work.author, &work.artist, &work.status]
@@ -310,7 +330,8 @@ async fn start_restore(
         .ok_or_else(unavailable)
 }
 
-/// A Mihon backup holding only the works and their chapters, in the library and in no category.
+/// A Mihon backup holding only the works and their chapters, in no category: in the library unless
+/// a work says otherwise.
 fn encode_backup(works: &[ImportWork]) -> Vec<u8> {
     let mut backup = Vec::new();
     for work in works {
@@ -356,7 +377,15 @@ fn encode_backup(works: &[ImportWork]) -> Vec<u8> {
             put_varint_field(&mut encoded, 10, chapter.source_order.max(0) as u64);
             put_bytes_field(&mut manga, 16, &encoded);
         }
-        put_varint_field(&mut manga, 100, 1);
+        // `favorite` defaults to true when left out, so false is written out.
+        put_varint(&mut manga, 100 << 3);
+        put_varint(&mut manga, u64::from(work.in_library != Some(false)));
+        let strategy = work.update_strategy.as_deref().unwrap_or_default();
+        let strategy = UPDATE_STRATEGIES
+            .iter()
+            .position(|name| *name == strategy)
+            .unwrap_or(0);
+        put_varint_field(&mut manga, 105, strategy as u64);
         put_bytes_field(&mut backup, 1, &manga);
     }
     backup
@@ -492,6 +521,22 @@ mod tests {
         let mut varint = Vec::new();
         put_varint(&mut varint, u64::MAX);
         assert_eq!(varint.len(), 10);
+    }
+
+    #[test]
+    fn a_work_kept_out_of_the_library_says_so_and_keeps_its_strategy() {
+        let mut variables = work(json!([]));
+        variables["works"][0]["inLibrary"] = json!(false);
+        variables["works"][0]["updateStrategy"] = json!("ONLY_FETCH_ONCE");
+        let parsed: ImportWorksVariables =
+            serde_json::from_value(normalized_import(variables).unwrap()).unwrap();
+        let backup = encode_backup(&parsed.works);
+        // favorite = 100 written as false, then updateStrategy = 105 as ONLY_FETCH_ONCE.
+        assert!(backup.ends_with(&[0xA0, 0x06, 0, 0xC8, 0x06, 1]));
+
+        let mut bad = work(json!([]));
+        bad["works"][0]["updateStrategy"] = json!("SOMETIMES");
+        assert!(normalized_import(bad).is_err());
     }
 
     #[test]

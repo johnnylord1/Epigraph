@@ -8081,20 +8081,24 @@ async fn enqueue_comic_projections_in_tx(
     Ok(())
 }
 
-/// Queues the stored progress of a work's chapters again, exactly as it was queued when it
-/// arrived. For chapters Suwayomi replaced after the progress was applied to them (a source that
-/// now lists them under another host): the projection finds the chapters that took their place.
-/// Returns how many records were queued.
-pub async fn reproject_comic_chapter_states(
+/// Queues again, exactly as it was queued when it arrived, the stored progress of every chapter of
+/// a work that its source does not list under the same URL (`listed`): Suwayomi replaced the
+/// chapter the progress was written to (a stand-in, or one the source now lists under another
+/// host), and the projection finds the chapter that took its place. Which chapters had progress
+/// in Suwayomi does not matter: progress applied while the source was being fetched would be
+/// missed, and the stored state, not Suwayomi's, is what the sync's clock chose. A chapter queued
+/// for nothing is settled without a write. Returns how many records were queued.
+pub async fn reproject_unlisted_comic_chapter_states(
     pool: &sqlx::SqlitePool,
     profile_id: &str,
     work: &PortableWorkRefV3,
-    chapter_keys: &std::collections::BTreeSet<String>,
+    listed: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<usize> {
     let PortableWorkRefV3::Comic { manga_key, .. } = work else {
         return Ok(0);
     };
-    if chapter_keys.is_empty() {
+    // A source that lists nothing has replaced nothing yet.
+    if listed.is_empty() {
         return Ok(0);
     }
     let scope_id = format!("comics:profile:{profile_id}");
@@ -8116,17 +8120,28 @@ pub async fn reproject_comic_chapter_states(
         let Ok(record) = serde_json::from_str::<Value>(&record_json) else {
             continue;
         };
-        let matches = record
+        let Some(chapter) = record
             .get("portableChapterRef")
             .cloned()
             .and_then(|value| serde_json::from_value::<PortableChapterRefV3>(value).ok())
-            .is_some_and(|chapter| {
-                matches!(&chapter, PortableChapterRefV3::Comic { work: chapter_work, chapter_key }
-                    if chapter_work == work && chapter_keys.contains(chapter_key))
-            });
-        if !matches {
+            .filter(|chapter| {
+                matches!(chapter, PortableChapterRefV3::Comic { work: chapter_work, chapter_key }
+                    if chapter_work == work && !listed.contains(chapter_key))
+            })
+        else {
             continue;
-        }
+        };
+        // The binding still names the chapter the source replaced, which Suwayomi no longer has:
+        // trusting it would write the progress to a missing chapter, fail its confirmation and
+        // hold every later row of the profile until the retry looks the chapter up again.
+        sqlx::query(
+            "DELETE FROM portable_chapter_bindings WHERE profile_id = ? AND portable_chapter_id = ?",
+        )
+        .bind(profile_id)
+        .bind(canonical_portable_chapter_id(&chapter))
+        .execute(&mut *tx)
+        .await
+        .context("failed to forget the chapter the source replaced")?;
         enqueue_comic_state_projection_in_tx(
             &mut tx,
             &scope_id,

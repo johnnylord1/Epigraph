@@ -254,6 +254,13 @@ pub fn spawn_projection_task(
                     tracing::warn!(error = %error, "failed to rearm Suwayomi projections")
                 }
             }
+            match rearm_missing_chapter_retries(&state.pool, super::db::now_ms()).await {
+                Ok(0) => {}
+                Ok(count) => tracing::info!(count, "rearmed Suwayomi progress waiting on missing chapters"),
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to rearm Suwayomi progress")
+                }
+            }
         }
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1348,6 +1355,27 @@ async fn block_foreign_server_projections(
 /// daemon start, when maintenance ends and when a runtime seen down answers again, so a backoff
 /// earned during an outage does not keep the queue pending. Attempt counts are kept, so ordering
 /// and bounded-attempt rules hold.
+/// Progress waiting on a chapter Suwayomi does not list gets one bulk pass when the daemon starts,
+/// which adds the chapter. Its attempts are kept.
+async fn rearm_missing_chapter_retries(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET next_attempt_at_ms = ?, updated_at_ms = ?
+        WHERE status = 'retry' AND operation_name = 'UpdateChaptersProgress'
+          AND last_error = ? AND next_attempt_at_ms > ?
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .bind(WAITING_CHAPTER_CODE)
+    .bind(now)
+    .execute(pool)
+    .await
+    .context("failed to rearm Suwayomi progress waiting on missing chapters")?;
+    Ok(result.rows_affected())
+}
+
 async fn rearm_runtime_retries(
     pool: &sqlx::SqlitePool,
     now: i64,
@@ -1994,8 +2022,9 @@ const BULK_PROGRESS_ROWS: usize = 5_000;
 /// Works whose chapters one listing query reads.
 const BULK_CHAPTER_WORKS: usize = 100;
 const BULK_CHAPTER_PAGE: usize = 2_000;
-/// Chapters one bulk `updateChapters` names.
-const BULK_UPDATE_CHAPTERS: usize = 500;
+/// Chapters one bulk `updateChapters` names: as many as the command takes, which refuses a
+/// longer list outright.
+const BULK_UPDATE_CHAPTERS: usize = suwayomi_commands::MAX_CHAPTER_IDS;
 /// Rows a bulk pass could not settle are left to the per-row path; past this many remembered
 /// rows the memory is dropped and they get one more bulk try.
 const BULK_PROGRESS_MAX_TRIED: usize = 200_000;
@@ -2013,6 +2042,9 @@ const BULK_CHAPTERS_QUERY: &str = r#"
 #[derive(Default)]
 struct BulkProgressWatch {
     tried: std::collections::HashSet<String>,
+    /// Rows whose missing chapter a restore already added: if the chapter still does not show up,
+    /// they go to the per-row path instead of being restored again every pass.
+    topped_up: std::collections::HashSet<String>,
 }
 
 /// A progress row the bulk pass claimed, with where it goes.
@@ -2039,8 +2071,9 @@ async fn settle_progress_in_bulk(
     state: &SharedAppState,
     watch: &mut BulkProgressWatch,
 ) -> anyhow::Result<usize> {
-    if watch.tried.len() > BULK_PROGRESS_MAX_TRIED {
+    if watch.tried.len() + watch.topped_up.len() > BULK_PROGRESS_MAX_TRIED {
         watch.tried.clear();
+        watch.topped_up.clear();
     }
     let Some((profile_id, rows)) = claim_bulk_progress(state, watch).await? else {
         return Ok(0);
@@ -2065,9 +2098,14 @@ async fn settle_progress_in_bulk(
     let mut by_chapter: Vec<(i64, Vec<&BulkProgressRow>)> = Vec::new();
     let mut chapter_index: HashMap<i64, usize> = HashMap::new();
     let mut unresolved: Vec<&BulkProgressRow> = Vec::new();
+    // Rows whose chapter Suwayomi lists under no key like theirs, not merely ambiguously.
+    let mut missing: Vec<&BulkProgressRow> = Vec::new();
     for row in &rows {
         let nodes = chapters.get(&row.manga_id);
         let (exact, same_path) = chapter_key_matches(nodes, row.manga_id, &row.chapter_key);
+        if exact.is_none() && same_path.is_empty() {
+            missing.push(row);
+        }
         let chapter_id = exact.or(match same_path.as_slice() {
             [only] => Some(*only),
             _ => None,
@@ -2115,6 +2153,9 @@ async fn settle_progress_in_bulk(
     }
 
     let mut runtime_down = false;
+    // Rows whose command Suwayomi rejected, and rows it accepted without showing their state.
+    let mut rejected = 0usize;
+    let mut unconfirmed = 0usize;
     let mut landed: BTreeSet<i64> = applied.iter().map(|row| row.manga_id).collect();
     for (patch, members) in by_patch {
         for chunk in members.chunks(BULK_UPDATE_CHAPTERS) {
@@ -2138,6 +2179,8 @@ async fn settle_progress_in_bulk(
                         if chapters_projection_confirmed(&expected, &data) {
                             landed.insert(chapter_rows[0].manga_id);
                             applied.extend(chapter_rows.iter().copied());
+                        } else {
+                            unconfirmed += chapter_rows.len();
                         }
                     }
                 }
@@ -2145,7 +2188,10 @@ async fn settle_progress_in_bulk(
                     runtime_down = true;
                 }
                 // A rejected command is the per-row path's to retry or block.
-                Err(_) => {}
+                Err(error) => {
+                    rejected += chunk.iter().map(|(_, rows)| rows.len()).sum::<usize>();
+                    tracing::warn!(profile = %profile_id, chapters = chunk.len(), error = ?error, "Suwayomi rejected synced chapter progress in bulk");
+                }
             }
         }
     }
@@ -2162,6 +2208,14 @@ async fn settle_progress_in_bulk(
         })
         .collect();
     let applied_list: Vec<&str> = applied_ids.iter().copied().collect();
+    // Chapters the device read that this Suwayomi does not list yet are added now, as a restore
+    // would add them, instead of waiting for the work's source to list them: a source behind rate
+    // limits can take hours. Their rows settle on the next pass, right after this one.
+    let topped_up = if runtime_down || missing.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        top_up_missing_chapters(state, &session, &missing, watch).await
+    };
     release_bulk_progress(state, &rows, &applied_list).await?;
     {
         let _writer_guard = state.mutation_gate.lock().await;
@@ -2170,7 +2224,10 @@ async fn settle_progress_in_bulk(
     }
     // Rows it could not settle go to the per-row path; after an outage they get another bulk try.
     if !runtime_down {
-        for row in rows.iter().filter(|row| !applied_ids.contains(row.operation_id.as_str())) {
+        for row in rows.iter().filter(|row| {
+            !applied_ids.contains(row.operation_id.as_str())
+                && !topped_up.contains(row.operation_id.as_str())
+        }) {
             watch.tried.insert(row.operation_id.clone());
         }
     }
@@ -2184,10 +2241,166 @@ async fn settle_progress_in_bulk(
             claimed = rows.len(),
             applied = applied_list.len(),
             unresolved = unresolved.len(),
+            rejected,
+            unconfirmed,
+            topped_up = topped_up.len(),
             "settled synced chapter progress in bulk"
         );
     }
-    Ok(applied_list.len())
+    // Topped-up rows count as progress: the next pass, which settles them, goes right away.
+    Ok(applied_list.len() + topped_up.len())
+}
+
+const TOP_UP_WORKS_QUERY: &str = r#"
+  query EpigraphTopUpWorks($ids: [Int!]!, $first: Int!) {
+    mangas(filter: { id: { in: $ids } }, first: $first) {
+      nodes { id sourceId url title status inLibrary inLibraryAt updateStrategy }
+    }
+  }
+"#;
+
+/// Adds to Suwayomi, with one restore, the chapters the rows name that it does not list, carrying
+/// the state the rows leave them in. Answers the rows whose chapter was added.
+///
+/// A restore only inserts chapters it lacks by URL and merges into the ones it has, and every
+/// chapter it is given here is one it lacks, so nothing Suwayomi already holds is overwritten. The
+/// sync's own clock still decides the state: the rows are settled afterwards like any other, and a
+/// row that leaves a chapter unread writes it back unread. What a restore overwrites on the work
+/// itself (status, update strategy, the date it joined the library) is passed as Suwayomi has it,
+/// and the work is not put into the library: a restore only ever keeps a work there.
+///
+/// Like an import's, the stand-ins carry no chapter number, and the source's own listing replaces
+/// their name and order when the work is next fetched.
+async fn top_up_missing_chapters(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    missing: &[&BulkProgressRow],
+    watch: &mut BulkProgressWatch,
+) -> std::collections::HashSet<String> {
+    let mut by_work: std::collections::BTreeMap<i64, Vec<&BulkProgressRow>> = Default::default();
+    for row in missing {
+        if !watch.topped_up.contains(&row.operation_id) {
+            by_work.entry(row.manga_id).or_default().push(row);
+        }
+    }
+    let ids: Vec<i64> = by_work.keys().copied().collect();
+    let mut works: Vec<(Value, Vec<String>)> = Vec::new();
+    for chunk in ids.chunks(COMIC_LOOKUP_CHUNK) {
+        let Ok(data) = suwayomi_catalog::execute_graphql_document(
+            state,
+            session,
+            TOP_UP_WORKS_QUERY,
+            json!({ "ids": chunk, "first": chunk.len() }),
+            false,
+        )
+        .await
+        else {
+            return Default::default();
+        };
+        for node in data.pointer("/mangas/nodes").and_then(Value::as_array).into_iter().flatten() {
+            let Some(rows) = node.get("id").and_then(Value::as_i64).and_then(|id| by_work.get(&id))
+            else {
+                continue;
+            };
+            if let Some(work) = top_up_work(node, rows) {
+                works.push((work, rows.iter().map(|row| row.operation_id.clone()).collect()));
+            }
+        }
+    }
+    let mut topped_up = std::collections::HashSet::new();
+    for batch in works.chunks(IMPORT_BATCH_WORKS) {
+        let started = Instant::now();
+        let payload: Vec<&Value> = batch.iter().map(|(work, _)| work).collect();
+        match suwayomi_import::import_works_confirmed(state, session, json!({ "works": payload })).await
+        {
+            Ok(_) => {
+                let rows: Vec<&String> = batch.iter().flat_map(|(_, rows)| rows).collect();
+                tracing::info!(
+                    profile = %session.profile_id,
+                    works = batch.len(),
+                    rows = rows.len(),
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "added the chapters synced progress names to Suwayomi"
+                );
+                watch.topped_up.extend(rows.iter().map(|id| (*id).clone()));
+                topped_up.extend(rows.into_iter().cloned());
+            }
+            Err(error) => {
+                tracing::warn!(profile = %session.profile_id, error = ?error, "failed to add the chapters synced progress names to Suwayomi");
+                break;
+            }
+        }
+    }
+    topped_up
+}
+
+/// The work as the restore takes it: Suwayomi's own details, so the restore keeps them, and the
+/// missing chapters with the state the rows leave them in, oldest row first. `None` when Suwayomi
+/// lists the work under another identity than the rows name.
+fn top_up_work(node: &Value, rows: &[&BulkProgressRow]) -> Option<Value> {
+    let work = serde_json::from_value::<PortableWorkRefV3>(
+        rows.first()?.variables.get("portableWorkRef")?.clone(),
+    )
+    .ok()?;
+    let PortableWorkRefV3::Comic { source_id, manga_key } = &work else {
+        return None;
+    };
+    let node_source = match node.get("sourceId")? {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        _ => return None,
+    };
+    if node_source != *source_id || node.get("url").and_then(Value::as_str) != Some(manga_key) {
+        return None;
+    }
+    let joined_ms = match node.get("inLibraryAt") {
+        Some(Value::String(text)) => text.parse::<i64>().ok(),
+        Some(Value::Number(number)) => number.as_i64(),
+        _ => None,
+    }
+    .unwrap_or(0)
+    .max(0)
+    .saturating_mul(1000);
+    let mut chapters: std::collections::BTreeMap<&str, Value> = Default::default();
+    for row in rows {
+        let merged = chapters.entry(row.chapter_key.as_str()).or_insert_with(|| json!({}));
+        merge_progress_fields(merged, &chapter_progress_patch(&row.variables));
+    }
+    let chapters: Vec<Value> = chapters
+        .into_iter()
+        .map(|(key, progress)| {
+            json!({
+                "url": key,
+                "name": chapter_name_hint(key),
+                "isRead": progress.get("isRead").and_then(Value::as_bool).unwrap_or(false),
+                "isBookmarked": progress.get("isBookmarked").and_then(Value::as_bool).unwrap_or(false),
+                "lastPageRead": progress.get("lastPageRead").and_then(Value::as_i64).unwrap_or(0),
+                "chapterNumber": -1.0,
+            })
+        })
+        .collect();
+    let title = node
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or(manga_key);
+    let mut entry = json!({
+        "sourceId": source_id,
+        "url": manga_key,
+        "title": title,
+        "dateAdded": joined_ms,
+        "inLibrary": node.get("inLibrary").and_then(Value::as_bool).unwrap_or(false),
+        "chapters": chapters,
+    });
+    for field in ["status", "updateStrategy"] {
+        if let Some(value) = node.get(field).and_then(Value::as_str) {
+            entry[field] = json!(value);
+        }
+    }
+    suwayomi_import::normalized_import(json!({ "works": [entry] }))
+        .ok()
+        .and_then(|mut value| value.get_mut("works")?.as_array_mut()?.pop())
 }
 
 /// Whether the chapter already has every field the patch sets.
@@ -4550,6 +4763,56 @@ mod tests {
             variables[field] = value.clone();
         }
         variables
+    }
+
+    #[test]
+    fn a_top_up_restores_only_the_missing_chapters_and_keeps_the_work_as_suwayomi_has_it() {
+        let bound: HashMap<String, String> = [(
+            canonical_portable_work_id(&PortableWorkRefV3::comic("10002", "/series/a")),
+            "7".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let row = |id: &str, chapter: &str, fields: Value| {
+            bulk_progress_row(
+                id.to_string(),
+                "pending".to_string(),
+                &progress_variables("/series/a", chapter, fields).to_string(),
+                &bound,
+            )
+            .unwrap()
+        };
+        let rows = [
+            row("1", "/series/a/2", json!({ "isRead": true, "lastPageRead": 3 })),
+            row("2", "/series/a/2", json!({ "isBookmarked": true, "lastPageRead": null })),
+            row("3", "/series/a/1", json!({ "isRead": false, "lastPageRead": 9 })),
+        ];
+        let rows: Vec<&BulkProgressRow> = rows.iter().collect();
+        let node = json!({
+            "id": 7, "sourceId": "10002", "url": "/series/a", "title": " A ",
+            "status": "ONGOING", "inLibrary": false, "inLibraryAt": "1700000000",
+            "updateStrategy": "ONLY_FETCH_ONCE",
+        });
+        let work = top_up_work(&node, &rows).expect("the work Suwayomi lists");
+        assert_eq!(work["title"], "A");
+        assert_eq!(work["inLibrary"], false);
+        assert_eq!(work["dateAdded"], 1_700_000_000_000_i64);
+        assert_eq!(work["status"], "ONGOING");
+        assert_eq!(work["updateStrategy"], "ONLY_FETCH_ONCE");
+        assert_eq!(
+            work["chapters"],
+            json!([
+                { "url": "/series/a/1", "name": "1", "isRead": false, "isBookmarked": false, "lastPageRead": 9, "chapterNumber": -1.0 },
+                { "url": "/series/a/2", "name": "2", "isRead": true, "isBookmarked": true, "lastPageRead": 3, "chapterNumber": -1.0 },
+            ])
+        );
+        let mut library = node.clone();
+        library["inLibrary"] = json!(true);
+        library["sourceId"] = json!(10002);
+        assert_eq!(top_up_work(&library, &rows).unwrap()["inLibrary"], true);
+        let mut moved = node.clone();
+        moved["url"] = json!("/series/b");
+        assert!(top_up_work(&moved, &rows).is_none(), "another work under the same id");
     }
 
     #[test]

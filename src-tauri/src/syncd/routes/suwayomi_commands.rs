@@ -11,7 +11,8 @@ use crate::syncd::routes::{suwayomi_catalog, suwayomi_import};
 use crate::syncd::suwayomi_projection;
 
 const COMMAND_SCHEMA_VERSION: u32 = 1;
-const MAX_CHAPTER_IDS: usize = 250;
+/// Chapters one `UpdateChaptersProgress` command names at most.
+pub(crate) const MAX_CHAPTER_IDS: usize = 250;
 const CATEGORY_LOOKUP_PAGE_SIZE: i64 = 100;
 const MAX_CATEGORY_LOOKUP_PAGES: usize = 20;
 
