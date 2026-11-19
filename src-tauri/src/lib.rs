@@ -7736,6 +7736,7 @@ pub fn run() {
             syncd_desktop::syncd_list_paired_devices_if_running,
             syncd_desktop::syncd_get_sync_progress_if_running,
             syncd_desktop::syncd_request_progress_mirror,
+            syncd_desktop::syncd_stored_chapter_pages,
             syncd_desktop::syncd_publish_tracker_login,
             syncd_desktop::syncd_publish_tracker_logout,
             syncd_desktop::syncd_start_myanimelist_login,

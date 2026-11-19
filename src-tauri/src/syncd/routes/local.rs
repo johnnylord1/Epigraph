@@ -5,6 +5,7 @@ use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use serde::Deserialize;
+use serde_json::{json, Value};
 
 use crate::syncd::landed_works::{self, LandedWorksView};
 use crate::syncd::models::{AppError, PairingTokenResponse, SharedAppState};
@@ -100,6 +101,40 @@ pub async fn post_local_progress_mirror(
     }
     suwayomi_progress_mirror::request_immediate_mirror(&request.manga_ids, &request.chapter_ids);
     Ok(StatusCode::ACCEPTED)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalStoredChapterPagesRequest {
+    pub chapter_ids: Vec<i64>,
+}
+
+/// The pages Core keeps for chapters Suwayomi shows as unopened because it did not know their page
+/// count when another device's page arrived. The desktop reader asks once it has fetched a
+/// chapter's pages, so it resumes where the other device stopped.
+pub async fn post_local_stored_chapter_pages(
+    State(state): State<SharedAppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    Json(request): Json<LocalStoredChapterPagesRequest>,
+) -> Result<Json<Value>, AppError> {
+    if !remote_addr.ip().is_loopback() {
+        return Err(AppError::Forbidden(
+            "Stored chapter pages are only available from loopback.".to_string(),
+        ));
+    }
+    if request.chapter_ids.len() > MAX_PROGRESS_MIRROR_IDS {
+        return Err(AppError::BadRequest(format!(
+            "Stored chapter pages accept at most {MAX_PROGRESS_MIRROR_IDS} ids."
+        )));
+    }
+    let pages = suwayomi_progress_mirror::stored_chapter_pages(&state, &request.chapter_ids)
+        .await
+        .map_err(|error| AppError::Internal(format!("{error:#}")))?;
+    let pages = pages
+        .into_iter()
+        .map(|(chapter_id, page)| (chapter_id.to_string(), Value::from(page)))
+        .collect::<serde_json::Map<_, _>>();
+    Ok(Json(json!({ "pages": pages })))
 }
 
 #[derive(Deserialize)]

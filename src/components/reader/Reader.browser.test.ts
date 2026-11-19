@@ -6,8 +6,9 @@ import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 import type { Chapter, Manga } from "../../lib/types";
 import { resetMangaProgressRuntimeForTests } from "../../lib/reader/mangaProgressRuntime";
 
-const { fetchPages, writes } = vi.hoisted(() => ({
+const { fetchPages, writes, storedPage } = vi.hoisted(() => ({
   fetchPages: vi.fn(),
+  storedPage: vi.fn(async (_chapterId: number) => 0),
   writes: [] as Array<{ ids: number[]; lastPageRead: number; isRead: boolean }>,
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null), convertFileSrc: (path: string) => path }));
@@ -29,6 +30,7 @@ vi.mock("../../lib/imageCache", () => ({
   preloadBlobUrls: vi.fn(async () => {}), resetImageCache: vi.fn(),
   resolvedImage: (node: HTMLImageElement, input: any) => { node.src = typeof input === "string" ? input : input.url; return { destroy() {} }; }, warmResolvedMediaUrl: vi.fn(async () => {}),
 }));
+vi.mock("../../lib/reader/storedChapterPage", () => ({ storedChapterPage: storedPage }));
 vi.mock("../../lib/discord", () => ({ setReading: vi.fn(async () => {}), clearActivity: vi.fn(async () => {}) }));
 
 import Reader from "./Reader.svelte";
@@ -43,6 +45,8 @@ describe("manga reader progress lifecycle", () => {
     resetMangaProgressRuntimeForTests();
     writes.length = 0;
     fetchPages.mockReset();
+    storedPage.mockReset();
+    storedPage.mockResolvedValue(0);
     const page = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600"><rect width="400" height="600" fill="white"/></svg>')}`;
     fetchPages.mockResolvedValue({ fetchChapterPages: { pages: Array.from({ length: 10 }, () => page) } });
     store.settings = { ...DEFAULT_SETTINGS, pageStyle: "single", readingDirection: "ltr", autoMarkRead: true, autoBookmark: false, discordRpc: false };
@@ -70,6 +74,40 @@ describe("manga reader progress lifecycle", () => {
     await waitFor(() => expect(writes.at(-1)).toEqual({ ids: [81], lastPageRead: 3, isRead: false }));
     expect(fetchPages).toHaveBeenCalledTimes(1);
     expect(store.readLog).toHaveLength(0);
+  });
+
+  test("opens at the page Core kept when Suwayomi shows the chapter unopened", async () => {
+    storedPage.mockResolvedValue(6);
+    render(Reader);
+    await waitFor(() => expect(store.pageUrls).toHaveLength(10));
+    await waitFor(() => expect(store.pageNumber).toBe(7));
+    expect(storedPage).toHaveBeenCalledWith(81);
+    key("ArrowRight");
+    await waitFor(() => expect(store.pageNumber).toBe(8));
+    await waitFor(() => expect(writes.at(-1)).toEqual({ ids: [81], lastPageRead: 7, isRead: false }));
+  });
+
+  test("does not ask Core when Suwayomi already has a page or the chapter is finished", async () => {
+    store.activeChapter = { ...store.activeChapter!, lastPageRead: 4 };
+    store.activeChapterList = [store.activeChapter];
+    render(Reader);
+    await waitFor(() => expect(store.pageNumber).toBe(5));
+    expect(storedPage).not.toHaveBeenCalled();
+    cleanup();
+    store.activeChapter = { ...store.activeChapter!, lastPageRead: 0, isRead: true };
+    store.activeChapterList = [store.activeChapter];
+    render(Reader);
+    await waitFor(() => expect(store.pageUrls).toHaveLength(10));
+    expect(storedPage).not.toHaveBeenCalled();
+    expect(store.pageNumber).toBe(1);
+  });
+
+  test("ignores a kept page past the chapter's end", async () => {
+    storedPage.mockResolvedValue(40);
+    render(Reader);
+    await waitFor(() => expect(store.pageUrls).toHaveLength(10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(store.pageNumber).toBe(1);
   });
 
   test("turns pages from keys pressed while the page viewer has focus", async () => {

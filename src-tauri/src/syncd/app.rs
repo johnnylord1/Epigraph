@@ -303,6 +303,10 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             post(local::post_local_progress_mirror),
         )
         .route(
+            "/v1/local/stored-chapter-pages",
+            post(local::post_local_stored_chapter_pages),
+        )
+        .route(
             "/v1/local/sync-progress",
             get(local::get_local_sync_progress),
         )
@@ -322,6 +326,7 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         .route("/v1/pairing/claim", post(pairing::post_pairing_claim))
         .merge(protected)
         .layer(middleware::from_fn(super::compression::gzip_sync_bodies))
+        .layer(middleware::map_response(super::middleware::stamp_server_time))
         .with_state(state.clone());
 
     if std::env::var("EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES").as_deref() == Ok("1") {
@@ -1002,6 +1007,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        let server_time: i64 = response.headers()[crate::syncd::middleware::SERVER_TIME_HEADER]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((server_time - db::now_ms()).abs() < 60_000);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let payload: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload["supportsSseReplay"], true);

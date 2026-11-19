@@ -118,6 +118,7 @@ export const DETACHED_READER_RELAYED_COMMANDS: ReadonlySet<string> = new Set([
   "get_suwayomi_update_lock_status",
   "begin_suwayomi_runtime_operation",
   "end_suwayomi_runtime_operation",
+  "syncd_stored_chapter_pages",
 ]);
 
 /** Store changes a detached reader hands to the main window, which owns persistence. */

@@ -945,6 +945,41 @@ pub async fn syncd_request_progress_mirror(
     Ok(true)
 }
 
+#[derive(Deserialize)]
+struct StoredChapterPagesResponse {
+    #[serde(default)]
+    pages: std::collections::HashMap<String, i64>,
+}
+
+/// Pages Core keeps for chapters Suwayomi shows as unopened, keyed by chapter id. A page restored
+/// from another device waits there while Suwayomi does not know the chapter's page count, so the
+/// reader asks once it has fetched the pages. Empty when no Core runtime is attached; never
+/// starts Core.
+#[tauri::command]
+pub async fn syncd_stored_chapter_pages(
+    chapter_ids: Vec<i64>,
+    app: AppHandle,
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(Default::default());
+    };
+    if chapter_ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let client = insecure_local_client()?;
+    let response: StoredChapterPagesResponse = send_json_request(
+        client
+            .post(format!(
+                "{}/v1/local/stored-chapter-pages",
+                runtime.local_base_url
+            ))
+            .timeout(Duration::from_secs(5)),
+        &json!({ "chapterIds": chapter_ids }),
+    )
+    .await?;
+    Ok(response.pages)
+}
+
 /// Publishes a tracker login the desktop just completed against its Suwayomi to the running
 /// Core, so paired devices receive it through `/v1/tracker-credentials`. Only AniList has a
 /// portable login shape. Returns `false` when no Core runtime is attached. Never starts Core,

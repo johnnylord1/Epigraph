@@ -2236,6 +2236,126 @@ fn chapter_state_semantically_equal(stored_json: &str, incoming_json: &str) -> b
     }
 }
 
+/// The page Core keeps for each requested chapter that Suwayomi shows as unopened. Suwayomi
+/// stores no page for a chapter whose page count it has not learned yet, so the projection keeps a
+/// page restored from another device only in `comic_sync_state` until the reader fetches the
+/// chapter's pages. The reader asks here once those pages are known, so it opens where the other
+/// device stopped instead of at the first page. A chapter id that several running profiles know is
+/// ambiguous and gets no page.
+pub async fn stored_chapter_pages(
+    state: &SharedAppState,
+    chapter_ids: &[i64],
+) -> anyhow::Result<HashMap<i64, i64>> {
+    let mut pages = HashMap::new();
+    let mut ambiguous = HashSet::new();
+    if chapter_ids.is_empty() {
+        return Ok(pages);
+    }
+    let server_identity = db::load_server_identity(&state.pool).await?;
+    for instance in suwayomi_process::attach_owned_instances() {
+        let found = profile_stored_chapter_pages(
+            state,
+            &server_identity.server_id,
+            &instance.profile_key,
+            chapter_ids,
+        )
+        .await;
+        match found {
+            Ok(found) => {
+                for (chapter_id, page) in found {
+                    if pages.insert(chapter_id, page).is_some() {
+                        ambiguous.insert(chapter_id);
+                    }
+                }
+            }
+            Err(error) => tracing::debug!(
+                profile = %instance.profile_key,
+                error = %error,
+                "stored chapter page lookup skipped profile"
+            ),
+        }
+    }
+    pages.retain(|chapter_id, _| !ambiguous.contains(chapter_id));
+    Ok(pages)
+}
+
+async fn profile_stored_chapter_pages(
+    state: &SharedAppState,
+    server_id: &str,
+    profile_id: &str,
+    chapter_ids: &[i64],
+) -> anyhow::Result<HashMap<i64, i64>> {
+    let session = mirror_session(profile_id);
+    let scope_id = format!("comics:profile:{profile_id}");
+    let chapters = fetch_chapters(
+        state,
+        &session,
+        HINTED_CHAPTERS_QUERY,
+        json!({ "ids": chapter_ids }),
+        "reader chapters",
+    )
+    .await?
+    .into_iter()
+    .filter(|chapter| !chapter.is_read && chapter.last_page_read <= 0)
+    .collect::<Vec<_>>();
+    if chapters.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let portable = load_portable_refs_batch(state, profile_id, &chapters).await?;
+    // Every address a device may have written the chapter under; see `write_chapter_states`.
+    let mut addresses = Vec::with_capacity(chapters.len());
+    for chapter in &chapters {
+        let identity = chapter_state_identity(
+            server_id,
+            profile_id,
+            chapter.manga_id,
+            chapter.chapter_id,
+            portable.get(&chapter.chapter_id).cloned(),
+        );
+        let mut ids = Vec::with_capacity(3);
+        if let Some(listed) = core_listed_chapter_identity(server_id, profile_id, chapter, &identity) {
+            ids.push(listed.entity_id);
+        }
+        if identity.portable_chapter_ref.is_some() {
+            ids.push(
+                chapter_state_identity(
+                    server_id,
+                    profile_id,
+                    chapter.manga_id,
+                    chapter.chapter_id,
+                    None,
+                )
+                .entity_id,
+            );
+        }
+        ids.push(identity.entity_id);
+        addresses.push((chapter.chapter_id, ids));
+    }
+    let stored = load_stored_chapter_states(
+        state,
+        &scope_id,
+        addresses
+            .iter()
+            .flat_map(|(_, ids)| ids.iter().map(String::as_str)),
+    )
+    .await?;
+    Ok(addresses
+        .into_iter()
+        .filter_map(|(chapter_id, ids)| {
+            let page = newest_stored_page(ids.iter().filter_map(|id| stored.get(id)))?;
+            Some((chapter_id, page))
+        })
+        .collect())
+}
+
+/// The page of the newest stored record among a chapter's addresses, when that record is an
+/// unfinished chapter with a page past the first.
+fn newest_stored_page<'a>(rows: impl Iterator<Item = &'a StoredChapterStateRow>) -> Option<i64> {
+    let newest = rows.max_by_key(|row| row.record_updated_at_ms)?;
+    let progress = stored_progress_state(&newest.record_json)?;
+    (!progress.read && progress.last_page_read > 0).then_some(progress.last_page_read)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2959,5 +3079,24 @@ mod tests {
         let hints = take(&requests.pending);
         assert_eq!(hints.manga_ids, BTreeSet::from([7]));
         assert_eq!(hints.chapter_edits, HashMap::from([(901, 2_000)]));
+    }
+
+    #[test]
+    fn reader_gets_the_page_of_the_newest_stored_address() {
+        let phone = stored_row("phone", 2_000, json!({ "read": false, "lastPageRead": 14 }));
+        let older = stored_row(MIRROR_DEVICE_ID, 1_000, json!({ "read": false, "lastPageRead": 3 }));
+        assert_eq!(newest_stored_page([&older, &phone].into_iter()), Some(14));
+        let pages_index = stored_row("phone", 2_000, json!({ "read": false, "pageIndex": 9 }));
+        assert_eq!(newest_stored_page([&pages_index].into_iter()), Some(9));
+    }
+
+    #[test]
+    fn reader_gets_no_page_for_a_finished_or_unopened_newest_record() {
+        let finished = stored_row("phone", 3_000, json!({ "read": true, "lastPageRead": 20 }));
+        let older = stored_row("phone", 1_000, json!({ "read": false, "lastPageRead": 5 }));
+        assert_eq!(newest_stored_page([&older, &finished].into_iter()), None);
+        let unopened = stored_row("phone", 3_000, json!({ "read": false, "lastPageRead": 0 }));
+        assert_eq!(newest_stored_page([&older, &unopened].into_iter()), None);
+        assert_eq!(newest_stored_page(std::iter::empty()), None);
     }
 }

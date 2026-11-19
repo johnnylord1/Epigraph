@@ -25,6 +25,7 @@
   import type { MangaChapterProgress } from "../../lib/reader/mangaProgress";
   import { getMangaProgressForScope } from "../../lib/reader/mangaProgressRuntime";
   import { isDetachedReaderWindow } from "../../lib/reader/detachedChannel";
+  import { storedChapterPage } from "../../lib/reader/storedChapterPage";
   import { setReading } from "../../lib/discord";
   import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
   import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
@@ -664,11 +665,26 @@
     stripResumeReady = false;
 
     store.pageNumber = 1;
+    // Suwayomi drops a page another device restored while it does not know the chapter's page count; Core keeps it.
+    const storedPage = finished || resumeTo > 1 ? null : storedChapterPage(id);
     try {
       const urls = await fetchPagesWithEmptyRetry(id, ctrl.signal);
       if (ctrl.signal.aborted) return;
+      let resumeAt = resumeTo;
+      if (storedPage) {
+        const lastPageRead = await storedPage;
+        if (ctrl.signal.aborted) return;
+        const restored = persistedResumePage(lastPageRead);
+        if (restored > 1 && restored <= urls.length) {
+          resumeAt = restored;
+          resumePage = restored;
+          resumeVisible = true;
+          scheduleResumeDismiss();
+          applyLocalChapterProgress({ chapterId: id, lastPageRead, isRead: false });
+        }
+      }
       store.pageUrls = urls;
-      if (resumeTo > 1) store.pageNumber = Math.min(resumeTo, urls.length || resumeTo);
+      if (resumeAt > 1) store.pageNumber = Math.min(resumeAt, urls.length || resumeAt);
       pageReady = true;
       loading   = false;
     } catch (e: any) {

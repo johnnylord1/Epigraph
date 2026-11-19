@@ -21,6 +21,9 @@ pub const LEGACY_CLIENT_PROTOCOL_HEADER: HeaderName =
 pub const ASSET_SHA256_HEADER: HeaderName = HeaderName::from_static("x-epigraph-asset-sha256");
 pub const LEGACY_ASSET_SHA256_HEADER: HeaderName =
     HeaderName::from_static("x-aethon-asset-sha256");
+/// This Core's wall clock when it answered. A phone whose clock runs off stamps its edits with
+/// this offset applied, so a later edit on either device still wins.
+pub const SERVER_TIME_HEADER: HeaderName = HeaderName::from_static("x-epigraph-server-time-ms");
 pub const CURRENT_CLIENT_VERSION: &str = "0.1.0";
 /// A request extends a token's inactivity window only once the extension is at least this long.
 /// Every request used to write, so a sync reading a few pages in parallel queued its requests
@@ -287,6 +290,13 @@ async fn refresh_token_activity(
 fn hash_token(raw_token: &str) -> String {
     let digest = Sha256::digest(raw_token.as_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+pub async fn stamp_server_time(mut response: Response) -> Response {
+    if let Ok(value) = HeaderValue::from_str(&db::now_ms().to_string()) {
+        response.headers_mut().insert(SERVER_TIME_HEADER, value);
+    }
+    response
 }
 
 #[cfg(test)]
