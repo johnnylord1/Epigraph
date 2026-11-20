@@ -169,9 +169,10 @@ fun ReaderActivityBinding.applyReaderTheme(colors: ReaderThemeColors) {
 
     readerNav.leftPageText.setTextColor(colors.foreground)
     readerNav.rightPageText.setTextColor(colors.foreground)
-    pageNumber.setTextColor(colors.foreground)
-    // The indicator's pill follows the reader surface so it stays readable over any page.
-    pageNumber.backgroundTintList = ColorStateList.valueOf(colors.surface)
+    // The page indicator keeps the comics look in every reader and theme: white on its dark plate,
+    // so it reads the same over manga art, novel text, EPUB and PDF pages.
+    pageNumber.setTextColor(Color.WHITE)
+    pageNumber.backgroundTintList = null
     readerNav.pageSeekbar.apply {
         thumbTintList = ColorStateList.valueOf(colors.accent)
         trackActiveTintList = ColorStateList.valueOf(colors.accent)

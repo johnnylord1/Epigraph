@@ -1457,7 +1457,48 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                     };
                 };
 
+                // Screen-sized pages of the visible chapter for the footer ("3/12 · 25%").
+                // Reported only when the page or the count changes.
+                window.__epigraphLastPages = '';
+                window.__epigraphReportPages = function() {
+                    var viewport = window.innerHeight;
+                    if (!viewport || viewport <= 0) return;
+                    var scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+                    var chapterId = '';
+                    var offset = scrollTop;
+                    var height = document.documentElement.scrollHeight;
+                    var boundaries = window.chapterBoundaries || [];
+                    for (var i = 0; i < boundaries.length; i++) {
+                        var b = boundaries[i];
+                        var isLast = i === boundaries.length - 1;
+                        if ((scrollTop >= b.startOffset && scrollTop < b.startOffset + b.height) || (isLast && scrollTop >= b.startOffset)) {
+                            chapterId = b.chapterId ? String(b.chapterId) : '';
+                            offset = scrollTop - b.startOffset;
+                            height = b.height;
+                            break;
+                        }
+                    }
+                    if (!height || height <= 0) return;
+                    // Same share as the saved chapter progress, so page and percent agree.
+                    var progress = Math.min(Math.max(0, offset) / Math.max(height - viewport, 1), 1);
+                    var percent = Math.round(progress * 100);
+                    if (percent >= 98) percent = 100;
+                    var pages = Math.max(1, Math.ceil(height / viewport));
+                    var page = percent >= 100 ? pages : Math.min(pages, Math.floor(Math.max(0, offset) / viewport) + 1);
+                    var key = chapterId + ':' + page + '/' + pages + ':' + percent;
+                    if (key === window.__epigraphLastPages) return;
+                    window.__epigraphLastPages = key;
+                    try { Android.onChapterPagesUpdate(chapterId, page, pages, percent); } catch (_) {}
+                };
+                window.addEventListener('load', function() { window.__epigraphReportPages(); });
+                window.addEventListener('resize', function() {
+                    window.__epigraphLastPages = '';
+                    window.__epigraphReportPages();
+                });
+                setTimeout(function() { window.__epigraphReportPages(); }, 300);
+
                 window.addEventListener('scroll', function() {
+                    window.__epigraphReportPages();
                     // Keep chapter boundaries in sync with actual DOM markers.
                     // This is important after appends/prepends.
                     if (infiniteScrollEnabled && typeof window.updateChapterBoundaries === 'function') {
@@ -3687,6 +3728,18 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
             activity.runOnUiThread {
                 lastSavedProgress = progress
                 saveProgress()
+            }
+        }
+
+        /**
+         * Visible screen-sized page of a chapter and the share read, for the footer.
+         * [chapterIdStr] is empty in single-chapter documents.
+         */
+        @JavascriptInterface
+        fun onChapterPagesUpdate(chapterIdStr: String, page: Int, pages: Int, percent: Int) {
+            val chapterId = chapterIdStr.toLongOrNull()
+            activity.runOnUiThread {
+                activity.onNovelPagesChanged(chapterId, page, pages, percent)
             }
         }
 

@@ -1,19 +1,15 @@
 package epigraph.reader
 
 import android.app.Activity
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.provider.Settings
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.widget.TextView
-import androidx.core.content.ContextCompat
-import eu.kanade.tachiyomi.R
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -51,7 +47,7 @@ class EdgeBrightnessGesture(
     private var anchorY = 0f
     private var anchorValue = 0
     private var lastValue = 0
-    private var indicator: TextView? = null
+    private var indicator: BrightnessLevelView? = null
     private val hideIndicator = Runnable { indicator?.visibility = View.GONE }
 
     /**
@@ -127,8 +123,9 @@ class EdgeBrightnessGesture(
         val width = root.width
         val height = root.height
         if (width <= 0 || height <= 0) return false
+        val edgeWidth = minOf(EDGE_WIDTH_DP * root.resources.displayMetrics.density, width * MAX_EDGE_FRACTION)
         // Leave the status bar / notification shade and the gesture bar alone.
-        return event.x <= width * EDGE_FRACTION &&
+        return event.x <= edgeWidth &&
             event.y >= height * VERTICAL_EXCLUSION_FRACTION &&
             event.y <= height * (1f - VERTICAL_EXCLUSION_FRACTION)
     }
@@ -155,42 +152,33 @@ class EdgeBrightnessGesture(
     private fun showIndicator(value: Int) {
         val view = indicator ?: createIndicator() ?: return
         view.removeCallbacks(hideIndicator)
-        view.text = if (value > 0) "$value%" else "−${abs(value)}%"
+        view.value = value
+        if (view.visibility != View.VISIBLE) placeAtBottom(view)
         view.visibility = View.VISIBLE
         view.bringToFront()
     }
 
-    private fun createIndicator(): TextView? {
-        val parent = activity.findViewById<ViewGroup>(android.R.id.content) ?: return null
-        val density = activity.resources.displayMetrics.density
-        val view = TextView(activity).apply {
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            gravity = Gravity.CENTER
-            compoundDrawablePadding = (8 * density).roundToInt()
-            val padH = (16 * density).roundToInt()
-            val padV = (10 * density).roundToInt()
-            setPadding(padH, padV, padH, padV)
-            background = GradientDrawable().apply {
-                cornerRadius = 24 * density
-                setColor(Color.argb(0xCC, 0x20, 0x20, 0x20))
-            }
-            ContextCompat.getDrawable(activity, R.drawable.ic_brightness_day_24dp)?.mutate()?.let { icon ->
-                icon.setTint(Color.WHITE)
-                setCompoundDrawablesRelativeWithIntrinsicBounds(icon, null, null, null)
-            }
-            isClickable = false
-            isFocusable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            elevation = 8 * density
-            visibility = View.GONE
+    /** Keeps the pill clear of the navigation bar and the reader's page number. */
+    private fun placeAtBottom(view: View) {
+        val params = view.layoutParams as? FrameLayout.LayoutParams ?: return
+        val navBar = ViewCompat.getRootWindowInsets(view)
+            ?.getInsets(WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0
+        val margin = navBar + (INDICATOR_BOTTOM_MARGIN_DP * view.resources.displayMetrics.density).roundToInt()
+        if (params.bottomMargin != margin) {
+            params.bottomMargin = margin
+            view.layoutParams = params
         }
+    }
+
+    private fun createIndicator(): BrightnessLevelView? {
+        val parent = activity.findViewById<ViewGroup>(android.R.id.content) ?: return null
+        val view = BrightnessLevelView(activity).apply { visibility = View.GONE }
         parent.addView(
             view,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
             ),
         )
         indicator = view
@@ -201,12 +189,15 @@ class EdgeBrightnessGesture(
         const val MIN_VALUE = -75
         const val MAX_VALUE = 100
 
-        private const val EDGE_FRACTION = 0.15f
+        /** Width of the touch strip along the left edge; capped on narrow windows. */
+        private const val EDGE_WIDTH_DP = 28f
+        private const val MAX_EDGE_FRACTION = 0.08f
         private const val VERTICAL_EXCLUSION_FRACTION = 0.06f
         private const val DIRECTION_RATIO = 1.5f
 
         /** Dragging this share of the screen height sweeps the whole -75..100 range. */
         private const val FULL_RANGE_HEIGHT_FRACTION = 0.8f
-        private const val INDICATOR_LINGER_MS = 600L
+        private const val INDICATOR_LINGER_MS = 700L
+        private const val INDICATOR_BOTTOM_MARGIN_DP = 30f
     }
 }

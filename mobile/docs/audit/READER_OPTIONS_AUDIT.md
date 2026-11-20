@@ -43,10 +43,14 @@ funcionam. EPUB e PDF compartilham as preferências de brilho.
 
 ## Nova funcionalidade: brilho por gesto na borda esquerda
 
-Como no Moon+ Reader Pro: arrastar o dedo para cima/baixo na faixa esquerda da tela (~15% da
-largura) ajusta o brilho. Grava nas mesmas preferências de brilho personalizado (ativa o modo e
-atualiza o valor), então o slider das configurações fica sincronizado e o valor persiste. Mostra um
-indicador com a porcentagem. Toques, rolagem e seleção continuam funcionando: o gesto só é
+Como no Moon+ Reader Pro: arrastar o dedo para cima/baixo numa faixa fina na borda esquerda da
+tela (28dp, no máximo 8% da largura) ajusta o brilho. Grava nas mesmas preferências de brilho personalizado (ativa o modo e
+atualiza o valor), então o slider das configurações fica sincronizado e o valor persiste. Durante o
+arrasto, uma pílula fina na parte inferior mostra o valor e uma linha de nível na faixa −75%..100%
+(um traço marca o 0, brilho do sistema; à esquerda dele é a faixa de escurecimento). A pílula é
+opaca, com contorno fino, porque em novels, PDFs e comics o conteúdo ocupa a tela toda e ela fica
+sobre o texto; nos readers com indicador de página (PDF, comics) ela fica logo acima dele, e some
+700 ms depois de soltar. Toques, rolagem e seleção continuam funcionando: o gesto só é
 capturado depois que um arrasto vertical começado na borda esquerda é detectado.
 Readers: novel, mangá (pager/webtoon), EPUB e PDF. Pode ser desligado em Controles.
 
@@ -70,3 +74,20 @@ Readers: novel, mangá (pager/webtoon), EPUB e PDF. Pode ser desligado em Contro
 - Novel: sem fonte de novel instalada no AVD (sem plugins/rede), então as correções de novel foram
   verificadas por testes unitários e revisão de código; o gesto usa o mesmo caminho da
   `ReaderActivity` validado no mangá.
+
+## Rodapé unificado e progresso (2026-11-20)
+
+Os quatro readers mostram o mesmo rodapé dos comics, `página/total · %` do capítulo, montado por
+`epigraph.reader.ReaderFooterLabel`. Em novel e EPUB em rolagem a “página” é a tela atual e a % vai
+de 0 a 100 ao longo do capítulo; a partir de 98% (o ponto em que o capítulo já conta como lido)
+mostra a última página e 100%. No novel a página e a % vêm do mesmo cálculo no JS, para não
+divergirem.
+
+Validação no emulador: comics (3/5 · 60% restaurado ao reabrir), novel (4/4 · 100% → 1/4 no
+capítulo seguinte e de volta), PDF (por seção, 3/3 · 100% no fim), EPUB paginado (1/25 · 4% …
+25/25 · 100%) e em rolagem (1/22 · 0% … 22/22 · 100%, nos dois sentidos).
+
+Correção encontrada na validação: no EPUB paginado um swipe na borda do capítulo pulava um
+capítulo inteiro, porque o WebView do Readium já trocava de recurso ao soltar e o fling também
+virava a página. Agora o swipe horizontal é retido pelo reader também no modo paginado e só o
+fling navega.

@@ -8,6 +8,7 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.webkit.WebView
 import android.widget.OverScroller
+import epigraph.reader.ReaderFooterLabel
 import androidx.viewpager.widget.ViewPager
 import org.readium.r2.navigator.pager.R2RTLViewPager
 import org.readium.r2.navigator.preferences.ReadingProgression
@@ -170,6 +171,13 @@ internal class EpubContinuousScroller(
         val web = webViewAt(0)?.takeIf(::isReady) ?: return null
         val max = maxScroll(web)
         return if (max <= 0) 1f else (web.scrollY.toFloat() / max).coerceIn(0f, 1f)
+    }
+
+    /** Screen-sized page of the current chapter and its page count, or null while it is loading. */
+    fun chapterPages(): Pair<Int, Int>? {
+        val web = webViewAt(0)?.takeIf(::isReady) ?: return null
+        val range = verticalScrollRange.invoke(web) as Int
+        return ReaderFooterLabel.scrollPages(web.scrollY, range, web.height)
     }
 
     /** Moves within the current chapter, the only range the progress bar covers. */

@@ -92,6 +92,7 @@ import epigraph.contract.ContentType
 import epigraph.contract.ReaderLocator
 import epigraph.contract.withDocumentMetrics
 import epigraph.reader.EdgeBrightnessGesture
+import epigraph.reader.ReaderFooterLabel
 import epigraph.reader.settings.ReaderDomain
 import epigraph.reader.settings.ReaderSettingsCapabilities
 import epigraph.reader.settings.ReaderSettingsHost
@@ -223,6 +224,9 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     /** First page of the PDF section the progress bar covers; its value counts from here. */
     private var pdfSliderStart = 0
     private var lastEpubChapterPercent = -1
+
+    /** Page of the current EPUB chapter and its page count, for the footer; null until known. */
+    private var epubPagePosition: Pair<Int, Int>? = null
     private var updatingReaderProgress = false
     private var latestReaderLocator: ReaderLocator? = null
     /** Books uses the same tap-to-toggle contract as the Comics reader. */
@@ -450,6 +454,9 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     /**
      * Decides once, past the touch slop, whose gesture this is: vertical drags scroll the column
      * unless the press was held for text selection; horizontal ones never reach Readium's pager.
+     * In paginated EPUB only the horizontal claim applies: at a chapter edge Readium's WebView
+     * would jump to the neighbouring resource on release while the fling also turns the page,
+     * skipping a whole chapter.
      */
     private fun trackEpubGesture(event: MotionEvent) {
         if (event.pointerCount > 1) {
@@ -461,6 +468,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         if (abs(dx) < bookTouchSlop && abs(dy) < bookTouchSlop) return
         epubGestureTracking = false
         if (abs(dy) >= abs(dx)) {
+            if (!epubScrollFlowActive()) return
             if (epubSelecting || event.eventTime - event.downTime > ViewConfiguration.getLongPressTimeout()) return
             val scroller = epubScroller() ?: return
             cancelContentGesture(event)
@@ -655,7 +663,6 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         super.onSaveInstanceState(outState)
     }
 
-    /** Observe content taps before EPUB WebView/PDF surfaces consume them. */
     /** Left-edge vertical drag adjusts the book brightness (Moon+ Reader style). */
     private val edgeBrightnessGesture by lazy {
         EdgeBrightnessGesture(
@@ -676,6 +683,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         )
     }
 
+    /** Observe content taps before EPUB WebView/PDF surfaces consume them. */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val brightnessHandled = edgeBrightnessGesture.handle(event) { cancel ->
             if (bookGestureStartedOnContent && !bookTapSuppressed) bookChromeGestureDetector.onTouchEvent(cancel)
@@ -718,7 +726,8 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     if (!bookTapSuppressed) bookChromeGestureDetector.onTouchEvent(event)
                     bookTouchDownX = event.x
                     bookTouchDownY = event.y
-                    epubGestureTracking = epubScrollFlowActive() && readerSettingsPanel == null
+                    // Paginated EPUB is tracked too, for its sideways swipes only.
+                    epubGestureTracking = !readerProgressIsPdf && epubNavigator != null && readerSettingsPanel == null
                 }
             }
             MotionEvent.ACTION_POINTER_DOWN,
@@ -1504,6 +1513,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     latestReaderLocator = current
                     epubChapterIndex = session.chapterIndexFor(current)
                     epubChapterTitle = locator.title?.trim()?.takeIf { it.isNotEmpty() }
+                    epubPagePosition = if (epubScrollFlowActive()) {
+                        epubScroller()?.chapterPages()
+                    } else {
+                        (pageIndex + 1).coerceIn(1, totalPages.coerceAtLeast(1)) to totalPages.coerceAtLeast(1)
+                    }
                     // Like the novel bar, this one covers the chapter; the saved position stays global.
                     showEpubChapterProgress(
                         when {
@@ -1554,7 +1568,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     }
 
     private fun showEpubChapterProgress(fraction: Double) {
-        lastEpubChapterPercent = (fraction.coerceIn(0.0, 1.0) * READER_PROGRESS_MAX).roundToInt()
+        lastEpubChapterPercent = ReaderFooterLabel.scrollPercent(fraction.toFloat())
         updateReaderProgress(
             value = lastEpubChapterPercent,
             max = READER_PROGRESS_MAX,
@@ -1566,7 +1580,10 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         if (!epubScrollFlowActive()) return
         val scroller = epubScroller ?: return
         val fraction = scroller.chapterProgress() ?: return
-        if ((fraction * READER_PROGRESS_MAX).roundToInt() != lastEpubChapterPercent) {
+        val pages = scroller.chapterPages()
+        val pagesChanged = pages != null && pages != epubPagePosition
+        if (pages != null) epubPagePosition = pages
+        if (pagesChanged || ReaderFooterLabel.scrollPercent(fraction) != lastEpubChapterPercent) {
             showEpubChapterProgress(fraction.toDouble())
         }
         val chapter = scroller.currentChapter
@@ -2098,20 +2115,34 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             // max of 1 even though the document has only page 1. The chrome must display the
             // document count, not that implementation range (otherwise it showed "1 / 2").
             chrome.readerNav.rightPageText.text = readerProgressPageCount.coerceAtLeast(1).toString()
-            chrome.pageNumber.text = BookChapterMetrics.pdfLabel(
-                value,
-                readerProgressPageCount,
-                pdfChapterCount,
-                pdfChapterStartPages,
-                pdfPagesShown(),
-                text = pdfLabelText(),
+            // Footer as in comics: the page within its chapter (outline section) and the share read.
+            val (first, last) = pdfSectionPages(value)
+            val pages = (last - first + 1).coerceAtLeast(1)
+            val page = (value - first + 1).coerceIn(1, pages)
+            val lastShown = (page + pdfPagesShown() - 1).coerceAtMost(pages)
+            chrome.pageNumber.text = ReaderFooterLabel.format(
+                page = if (lastShown > page) "$page-$lastShown" else page.toString(),
+                pages = pages,
+                percent = ReaderFooterLabel.pagedPercent(lastShown, pages),
+                isLtr = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_LTR,
             )
         } else {
             val chapterIndex = epubChapterIndex.coerceIn(0, (epubChapterCount - 1).coerceAtLeast(0))
             chrome.readerNav.leftPageText.text = (chapterIndex + 1).toString()
             chrome.readerNav.rightPageText.text = epubChapterCount.coerceAtLeast(1).toString()
-            // The novel reader's pill: how far through this chapter.
-            chrome.pageNumber.text = "$value%"
+            // Footer as in comics: the page within this chapter and how far through it.
+            val position = epubPagePosition
+            val percent = if (position != null && !epubScrollFlowActive()) {
+                ReaderFooterLabel.pagedPercent(position.first, position.second)
+            } else {
+                value
+            }
+            chrome.pageNumber.text = ReaderFooterLabel.format(
+                page = position?.first?.toString(),
+                pages = position?.second ?: 0,
+                percent = percent,
+                isLtr = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_LTR,
+            )
         }
         chrome.pageNumber.isVisible = bookReaderPreferences.showPageNumber.get()
         chrome.toolbar.subtitle = label
@@ -3256,6 +3287,8 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         epubChapterIndex = session.chapterIndexFor(locator)
         epubChapterTitle = readiumLocator.title?.trim()?.takeIf { it.isNotEmpty() }
         navigator.go(readiumLocator, bookReaderPreferences.epubAnimateTransitions.get())
+        // The navigator reports the new chapter's pages once it lands there.
+        epubPagePosition = null
         showEpubChapterProgress(readiumLocator.locations.progression ?: 0.0)
     }
 

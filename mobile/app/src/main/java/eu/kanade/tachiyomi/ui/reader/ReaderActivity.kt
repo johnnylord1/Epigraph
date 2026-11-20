@@ -84,6 +84,7 @@ import com.google.android.material.transition.platform.MaterialContainerTransfor
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
 import epigraph.reader.EdgeBrightnessGesture
+import epigraph.reader.ReaderFooterLabel
 import epigraph.reader.settings.ReaderDomain
 import epigraph.reader.settings.ReaderSettingsCapabilities
 import epigraph.reader.settings.ReaderSettingsHost
@@ -2775,7 +2776,13 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
                 marginStart = (binding.root.width) / 2 + hingeGapSize
             }
         }
-        binding.pageNumber.text = if (resources.isLTR) "$currentPage/$totalPages" else "$totalPages/$currentPage"
+        val lastShownPage = page.number + if (hasExtraPage) 1 else 0
+        binding.pageNumber.text = ReaderFooterLabel.format(
+            page = currentPage,
+            pages = pages.size,
+            percent = ReaderFooterLabel.pagedPercent(lastShownPage, pages.size),
+            isLtr = resources.isLTR,
+        )
         if (viewer is R2LPagerViewer) {
             binding.readerNav.rightPageText.text = currentPage
             binding.readerNav.leftPageText.text = totalPages
@@ -2897,9 +2904,37 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
         // No-op — quotes feature ships in a later phase.
     }
 
+    /** Last screen-sized page reported by the novel viewer, kept per chapter. */
+    private var novelPagePosition: NovelPagePosition? = null
+    private var lastNovelProgressPercent = 0
+
+    private data class NovelPagePosition(val chapterId: Long?, val page: Int, val pages: Int, val percent: Int)
+
+    /**
+     * Called by the novel viewer when the visible screen-sized page of a chapter or its share
+     * read changes. Both come from the same scroll measurement, so the footer never pairs a
+     * page with a stale percentage.
+     */
+    fun onNovelPagesChanged(chapterId: Long?, page: Int, pages: Int, percent: Int) {
+        if (pages <= 0) return
+        val position = NovelPagePosition(chapterId, page.coerceIn(1, pages), pages, percent.coerceIn(0, 100))
+        if (position == novelPagePosition) return
+        novelPagePosition = position
+        updateNovelProgressUi(lastNovelProgressPercent)
+    }
+
     @SuppressLint("SetTextI18n")
     private fun updateNovelProgressUi(progressPercent: Int) {
-        val progressLabel = "$progressPercent%"
+        lastNovelProgressPercent = progressPercent
+        val currentChapterId = viewModel.state.value.viewerChapters?.currChapter?.chapter?.id
+        val pagePosition = novelPagePosition?.takeIf { it.chapterId == null || it.chapterId == currentChapterId }
+        val shownPercent = pagePosition?.percent ?: progressPercent
+        val progressLabel = ReaderFooterLabel.format(
+            page = pagePosition?.page?.toString(),
+            pages = pagePosition?.pages ?: 0,
+            percent = shownPercent,
+            isLtr = resources.isLTR,
+        )
         if (hingeGapSize > 0) {
             binding.pageNumber.updateLayoutParams<CoordinatorLayout.LayoutParams> {
                 marginStart = (binding.root.width) / 2 + hingeGapSize
@@ -2908,8 +2943,8 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
 
         binding.readerNav.pageSeekbar.valueFrom = 0f
         binding.readerNav.pageSeekbar.valueTo = 100f
-        if (binding.readerNav.pageSeekbar.value.roundToInt() != progressPercent) {
-            binding.readerNav.pageSeekbar.value = progressPercent.toFloat()
+        if (binding.readerNav.pageSeekbar.value.roundToInt() != shownPercent) {
+            binding.readerNav.pageSeekbar.value = shownPercent.toFloat()
         }
 
         binding.pageNumber.text = progressLabel
