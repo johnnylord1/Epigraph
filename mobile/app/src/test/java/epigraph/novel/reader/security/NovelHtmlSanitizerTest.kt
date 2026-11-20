@@ -160,4 +160,63 @@ class NovelHtmlSanitizerTest {
         assertFalse(NovelHtmlSanitizer.isAllowedImageSource(valid, allowRemoteImages = false))
         assertTrue(NovelHtmlSanitizer.isAllowedImageSource(valid, allowRemoteImages = true))
     }
+
+    @Test
+    fun `author styles keep safe css and drop dangerous rules`() {
+        val sanitized = NovelHtmlSanitizer.sanitize(
+            """
+            <style>
+            @import 'https://attacker.example/style.css';
+            @font-face { font-family: X; src: url(https://attacker.example/f.woff); }
+            .lead { font-style: italic; color: #333; }
+            .bg { background: url(https://attacker.example/pixel); }
+            .pin { position: fixed; top: 0; }
+            </style>
+            <p class="lead chapter-transition tsundoku-x" style="text-indent: 2em; background-image: url(https://attacker.example/p)" onclick="x()">Styled</p>
+            """.trimIndent(),
+            allowAuthorStyles = true,
+        )
+
+        val body = Jsoup.parseBodyFragment(sanitized).body()
+        val css = body.select("style[data-epigraph-author-css]").single().data()
+        assertTrue(css.contains("font-style: italic"))
+        assertFalse(css.contains("attacker.example"))
+        assertFalse(css.contains("@import"))
+        assertFalse(css.contains("fixed"))
+        val p = body.selectFirst("p")!!
+        assertEquals("lead", p.className())
+        assertTrue(p.attr("style").contains("text-indent: 2em"))
+        assertFalse(p.attr("style").contains("url("))
+        assertFalse(sanitized.contains("onclick"))
+        assertTrue(body.select("script").isEmpty())
+    }
+
+    @Test
+    fun `author styles are stripped when disabled`() {
+        val sanitized = NovelHtmlSanitizer.sanitize(
+            "<style>.lead{color:red}</style><p class=\"lead\" style=\"color:red\">Plain</p>",
+        )
+        assertFalse(sanitized.contains("color"))
+        assertFalse(sanitized.contains("class="))
+    }
+
+    @Test
+    fun `auto split breaks long text paragraphs at sentence boundaries`() {
+        val body = Jsoup.parseBodyFragment(
+            "<p>One two three. Four five six. Seven eight nine.</p><p>Short <b>bold</b> text that is long enough here.</p>",
+        ).body()
+        NovelViewerTextUtils.splitLongParagraphs(body, 3)
+        val texts = body.select("p").map { it.text() }
+        assertEquals(listOf("One two three.", "Four five six.", "Seven eight nine.", "Short bold text that is long enough here."), texts)
+    }
+
+    @Test
+    fun `raw html mode shows markup as text`() {
+        val tagged = NovelViewerTextUtils.normalizeAndTagContentForHtml(
+            "<p>Hello</p>",
+            null,
+            NovelViewerTextUtils.RenderOptions(rawHtml = true),
+        )
+        assertTrue(tagged.html.contains("&lt;p&gt;Hello&lt;/p&gt;"))
+    }
 }

@@ -83,6 +83,7 @@ import com.google.android.material.transition.platform.MaterialContainerTransfor
 import com.google.android.material.transition.platform.MaterialContainerTransformSharedElementCallback
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
+import epigraph.reader.EdgeBrightnessGesture
 import epigraph.reader.settings.ReaderDomain
 import epigraph.reader.settings.ReaderSettingsCapabilities
 import epigraph.reader.settings.ReaderSettingsHost
@@ -1047,7 +1048,46 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
         })
     }
 
+    /**
+     * Left-edge vertical drag adjusts brightness (Moon+ Reader style). Novels write their own
+     * brightness prefs; manga uses the shared reader ones. The prefs observers re-apply the
+     * committed value, [applyReaderBrightness] previews it while the finger moves.
+     */
+    private val edgeBrightnessGesture by lazy {
+        EdgeBrightnessGesture(
+            activity = this,
+            isEnabled = { readerPreferences.edgeBrightnessSwipe.get() && !menuVisible },
+            currentValue = {
+                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+                    readerPreferences.novelCustomBrightnessValue.get()
+                        .takeIf { readerPreferences.novelCustomBrightness.get() && it != 0 }
+                } else {
+                    preferences.customBrightnessValue().get()
+                        .takeIf { preferences.customBrightness().get() && it != 0 }
+                }
+            },
+            preview = ::applyReaderBrightness,
+            commit = { value ->
+                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+                    readerPreferences.novelCustomBrightnessValue.set(value)
+                    readerPreferences.novelCustomBrightness.set(true)
+                } else {
+                    preferences.customBrightnessValue().set(value)
+                    preferences.customBrightness().set(true)
+                }
+            },
+        )
+    }
+
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val brightnessHandled = edgeBrightnessGesture.handle(event) { cancel ->
+            if (readerSettingsGestureStartedOnContent) {
+                readerSettingsGestureDetector.onTouchEvent(cancel)
+                readerSettingsGestureStartedOnContent = false
+            }
+            super.dispatchTouchEvent(cancel)
+        }
+        if (brightnessHandled) return true
         // The detector is armed only while the embedded settings surface exists. It observes
         // page taps before the active manga/novel viewer receives them without stealing any
         // gestures from the sheet controls or from the normal reader chrome.
@@ -3321,6 +3361,29 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
     /**
      * Class that handles the user preferences of the reader.
      */
+    /**
+     * Applies a reader brightness value in [-75, 100] to this window.
+     * From -75 to -1 a semi-transparent black view is overlaid with the minimum brightness.
+     * From 1 to 100 it sets that value as brightness. 0 restores system brightness.
+     * Shared by the manga config, the novel viewer and the left-edge brightness gesture.
+     */
+    fun applyReaderBrightness(value: Int) {
+        val readerBrightness = when {
+            value > 0 -> value / 100f
+            value < 0 -> 0.01f
+            else -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        }
+        window.attributes = window.attributes.apply { screenBrightness = readerBrightness }
+
+        if (value < 0) {
+            binding.brightnessOverlay.isVisible = true
+            val alpha = (abs(value) * 2.56).toInt()
+            binding.brightnessOverlay.setBackgroundColor(Color.argb(alpha, 0, 0, 0))
+        } else {
+            binding.brightnessOverlay.isVisible = false
+        }
+    }
+
     private inner class ReaderConfig {
 
         var showNewChapter = false
@@ -3584,29 +3647,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
          * From 1 to 100 it sets that value as brightness.
          * 0 sets system brightness and hides the overlay.
          */
-        private fun setCustomBrightnessValue(value: Int) {
-            // Calculate and set reader brightness.
-            val readerBrightness = when {
-                value > 0 -> {
-                    value / 100f
-                }
-                value < 0 -> {
-                    0.01f
-                }
-                else -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            }
-
-            window.attributes = window.attributes.apply { screenBrightness = readerBrightness }
-
-            // Set black overlay visibility.
-            if (value < 0) {
-                binding.brightnessOverlay.isVisible = true
-                val alpha = (abs(value) * 2.56).toInt()
-                binding.brightnessOverlay.setBackgroundColor(Color.argb(alpha, 0, 0, 0))
-            } else {
-                binding.brightnessOverlay.isVisible = false
-            }
-        }
+        private fun setCustomBrightnessValue(value: Int) = applyReaderBrightness(value)
 
         /**
          * Sets the color filter [value].

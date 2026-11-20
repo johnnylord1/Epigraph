@@ -91,6 +91,7 @@ import epigraph.contract.EpigraphEntityId
 import epigraph.contract.ContentType
 import epigraph.contract.ReaderLocator
 import epigraph.contract.withDocumentMetrics
+import epigraph.reader.EdgeBrightnessGesture
 import epigraph.reader.settings.ReaderDomain
 import epigraph.reader.settings.ReaderSettingsCapabilities
 import epigraph.reader.settings.ReaderSettingsHost
@@ -154,6 +155,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     private val router: BookReaderRouter by inject()
     private val bookReaderPreferences: BookReaderPreferences by inject()
     private val commonReaderPreferences: PreferencesHelper by inject()
+    private val sharedReaderPreferences: yokai.domain.ui.settings.ReaderPreferences by inject()
 
     private var book: LocalBook? = null
     private var requestedLocator: ReaderLocator? = null
@@ -654,7 +656,38 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     }
 
     /** Observe content taps before EPUB WebView/PDF surfaces consume them. */
+    /** Left-edge vertical drag adjusts the book brightness (Moon+ Reader style). */
+    private val edgeBrightnessGesture by lazy {
+        EdgeBrightnessGesture(
+            activity = this,
+            isEnabled = {
+                readerBinding != null && !bookMenuVisible && readerSettingsPanel == null &&
+                    sharedReaderPreferences.edgeBrightnessSwipe.get()
+            },
+            currentValue = {
+                bookReaderPreferences.customBrightnessValue.get()
+                    .takeIf { bookReaderPreferences.customBrightness.get() && it != 0 }
+            },
+            preview = { value -> readerBinding?.let { applyBookBrightness(it, value) } },
+            commit = { value ->
+                bookReaderPreferences.customBrightnessValue.set(value)
+                bookReaderPreferences.customBrightness.set(true)
+            },
+        )
+    }
+
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val brightnessHandled = edgeBrightnessGesture.handle(event) { cancel ->
+            if (bookGestureStartedOnContent && !bookTapSuppressed) bookChromeGestureDetector.onTouchEvent(cancel)
+            if (epubDragActive) epubScroller?.endDrag(cancel, cancelled = true)
+            bookGestureStartedOnContent = false
+            epubGestureTracking = false
+            epubDragActive = false
+            epubSwipeClaimed = false
+            bookTapSuppressed = true
+            super.dispatchTouchEvent(cancel)
+        }
+        if (brightnessHandled) return true
         val chrome = readerBinding
         if (chrome == null) {
             bookGestureStartedOnContent = false
@@ -1906,47 +1939,6 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         sheet.cropBordersSheetButton.contentDescription = sheet.cropBordersSheetButton.compatToolTipText
     }
 
-    private fun showTtsOptionsMenu() {
-        showBookSubmenu(
-            title = getString(MR.strings.book_reader_text_to_speech),
-            items = listOf(
-                MaterialMenuSheet.MenuSheetItem(
-                    TTS_OPTION_READ,
-                    R.drawable.ic_play_arrow_24dp,
-                    text = getString(MR.strings.book_reader_tts_read_from_here),
-                ),
-                MaterialMenuSheet.MenuSheetItem(
-                    TTS_OPTION_CONTROLS,
-                    R.drawable.ic_settings_24dp,
-                    text = getString(MR.strings.book_reader_tts_settings),
-                ),
-                MaterialMenuSheet.MenuSheetItem(
-                    TTS_OPTION_PREVIOUS,
-                    R.drawable.ic_skip_previous_24,
-                    text = getString(MR.strings.book_reader_tts_previous),
-                ),
-                MaterialMenuSheet.MenuSheetItem(
-                    TTS_OPTION_NEXT,
-                    R.drawable.ic_skip_next_24,
-                    text = getString(MR.strings.book_reader_tts_next),
-                ),
-                MaterialMenuSheet.MenuSheetItem(
-                    TTS_OPTION_STOP,
-                    R.drawable.ic_close_24dp,
-                    text = getString(MR.strings.book_reader_tts_stop),
-                ),
-            ),
-        ) { itemId ->
-            when (itemId) {
-                TTS_OPTION_READ -> speakCurrent()
-                TTS_OPTION_CONTROLS -> showTtsControls()
-                TTS_OPTION_PREVIOUS -> speakSegment(speechSegmentIndex - 1)
-                TTS_OPTION_NEXT -> speakSegment(speechSegmentIndex + 1)
-                TTS_OPTION_STOP -> stopTtsPlayback()
-            }
-        }
-    }
-
     private fun showAnnotationOptionsMenu() {
         showBookSubmenu(
             title = getString(MR.strings.book_reader_annotations),
@@ -2844,16 +2836,6 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
 
     private var currentSpeechText: String? = null
 
-    internal fun availableTtsVoiceNames(): List<String> = textToSpeech?.voices
-        ?.asSequence()
-        ?.filter { it.locale.language == Locale.getDefault().language }
-        ?.map { it.name }
-        ?.distinct()
-        ?.sorted()
-        ?.take(MAX_VOICE_OPTIONS)
-        ?.toList()
-        .orEmpty()
-
     private fun stopTtsPlayback() {
         textToSpeech?.stop()
         pendingSpeech = null
@@ -2872,106 +2854,6 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     internal fun stopBookTts() = stopTtsPlayback()
 
     internal fun skipBookTts(forward: Boolean) = BookTtsPlaybackService.skip(this, forward)
-
-    private fun showTtsControls() {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(24.dpToPx, 8.dpToPx, 24.dpToPx, 0)
-        }
-        val rates = floatArrayOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 2.5f)
-        addTtsSettingRow(container, getString(MR.strings.book_reader_tts_rate), "${speechRate}x", rates.map { "${it}x" }) { label ->
-            speechRate = label.removeSuffix("x").toFloatOrNull() ?: speechRate
-            readerPreferences().edit().putFloat(KEY_TTS_RATE, speechRate).apply()
-            textToSpeech?.setSpeechRate(speechRate)
-            BookTtsPlaybackService.updateSettings(this, speechRate, speechPitch, speechVoiceName)
-        }
-        val pitches = floatArrayOf(0.75f, 1.0f, 1.25f, 1.5f)
-        addTtsSettingRow(container, getString(MR.strings.book_reader_tts_pitch), formatDecimal(speechPitch), pitches.map { formatDecimal(it) }) { label ->
-            speechPitch = label.toFloatOrNull() ?: speechPitch
-            readerPreferences().edit().putFloat(KEY_TTS_PITCH, speechPitch).apply()
-            textToSpeech?.setPitch(speechPitch)
-            BookTtsPlaybackService.updateSettings(this, speechRate, speechPitch, speechVoiceName)
-        }
-        val availableVoices = textToSpeech?.voices
-            ?.asSequence()
-            ?.filter { it.locale.language == Locale.getDefault().language }
-            ?.map { it.name }
-            ?.distinct()
-            ?.sorted()
-            ?.take(MAX_VOICE_OPTIONS)
-            ?.toList()
-            .orEmpty()
-        if (availableVoices.isNotEmpty()) {
-            addTtsSettingRow(
-                container,
-                getString(MR.strings.book_reader_tts_voice),
-                speechVoiceName ?: getString(MR.strings.system_default),
-                listOf(getString(MR.strings.system_default)) + availableVoices,
-            ) { label ->
-                speechVoiceName = label.takeUnless { it == getString(MR.strings.system_default) }
-                readerPreferences().edit().putString(KEY_TTS_VOICE, speechVoiceName).apply()
-                textToSpeech?.voices?.firstOrNull { it.name == speechVoiceName }?.let { textToSpeech?.voice = it }
-                BookTtsPlaybackService.updateSettings(this, speechRate, speechPitch, speechVoiceName)
-            }
-        } else {
-            container.addView(TextView(this).apply { text = getString(MR.strings.book_reader_tts_voices_pending) })
-        }
-        val segmentRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        segmentRow.addView(MaterialButton(this).apply {
-            text = getString(MR.strings.book_reader_tts_previous)
-            setOnClickListener { speakSegment(speechSegmentIndex - 1) }
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        segmentRow.addView(MaterialButton(this).apply {
-            text = getString(MR.strings.book_reader_tts_next)
-            setOnClickListener { speakSegment(speechSegmentIndex + 1) }
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        container.addView(segmentRow)
-        materialAlertDialog()
-            .setTitle(getString(MR.strings.book_reader_text_to_speech))
-            .setView(container)
-            .setNegativeButton(getString(MR.strings.stop)) { _, _ ->
-                stopTtsPlayback()
-            }
-            .setPositiveButton(getString(MR.strings.book_reader_tts_read_current)) { _, _ -> speakCurrent() }
-            .setNeutralButton(android.R.string.ok, null)
-            .show()
-    }
-
-    private fun addTtsSettingRow(
-        container: LinearLayout,
-        label: String,
-        selected: String,
-        options: List<String>,
-        onSelected: (String) -> Unit,
-    ) {
-        var currentValue = selected
-        val button = MaterialButton(this).apply {
-            text = "$label: $currentValue"
-            setOnClickListener {
-                this@LocalBookReaderActivity.materialAlertDialog()
-                    .setTitle(label)
-                    .setSingleChoiceItems(options.toTypedArray(), options.indexOf(currentValue).coerceAtLeast(0)) { dialog, which ->
-                        options.getOrNull(which)?.let { value ->
-                            currentValue = value
-                            onSelected(value)
-                            text = "$label: $value"
-                        }
-                        dialog.dismiss()
-                    }
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show()
-            }
-        }
-        container.addView(button, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply {
-            topMargin = 4.dpToPx
-            bottomMargin = 4.dpToPx
-        })
-    }
 
     private fun speakSegment(index: Int) {
         val segment = speechSegments.getOrNull(index) ?: return
@@ -3340,6 +3222,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         } else {
             0
         }
+        applyBookBrightness(chrome, brightness)
+    }
+
+    /** Applies a -75..100 brightness value (0 = system) to the window and the dimming overlay. */
+    private fun applyBookBrightness(chrome: ReaderActivityBinding, brightness: Int) {
         window.attributes = window.attributes.apply {
             screenBrightness = when {
                 brightness > 0 -> brightness / 100f
@@ -3601,7 +3488,6 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         private const val DEFAULT_HIGHLIGHT_COLOR = 0x66ffcc00L
         private const val READER_PROGRESS_MAX = 100
         private const val CHAPTER_END_FRACTION = 0.98f
-        private const val MAX_VOICE_OPTIONS = 40
         private const val MENU_HIGHLIGHT_SELECTION = 0xA37
         private const val MENU_DEFINE_SELECTION = 0xA38
         private const val MENU_TRANSLATE_SELECTION = 0xA39
@@ -3610,18 +3496,10 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         private const val BOOK_OPTION_SEARCH = 0xB02
         private const val BOOK_OPTION_SETTINGS = 0xB03
         private const val BOOK_OPTION_ANNOTATIONS = 0xB04
-        private const val TTS_OPTION_READ = 0xB11
-        private const val TTS_OPTION_CONTROLS = 0xB12
-        private const val TTS_OPTION_PREVIOUS = 0xB13
-        private const val TTS_OPTION_NEXT = 0xB14
-        private const val TTS_OPTION_STOP = 0xB15
         private const val ANNOTATION_OPTION_VIEW = 0xB21
         private const val ANNOTATION_OPTION_BOOKMARK = 0xB22
         private const val ANNOTATION_OPTION_HIGHLIGHT = 0xB23
         private const val READER_PREFS = "aethon_local_reader_preferences"
-        private const val KEY_TTS_RATE = "tts_rate"
-        private const val KEY_TTS_PITCH = "tts_pitch"
-        private const val KEY_TTS_VOICE = "tts_voice"
         private const val KEY_EPUB_FONT_SCALE = "epub_font_scale"
         private const val KEY_EPUB_LINE_HEIGHT = "epub_line_height"
         private const val KEY_EPUB_FONT_FAMILY = "epub_font_family"

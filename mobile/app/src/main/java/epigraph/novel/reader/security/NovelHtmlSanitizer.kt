@@ -1,6 +1,8 @@
 package epigraph.novel.reader.security
 
 import org.jsoup.Jsoup
+import org.jsoup.nodes.DataNode
+import org.jsoup.nodes.Element
 import org.jsoup.safety.Cleaner
 import org.jsoup.safety.Safelist
 import java.net.URI
@@ -17,6 +19,11 @@ import java.nio.charset.StandardCharsets
  * cannot make the WebView contact a source-controlled host. Callers that opt in with
  * `allowRemoteImages` get absolute HTTPS images rewritten to [REMOTE_IMAGE_SCHEME], which only
  * [NovelRemoteImageBroker] serves.
+ *
+ * `allowAuthorStyles` (the reader's "Apply EPUB styles" option) keeps the chapter's own
+ * `<style>` blocks, `style` and `class` attributes, after [sanitizeCss] drops every construct
+ * that can load a resource, run code or escape the style element (`url(`, `@import`,
+ * `@font-face`, `expression(`, `behavior`, `-moz-binding`, escapes and `<`).
  */
 object NovelHtmlSanitizer {
 
@@ -56,7 +63,13 @@ object NovelHtmlSanitizer {
         "base",
     ).joinToString(",")
 
-    private val safelist = Safelist.none()
+    private const val MAX_AUTHOR_CSS_CHARS = 64 * 1024
+
+    private val safelist = baseSafelist()
+
+    private val styledSafelist = baseSafelist().addAttributes(":all", "style", "class")
+
+    private fun baseSafelist(): Safelist = Safelist.none()
         .addTags(
             "article", "section", "main", "header", "footer", "aside", "nav",
             "div", "span", "p", "br", "hr",
@@ -83,7 +96,7 @@ object NovelHtmlSanitizer {
         .preserveRelativeLinks(true)
 
     /** Returns an HTML body fragment that is safe to place under the app-owned document shell. */
-    fun sanitize(html: String, allowRemoteImages: Boolean = false): String {
+    fun sanitize(html: String, allowRemoteImages: Boolean = false, allowAuthorStyles: Boolean = false): String {
         val untrusted = Jsoup.parseBodyFragment(html, "")
         untrusted.outputSettings().prettyPrint(false)
         if (allowRemoteImages) {
@@ -92,12 +105,36 @@ object NovelHtmlSanitizer {
             }
         }
 
+        val authorCss = if (allowAuthorStyles) {
+            sanitizeCss(untrusted.select("style").joinToString("\n") { it.data() })
+        } else {
+            ""
+        }
+
         // Cleaner unwraps unknown elements to preserve their text. Active containers are removed
         // first because even preserving their child text would expose script/CSS source to TTS.
         untrusted.select(removableElements).remove()
 
-        val clean = Cleaner(safelist).clean(untrusted)
+        val clean = Cleaner(if (allowAuthorStyles) styledSafelist else safelist).clean(untrusted)
         clean.outputSettings().prettyPrint(false)
+
+        if (allowAuthorStyles) {
+            // The reader document's own scripts select `.chapter-content`, transition cards and
+            // similar hooks; author classes must never collide with them.
+            clean.select("[class]").forEach { element ->
+                val kept = element.classNames().filterNot(::isReservedClass)
+                if (kept.isEmpty()) element.removeAttr("class") else element.classNames(kept.toMutableSet())
+            }
+            clean.select("[style]").forEach { element ->
+                val style = sanitizeCss(element.attr("style"))
+                if (style.isBlank()) element.removeAttr("style") else element.attr("style", style)
+            }
+            if (authorCss.isNotBlank()) {
+                clean.body().prependChild(
+                    Element("style").attr("data-epigraph-author-css", "1").appendChild(DataNode(authorCss)),
+                )
+            }
+        }
 
         clean.select("a[href]").forEach { anchor ->
             if (!isAllowedLink(anchor.attr("href"))) {
@@ -112,6 +149,31 @@ object NovelHtmlSanitizer {
         }
 
         return clean.body().html()
+    }
+
+    /**
+     * Keeps only passive author CSS. Whole declarations (and at-rules) that could fetch a
+     * resource, execute code or pin content over the reader are dropped; `<` is removed so the
+     * text can never close the `<style>` element it is placed in.
+     */
+    internal fun sanitizeCss(css: String): String {
+        if (css.isBlank()) return ""
+        var out = css.take(MAX_AUTHOR_CSS_CHARS)
+            .replace(CSS_COMMENT, "")
+            .replace("<", "")
+            .replace(CSS_FONT_FACE, "")
+            .replace(CSS_AT_STATEMENT, "")
+        out = out.replace(CSS_DANGEROUS_DECLARATION, "")
+        return out.trim()
+    }
+
+    private fun isReservedClass(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower.startsWith("chapter-") ||
+            lower.startsWith("initial-") ||
+            lower.startsWith("transition") ||
+            "tsundoku" in lower ||
+            "epigraph" in lower
     }
 
     internal fun isAllowedLink(value: String): Boolean {
@@ -174,6 +236,17 @@ object NovelHtmlSanitizer {
         val valid = uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null
         return decoded.takeIf { valid }
     }
+
+    private val CSS_COMMENT = Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL)
+    private val CSS_FONT_FACE = Regex("""@font-face\s*\{[^}]*\}?""", RegexOption.IGNORE_CASE)
+    private val CSS_AT_STATEMENT = Regex("""@(?:import|charset|namespace)\b[^;{}]*;?""", RegexOption.IGNORE_CASE)
+
+    /** A declaration (up to `;`, `{` or `}`) that loads, executes, escapes or pins content. */
+    private val CSS_DANGEROUS_DECLARATION = Regex(
+        """[^;{}]*(?:url\s*\(|image(?:-set)?\s*\(|expression\s*\(|javascript:|behavior\s*:|-moz-binding|\\|""" +
+            """position\s*:\s*(?:fixed|sticky))[^;{}]*;?""",
+        RegexOption.IGNORE_CASE,
+    )
 
     private val SAFE_RASTER_DATA_URI = Regex(
         pattern = "^data:image/(?:png|jpe?g|gif|webp|avif);base64,[a-z0-9+/=\\r\\n]+$",

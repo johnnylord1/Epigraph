@@ -480,6 +480,8 @@
     <string name="crop_borders_long_strip">Crop borders (Long strip)</string>
     <string name="remove_crop">Remove crop</string>
     <string name="use_custom_brightness">Use custom brightness</string>
+    <string name="edge_brightness_swipe">Swipe left edge to adjust brightness</string>
+    <string name="edge_brightness_swipe_summary">Slide a finger up or down along the left edge of the screen</string>
     <string name="grayscale">Grayscale</string>
     <string name="pref_inverted_colors">Inverted</string>
     <string name="custom_filter">Filters</string>

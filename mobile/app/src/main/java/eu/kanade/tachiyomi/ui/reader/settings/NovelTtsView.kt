@@ -2,9 +2,9 @@ package eu.kanade.tachiyomi.ui.reader.settings
 
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.Intent
 import android.speech.tts.TextToSpeech
 import android.util.AttributeSet
+import epigraph.reader.tts.TtsVoiceCatalog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.databinding.ReaderNovelTtsBinding
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
@@ -68,9 +68,7 @@ class NovelTtsView @JvmOverloads constructor(context: Context, attrs: AttributeS
             ttsNext.setOnClickListener { reader?.nextNovelTtsParagraph() }
 
             openTtsSettings.setOnClickListener {
-                runCatching {
-                    context.startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
+                TtsVoiceCatalog.openTtsSettings(context)
             }
 
             // Engine probe — populate engine + voice entries asynchronously.
@@ -133,10 +131,12 @@ class NovelTtsView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
             voiceEntries.clear()
             voiceEntries += "" to voiceDefaultLabel
-            tts.voices
-                ?.filter { !it.isNetworkConnectionRequired }
-                ?.sortedBy { "${it.locale.displayLanguage} (${it.name})" }
-                ?.forEach { v -> voiceEntries += v.name to "${v.locale.displayLanguage} (${v.name})" }
+            // A voice also picks the spoken language; list every usable installed voice.
+            val voices = runCatching { TtsVoiceCatalog.usableVoices(tts.voices.orEmpty()) }.getOrDefault(emptyList())
+            if (voiceSelected.isNotBlank() && voices.none { it.name == voiceSelected }) {
+                voiceEntries += voiceSelected to voiceSelected
+            }
+            voices.forEach { v -> voiceEntries += v.name to v.label }
 
             post {
                 with(binding) {

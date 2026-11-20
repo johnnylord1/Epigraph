@@ -203,7 +203,7 @@ class NovelTtsController(
             is TtsCommand.PreviousParagraph -> onSkipParagraph(delta = -1)
             is TtsCommand.NextChapter -> onAdvanceChapter(forward = true)
             is TtsCommand.PreviousChapter -> onAdvanceChapter(forward = false)
-            is TtsCommand.ReapplySettings -> applyEngineSettings()
+            is TtsCommand.ReapplySettings -> onReapplySettings()
             is TtsCommand.InternalParagraphStarted -> onParagraphStarted(cmd.paragraphIndex, cmd.generation)
             is TtsCommand.InternalParagraphDone -> onParagraphDone(cmd.paragraphIndex, cmd.generation)
             is TtsCommand.InternalEngineError -> onEngineError(cmd.message, cmd.generation)
@@ -259,6 +259,19 @@ class NovelTtsController(
             lastPersistedParagraph = -1,
             generation = nextGeneration(),
         )
+        speakCurrentParagraph(flush = true)
+    }
+
+    /**
+     * Speed, pitch and voice are fixed per queued utterance, so a change would otherwise only be
+     * heard from the next paragraph on. While speaking, restart the current paragraph with the
+     * new settings.
+     */
+    private fun onReapplySettings() {
+        applyEngineSettings()
+        val s = session ?: return
+        if (_state.value !is TtsState.Speaking) return
+        s.generation = nextGeneration()
         speakCurrentParagraph(flush = true)
     }
 

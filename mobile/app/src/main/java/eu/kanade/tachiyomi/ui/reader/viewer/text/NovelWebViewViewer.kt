@@ -234,7 +234,9 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                         if (tapToScroll) {
                             webView.evaluateJavascript("window.scrollBy(0, ${(container.height * 0.8).toInt()});", null)
                         } else {
-                            return false
+                            // Tap-to-scroll off: the whole screen toggles the menu instead of
+                            // leaving the side zones dead.
+                            activity.toggleMenu()
                         }
                     }
                     eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion.PREV,
@@ -242,7 +244,9 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                         if (tapToScroll) {
                             webView.evaluateJavascript("window.scrollBy(0, -${(container.height * 0.8).toInt()});", null)
                         } else {
-                            return false
+                            // Tap-to-scroll off: the whole screen toggles the menu instead of
+                            // leaving the side zones dead.
+                            activity.toggleMenu()
                         }
                     }
                 }
@@ -938,21 +942,14 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     private fun applyNovelCustomBrightness() {
         val enabled = preferences.novelCustomBrightness.get()
         val value = if (enabled) preferences.novelCustomBrightnessValue.get() else 0
-        val readerBrightness = when {
-            value > 0 -> value / 100f
-            value < 0 -> 0.01f
-            else -> android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-        }
-        activity.window.attributes = activity.window.attributes.apply {
-            screenBrightness = readerBrightness
-        }
+        // Same window brightness + black overlay as the manga reader, so negative values dim
+        // below the panel's minimum instead of stopping at 1%.
+        activity.applyReaderBrightness(value)
     }
 
     /** Restores system-controlled brightness when the novel viewer goes away. */
     private fun restoreSystemBrightness() {
-        activity.window.attributes = activity.window.attributes.apply {
-            screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-        }
+        activity.applyReaderBrightness(0)
     }
 
     /**
@@ -1141,7 +1138,14 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 "h4 { font-size: 1em !important; } " +
                 "h5 { font-size: 0.83em !important; } " +
                 "h6 { font-size: 0.67em !important; }"
-            starOverride to headings
+            // Author CSS ("Apply EPUB styles") may paint block backgrounds that fight the
+            // reader theme; while the app's styling has priority, keep them transparent.
+            val authorBackgrounds = if (preferences.enableEpubStyles.get()) {
+                " .chapter-content * { background-color: transparent !important; }"
+            } else {
+                ""
+            }
+            starOverride to headings + authorBackgrounds
         }
 
         val css = """
@@ -2577,10 +2581,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
             NovelViewerTextUtils.normalizePlainTextContent(content)
         } else {
             normalizeContentForHtml(content, chapterUrl)
-                .replace(Regex("<script[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                .replace(Regex("<script[^>]*/>", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("<style[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                .replace(Regex("<noscript[^>]*>.*?</noscript>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+                .let(::stripActiveMarkup)
         }
         if (preferences.novelBlockMedia.get()) {
             cleanContent = stripMediaTags(cleanContent)
@@ -2683,10 +2684,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
             NovelViewerTextUtils.normalizePlainTextContent(content)
         } else {
             normalizeContentForHtml(content, chapterUrl)
-                .replace(Regex("<script[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                .replace(Regex("<script[^>]*/>", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("<style[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                .replace(Regex("<noscript[^>]*>.*?</noscript>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+                .let(::stripActiveMarkup)
         }
         if (preferences.novelBlockMedia.get()) {
             cleanContent = stripMediaTags(cleanContent)
@@ -2912,10 +2910,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 NovelViewerTextUtils.normalizePlainTextContent(content)
             } else {
                 NovelViewerTextUtils.normalizeContentForHtml(content, normalizedChapterUrl)
-                    .replace(Regex("<script[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                    .replace(Regex("<script[^>]*/>", RegexOption.IGNORE_CASE), "")
-                    .replace(Regex("<style[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                    .replace(Regex("<noscript[^>]*>.*?</noscript>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+                    .let(::stripActiveMarkup)
             }
             if (blockMedia) cleanContent = stripMediaTags(cleanContent)
             cleanContent = applyRegexReplacements(cleanContent)
@@ -2939,6 +2934,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 val tagged = NovelViewerTextUtils.normalizeAndTagContentForHtml(
                     finalContent,
                     normalizedChapterUrl,
+                    renderOptions(),
                 )
                 finalContent = tagged.html
                 paragraphsForChapter = tagged.paragraphs
@@ -3272,6 +3268,33 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     private fun normalizeContentForHtml(content: String, chapterUrl: String?): String =
         NovelViewerTextUtils.normalizeContentForHtml(content, chapterUrl)
 
+    /** Reader options that shape the chapter document (EPUB styles, raw HTML, auto-split). */
+    private fun renderOptions() = NovelViewerTextUtils.RenderOptions(
+        authorStyles = preferences.enableEpubStyles.get(),
+        rawHtml = preferences.novelShowRawHtml.get(),
+        autoSplitWords = if (preferences.novelAutoSplitText.get()) {
+            preferences.novelAutoSplitWordCount.get()
+        } else {
+            0
+        },
+    )
+
+    /**
+     * Cheap pre-pass shared by every load path; the Jsoup sanitizer in
+     * [NovelViewerTextUtils.normalizeAndTagContentForHtml] stays the security gate. Style
+     * blocks survive only when "Apply EPUB styles" is on, and the raw-HTML debug view keeps
+     * the markup exactly as received (it is rendered escaped).
+     */
+    private fun stripActiveMarkup(html: String): String {
+        if (preferences.novelShowRawHtml.get()) return html
+        var out = html
+            .replace(SCRIPT_BLOCK_REGEX, "")
+            .replace(SCRIPT_SELF_CLOSING_REGEX, "")
+            .replace(NOSCRIPT_BLOCK_REGEX, "")
+        if (!preferences.enableEpubStyles.get()) out = out.replace(STYLE_BLOCK_REGEX, "")
+        return out
+    }
+
     /**
      * Phase C #17: thin wrapper that defers tagging + paragraph capture to the shared
      * [NovelViewerTextUtils.normalizeAndTagContentForHtml] helper so all WebView paths
@@ -3295,7 +3318,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
             chapterParagraphReadyFlow.tryEmit(chapterId)
             return cleanContent
         }
-        val tagged = NovelViewerTextUtils.normalizeAndTagContentForHtml(cleanContent, chapterUrl)
+        val tagged = NovelViewerTextUtils.normalizeAndTagContentForHtml(cleanContent, chapterUrl, renderOptions())
         chapterParagraphsById[chapterId] = tagged.paragraphs
         chapterParagraphReadyFlow.tryEmit(chapterId)
         return tagged.html
@@ -3310,14 +3333,11 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
             NovelViewerTextUtils.normalizePlainTextContent(content)
         } else {
             NovelViewerTextUtils.normalizeContentForHtml(content, chapterUrl)
-                .replace(Regex("<script[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                .replace(Regex("<script[^>]*/>", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("<style[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                .replace(Regex("<noscript[^>]*>.*?</noscript>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+                .let(::stripActiveMarkup)
         }
         if (preferences.novelBlockMedia.get()) cleanContent = stripMediaTags(cleanContent)
         if (plainTextMode) return if (cleanContent.isBlank()) emptyList() else listOf(cleanContent)
-        return NovelViewerTextUtils.normalizeAndTagContentForHtml(cleanContent, chapterUrl).paragraphs
+        return NovelViewerTextUtils.normalizeAndTagContentForHtml(cleanContent, chapterUrl, renderOptions()).paragraphs
     }
 
     private fun storeOriginalParagraphs(chapterId: Long, paragraphs: List<String>?) {
@@ -4665,6 +4685,14 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         )
     }
     companion object {
+        private val SCRIPT_BLOCK_REGEX =
+            Regex("<script[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        private val SCRIPT_SELF_CLOSING_REGEX = Regex("<script[^>]*/>", RegexOption.IGNORE_CASE)
+        private val STYLE_BLOCK_REGEX =
+            Regex("<style[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        private val NOSCRIPT_BLOCK_REGEX =
+            Regex("<noscript[^>]*>.*?</noscript>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+
         private const val REMEMBER_MENU_ITEM_ID = 0xBEEF // arbitrary unique ID
         // Phase B #15 — second action-mode menu item we own (Define). Must not collide
         // with REMEMBER_MENU_ITEM_ID or any default Android selection IDs.

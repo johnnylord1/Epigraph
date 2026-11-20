@@ -6,8 +6,10 @@ import epigraph.books.reader.bookOrientationType
 import epigraph.books.tts.BookTtsPlaybackService
 import epigraph.contract.ContentType
 import epigraph.novel.reader.NovelTapAction
+import epigraph.reader.tts.TtsVoiceCatalog
 import android.content.Context
 import android.graphics.Color
+import android.speech.tts.TextToSpeech
 import android.util.AttributeSet
 import android.view.LayoutInflater
 import android.view.View
@@ -453,13 +455,41 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
                 ) {
                     bookPreferences.ttsPitch.set(it / 10f); onChanged()
                 }
-                val systemDefault = context.getString(R.string.epigraph_reader_system_default)
-                val voices = activity.availableTtsVoiceNames()
-                val labels = listOf(systemDefault) + voices
-                val values = listOf("") + voices
-                bindSpinner(ttsVoice, labels, values, bookPreferences.ttsVoice.get(), bookPreferences.ttsVoice::set, onChanged)
+                bindTtsVoices(bookPreferences, onChanged)
+                ttsOpenSettings.setOnClickListener { TtsVoiceCatalog.openTtsSettings(context) }
                 bindTtsPlayback(activity)
             }
+        }
+    }
+
+    private var voiceProbe: TextToSpeech? = null
+
+    /**
+     * The voice picker also chooses the spoken language. Voices come from a short-lived engine
+     * probe because the reader's own engine lives in [BookTtsPlaybackService].
+     */
+    private fun bindTtsVoices(bookPreferences: BookReaderPreferences, onChanged: () -> Unit) = with(binding) {
+        val systemDefault = context.getString(R.string.epigraph_reader_system_default)
+        val selected = bookPreferences.ttsVoice.get()
+        val saved = listOfNotNull(selected.takeIf { it.isNotBlank() })
+        bindSpinner(ttsVoice, listOf(systemDefault) + saved, listOf("") + saved, selected, bookPreferences.ttsVoice::set, onChanged)
+        voiceProbe?.shutdown()
+        voiceProbe = TtsVoiceCatalog.probe(context) { voices ->
+            voiceProbe?.shutdown()
+            voiceProbe = null
+            val entries = voices.toMutableList()
+            // Keep a saved voice that is no longer listed (e.g. its data was removed) visible.
+            if (selected.isNotBlank() && entries.none { it.name == selected }) {
+                entries.add(0, TtsVoiceCatalog.Entry(selected, selected))
+            }
+            bindSpinner(
+                ttsVoice,
+                listOf(systemDefault) + entries.map { it.label },
+                listOf("") + entries.map { it.name },
+                selected,
+                bookPreferences.ttsVoice::set,
+                onChanged,
+            )
         }
     }
 
@@ -505,6 +535,8 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
         super.onDetachedFromWindow()
         playbackScope?.cancel()
         playbackScope = null
+        voiceProbe?.shutdown()
+        voiceProbe = null
     }
 
     /** Typography shared by EPUB and reflowed PDF text, as on the desktop. */

@@ -91,7 +91,29 @@ object NovelViewerTextUtils {
      * we treat the whole blob as one paragraph (the existing chunk-by-maxLength path inside
      * `speak()` handles further splitting if needed).
      */
-    fun normalizeAndTagContentForHtml(content: String, chapterUrl: String?): TaggedChapter {
+    /**
+     * Reader options that change how chapter markup becomes the displayed document.
+     *
+     * @property authorStyles keep the chapter's own (sanitized) CSS ("Apply EPUB styles").
+     * @property rawHtml show the received markup as escaped source text ("Show raw HTML").
+     * @property autoSplitWords when > 0, split text-only paragraphs longer than this many
+     *   words at sentence boundaries ("Auto-split paragraphs").
+     */
+    data class RenderOptions(
+        val authorStyles: Boolean = false,
+        val rawHtml: Boolean = false,
+        val autoSplitWords: Int = 0,
+    )
+
+    fun normalizeAndTagContentForHtml(
+        content: String,
+        chapterUrl: String?,
+        options: RenderOptions = RenderOptions(),
+    ): TaggedChapter {
+        if (options.rawHtml) {
+            val source = content.replace("\u0000", "")
+            return TaggedChapter(plainTextToHtml(source), if (source.isBlank()) emptyList() else listOf(source))
+        }
         val html = normalizeContentForHtml(content, chapterUrl)
         if (isPlainTextChapter(chapterUrl)) {
             val text = normalizePlainTextContent(content)
@@ -103,8 +125,13 @@ object NovelViewerTextUtils {
             // parseBodyFragment so a chapter HTML snippet isn't wrapped in a synthetic
             // <html><body>; we only need to iterate the elements the user actually sees.
             // Remote images stay off the WebView's network: they are rewritten for the broker.
-            val sanitizedHtml = NovelHtmlSanitizer.sanitize(html, allowRemoteImages = true)
+            val sanitizedHtml = NovelHtmlSanitizer.sanitize(
+                html,
+                allowRemoteImages = true,
+                allowAuthorStyles = options.authorStyles,
+            )
             val doc = org.jsoup.Jsoup.parseBodyFragment(sanitizedHtml)
+            if (options.autoSplitWords > 0) splitLongParagraphs(doc.body(), options.autoSplitWords)
             val elements = doc.body().select(PARAGRAPH_SELECTOR)
             val paragraphs = mutableListOf<String>()
             for (el in elements) {
@@ -121,6 +148,49 @@ object NovelViewerTextUtils {
             // sanitizer pass, render escaped visible text instead of executable markup.
             val visibleText = runCatching { org.jsoup.Jsoup.parse(html).text() }.getOrDefault("")
             TaggedChapter(plainTextToHtml(visibleText), emptyList())
+        }
+    }
+
+    private val sentenceBoundary = Regex("""(?<=[.!?…。！？]["'”’»)\]]?)\s+""")
+    private val whitespaceRun = Regex("""\s+""")
+
+    /**
+     * Splits every text-only `<p>` longer than [maxWords] words into consecutive `<p>`s at
+     * sentence boundaries, each holding at least [maxWords] words (the last one may be
+     * shorter). Paragraphs with inline markup are left intact so links and emphasis survive.
+     * Runs before paragraph tagging, so TTS indices follow the split paragraphs.
+     */
+    internal fun splitLongParagraphs(root: org.jsoup.nodes.Element, maxWords: Int) {
+        for (paragraph in root.select("p")) {
+            if (paragraph.childrenSize() > 0) continue
+            val text = paragraph.text()
+            if (text.split(whitespaceRun).count { it.isNotEmpty() } <= maxWords) continue
+            val sentences = text.split(sentenceBoundary).filter { it.isNotBlank() }
+            if (sentences.size < 2) continue
+
+            val chunks = mutableListOf<String>()
+            val current = StringBuilder()
+            var words = 0
+            for (sentence in sentences) {
+                if (current.isNotEmpty()) current.append(' ')
+                current.append(sentence.trim())
+                words += sentence.split(whitespaceRun).count { it.isNotEmpty() }
+                if (words >= maxWords) {
+                    chunks += current.toString()
+                    current.setLength(0)
+                    words = 0
+                }
+            }
+            if (current.isNotEmpty()) chunks += current.toString()
+            if (chunks.size < 2) continue
+
+            paragraph.text(chunks.first())
+            var anchor = paragraph
+            for (chunk in chunks.drop(1)) {
+                val next = paragraph.shallowClone().text(chunk)
+                anchor.after(next)
+                anchor = next
+            }
         }
     }
 

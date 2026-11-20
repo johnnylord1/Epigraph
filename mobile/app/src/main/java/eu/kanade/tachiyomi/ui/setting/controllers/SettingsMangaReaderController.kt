@@ -499,6 +499,11 @@ fun SettingsLegacyController.populateMangaReaderPreferences(screen: PreferenceSc
                 defaultValue = 0
             }
             switchPreference {
+                bindTo(readerPreferences.edgeBrightnessSwipe)
+                title = context.getString(MR.strings.edge_brightness_swipe)
+                summary = context.getString(MR.strings.edge_brightness_swipe_summary)
+            }
+            switchPreference {
                 key = Keys.customBrightness
                 title = context.getString(MR.strings.use_custom_brightness)
                 defaultValue = false

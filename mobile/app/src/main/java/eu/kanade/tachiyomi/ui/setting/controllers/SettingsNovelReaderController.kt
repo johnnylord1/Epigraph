@@ -233,6 +233,11 @@ fun SettingsLegacyController.populateNovelReaderPreferences(screen: PreferenceSc
                 onChange { value -> readerPreferences.novelColorFilterMode.set(value as Int); true }
             }
             switchPreference {
+                bindTo(readerPreferences.edgeBrightnessSwipe)
+                title = context.getString(MR.strings.edge_brightness_swipe)
+                summary = context.getString(MR.strings.edge_brightness_swipe_summary)
+            }
+            switchPreference {
                 bindTo(readerPreferences.novelCustomBrightness)
                 title = context.getString(MR.strings.use_custom_brightness)
             }
@@ -271,12 +276,6 @@ fun SettingsLegacyController.populateNovelReaderPreferences(screen: PreferenceSc
             switchPreference {
                 bindTo(readerPreferences.enableEpubStyles)
                 titleRes = MR.strings.novel_enable_epub_styles
-            }
-
-            switchPreference {
-                bindTo(readerPreferences.enableEpubJs)
-                titleRes = MR.strings.novel_enable_epub_js
-                summaryRes = MR.strings.novel_enable_epub_js_summary
             }
         }
 

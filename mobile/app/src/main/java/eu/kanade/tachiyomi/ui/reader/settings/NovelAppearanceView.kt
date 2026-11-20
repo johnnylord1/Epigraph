@@ -92,7 +92,8 @@ class NovelAppearanceView @JvmOverloads constructor(context: Context, attrs: Att
             // since they affect how the rendered chapter looks; Find & Replace lives on the
             // action bar so we don't need a tab just for those two switches.
             enableEpubStyles.bindToPreference(readerPreferences.enableEpubStyles)
-            enableEpubJs.bindToPreference(readerPreferences.enableEpubJs)
+            // "Run EPUB JavaScript" is not offered: chapter scripts would run beside the
+            // reader's privileged JS bridge (AGENTS.md security rule), so they are always stripped.
             // Let source/EPUB CSS win — skips Epigraph's !important overrides + font force.
             sourceCssPriority.bindToPreference(readerPreferences.novelSourceCssPriority)
             // Content cleanup: normalize fancy/fullwidth Unicode + strip ads/links.

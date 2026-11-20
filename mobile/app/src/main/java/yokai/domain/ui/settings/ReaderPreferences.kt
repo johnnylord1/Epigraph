@@ -155,6 +155,10 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
     // Keep chapters loaded in DOM during continuous scroll (0 = unlimited; >0 caps the window).
     val novelKeepChaptersLoaded: Preference<Int> = preferenceStore.getInt("pref_novel_keep_chapters_loaded", 0)
 
+    // Moon+ Reader style gesture: a vertical drag on the left edge adjusts brightness.
+    // Shared by the manga, novel, EPUB and PDF readers.
+    val edgeBrightnessSwipe: Preference<Boolean> = preferenceStore.getBoolean("pref_reader_brightness_edge_swipe", true)
+
     // Custom brightness for novel reader
     val novelCustomBrightness: Preference<Boolean> = preferenceStore.getBoolean("pref_novel_custom_brightness", false)
 

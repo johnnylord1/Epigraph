@@ -1,13 +1,15 @@
 package eu.kanade.tachiyomi.ui.setting.controllers
 
 import epigraph.books.reader.BookReaderPreferences
+import epigraph.reader.tts.TtsVoiceCatalog
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys as Keys
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
 import eu.kanade.tachiyomi.ui.setting.bindTo
 import eu.kanade.tachiyomi.ui.setting.defaultValue
-import eu.kanade.tachiyomi.ui.setting.editTextPreference
+import eu.kanade.tachiyomi.ui.setting.onClick
+import eu.kanade.tachiyomi.ui.setting.preference
 import eu.kanade.tachiyomi.ui.setting.listPreference
 import eu.kanade.tachiyomi.ui.setting.intListPreference
 import eu.kanade.tachiyomi.ui.setting.multiSelectListPreferenceMat
@@ -16,6 +18,7 @@ import eu.kanade.tachiyomi.ui.setting.preferenceCategory
 import eu.kanade.tachiyomi.ui.setting.seekBarPreference
 import eu.kanade.tachiyomi.ui.setting.switchPreference
 import eu.kanade.tachiyomi.ui.setting.titleMRes as titleRes
+import yokai.domain.ui.settings.ReaderPreferences
 import yokai.i18n.MR
 import yokai.util.koin.get
 import yokai.util.lang.getString
@@ -29,6 +32,7 @@ class SettingsBooksReaderController : SettingsLegacyController() {
 
 fun SettingsLegacyController.populateBooksReaderPreferences(screen: PreferenceScreen) {
     val bookPreferences: BookReaderPreferences = get()
+    val readerPreferences: ReaderPreferences = get()
     screen.apply {
         preferenceCategory {
             titleRes = MR.strings.general
@@ -176,6 +180,11 @@ fun SettingsLegacyController.populateBooksReaderPreferences(screen: PreferenceSc
                 onChange { value -> bookPreferences.colorFilterMode.set(value as Int); true }
             }
             switchPreference {
+                bindTo(readerPreferences.edgeBrightnessSwipe)
+                title = context.getString(MR.strings.edge_brightness_swipe)
+                summary = context.getString(MR.strings.edge_brightness_swipe_summary)
+            }
+            switchPreference {
                 bindTo(bookPreferences.customBrightness)
                 title = context.getString(MR.strings.use_custom_brightness)
             }
@@ -200,10 +209,31 @@ fun SettingsLegacyController.populateBooksReaderPreferences(screen: PreferenceSc
             titleRes = MR.strings.text_to_speech
             floatSeekBar(bookPreferences.ttsRate, context.getString(MR.strings.novel_tts_speed), 5, 30, 10f)
             floatSeekBar(bookPreferences.ttsPitch, context.getString(MR.strings.novel_tts_pitch), 5, 20, 10f)
-            editTextPreference(activity) {
+            listPreference(activity) {
                 bindTo(bookPreferences.ttsVoice)
                 title = context.getString(R.string.epigraph_reader_tts_voice)
-                summary = context.getString(R.string.epigraph_reader_system_default)
+                // The voice also picks the spoken language. Installed voices load asynchronously.
+                val systemDefault = context.getString(R.string.epigraph_reader_system_default)
+                val saved = listOfNotNull(bookPreferences.ttsVoice.get().takeIf { it.isNotBlank() })
+                entries = listOf(systemDefault) + saved
+                entryValues = listOf("") + saved
+                // Settings search builds this screen without an activity; don't start an engine then.
+                var probe: android.speech.tts.TextToSpeech? = null
+                if (activity != null) probe = TtsVoiceCatalog.probe(context) { voices ->
+                    probe?.shutdown()
+                    val selected = bookPreferences.ttsVoice.get()
+                    val missing = listOfNotNull(selected.takeIf { it.isNotBlank() && voices.none { v -> v.name == it } })
+                    entries = listOf(systemDefault) + missing + voices.map { it.label }
+                    entryValues = listOf("") + missing + voices.map { it.name }
+                    // Re-render the summary with the voice's label.
+                    summaryProvider = summaryProvider
+                }
+            }
+            preference {
+                key = "pref_books_tts_open_settings"
+                isPersistent = false
+                title = context.getString(MR.strings.novel_tts_open_settings)
+                onClick { TtsVoiceCatalog.openTtsSettings(context) }
             }
         }
     }

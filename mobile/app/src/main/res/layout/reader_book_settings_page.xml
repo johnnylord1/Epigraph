@@ -373,6 +373,18 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 app:title="@string/epigraph_reader_tts_voice" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/tts_open_settings"
+                style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginTop="8dp"
+                android:gravity="start|center_vertical"
+                android:text="@string/novel_tts_open_settings"
+                app:icon="@drawable/ic_outline_settings_24dp"
+                app:iconGravity="textStart" />
         </LinearLayout>
     </LinearLayout>
 </epigraph.books.ui.LocalBookReaderSettingsView>
