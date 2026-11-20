@@ -91,7 +91,7 @@ android {
             // debug manifest, and Chucker's receivers there are Java 21 class files.
             if (!org.gradle.api.JavaVersion.current().isCompatibleWith(org.gradle.api.JavaVersion.VERSION_21)) {
                 test.exclude("**/*ScreenshotTest*")
-                test.exclude("**/LibraryRecyclerViewTest*", "**/EpubReaderSyncProgressionTest*")
+                test.exclude("**/LibraryRecyclerViewTest*", "**/EpubReaderSyncProgressionTest*", "**/TtsVoiceCatalogTest*")
             }
         }
     }
