@@ -63,6 +63,11 @@
     removeInstalledNovelPlugin,
   } from "../../lib/novels/packages";
   import { readInstalledNovelSourceRuntimeSummary } from "../../lib/novels/sources";
+  import {
+    saveNovelPluginSettingValue,
+    type NovelPluginSetting,
+    type NovelPluginSettingValues,
+  } from "../../lib/novels/pluginSettings";
   import { addToast, bumpContentSetupVersion, setExtensionsPanelHint, store } from "../../store/state.svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { ensureServerAwakeFor, maybeStandbyLocalServer, SERVER_READY_EVENT } from "../../lib/serverLifecycle";
@@ -147,7 +152,9 @@
   let preferenceLoadError: string | null = $state(null);
   let preferenceBusyKey: string | null = $state(null);
   let preferenceErrors: Record<string, string> = $state({});
-  let novelPreferenceKeys: string[] = $state([]);
+  let novelSettings: NovelPluginSetting[] = $state([]);
+  let novelSettingValues: NovelPluginSettingValues = $state({});
+  let novelSettingsPluginId: string | null = null;
   let selectedPreferenceSourceId = $state("");
   let extensionLoadRun = 0;
   let preferenceLoadRun = 0;
@@ -298,7 +305,9 @@
     preferenceLoadError = null;
     preferenceBusyKey = null;
     preferenceErrors = {};
-    novelPreferenceKeys = [];
+    novelSettings = [];
+    novelSettingValues = {};
+    novelSettingsPluginId = null;
     selectedPreferenceSourceId = "";
   }
 
@@ -361,7 +370,9 @@
     preferenceLoadError = null;
     preferenceBusyKey = null;
     preferenceErrors = {};
-    novelPreferenceKeys = [];
+    novelSettings = [];
+    novelSettingValues = {};
+    novelSettingsPluginId = null;
 
     if (!extension.isInstalled) {
       preferenceLoading = false;
@@ -373,12 +384,15 @@
         if (!extension.novelPluginId) {
           throw new Error(translate("sources_runtime_novelIdentityMissing"));
         }
-        const summary = await readInstalledNovelSourceRuntimeSummary({}, extension.novelPluginId);
-        if (run !== preferenceLoadRun || controller.signal.aborted) return;
-        novelPreferenceKeys = [...new Set(summary.pluginSettingsKeys)].sort((left, right) =>
-          left.localeCompare(right),
+        const summary = await readInstalledNovelSourceRuntimeSummary(
+          novelSettingsScope(),
+          extension.novelPluginId,
         );
-        preferenceAccess = "read-only";
+        if (run !== preferenceLoadRun || controller.signal.aborted) return;
+        novelSettings = summary.pluginSettings;
+        novelSettingValues = summary.pluginSettingValues;
+        novelSettingsPluginId = extension.novelPluginId;
+        preferenceAccess = "read-write";
         return;
       }
 
@@ -443,6 +457,36 @@
       };
     } finally {
       preferenceBusyKey = null;
+    }
+  }
+
+  function novelSettingsScope() {
+    return {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+  }
+
+  /** Saves a novel plugin setting on this computer; the plugin reads it the next time it runs. */
+  async function updateNovelSetting(setting: NovelPluginSetting, value: boolean | string | string[]) {
+    const pluginId = novelSettingsPluginId;
+    if (!pluginId || preferenceBusyKey) return;
+    const key = `novel:${setting.key}`;
+    const run = preferenceLoadRun;
+    preferenceBusyKey = key;
+    const nextErrors = { ...preferenceErrors };
+    delete nextErrors[key];
+    preferenceErrors = nextErrors;
+
+    try {
+      const values = await saveNovelPluginSettingValue(novelSettingsScope(), pluginId, setting, value);
+      if (run === preferenceLoadRun) novelSettingValues = values;
+    } catch (error) {
+      if (run === preferenceLoadRun) {
+        preferenceErrors = { ...preferenceErrors, [key]: extensionErrorMessage(error) };
+      }
+    } finally {
+      if (run === preferenceLoadRun) preferenceBusyKey = null;
     }
   }
 
@@ -2024,11 +2068,13 @@
       {preferenceLoadError}
       {preferenceBusyKey}
       {preferenceErrors}
-      {novelPreferenceKeys}
+      {novelSettings}
+      {novelSettingValues}
       {selectedPreferenceSourceId}
       dismissible={!massMigrationExtension}
       onSelectPreferenceSource={loadPreferenceSource}
       onUpdatePreference={updateSourcePreference}
+      onUpdateNovelSetting={(setting, value) => void updateNovelSetting(setting, value)}
       compatibilityReport={latestCompatibilityReport(selectedExtension.pkgName)}
       compatibilityBusy={checkingCompatibilityPkg === selectedExtension.pkgName}
       onCheckCompatibility={checkCompatibility}

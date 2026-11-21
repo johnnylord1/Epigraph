@@ -4651,6 +4651,78 @@ pub(crate) fn novel_source_classification_state_path_for_target(
     Ok(novels_dir.join("source-classification-state.json"))
 }
 
+/// Values the user chose for LNReader plugin settings (`pluginSettings`), per profile. Syncd
+/// replication publishes only the values that may travel (`novel.plugin_setting`); logins,
+/// passwords, sessions and caches never leave this file.
+pub(crate) fn novel_plugin_settings_path_for_target(
+    launch_target: &LaunchTargetInfo,
+    profile_id: Option<&str>,
+    server_url: Option<&str>,
+) -> Result<PathBuf, String> {
+    Ok(novels_storage_root_path_for_target(launch_target, profile_id, server_url)?
+        .join("plugin-settings.json"))
+}
+
+/// Largest settings file accepted, so a runaway plugin value cannot grow it without bound.
+const NOVEL_PLUGIN_SETTINGS_MAX_BYTES: usize = 1024 * 1024;
+
+#[tauri::command]
+fn read_novel_plugin_settings(
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = novel_plugin_settings_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    std::fs::read_to_string(path)
+        .map(Some)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn write_novel_plugin_settings(
+    contents: String,
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if contents.len() > NOVEL_PLUGIN_SETTINGS_MAX_BYTES {
+        return Err("Novel plugin settings are too large to save.".to_string());
+    }
+    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents)
+        .map_err(|_| "Novel plugin settings must be a JSON object.".to_string())?;
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = novel_plugin_settings_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    let previous_contents = fs::read_to_string(&path).ok();
+    write_text_file_atomic(&path, &contents)?;
+    let notify_profile_id = profile_id.clone();
+    let notify_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = syncd_replication::notify_novel_plugin_settings_written(
+            &notify_app,
+            notify_profile_id.as_deref(),
+            previous_contents,
+            &contents,
+        )
+        .await
+        {
+            eprintln!("syncd replication novel plugin settings notify failed: {error}");
+        }
+    });
+    Ok(())
+}
+
 fn extension_compatibility_state_path_for_target(
     launch_target: &LaunchTargetInfo,
     profile_id: Option<&str>,
@@ -7779,6 +7851,8 @@ pub fn run() {
             write_reconciliation_overlay,
             read_novel_repository_state,
             write_novel_repository_state,
+            read_novel_plugin_settings,
+            write_novel_plugin_settings,
             read_novel_source_classification_state,
             write_novel_source_classification_state,
             read_extension_compatibility_state,

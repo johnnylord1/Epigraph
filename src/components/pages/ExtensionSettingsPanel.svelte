@@ -12,6 +12,12 @@
     SourcePreferenceGroup,
     SourcePreferenceUpdateInput,
   } from "../../lib/manga/runtime";
+  import {
+    currentNovelPluginSettingValue,
+    NOVEL_PLUGIN_TEXT_SETTING_MAX_LENGTH,
+    type NovelPluginSetting,
+    type NovelPluginSettingValues,
+  } from "../../lib/novels/pluginSettings";
   import NocturneState from "../shared/NocturneState.svelte";
 
   let {
@@ -25,7 +31,8 @@
     preferenceLoadError = null,
     preferenceBusyKey = null,
     preferenceErrors = {},
-    novelPreferenceKeys = [],
+    novelSettings = [],
+    novelSettingValues = {},
     selectedPreferenceSourceId = "",
     dismissible = true,
     onClose,
@@ -35,6 +42,7 @@
     onMassMigration,
     onSelectPreferenceSource,
     onUpdatePreference,
+    onUpdateNovelSetting,
   }: {
     extension: ManagedExtension;
     busy?: boolean;
@@ -46,7 +54,8 @@
     preferenceLoadError?: string | null;
     preferenceBusyKey?: string | null;
     preferenceErrors?: Readonly<Record<string, string>>;
-    novelPreferenceKeys?: readonly string[];
+    novelSettings?: readonly NovelPluginSetting[];
+    novelSettingValues?: Readonly<NovelPluginSettingValues>;
     selectedPreferenceSourceId?: string;
     /** False while another dialog (mass migration) sits on top and owns Escape. */
     dismissible?: boolean;
@@ -57,6 +66,7 @@
     onMassMigration?: (extension: ManagedExtension) => void;
     onSelectPreferenceSource: (sourceId: string) => void;
     onUpdatePreference: (input: SourcePreferenceUpdateInput) => void;
+    onUpdateNovelSetting?: (setting: NovelPluginSetting, value: boolean | string | string[]) => void;
   } = $props();
 
   const description = $derived(
@@ -100,6 +110,15 @@
     if (event.key !== "Escape" || !dismissible || event.defaultPrevented) return;
     event.preventDefault();
     onClose();
+  }
+
+  function novelSettingKey(setting: NovelPluginSetting): string {
+    return `novel:${setting.key}`;
+  }
+
+  /** Plugins rarely ask for a password, but when they do it should not sit on screen in clear text. */
+  function isSecretNovelSetting(setting: NovelPluginSetting): boolean {
+    return /pass(word)?|token|secret|api.?key|cookie|session/iu.test(`${setting.key} ${setting.label}`);
   }
 
   function preferenceKey(sourceId: string, position: number): string {
@@ -347,7 +366,7 @@
         <span>{$_("extensionSettings_sourcePreferences")}</span>
         <small>
           {extension.kind === "novels"
-            ? $_("extensionSettings_lnreaderReadOnly")
+            ? $_("extensionSettings_novelSettingsLocal")
             : preferenceAccess === "read-write"
               ? $_("extensionSettings_suwayomiManaged")
               : preferenceAccess === "read-only"
@@ -371,16 +390,84 @@
           body={preferenceLoadError}
         />
       {:else if extension.kind === "novels"}
-        <div class="preferenceState">
-          <strong>{$_("extensionSettings_readOnlySourceSettings")}</strong>
-          <span>
-            {$_("extensionSettings_readOnlySourceSettingsHint")}
-          </span>
-        </div>
-        {#if novelPreferenceKeys.length > 0}
-          <div class="novelPreferenceList" aria-label={$_("extensionSettings_preferenceKeys")}>
-            {#each novelPreferenceKeys as key}
-              <span>{key}</span>
+        {#if novelSettings.length > 0}
+          <div class="preferenceGroup">
+            <div class="preferenceGroupHeader">
+              <small>{$_("extensionSettings_novelSettingsHint")}</small>
+              <small>{$_("extensionSettings_settingsCount", { count: novelSettings.length })}</small>
+            </div>
+            {#each novelSettings as setting (setting.key)}
+              {@const key = novelSettingKey(setting)}
+              {@const isBusy = preferenceBusyKey === key}
+              {@const value = currentNovelPluginSettingValue(setting, novelSettingValues)}
+              <div class="preferenceRow">
+                <div class="preferenceCopy">
+                  <strong>{setting.label}</strong>
+                </div>
+
+                {#if setting.type === "Switch"}
+                  <input
+                    aria-label={setting.label}
+                    type="checkbox"
+                    checked={value === true}
+                    disabled={isBusy}
+                    onchange={(event) => onUpdateNovelSetting?.(
+                      setting,
+                      (event.currentTarget as HTMLInputElement).checked,
+                    )}
+                  />
+                {:else if setting.type === "Select"}
+                  <select
+                    aria-label={setting.label}
+                    value={String(value)}
+                    disabled={isBusy}
+                    onchange={(event) => onUpdateNovelSetting?.(
+                      setting,
+                      (event.currentTarget as HTMLSelectElement).value,
+                    )}
+                  >
+                    {#each setting.options as option (option.value)}
+                      <option value={option.value}>{option.label}</option>
+                    {/each}
+                  </select>
+                {:else if setting.type === "CheckboxGroup"}
+                  <select
+                    aria-label={setting.label}
+                    multiple
+                    disabled={isBusy}
+                    onchange={(event) => onUpdateNovelSetting?.(setting, selectedValues(event))}
+                  >
+                    {#each setting.options as option (option.value)}
+                      <option
+                        value={option.value}
+                        selected={Array.isArray(value) && value.includes(option.value)}
+                      >{option.label}</option>
+                    {/each}
+                  </select>
+                {:else}
+                  <input
+                    aria-label={setting.label}
+                    type={isSecretNovelSetting(setting) ? "password" : "text"}
+                    autocomplete="off"
+                    spellcheck="false"
+                    maxlength={NOVEL_PLUGIN_TEXT_SETTING_MAX_LENGTH}
+                    value={String(value)}
+                    disabled={isBusy}
+                    onchange={(event) => onUpdateNovelSetting?.(
+                      setting,
+                      (event.currentTarget as HTMLInputElement).value,
+                    )}
+                  />
+                {/if}
+
+                {#if isBusy}
+                  <span class="preferenceFeedback" aria-live="polite">{$_("common_saving")}</span>
+                {:else if preferenceErrors[key]}
+                  <span class="preferenceFeedback preferenceFeedbackError" role="alert">
+                    {readableErrorText(preferenceErrors[key])}
+                  </span>
+                {/if}
+              </div>
             {/each}
           </div>
         {:else}
@@ -1074,13 +1161,6 @@
     animation: spin 800ms linear infinite;
   }
 
-  .novelPreferenceList {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .novelPreferenceList span,
   .unsupportedPreference {
     border: 1px solid var(--component-sources-settings-icon-border);
     border-radius: var(--component-sources-settings-meta-radius);

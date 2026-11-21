@@ -123,6 +123,10 @@ pub async fn run() -> anyhow::Result<()> {
         state.clone(),
         shutdown.subscribe(),
     );
+    super::suwayomi_source_preference_mirror::spawn_source_preference_mirror_task(
+        state.clone(),
+        shutdown.subscribe(),
+    );
     spawn_parent_watchdog(state.clone(), shutdown.clone());
     spawn_discovery_provider_task(state.clone(), shutdown.subscribe());
     let router = build_router(state.clone(), shutdown.clone());
@@ -1040,9 +1044,15 @@ mod tests {
             crate::syncd::tracker_credentials::is_supported()
         );
         let entity_types = payload["snapshotEntityTypes"].as_array().unwrap();
-        assert_eq!(entity_types.len(), 27);
+        assert_eq!(entity_types.len(), 29);
         assert!(entity_types.iter().any(|value| value == "comic.tracking"));
+        assert!(entity_types
+            .iter()
+            .any(|value| value == "comic.source_preference"));
         assert!(entity_types.iter().any(|value| value == "novel.tracking"));
+        assert!(entity_types
+            .iter()
+            .any(|value| value == "novel.plugin_setting"));
         assert!(entity_types
             .iter()
             .any(|value| value == "novel.chapter_asset"));

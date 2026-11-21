@@ -97,6 +97,9 @@ const CATALOG_NEUTRAL_MUTATIONS: &[&str] = &[
     "loginTrackerCredentials",
     "logoutTracker",
     "fetchSourceManga",
+    // Extension settings (for example a preferred mirror) change how a source is reached, not
+    // which works are in the library.
+    "updateSourcePreference",
 ];
 
 /// What a paired device applies from this profile's catalog.

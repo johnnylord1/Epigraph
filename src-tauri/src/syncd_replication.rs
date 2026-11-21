@@ -23,6 +23,8 @@ use crate::syncd::middleware::{
     CURRENT_CLIENT_VERSION, LEGACY_ASSET_SHA256_HEADER, LEGACY_CLIENT_PROTOCOL_HEADER,
     LEGACY_CLIENT_VERSION_HEADER,
 };
+use crate::syncd::novel_plugin_settings;
+use crate::syncd::source_preferences::PreferenceValue;
 use crate::syncd::models::{
     canonical_novel_category_assignment_id, canonical_novel_identity_key,
     canonical_novel_plugin_id, canonical_novel_repository_id,
@@ -51,8 +53,8 @@ use crate::syncd_desktop::{
 };
 use crate::{
     book_library_state_path, books_data_dir, novel_library_state_path_for_target,
-    novel_repository_state_path_for_target, novel_source_classification_state_path_for_target,
-    LaunchTarget, LaunchTargetInfo,
+    novel_plugin_settings_path_for_target, novel_repository_state_path_for_target,
+    novel_source_classification_state_path_for_target, LaunchTarget, LaunchTargetInfo,
 };
 
 const CLIENT_PROTOCOL_VERSION: u32 = 1;
@@ -1567,6 +1569,12 @@ enum SerializableMutationInput {
         base: SerializableMutationBase,
         patch: Option<ComicPageBookmarkPatch>,
     },
+    #[serde(rename = "novel.plugin_setting")]
+    NovelPluginSetting {
+        #[serde(flatten)]
+        base: SerializableMutationBase,
+        patch: Option<Value>,
+    },
 }
 
 impl SerializableMutationInput {
@@ -1591,6 +1599,7 @@ impl SerializableMutationInput {
             Self::NovelPlugin { .. } => "novel.plugin",
             Self::ComicHistory { .. } => "comic.history",
             Self::ComicPageBookmark { .. } => "comic.page_bookmark",
+            Self::NovelPluginSetting { .. } => "novel.plugin_setting",
         }
     }
 
@@ -1613,7 +1622,8 @@ impl SerializableMutationInput {
             | Self::NovelRepository { base, .. }
             | Self::NovelPlugin { base, .. }
             | Self::ComicHistory { base, .. }
-            | Self::ComicPageBookmark { base, .. } => &base.op,
+            | Self::ComicPageBookmark { base, .. }
+            | Self::NovelPluginSetting { base, .. } => &base.op,
             Self::BookLibraryUi { base, .. } => &base.op,
         };
         match op {
@@ -1641,7 +1651,8 @@ impl SerializableMutationInput {
             | Self::NovelRepository { base, .. }
             | Self::NovelPlugin { base, .. }
             | Self::ComicHistory { base, .. }
-            | Self::ComicPageBookmark { base, .. } => &base.entity_id,
+            | Self::ComicPageBookmark { base, .. }
+            | Self::NovelPluginSetting { base, .. } => &base.entity_id,
             Self::BookLibraryUi { base, .. } => &base.entity_id,
         }
     }
@@ -1666,6 +1677,7 @@ impl SerializableMutationInput {
             | Self::NovelPlugin { base, .. }
             | Self::ComicHistory { base, .. }
             | Self::ComicPageBookmark { base, .. }
+            | Self::NovelPluginSetting { base, .. }
             | Self::BookLibraryUi { base, .. } => &base.client_mutation_id,
         }
     }
@@ -1690,6 +1702,7 @@ impl SerializableMutationInput {
             | Self::NovelPlugin { base, .. }
             | Self::ComicHistory { base, .. }
             | Self::ComicPageBookmark { base, .. }
+            | Self::NovelPluginSetting { base, .. }
             | Self::BookLibraryUi { base, .. } => base,
         }
     }
@@ -2018,6 +2031,8 @@ struct RemoteApplyOutcome {
     /// is republished so a device that bootstraps from either sees the same folder.
     book_categories_changed: bool,
     novel_categories_changed: bool,
+    /// `novel.plugin_setting` values to put into this profile's `plugin-settings.json`.
+    novel_plugin_settings: Vec<(String, String, PreferenceValue)>,
 }
 
 fn novels_scope_id(remote_profile_id: &str) -> String {
@@ -3812,6 +3827,12 @@ async fn apply_authoritative_snapshots(
         write_books_state(&books_state)?;
         write_novels_state(launch_target, local_profile_id, &novels_state)?;
         write_novel_classification_state(launch_target, local_profile_id, &classification_state)?;
+        // Settings are not removed by a snapshot: one the Core lacks is simply not chosen there.
+        apply_novel_plugin_settings(
+            launch_target,
+            local_profile_id,
+            &snapshot_novel_plugin_settings(&novels_snapshot),
+        )?;
         Ok(stage_snapshot_recovery(
             profile,
             &books_snapshot,
@@ -4430,6 +4451,14 @@ async fn apply_remote_envelopes(
                 }
                 classification_state.updated_at_ms = Some(now_ms());
             }
+            // A removed setting keeps the local value; only devices that chose one send it.
+            "novel.plugin_setting" => {
+                if let Some(setting) =
+                    remote_novel_plugin_setting(&envelope.entity_id, envelope.patch.as_ref())
+                {
+                    outcome.novel_plugin_settings.push(setting);
+                }
+            }
             // Syncd carries dependency evidence only. The declarations are kept so the webview
             // installs missing plugins from their repository; executable bytes never come from
             // replay.
@@ -4520,6 +4549,7 @@ async fn apply_remote_envelopes(
             );
             write_novel_classification_state(launch_target, profile_id, &classification_state)?;
         }
+        apply_novel_plugin_settings(launch_target, profile_id, &outcome.novel_plugin_settings)?;
         if !outcome.comic_reader_changes.is_empty() {
             profile
                 .pending_comic_reader_changes
@@ -5356,6 +5386,11 @@ async fn publish_local_state_to_core(
             profile_id,
             publish_current_novel_library_state(app, profile_id).await,
         )?;
+        settle_core_publish_step(
+            "novel_plugin_settings",
+            profile_id,
+            publish_current_novel_plugin_settings(app, profile_id).await,
+        )?;
     }
     if books {
         settle_core_publish_step(
@@ -5505,6 +5540,191 @@ pub async fn notify_novel_source_classification_state_written(
         return Ok(());
     }
     submit_mutations_for_active_profiles(app, Some(profile_id), diff).await
+}
+
+/// The values of a `plugin-settings.json` document (`{ version, plugins: { id: { key: value } } }`)
+/// that may travel: settings that hold credentials, sessions or caches stay on this computer.
+fn syncable_novel_plugin_settings(document: &Value) -> BTreeMap<(String, String), PreferenceValue> {
+    let mut settings = BTreeMap::new();
+    let Some(plugins) = document.get("plugins").and_then(Value::as_object) else {
+        return settings;
+    };
+    for (plugin_id, values) in plugins {
+        let Some(values) = values.as_object() else {
+            continue;
+        };
+        for (key, value) in values {
+            if !novel_plugin_settings::is_syncable_setting(plugin_id, key) {
+                continue;
+            }
+            if let Some(value) = novel_plugin_settings::local_value(value) {
+                settings.insert((plugin_id.clone(), key.clone()), value);
+            }
+        }
+    }
+    settings
+}
+
+/// One merge per syncable setting whose value changed. A setting removed here sends nothing: the
+/// plugin then falls back to its default, and the other devices keep their own choice.
+fn diff_novel_plugin_setting_mutations(
+    local_profile_id: &str,
+    previous: &Value,
+    next: &Value,
+) -> Vec<SerializableMutationInput> {
+    let scope_id = novels_scope_id(local_profile_id);
+    let before = syncable_novel_plugin_settings(previous);
+    let updated_at_ms = now_ms();
+    syncable_novel_plugin_settings(next)
+        .into_iter()
+        .filter(|(setting, value)| before.get(setting) != Some(value))
+        .map(|((plugin_id, key), value)| SerializableMutationInput::NovelPluginSetting {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: novel_plugin_settings::entity_id_for(&plugin_id, &key),
+                op: MutationOperation::Merge,
+                lamport: updated_at_ms,
+            },
+            patch: Some(novel_plugin_settings::core_record(
+                &plugin_id,
+                &key,
+                &value,
+                updated_at_ms,
+            )),
+        })
+        .collect()
+}
+
+fn read_novel_plugin_settings_document(
+    launch_target: &LaunchTargetInfo,
+    profile_id: &str,
+) -> Result<Value, String> {
+    let path = novel_plugin_settings_path_for_target(launch_target, Some(profile_id), None)?;
+    if !path.exists() {
+        return Ok(Value::Null);
+    }
+    let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&raw).map_err(|error| error.to_string())
+}
+
+/// Puts plugin setting values received from the Core into `plugin-settings.json`. Other settings,
+/// including the ones that never travel, stay as they are. Returns whether the file changed.
+fn apply_novel_plugin_settings(
+    launch_target: &LaunchTargetInfo,
+    profile_id: &str,
+    values: &[(String, String, PreferenceValue)],
+) -> Result<bool, String> {
+    if values.is_empty() {
+        return Ok(false);
+    }
+    // An unreadable file is shown as "no values" by the app, so it is rebuilt rather than kept.
+    let mut document = read_novel_plugin_settings_document(launch_target, profile_id)
+        .ok()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({ "version": 1, "plugins": {} }));
+    let changed = merge_novel_plugin_settings(&mut document, values);
+    if changed {
+        let path = novel_plugin_settings_path_for_target(launch_target, Some(profile_id), None)?;
+        let payload = serde_json::to_vec_pretty(&document).map_err(|error| error.to_string())?;
+        write_file_atomic(&path, &payload)?;
+    }
+    Ok(changed)
+}
+
+fn merge_novel_plugin_settings(
+    document: &mut Value,
+    values: &[(String, String, PreferenceValue)],
+) -> bool {
+    let Some(root) = document.as_object_mut() else {
+        return false;
+    };
+    root.entry("version").or_insert(json!(1));
+    let plugins = root.entry("plugins").or_insert_with(|| json!({}));
+    if !plugins.is_object() {
+        *plugins = json!({});
+    }
+    let Some(plugins) = plugins.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    for (plugin_id, key, value) in values {
+        let entry = plugins.entry(plugin_id.clone()).or_insert_with(|| json!({}));
+        if !entry.is_object() {
+            *entry = json!({});
+        }
+        let Some(settings) = entry.as_object_mut() else {
+            continue;
+        };
+        let same = settings
+            .get(key)
+            .and_then(novel_plugin_settings::local_value)
+            .is_some_and(|current| &current == value);
+        if !same {
+            settings.insert(key.clone(), value.to_json());
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Values carried by `novel.plugin_setting` entities of a novels snapshot.
+fn snapshot_novel_plugin_settings(snapshot: &SnapshotResponse) -> Vec<(String, String, PreferenceValue)> {
+    snapshot
+        .entities
+        .iter()
+        .filter(|entity| entity.entity_type == novel_plugin_settings::NOVEL_PLUGIN_SETTING)
+        .filter_map(|entity| remote_novel_plugin_setting(&entity.entity_id, Some(&entity.record)))
+        .collect()
+}
+
+fn remote_novel_plugin_setting(
+    entity_id: &str,
+    record: Option<&Value>,
+) -> Option<(String, String, PreferenceValue)> {
+    let value = novel_plugin_settings::record_value(entity_id, record?)?;
+    let (plugin_id, key) = novel_plugin_settings::parse_entity_id(entity_id)?;
+    Some((plugin_id.to_string(), key.to_string(), value))
+}
+
+pub async fn notify_novel_plugin_settings_written(
+    app: &AppHandle,
+    local_profile_id: Option<&str>,
+    previous_contents: Option<String>,
+    next_contents: &str,
+) -> Result<(), String> {
+    let Some(profile_id) = local_profile_id.filter(|value| !value.trim().is_empty()) else {
+        return Ok(());
+    };
+    let previous = previous_contents
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .unwrap_or(Value::Null);
+    let next = serde_json::from_str::<Value>(next_contents).map_err(|error| error.to_string())?;
+    let diff = diff_novel_plugin_setting_mutations(profile_id, &previous, &next);
+    if diff.is_empty() {
+        return Ok(());
+    }
+    submit_mutations_for_active_profiles(app, Some(profile_id), diff).await
+}
+
+/// Sends the settings chosen here that a Core does not hold yet. Values it already has are left
+/// alone, so joining a Core never overrides a choice made on another device.
+async fn publish_current_novel_plugin_settings(
+    app: &AppHandle,
+    profile_id: &str,
+) -> Result<(), String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let document = read_novel_plugin_settings_document(&launch_target, profile_id)?;
+    let mutations = diff_novel_plugin_setting_mutations(profile_id, &Value::Null, &document);
+    if mutations.is_empty() {
+        return Ok(());
+    }
+    let mutations = retain_republish_mutations_for_core(app, profile_id, mutations, true).await?;
+    if mutations.is_empty() {
+        return Ok(());
+    }
+    submit_mutations_for_active_profiles(app, Some(profile_id), mutations).await
 }
 
 pub async fn notify_novel_repository_state_written(
@@ -14783,5 +15003,139 @@ mod tests {
         let mut diff = diff_book_mutations(&empty, &streamed);
         drop_book_entries_the_core_has(&mut diff);
         assert_eq!(book_entry_mutations(&diff), 1);
+    }
+
+    // Settings below are the ones WTR-LAB 1.2.3, BoxNovel 2.2.2 and Komga 1.0.2 declare.
+    fn plugin_settings_document(wtrlab_mode: &str) -> Value {
+        json!({
+            "version": 1,
+            "plugins": {
+                "wtrlab": {
+                    "preferredMode": wtrlab_mode,
+                    "fallbackToWeb": true,
+                    "sessionCookie": "cf_clearance=abc",
+                    "signInUrl": "https://wtr-lab.com/en/signin"
+                },
+                "komga": {
+                    "url": "http://192.168.0.5:25600",
+                    "email": "me@example.com",
+                    "password": "hunter2"
+                },
+                "boxnovel": { "hideLocked": false }
+            }
+        })
+    }
+
+    #[test]
+    fn novel_plugin_setting_diff_sends_changed_values_and_never_secrets() {
+        let everything =
+            diff_novel_plugin_setting_mutations("main", &Value::Null, &plugin_settings_document("ai"));
+        let mut ids = everything
+            .iter()
+            .map(|mutation| mutation.entity_id().to_string())
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec![
+                "novel.plugin_setting::boxnovel::hideLocked",
+                "novel.plugin_setting::komga::url",
+                "novel.plugin_setting::wtrlab::fallbackToWeb",
+                "novel.plugin_setting::wtrlab::preferredMode",
+            ]
+        );
+        for mutation in &everything {
+            assert_eq!(mutation.base().scope_id, "novels:profile:main");
+            assert_eq!(mutation.entity_type_label(), "novel.plugin_setting");
+        }
+
+        let changed = diff_novel_plugin_setting_mutations(
+            "main",
+            &plugin_settings_document("ai"),
+            &plugin_settings_document("web"),
+        );
+        assert_eq!(changed.len(), 1);
+        let serialized = serde_json::to_value(&changed[0]).unwrap();
+        assert_eq!(serialized["entityType"], "novel.plugin_setting");
+        assert_eq!(serialized["op"], "merge");
+        assert_eq!(serialized["patch"]["value"], "web");
+        assert_eq!(serialized["patch"]["valueType"], "string");
+        assert!(novel_plugin_settings::validate_patch(
+            &serialized["entityId"].as_str().unwrap().to_string(),
+            &serialized["patch"]
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn novel_plugin_settings_from_the_core_keep_local_secrets() {
+        let mut document = plugin_settings_document("ai");
+        let incoming = vec![
+            ("wtrlab".to_string(), "preferredMode".to_string(), PreferenceValue::String("web".into())),
+            ("boxnovel".to_string(), "hideLocked".to_string(), PreferenceValue::Boolean(false)),
+            ("novelupdates".to_string(), "hideLocked".to_string(), PreferenceValue::Boolean(true)),
+        ];
+        assert!(merge_novel_plugin_settings(&mut document, &incoming));
+        assert_eq!(document["plugins"]["wtrlab"]["preferredMode"], "web");
+        assert_eq!(document["plugins"]["wtrlab"]["sessionCookie"], "cf_clearance=abc");
+        assert_eq!(document["plugins"]["komga"]["password"], "hunter2");
+        assert_eq!(document["plugins"]["novelupdates"]["hideLocked"], true);
+        // Applying the same values again changes nothing, so it writes nothing.
+        assert!(!merge_novel_plugin_settings(&mut document, &incoming));
+        // A value received from the Core is not sent back.
+        let echo = diff_novel_plugin_setting_mutations("main", &document, &document.clone());
+        assert!(echo.is_empty());
+
+        let mut empty = json!({});
+        assert!(merge_novel_plugin_settings(&mut empty, &incoming[..1]));
+        assert_eq!(empty["version"], 1);
+        assert_eq!(empty["plugins"]["wtrlab"]["preferredMode"], "web");
+    }
+
+    #[test]
+    fn novel_plugin_settings_come_only_from_valid_records() {
+        let entity_id = novel_plugin_settings::entity_id_for("wtrlab", "preferredMode");
+        let record = novel_plugin_settings::core_record(
+            "wtrlab",
+            "preferredMode",
+            &PreferenceValue::String("webplus".into()),
+            7,
+        );
+        assert_eq!(
+            remote_novel_plugin_setting(&entity_id, Some(&record)),
+            Some(("wtrlab".into(), "preferredMode".into(), PreferenceValue::String("webplus".into())))
+        );
+        assert_eq!(remote_novel_plugin_setting(&entity_id, None), None);
+        let forged = json!({
+            "settingId": "novel.plugin_setting::wtrlab::sessionCookie", "pluginId": "wtrlab",
+            "key": "sessionCookie", "valueType": "string", "value": "x", "updatedAtMs": 1,
+        });
+        assert_eq!(
+            remote_novel_plugin_setting("novel.plugin_setting::wtrlab::sessionCookie", Some(&forged)),
+            None
+        );
+
+        let snapshot = SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: None,
+            complete: Some(true),
+            entity_count: Some(2),
+            tombstone_count: Some(0),
+            scope_id: "novels:profile:main".to_string(),
+            snapshot_version: 3,
+            min_replayable_server_version: 1,
+            entities: vec![
+                core_entity("novel.plugin_setting", &entity_id, record.clone()),
+                core_entity("novel.classification", "wtrlab", Value::Null),
+            ],
+            tombstones: Vec::new(),
+        };
+        assert_eq!(snapshot_novel_plugin_settings(&snapshot).len(), 1);
+
+        // Joining a Core that already holds a value leaves that value alone.
+        let local = diff_novel_plugin_setting_mutations("main", &Value::Null, &plugin_settings_document("ai"));
+        let kept = retain_republish_mutations(local, std::slice::from_ref(&snapshot), true);
+        assert_eq!(kept.len(), 3);
+        assert!(kept.iter().all(|mutation| mutation.entity_id() != entity_id));
     }
 }

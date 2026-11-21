@@ -16,7 +16,7 @@ use super::models::{
 use super::routes::suwayomi_commands::{self, CommandOperation};
 use super::routes::suwayomi_import;
 use super::routes::suwayomi_proxy;
-use super::{db, landed_works, routes::suwayomi_catalog};
+use super::{db, landed_works, routes::suwayomi_catalog, source_preferences};
 
 const MAX_BATCH: usize = 8;
 /// How long one tick keeps draining a backlog batch after batch. The 2 s tick only paces an idle or
@@ -73,11 +73,17 @@ const MAX_CONFIRMATION_ATTEMPTS: i64 = 5;
 /// changed). They get one fresh bounded cycle each time the daemon starts. Codes caused by the
 /// command itself (`command_rejected`, `invalid_variables`, `unsupported_operation`) stay blocked
 /// until a newer version supersedes them.
-const RECOVERABLE_BLOCKED_CODES: [&str; 3] = [
+const RECOVERABLE_BLOCKED_CODES: [&str; 4] = [
     "confirmation_mismatch",
     COMMAND_FAILED,
     PORTABLE_WORK_NOT_FOUND,
+    SOURCE_PREFERENCE_NOT_OFFERED,
 ];
+/// A device chose a source preference this Suwayomi's extension does not offer: the extension
+/// is not installed, is an older version without that key or value (for example a mirror it does
+/// not list), or the key has another type here. An extension update can change that, so it gets a
+/// new cycle on daemon start.
+const SOURCE_PREFERENCE_NOT_OFFERED: &str = "source_preference_not_offered";
 /// A device added a work Suwayomi could not find, for example because its extension is not
 /// installed here. Blocked after a few attempts so it stops counting as pending.
 const PORTABLE_WORK_NOT_FOUND: &str = "portable_work_not_found";
@@ -708,6 +714,10 @@ async fn settle(
                     .execute(&mut *tx)
                     .await?;
                 applied += 1;
+                if row.operation_name == source_preferences::UPDATE_SOURCE_PREFERENCE_OPERATION {
+                    // Lets the desktop mirror record the landed value as agreed right away.
+                    super::suwayomi_source_preference_mirror::request_immediate_mirror();
+                }
             }
             ProjectionOutcome::Retry(code) => {
                 let delay = retry_delay_ms(code, row.attempt_count);
@@ -1249,6 +1259,9 @@ async fn apply_projection_with(
         Ok(value) => value,
         Err(_) => return ProjectionOutcome::Blocked("invalid_variables"),
     };
+    if row.operation_name == source_preferences::UPDATE_SOURCE_PREFERENCE_OPERATION {
+        return apply_source_preference(state, row, &variables).await;
+    }
     let (operation_name, variables) =
         if row.operation_name == db::REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION {
             match resolve_category_assignment_removal(state, &row.profile_id, &variables).await {
@@ -1318,6 +1331,83 @@ async fn apply_projection_with(
     outcome
 }
 
+/// Sets one extension source preference a device chose. The source's preference list is read
+/// first: the change addresses a preference by its position, and a value the extension here does
+/// not offer is blocked instead of written, so an older extension never stores a mirror it cannot
+/// use. Nothing about the library changes, so no landed work is noted.
+async fn apply_source_preference(
+    state: &SharedAppState,
+    row: &ProjectionRow,
+    variables: &Value,
+) -> ProjectionOutcome {
+    let Some((source_id, key, target)) = source_preferences::parse_projection_variables(variables)
+    else {
+        return ProjectionOutcome::Blocked("invalid_variables");
+    };
+    let session = projection_session(&row.profile_id);
+    let read = suwayomi_catalog::execute_graphql_document(
+        state,
+        &session,
+        &source_preferences::source_preferences_query(),
+        json!({ "id": source_id }),
+        false,
+    )
+    .await;
+    let offered = match read {
+        Ok(data) => match data.get("source").filter(|source| !source.is_null()) {
+            Some(source) => source_preferences::parse_offered_preferences(source.get("preferences")),
+            None => return ProjectionOutcome::Blocked(SOURCE_PREFERENCE_NOT_OFFERED),
+        },
+        Err(AppError::BadRequest(_) | AppError::Forbidden(_)) => {
+            return ProjectionOutcome::Blocked("command_rejected");
+        }
+        // Suwayomi answers an unknown source id with a GraphQL error, which is not retryable.
+        Err(error @ AppError::ServiceUnavailable(_)) if is_non_retryable(&error) => {
+            return if row.attempt_count >= MAX_NON_RETRYABLE_ATTEMPTS {
+                ProjectionOutcome::Blocked(SOURCE_PREFERENCE_NOT_OFFERED)
+            } else {
+                ProjectionOutcome::Retry(COMMAND_FAILED)
+            };
+        }
+        Err(error) => return failed_command_outcome(&error, row.attempt_count),
+    };
+    let change = match source_preferences::plan_change(&offered, &key, &target) {
+        source_preferences::ChangePlan::AlreadySet => return ProjectionOutcome::Applied,
+        source_preferences::ChangePlan::NotOffered => {
+            return ProjectionOutcome::Blocked(SOURCE_PREFERENCE_NOT_OFFERED);
+        }
+        source_preferences::ChangePlan::Change(change) => change,
+    };
+    let written = suwayomi_catalog::execute_graphql_document(
+        state,
+        &session,
+        &source_preferences::update_source_preference_mutation(),
+        json!({ "input": { "source": source_id, "change": change } }),
+        true,
+    )
+    .await;
+    match written {
+        Ok(data) => {
+            let offered = source_preferences::parse_offered_preferences(
+                data.get("updateSourcePreference")
+                    .and_then(|payload| payload.get("preferences")),
+            );
+            confirmation_outcome(
+                source_preferences::confirms(&offered, &key, &target),
+                row.attempt_count,
+            )
+        }
+        Err(AppError::BadRequest(_) | AppError::Forbidden(_)) => {
+            ProjectionOutcome::Blocked("command_rejected")
+        }
+        Err(error) => failed_command_outcome(&error, row.attempt_count),
+    }
+}
+
+fn is_non_retryable(error: &AppError) -> bool {
+    matches!(error, AppError::ServiceUnavailable(detail) if detail.retryable == Some(false))
+}
+
 /// Tells the window which work a confirmed projection changed, so it reads only that one.
 fn note_landed(row: &ProjectionRow, operation: &str, variables: &Value, outcome: &ProjectionOutcome) {
     if matches!(outcome, ProjectionOutcome::Applied) {
@@ -1347,7 +1437,7 @@ async fn requeue_recoverable_blocked(pool: &sqlx::SqlitePool, now: i64) -> anyho
         UPDATE suwayomi_projection_outbox
         SET status = 'retry', attempt_count = 0, next_attempt_at_ms = ?, lease_until_ms = NULL,
             updated_at_ms = ?
-        WHERE status = 'blocked' AND last_error IN (?, ?, ?)
+        WHERE status = 'blocked' AND last_error IN (?, ?, ?, ?)
         "#,
     )
     .bind(now)
@@ -1355,6 +1445,7 @@ async fn requeue_recoverable_blocked(pool: &sqlx::SqlitePool, now: i64) -> anyho
     .bind(RECOVERABLE_BLOCKED_CODES[0])
     .bind(RECOVERABLE_BLOCKED_CODES[1])
     .bind(RECOVERABLE_BLOCKED_CODES[2])
+    .bind(RECOVERABLE_BLOCKED_CODES[3])
     .execute(pool)
     .await
     .context("failed to requeue recoverable blocked Suwayomi projections")?;

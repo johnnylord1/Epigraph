@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::syncd::{
-    catalog_revision, db, suwayomi_progress_mirror, suwayomi_projection, suwayomi_tracking_mirror,
+    catalog_revision, db, suwayomi_progress_mirror, suwayomi_projection,
+    suwayomi_source_preference_mirror, suwayomi_tracking_mirror,
 };
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
@@ -329,6 +330,7 @@ enum CatalogWriteNotice {
 fn catalog_write_notice(token_id: &str) -> CatalogWriteNotice {
     if token_id == suwayomi_progress_mirror::MIRROR_TOKEN_ID
         || token_id == suwayomi_tracking_mirror::MIRROR_TOKEN_ID
+        || token_id == suwayomi_source_preference_mirror::MIRROR_TOKEN_ID
     {
         CatalogWriteNotice::None
     } else if token_id == suwayomi_projection::PROJECTION_TOKEN_ID {
@@ -526,6 +528,10 @@ mod tests {
         );
         assert_eq!(
             catalog_write_notice(suwayomi_tracking_mirror::MIRROR_TOKEN_ID),
+            CatalogWriteNotice::None
+        );
+        assert_eq!(
+            catalog_write_notice(suwayomi_source_preference_mirror::MIRROR_TOKEN_ID),
             CatalogWriteNotice::None
         );
     }

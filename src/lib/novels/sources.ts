@@ -3,6 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { TauriNovelRuntimeHostAdapter } from "./runtimeHost";
 import { NovelRuntimeSession } from "./runtimeSession";
 import { loadNovelRepositoryState, type NovelRepositoryScopeInput } from "./repositoryState";
+import {
+  loadNovelPluginSettingValues,
+  parseNovelPluginSettings,
+  type NovelPluginSetting,
+  type NovelPluginSettingValues,
+} from "./pluginSettings";
 import { resolveSearchResultsWithFallback } from "../search/queryFallback";
 import { translate } from "../i18n/runtime";
 import type { NovelCatalogEntry, NovelRepositoryRecord } from "./contracts";
@@ -105,19 +111,25 @@ async function readInstalledArtifactSource(path: string): Promise<string> {
   return decodeBase64Text(encoded);
 }
 
+/** The plugin code plus the setting values the user chose, which the plugin reads through `storage`. */
 async function readPluginPayload(
   source: InstalledNovelSourceDescriptor,
+  scopeInput: NovelRepositoryScopeInput,
 ): Promise<{
   pluginId: string;
   artifactUrl: string;
   pluginSource: string;
   settingsSeed: Record<string, unknown>;
 }> {
+  const [pluginSource, settingsSeed] = await Promise.all([
+    readInstalledArtifactSource(source.artifactPath),
+    loadNovelPluginSettingValues(scopeInput, source.pluginId),
+  ]);
   return {
     pluginId: source.pluginId,
     artifactUrl: source.artifactUrl,
-    pluginSource: await readInstalledArtifactSource(source.artifactPath),
-    settingsSeed: {},
+    pluginSource,
+    settingsSeed,
   };
 }
 
@@ -126,6 +138,8 @@ export async function readInstalledNovelSourceRuntimeSummary(
   sourceId: string,
 ): Promise<{
   pluginSettingsKeys: string[];
+  pluginSettings: NovelPluginSetting[];
+  pluginSettingValues: NovelPluginSettingValues;
   filterKeys: string[];
 }> {
   const source = (await loadTrustedInstalledNovelSources(scopeInput)).find((entry) => entry.pluginId === sourceId);
@@ -133,7 +147,7 @@ export async function readInstalledNovelSourceRuntimeSummary(
     throw new Error("Novel source is not installed, enabled, and trusted.");
   }
 
-  const payload = await readPluginPayload(source);
+  const payload = await readPluginPayload(source, scopeInput);
   const settings = await runtimeHost.invoke<typeof payload, {
     pluginSettingKeys: string[];
     pluginSettings: Record<string, unknown>;
@@ -144,6 +158,8 @@ export async function readInstalledNovelSourceRuntimeSummary(
 
   return {
     pluginSettingsKeys: (settings.pluginSettingKeys ?? Object.keys(settings.pluginSettings ?? {})).filter(Boolean),
+    pluginSettings: parseNovelPluginSettings(settings.pluginSettings),
+    pluginSettingValues: payload.settingsSeed,
     filterKeys: (filters.filterKeys ?? []).filter(Boolean),
   };
 }
@@ -158,7 +174,7 @@ export async function readInstalledNovelSourceFilters(
     throw new Error("Novel source is not installed, enabled, and trusted.");
   }
 
-  const payload = await readPluginPayload(source);
+  const payload = await readPluginPayload(source, scopeInput);
   const result = await runtimeHost.invoke<typeof payload, {
     filters?: Record<string, unknown>;
   }>("source.filters.read", payload);
@@ -221,7 +237,7 @@ export async function searchInstalledNovelSource(
     throw new Error("Novel source is not installed, enabled, and trusted.");
   }
 
-  const payload = await readPluginPayload(source);
+  const payload = await readPluginPayload(source, scopeInput);
   return resolveSearchResultsWithFallback(searchTerm, async (attemptTerm) => {
     const result = await runtimeHost.invoke<typeof payload & { searchTerm: string; pageNo: number }, {
       results: Array<NovelSourceRuntimeEntry>;
@@ -262,7 +278,7 @@ export async function browseInstalledNovelSource(
     throw new Error("Novel source is not installed, enabled, and trusted.");
   }
 
-  const payload = await readPluginPayload(source);
+  const payload = await readPluginPayload(source, scopeInput);
   const result = await runtimeHost.invoke<typeof payload & { pageNo: number; options?: Record<string, unknown> }, {
     results: Array<NovelSourceRuntimeEntry>;
   }>("source.popular", {
@@ -305,7 +321,7 @@ export async function readInstalledNovelDetails(
     throw new Error("Novel source is not installed, enabled, and trusted.");
   }
 
-  const payload = await readPluginPayload(source);
+  const payload = await readPluginPayload(source, scopeInput);
   const details = await runtimeHost.invoke<typeof payload & { novelPath: string }, {
     name: string | null;
     novelPath: string;
@@ -381,7 +397,7 @@ export async function readInstalledNovelChapter(
     throw new Error("Novel source is not installed, enabled, and trusted.");
   }
 
-  const payload = await readPluginPayload(source);
+  const payload = await readPluginPayload(source, scopeInput);
   const chapter = await runtimeHost.invoke<typeof payload & { chapterPath: string }, {
     content: string;
     preview: string | null;

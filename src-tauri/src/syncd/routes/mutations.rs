@@ -23,7 +23,7 @@ use crate::syncd::models::{
     SharedAppState,
 };
 use crate::syncd::routes::assets::{validate_asset_reference, AssetReferenceError};
-use crate::syncd::{suwayomi_tracking_mirror, tracking};
+use crate::syncd::{novel_plugin_settings, source_preferences, suwayomi_tracking_mirror, tracking};
 
 const MAX_COMIC_TITLE_HINT_CHARS: usize = 512;
 /// Upper bound on comic state merges applied under one write lock before committing, so a
@@ -111,6 +111,7 @@ pub async fn post_mutations(
                     | MutationInput::ComicCategory { .. }
                     | MutationInput::ComicCategoryAssignment { .. }
                     | MutationInput::ComicChapterState { .. }
+                    | MutationInput::ComicSourcePreference { .. }
             )
             .then(|| base.op == MutationOperation::Merge)
             .filter(|merge| *merge)
@@ -2103,8 +2104,48 @@ pub async fn post_mutations(
                     }
                 }
             },
+            MutationInput::ComicSourcePreference { base, patch } => {
+                let validation = match (base.op, patch.as_ref()) {
+                    (MutationOperation::Merge, Some(patch)) => {
+                        source_preferences::validate_patch(&base.entity_id, patch)
+                            .err()
+                            .map(|error| error_detail(error.code, &error.message, None))
+                    }
+                    _ => source_preferences::parse_entity_id(&base.entity_id)
+                        .is_none()
+                        .then(|| {
+                            error_detail(
+                                "INVALID_SOURCE_PREFERENCE_ID",
+                                "Source preference entityId must be 'comic.source_preference::<sourceId>::<key>'.",
+                                None,
+                            )
+                        }),
+                };
+                match persist_comic_sync_state(
+                    &state,
+                    &mut batch,
+                    &mut prefetch,
+                    &session,
+                    &mutation,
+                    base,
+                    patch.as_ref(),
+                    validation,
+                )
+                .await?
+                {
+                    ComicSyncRouteOutcome::Applied(outcome) => outcome,
+                    ComicSyncRouteOutcome::Result(result) => {
+                        if let Some(version) = result.applied_server_version {
+                            current_server_version = current_server_version.max(version);
+                        }
+                        results.push(result);
+                        continue;
+                    }
+                }
+            }
             MutationInput::ComicTracking { base, patch }
-            | MutationInput::NovelTracking { base, patch } => {
+            | MutationInput::NovelTracking { base, patch }
+            | MutationInput::NovelPluginSetting { base, patch } => {
                 match persist_tracking_record(&state, &session, &mutation, base, patch.as_ref())
                     .await?
                 {
@@ -2277,6 +2318,7 @@ fn is_batchable(mutation: &MutationInput) -> bool {
             | MutationInput::ComicCategoryAssignment { base, .. }
             | MutationInput::ComicChapterState { base, .. }
             | MutationInput::ComicHistory { base, .. }
+            | MutationInput::ComicSourcePreference { base, .. }
             if base.op == MutationOperation::Merge
     )
 }
@@ -2410,24 +2452,34 @@ async fn persist_tracking_record(
                     ),
                 )));
             };
-            let identity =
-                match tracking::validate_tracking_patch(entity_type, &base.entity_id, patch) {
-                    Ok(identity) => identity,
-                    Err(error) => {
-                        return Ok(ComicSyncRouteOutcome::Result(rejected_result(
-                            mutation,
-                            error_detail(error.code, &error.message, None),
-                        )));
-                    }
-                };
+            // Novel plugin settings share the tracking record table: plugin id and setting key
+            // take the work id and tracker key columns.
+            let identity = if entity_type == novel_plugin_settings::NOVEL_PLUGIN_SETTING {
+                novel_plugin_settings::validate_patch(&base.entity_id, patch)
+                    .map(|valid| (valid.plugin_id, valid.key))
+                    .map_err(|error| (error.code, error.message))
+            } else {
+                tracking::validate_tracking_patch(entity_type, &base.entity_id, patch)
+                    .map(|identity| (identity.work_id, identity.tracker_key))
+                    .map_err(|error| (error.code, error.message))
+            };
+            let (work_id, tracker_key) = match identity {
+                Ok(identity) => identity,
+                Err((code, message)) => {
+                    return Ok(ComicSyncRouteOutcome::Result(rejected_result(
+                        mutation,
+                        error_detail(code, &message, None),
+                    )));
+                }
+            };
             db::apply_tracking_record_mutation(
                 &state.pool,
                 session,
                 &base.scope_id,
                 entity_type,
                 &base.entity_id,
-                &identity.work_id,
-                &identity.tracker_key,
+                &work_id,
+                &tracker_key,
                 patch,
                 base.lamport,
                 base.event_clock.as_ref(),
@@ -2446,7 +2498,12 @@ async fn persist_tracking_record(
                     ),
                 )));
             }
-            if tracking::parse_tracking_entity_id(entity_type, &base.entity_id).is_none() {
+            let valid_id = if entity_type == novel_plugin_settings::NOVEL_PLUGIN_SETTING {
+                novel_plugin_settings::parse_entity_id(&base.entity_id).is_some()
+            } else {
+                tracking::parse_tracking_entity_id(entity_type, &base.entity_id).is_some()
+            };
+            if !valid_id {
                 return Ok(ComicSyncRouteOutcome::Result(rejected_result(
                     mutation,
                     error_detail(
@@ -2635,7 +2692,8 @@ fn validate_mutation_base(
         | MutationEntityType::NovelPlugin
         | MutationEntityType::NovelCategory
         | MutationEntityType::NovelCategoryAssignment
-        | MutationEntityType::NovelTracking => {
+        | MutationEntityType::NovelTracking
+        | MutationEntityType::NovelPluginSetting => {
             if !scope_id.starts_with("novels:profile:") {
                 return Some(error_detail(
                     "INVALID_SCOPE_FOR_ENTITY",
@@ -2654,7 +2712,8 @@ fn validate_mutation_base(
         | MutationEntityType::ComicChapterState
         | MutationEntityType::ComicHistory
         | MutationEntityType::ComicPageBookmark
-        | MutationEntityType::ComicTracking => {
+        | MutationEntityType::ComicTracking
+        | MutationEntityType::ComicSourcePreference => {
             if !scope_id.starts_with("comics:profile:") {
                 return Some(error_detail(
                     "INVALID_SCOPE_FOR_ENTITY",
@@ -8852,6 +8911,110 @@ mod tests {
         let snapshot = json_body(snapshot).await;
         assert!(snapshot["entities"].as_array().unwrap().is_empty());
         assert_eq!(snapshot["tombstones"][0]["entityType"], "comic.tracking");
+    }
+
+    fn plugin_setting_batch(request_id: &str, scope_id: &str, patch: Value) -> Value {
+        json!({
+            "requestId": request_id,
+            "mutations": [{
+                "entityType": "novel.plugin_setting",
+                "clientMutationId": format!("{request_id}-1"),
+                "scopeId": scope_id,
+                "entityId": patch["settingId"].clone(),
+                "lamport": 1,
+                "eventClock": {
+                    "physicalMs": 1_790_000_000_000_i64,
+                    "logical": 0,
+                    "deviceGenerationId": "mobile-a"
+                },
+                "patch": patch
+            }]
+        })
+    }
+
+    // WTR-LAB 1.2.3 declares `preferredMode` (Select) and `sessionCookie` (Text).
+    #[tokio::test]
+    async fn novel_plugin_settings_are_validated_and_snapshotted_without_secrets() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state);
+        let setting = |key: &str, value_type: &str, value: Value| {
+            json!({
+                "settingId": format!("novel.plugin_setting::wtrlab::{key}"),
+                "pluginId": "wtrlab",
+                "key": key,
+                "valueType": value_type,
+                "value": value,
+                "updatedAtMs": 1_790_000_000_000_i64
+            })
+        };
+        let send = |request_id: &str, scope: &str, patch: Value| {
+            let app = app.clone();
+            let request = plugin_setting_batch(request_id, scope, patch);
+            async move {
+                let response = app
+                    .oneshot(request_with_json("/v1/mutations", "main-token", request))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                json_body(response).await
+            }
+        };
+
+        let applied = send(
+            "mode",
+            "novels:profile:main",
+            setting("preferredMode", "string", json!("web")),
+        )
+        .await;
+        assert_eq!(applied["results"][0]["status"], "applied", "{applied}");
+
+        for (name, scope, patch, code) in [
+            (
+                "cookie",
+                "novels:profile:main",
+                setting("sessionCookie", "string", json!("abc")),
+                "NOVEL_PLUGIN_SETTING_NOT_SYNCABLE",
+            ),
+            (
+                "type",
+                "novels:profile:main",
+                setting("fallbackToWeb", "boolean", json!("true")),
+                "INVALID_NOVEL_PLUGIN_SETTING_VALUE",
+            ),
+            (
+                "scope",
+                "comics:profile:main",
+                setting("preferredMode", "string", json!("web")),
+                "INVALID_SCOPE_FOR_ENTITY",
+            ),
+        ] {
+            let payload = send(name, scope, patch).await;
+            assert_eq!(payload["results"][0]["status"], "rejected", "{name}: {payload}");
+            assert_eq!(payload["results"][0]["error"]["code"], code, "{name}: {payload}");
+        }
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=novels:profile:main",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let snapshot = json_body(snapshot).await;
+        let settings: Vec<&Value> = snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entity| entity["entityType"] == "novel.plugin_setting")
+            .collect();
+        assert_eq!(settings.len(), 1, "{snapshot}");
+        assert_eq!(
+            settings[0]["entityId"],
+            "novel.plugin_setting::wtrlab::preferredMode"
+        );
+        assert_eq!(settings[0]["record"]["value"], "web");
     }
 
     #[tokio::test]

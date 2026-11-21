@@ -19,11 +19,14 @@ pub mod pairing_pin;
 pub mod replay;
 pub mod routes;
 pub mod runtime_manifest;
+pub mod novel_plugin_settings;
+pub mod source_preferences;
 pub mod suwayomi_category_mirror;
 pub mod suwayomi_hydration;
 pub mod suwayomi_process;
 pub mod suwayomi_progress_mirror;
 pub mod suwayomi_projection;
+pub mod suwayomi_source_preference_mirror;
 pub mod suwayomi_tracker_prefs;
 pub mod suwayomi_tracking_mirror;
 #[cfg(test)]

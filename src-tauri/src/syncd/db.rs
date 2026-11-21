@@ -1108,6 +1108,14 @@ async fn load_scope_snapshot_parts(
             bounds,
         )
         .await?;
+        push_tracking_snapshot_entities_in_tx(
+            &mut tx,
+            &mut entities,
+            scope_id,
+            "novel.plugin_setting",
+            bounds,
+        )
+        .await?;
     } else if scope_id.starts_with("comics:profile:") {
         let rows = sqlx::query_as::<_, ComicSyncStateRow>(
             r#"
@@ -7978,6 +7986,18 @@ fn comic_state_projections(
                 }
                 category_projections
             }
+        }
+        // A removed preference keeps whatever Suwayomi holds: the extension's own default is
+        // not known here, and clearing a mirror would be worse than keeping it.
+        crate::syncd::source_preferences::COMIC_SOURCE_PREFERENCE if !deleting => {
+            crate::syncd::source_preferences::projection_variables(record)
+                .map(|variables| {
+                    vec![(
+                        crate::syncd::source_preferences::UPDATE_SOURCE_PREFERENCE_OPERATION,
+                        variables,
+                    )]
+                })
+                .unwrap_or_default()
         }
         _ => Vec::new(),
     }

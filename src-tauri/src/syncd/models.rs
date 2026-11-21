@@ -347,7 +347,7 @@ pub struct CapabilitiesResponse {
 pub const MIN_SUPPORTED_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
-pub const SNAPSHOT_ENTITY_TYPES: [&str; 27] = [
+pub const SNAPSHOT_ENTITY_TYPES: [&str; 29] = [
     "book.entry",
     "book.category",
     "book.category_assignment",
@@ -375,6 +375,8 @@ pub const SNAPSHOT_ENTITY_TYPES: [&str; 27] = [
     "comic.page_bookmark",
     "comic.tracking",
     "novel.tracking",
+    "comic.source_preference",
+    "novel.plugin_setting",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1023,6 +1025,10 @@ pub enum MutationEntityType {
     ComicTracking,
     #[serde(rename = "novel.tracking")]
     NovelTracking,
+    #[serde(rename = "comic.source_preference")]
+    ComicSourcePreference,
+    #[serde(rename = "novel.plugin_setting")]
+    NovelPluginSetting,
 }
 
 impl MutationEntityType {
@@ -1055,6 +1061,8 @@ impl MutationEntityType {
             Self::ComicPageBookmark => "comic.page_bookmark",
             Self::ComicTracking => "comic.tracking",
             Self::NovelTracking => "novel.tracking",
+            Self::ComicSourcePreference => "comic.source_preference",
+            Self::NovelPluginSetting => "novel.plugin_setting",
         }
     }
 }
@@ -1263,6 +1271,23 @@ pub enum MutationInput {
         base: MutationBase,
         patch: Option<serde_json::Value>,
     },
+    /// One extension source preference (for example a preferred mirror).  The
+    /// patch is kept as raw JSON so unknown fields survive; validation lives in
+    /// `source_preferences`.
+    #[serde(rename = "comic.source_preference")]
+    ComicSourcePreference {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<serde_json::Value>,
+    },
+    /// One LNReader novel plugin setting (`pluginSettings`).  Raw JSON so
+    /// unknown fields survive; validation lives in `novel_plugin_settings`.
+    #[serde(rename = "novel.plugin_setting")]
+    NovelPluginSetting {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<serde_json::Value>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1309,6 +1334,8 @@ impl MutationInput {
             Self::ComicPageBookmark { .. } => MutationEntityType::ComicPageBookmark,
             Self::ComicTracking { .. } => MutationEntityType::ComicTracking,
             Self::NovelTracking { .. } => MutationEntityType::NovelTracking,
+            Self::ComicSourcePreference { .. } => MutationEntityType::ComicSourcePreference,
+            Self::NovelPluginSetting { .. } => MutationEntityType::NovelPluginSetting,
         }
     }
 
@@ -1340,7 +1367,9 @@ impl MutationInput {
             | Self::ComicHistory { base, .. }
             | Self::ComicPageBookmark { base, .. }
             | Self::ComicTracking { base, .. }
-            | Self::NovelTracking { base, .. } => base,
+            | Self::NovelTracking { base, .. }
+            | Self::ComicSourcePreference { base, .. }
+            | Self::NovelPluginSetting { base, .. } => base,
         }
     }
 }

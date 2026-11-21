@@ -28,6 +28,16 @@ pub fn read_entries(profile_root: &Path) -> Result<Vec<(String, String)>, String
     }
 }
 
+/// The ordered entries of any `java.util.Properties` XML file Suwayomi keeps for a profile, such
+/// as an extension's `settings/source_<id>.xml`; a missing file is empty.
+pub fn read_properties_file(path: &Path) -> Result<Vec<(String, String)>, String> {
+    match std::fs::read(path) {
+        Ok(raw) => parse(&String::from_utf8(raw).map_err(|_| "preferences file is not UTF-8")?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(format!("preferences file is unreadable: {error}")),
+    }
+}
+
 fn username_key(tracker_id: i64) -> String {
     format!("pref_mangasync_username_{tracker_id}")
 }
