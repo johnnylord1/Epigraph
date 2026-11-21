@@ -133,4 +133,41 @@ class CoreSyncNotifierTest {
         assertEquals(MR.strings.epigraph_core_sync_notification_fetching, text(CoreSyncPhase.EXCHANGE, 0))
         assertEquals(MR.strings.epigraph_core_sync_notification_reading_progress, text(CoreSyncPhase.READING_PROGRESS, 0))
     }
+    @Test
+    fun `the estimate waits for a steady pace and starts over when the run changes`() {
+        val eta = CoreSyncEta(windowMs = 60_000, minSpanMs = 15_000)
+        assertNull(eta.sample(0, CoreSyncPhase.EXCHANGE, 10_000))
+        // Too early to guess.
+        assertNull(eta.sample(5_000, CoreSyncPhase.EXCHANGE, 9_000))
+        // 2,000 changes in 20 s leave 8,000 for 80 s.
+        assertEquals(80L, eta.sample(20_000, CoreSyncPhase.EXCHANGE, 8_000))
+        // New changes queued mid-run start the estimate over.
+        assertNull(eta.sample(21_500, CoreSyncPhase.EXCHANGE, 8_500))
+        // So does a new phase.
+        assertNull(eta.sample(40_000, CoreSyncPhase.READING_PROGRESS, 500))
+        // Nothing left: nothing to estimate.
+        assertNull(eta.sample(60_000, CoreSyncPhase.READING_PROGRESS, 0))
+    }
+
+    @Test
+    fun `a stalled run shows no estimate and the window follows the recent pace`() {
+        val eta = CoreSyncEta(windowMs = 60_000, minSpanMs = 15_000)
+        eta.sample(0, CoreSyncPhase.EXCHANGE, 1_000)
+        assertNull(eta.sample(30_000, CoreSyncPhase.EXCHANGE, 1_000))
+        // Fast at first, then slow: only the last minute counts.
+        val fast = CoreSyncEta(windowMs = 60_000, minSpanMs = 15_000)
+        fast.sample(0, CoreSyncPhase.EXCHANGE, 10_000)
+        fast.sample(30_000, CoreSyncPhase.EXCHANGE, 4_000)
+        fast.sample(90_000, CoreSyncPhase.EXCHANGE, 3_400)
+        // The window now starts at 30 s: 1,200 sent in 90 s, so 2,800 left take 210 s.
+        assertEquals(210L, fast.sample(120_000, CoreSyncPhase.EXCHANGE, 2_800))
+    }
+
+    @Test
+    fun `the estimate reads in minutes and hours`() {
+        assertEquals(MR.strings.epigraph_core_sync_notification_eta_soon to 0L, coreSyncEtaText(59))
+        assertEquals(MR.strings.epigraph_core_sync_notification_eta_minutes to 2L, coreSyncEtaText(61))
+        assertEquals(MR.strings.epigraph_core_sync_notification_eta_minutes to 90L, coreSyncEtaText(89 * 60 + 30))
+        assertEquals(MR.strings.epigraph_core_sync_notification_eta_hours to 2L, coreSyncEtaText(5_500))
+    }
 }

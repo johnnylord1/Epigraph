@@ -93,6 +93,8 @@ data class CoreSyncRunProgress(
     val percent: Int,
     val remaining: Long,
     val userVisible: Boolean,
+    /** Seconds the changes left should take at the pace of the last minute; null until known. */
+    val etaSeconds: Long? = null,
 )
 
 /**
@@ -109,6 +111,42 @@ fun coreSyncRunPercent(phase: CoreSyncPhase, outbox: CoreSyncProgress, floor: In
 }
 
 private const val MAX_RUNNING_PERCENT = 99
+
+/**
+ * How long the changes left should take, from how fast they went over the last [windowMs]. Null
+ * until the run has gone on for [minSpanMs] with changes leaving: a guess from a few seconds
+ * swings too much to show. A new phase, or new changes queued mid-run, starts the estimate over.
+ */
+class CoreSyncEta(
+    private val windowMs: Long = 60_000,
+    private val minSpanMs: Long = 15_000,
+) {
+    private val samples = ArrayDeque<Pair<Long, Long>>()
+    private var phase: CoreSyncPhase? = null
+
+    fun sample(nowMs: Long, phase: CoreSyncPhase, remaining: Long): Long? {
+        val last = samples.lastOrNull()
+        if (phase != this.phase || remaining <= 0 || (last != null && remaining > last.second)) {
+            samples.clear()
+            this.phase = phase
+        }
+        if (remaining <= 0) return null
+        samples.addLast(nowMs to remaining)
+        while (samples.size > 2 && nowMs - samples[1].first >= windowMs) samples.removeFirst()
+        val (firstMs, firstLeft) = samples.first()
+        val spanMs = nowMs - firstMs
+        val sent = firstLeft - remaining
+        if (spanMs < minSpanMs || sent <= 0) return null
+        return (remaining * spanMs / sent + 999) / 1_000
+    }
+}
+
+/** The ETA line for [seconds]: under a minute, minutes rounded up, or hours past 90 minutes. */
+fun coreSyncEtaText(seconds: Long): Pair<StringResource, Long> = when {
+    seconds < 60 -> MR.strings.epigraph_core_sync_notification_eta_soon to 0
+    seconds < 90 * 60 -> MR.strings.epigraph_core_sync_notification_eta_minutes to (seconds + 59) / 60
+    else -> MR.strings.epigraph_core_sync_notification_eta_hours to (seconds + 1_799) / 3_600
+}
 private const val PROGRESS_KEY_PHASE = "progress_phase"
 private const val PROGRESS_KEY_PERCENT = "progress_percent"
 private const val PROGRESS_KEY_REMAINING = "progress_remaining"
@@ -206,6 +244,7 @@ class CoreSyncNotifier(context: Context) {
             var promoted = false
             var published: CoreSyncRunProgress? = null
             var unchangedTicks = 0
+            val eta = CoreSyncEta()
             while (isActive) {
                 val current = phase()
                 if (current != lastPhase) {
@@ -223,7 +262,8 @@ class CoreSyncNotifier(context: Context) {
                 val outbox = coreSyncProgress(peak, left)
                 peak = outbox.max.toLong()
                 percent = coreSyncRunPercent(current, outbox, percent)
-                val progress = CoreSyncRunProgress(current, percent, outbox.remaining, userVisible())
+                val etaSeconds = eta.sample(System.nanoTime() / 1_000_000, current, outbox.remaining)
+                val progress = CoreSyncRunProgress(current, percent, outbox.remaining, userVisible(), etaSeconds)
                 val changed = progress != published
                 // Unchanged progress is not stored again.
                 if (changed) {
@@ -356,7 +396,12 @@ class CoreSyncNotifier(context: Context) {
         context.notificationBuilder(Notifications.CHANNEL_CORE_SYNC) {
             setSmallIcon(R.drawable.ic_epigraph)
             setContentTitle(context.getString(MR.strings.epigraph_core_sync_notification_progress))
-            setContentText(context.getString(coreSyncPhaseText(progress), progress.remaining))
+            val phaseText = context.getString(coreSyncPhaseText(progress), progress.remaining)
+            val etaText = progress.etaSeconds?.let { seconds ->
+                val (text, count) = coreSyncEtaText(seconds)
+                context.getString(text, count)
+            }
+            setContentText(if (etaText == null) phaseText else "$phaseText · $etaText")
             setProgress(100, progress.percent, false)
             setContentIntent(openSettings())
             setOngoing(true)

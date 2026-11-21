@@ -762,6 +762,36 @@ internal enum class CoreRemoteProjectionState { READY, IN_PROGRESS, BLOCKED }
  */
 internal fun uploadsStillToSend(unsettled: Long, blocked: Long): Long = (unsettled - blocked).coerceIn(0, unsettled)
 
+/**
+ * What the desktop's projection state means for this run, or null to finish it normally. Rows only
+ * the desktop can settle (blocked projections) stop the run only once this device has nothing left
+ * to send: stopping earlier left the rest of a first sync's backlog waiting for the periodic check,
+ * while the phone reported a desktop problem the desktop itself did not show.
+ */
+internal fun remoteProjectionOutcome(
+    state: CoreRemoteProjectionState,
+    unsettledAfter: Long,
+    uploadsLeft: Long,
+    desktopPendingCount: Long?,
+): CoreOutboxSyncOutcome? = when (state) {
+    CoreRemoteProjectionState.READY -> null
+    // The local mutation receipt may already be settled, but the authoritative Suwayomi
+    // projection is not. Keep the worker in a retryable state so UI layers cannot display a
+    // fully synchronized badge prematurely.
+    CoreRemoteProjectionState.IN_PROGRESS -> CoreOutboxSyncOutcome.Retry(
+        unsettledAfter,
+        CoreOutboxRetryReason.OUTBOX_PENDING,
+        desktopPendingCount = desktopPendingCount,
+    )
+    // Nothing is queued or in flight on the desktop, only rows Suwayomi refused. Retrying from
+    // the phone cannot unblock them; surface it instead of looping, once this device is done.
+    CoreRemoteProjectionState.BLOCKED -> if (uploadsLeft == 0L) {
+        CoreOutboxSyncOutcome.NeedsUserAction(unsettledAfter, CoreUserActionReason.REMOTE_PROJECTION_BLOCKED)
+    } else {
+        null
+    }
+}
+
 internal fun CoreSyncStatus.remoteProjectionState(): CoreRemoteProjectionState = when {
     ready -> CoreRemoteProjectionState.READY
     suwayomiProjectionPending > 0 || suwayomiProjectionInFlight > 0 -> CoreRemoteProjectionState.IN_PROGRESS
@@ -1040,16 +1070,15 @@ class CoreOutboxSyncRunner(
                 } else {
                     SuwayomiMutationDrainReport(0, 0, 0, 0, 0)
                 }
-                if (BuildConfig.DEBUG) {
-                    val ended = System.nanoTime()
-                    runCatching {
-                        Log.d(
-                            "EpigraphCoreSync",
-                            "drain batch: core=${core.acknowledged}/${core.claimed} " +
-                                "in ${(coreEnded - coreStarted) / 1_000_000}ms, assets ${(coreStarted - started) / 1_000_000}ms, suw ${(ended - coreEnded) / 1_000_000}ms, " +
-                                "total ${(ended - started) / 1_000_000}ms",
-                        )
-                    }
+                val ended = System.nanoTime()
+                // Counts and timings only, in release builds too: the log a real phone and an
+                // installed desktop leave is the one that explains a slow or stuck sync.
+                coreSyncLogger.i {
+                    "drain batch: core=${core.acknowledged}/${core.claimed} blocked=${core.blocked} " +
+                        "retry=${core.retryScheduled} in ${(coreEnded - coreStarted) / 1_000_000}ms, " +
+                        "suw=${suwayomi.succeeded}+${suwayomi.blocked}b+${suwayomi.retryScheduled}r " +
+                        "in ${(ended - coreEnded) / 1_000_000}ms, assets ${(coreStarted - started) / 1_000_000}ms, " +
+                        "total ${(ended - started) / 1_000_000}ms"
                 }
                 CoreDrainBatch(assets = assets, suwayomi = suwayomi, core = core)
             }
@@ -1202,23 +1231,7 @@ class CoreOutboxSyncRunner(
                 }
                 CoreRemoteProjectionState.READY
             }
-            when (remoteProjection) {
-                CoreRemoteProjectionState.READY -> Unit
-                // The local mutation receipt may already be settled, but the authoritative
-                // Suwayomi projection is not. Keep the worker in a retryable state so UI layers
-                // cannot display a fully synchronized badge prematurely.
-                CoreRemoteProjectionState.IN_PROGRESS -> return CoreOutboxSyncOutcome.Retry(
-                    unsettledAfter,
-                    CoreOutboxRetryReason.OUTBOX_PENDING,
-                    desktopPendingCount = desktopPendingCount,
-                )
-                // Nothing is queued or in flight on the desktop, only rows Suwayomi refused.
-                // Retrying from the phone cannot unblock them; surface it instead of looping.
-                CoreRemoteProjectionState.BLOCKED -> return CoreOutboxSyncOutcome.NeedsUserAction(
-                    unsettledAfter,
-                    CoreUserActionReason.REMOTE_PROJECTION_BLOCKED,
-                )
-            }
+            remoteProjectionOutcome(remoteProjection, unsettledAfter, uploadsLeft, desktopPendingCount)?.let { return it }
             if (drain.transientFailure && drain.pendingCount > 0) {
                 // Comic rows failing alone means the desktop's Suwayomi side is degraded (e.g.
                 // 503 SUWAYOMI_CATALOG_UNAVAILABLE), not that Core is unreachable.

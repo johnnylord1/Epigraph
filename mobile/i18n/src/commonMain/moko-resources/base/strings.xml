@@ -2348,6 +2348,9 @@
     <string name="epigraph_core_sync_notification_channel">Desktop sync</string>
     <string name="epigraph_core_sync_notification_progress">Syncing with Epigraph desktop</string>
     <string name="epigraph_core_sync_notification_remaining">Changes left: %1$d</string>
+    <string name="epigraph_core_sync_notification_eta_soon">Less than a minute left</string>
+    <string name="epigraph_core_sync_notification_eta_minutes">About %1$d min left</string>
+    <string name="epigraph_core_sync_notification_eta_hours">About %1$d h left</string>
     <string name="epigraph_core_sync_notification_fetching">Fetching updates from the desktop</string>
     <string name="epigraph_core_sync_notification_stopped">Sync stopped</string>
     <string name="epigraph_core_sync_notification_pair_again">Pair this device with the desktop again to keep syncing.</string>

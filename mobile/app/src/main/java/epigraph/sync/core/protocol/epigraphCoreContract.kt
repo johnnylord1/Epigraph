@@ -165,6 +165,12 @@ data class CoreSyncStatus(
     /** Queued projections other than chapter progress; absent from desktops that predate it. */
     val suwayomiCatalogProjectionPending: Long? = null,
     /**
+     * Projections for works the desktop could not find (extension missing there, source moved).
+     * The desktop lists them for its user and leaves them out of [suwayomiProjectionBlocked] and
+     * [ready]; absent from desktops that predate it, which count them as blocked.
+     */
+    val suwayomiProjectionNotFound: Long? = null,
+    /**
      * Revision of the comic library, categories and the extensions they need, as the catalog
      * stage reads them. Absent from older desktops and while work is unprojected.
      */
