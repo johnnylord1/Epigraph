@@ -47,7 +47,9 @@ object EpigraphCoreBootstrapPlanner {
         -> CoreBootstrapPhase.REPOSITORIES
 
         EpigraphCoreEntityType.COMIC_EXTENSION,
+        EpigraphCoreEntityType.COMIC_SOURCE_PREFERENCE,
         EpigraphCoreEntityType.NOVEL_PLUGIN,
+        EpigraphCoreEntityType.NOVEL_PLUGIN_SETTING,
         -> CoreBootstrapPhase.EXTENSIONS_AND_PLUGINS
 
         EpigraphCoreEntityType.BOOK_CATEGORY,

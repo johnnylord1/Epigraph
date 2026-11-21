@@ -17,6 +17,7 @@ import epigraph.contract.PortableWorkRef
 import epigraph.contract.ProviderOwnedKey
 import epigraph.contract.ReaderLocator
 import epigraph.contract.RepositoryDescriptor
+import epigraph.contract.SourcePreferenceValue
 import epigraph.contract.SyncCommand
 import epigraph.contract.SyncCommandEnvelope
 import epigraph.contract.SyncEntityType
@@ -1029,6 +1030,73 @@ class CoreV1OutboxAdapterTest {
             ),
         )
         assertEquals(CoreOutboxBlockReason.INVALID_SCOPE, malformedBook.reason)
+    }
+
+    @Test
+    fun `projects a source preference as a full state record`() {
+        val command = SyncCommand.SetSourcePreference.of("-42", "preferred_mirror", SourcePreferenceValue.Text("1"))
+        val record = record(EpigraphCoreEntityType.COMIC_SOURCE_PREFERENCE, COMIC_SCOPE, command)
+
+        val blocked = assertInstanceOf(
+            CoreOutboxAdaptation.Blocked::class.java,
+            adapter.adapt(record, DEVICE_ID, capabilities(setOf(EpigraphCoreEntityType.COMIC_ENTRY)), 1),
+        )
+        assertEquals(CoreOutboxBlockReason.ENTITY_CAPABILITY_NOT_ADVERTISED, blocked.reason)
+
+        val ready = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(record, DEVICE_ID, capabilities(setOf(EpigraphCoreEntityType.COMIC_SOURCE_PREFERENCE)), 2),
+        )
+        val patch = ready.mutation.patch!!
+        assertEquals("comic.source_preference::-42::preferred_mirror", ready.mutation.entityId)
+        assertEquals(CoreMutationOperation.MERGE, ready.mutation.op)
+        assertEquals(
+            setOf("preferenceId", "sourceId", "key", "valueType", "value", "updatedAtMs"),
+            patch.keys,
+        )
+        assertEquals("comic.source_preference::-42::preferred_mirror", patch["preferenceId"]?.jsonPrimitive?.content)
+        assertEquals("-42", patch["sourceId"]?.jsonPrimitive?.content)
+        assertEquals("preferred_mirror", patch["key"]?.jsonPrimitive?.content)
+        assertEquals("string", patch["valueType"]?.jsonPrimitive?.content)
+        assertEquals("1", patch["value"]?.jsonPrimitive?.content)
+        assertEquals("1234", patch["updatedAtMs"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `projects a novel plugin setting as a full state record in the novels scope`() {
+        // WTR-LAB declares preferredMode as a Select with the "ai" option.
+        val command = SyncCommand.SetNovelPluginSetting.of("wtrlab", "preferredMode", SourcePreferenceValue.Text("ai"))
+        val record = record(EpigraphCoreEntityType.NOVEL_PLUGIN_SETTING, NOVEL_SCOPE, command)
+
+        val blocked = assertInstanceOf(
+            CoreOutboxAdaptation.Blocked::class.java,
+            adapter.adapt(record, DEVICE_ID, capabilities(setOf(EpigraphCoreEntityType.NOVEL_ENTRY)), 1),
+        )
+        assertEquals(CoreOutboxBlockReason.ENTITY_CAPABILITY_NOT_ADVERTISED, blocked.reason)
+
+        val ready = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(record, DEVICE_ID, capabilities(setOf(EpigraphCoreEntityType.NOVEL_PLUGIN_SETTING)), 2),
+        )
+        val patch = ready.mutation.patch!!
+        assertEquals("novel.plugin_setting::wtrlab::preferredMode", ready.mutation.entityId)
+        assertEquals(CoreMutationOperation.MERGE, ready.mutation.op)
+        assertEquals(setOf("settingId", "pluginId", "key", "valueType", "value", "updatedAtMs"), patch.keys)
+        assertEquals("novel.plugin_setting::wtrlab::preferredMode", patch["settingId"]?.jsonPrimitive?.content)
+        assertEquals("wtrlab", patch["pluginId"]?.jsonPrimitive?.content)
+        assertEquals("preferredMode", patch["key"]?.jsonPrimitive?.content)
+        assertEquals("string", patch["valueType"]?.jsonPrimitive?.content)
+        assertEquals("ai", patch["value"]?.jsonPrimitive?.content)
+        assertEquals("1234", patch["updatedAtMs"]?.jsonPrimitive?.content)
+
+        // Recorded under the wrong entity type, the command is never sent.
+        val misfiled = adapter.adapt(
+            record(EpigraphCoreEntityType.NOVEL_PLUGIN, NOVEL_SCOPE, command),
+            DEVICE_ID,
+            capabilities(setOf(EpigraphCoreEntityType.NOVEL_PLUGIN, EpigraphCoreEntityType.NOVEL_PLUGIN_SETTING)),
+            3,
+        )
+        assertTrue(misfiled !is CoreOutboxAdaptation.Ready)
     }
 
     @Test

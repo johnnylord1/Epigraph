@@ -22,6 +22,8 @@ import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import androidx.recyclerview.widget.ConcatAdapter
 import co.touchlab.kermit.Logger
+import epigraph.sync.core.events.CoreBackgroundSyncReason
+import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import androidx.preference.R as preferenceR
 import com.google.android.material.snackbar.Snackbar
 import eu.kanade.tachiyomi.R
@@ -69,6 +71,9 @@ class ExtensionDetailsController(bundle: Bundle? = null) :
 
     private var preferenceScreen: PreferenceScreen? = null
 
+    /** The source settings when the screen opened, to send changes to the paired desktop on close. */
+    private var openedSourcePreferences: Map<Long, Map<String, *>>? = null
+
     private val preferences: PreferencesHelper = get()
     private val network: NetworkHelper by injectLazy()
 
@@ -98,6 +103,7 @@ class ExtensionDetailsController(bundle: Bundle? = null) :
 
         val extension = presenter.extension ?: return
         val context = view.context
+        openedSourcePreferences = sourcePreferenceSnapshot()
 
         val themedContext by lazy { getPreferenceThemeContext() }
         val manager = PreferenceManager(themedContext)
@@ -136,8 +142,20 @@ class ExtensionDetailsController(bundle: Bundle? = null) :
 
     override fun onDestroyView(view: View) {
         preferenceScreen = null
+        val opened = openedSourcePreferences
+        openedSourcePreferences = null
+        if (opened != null && opened != sourcePreferenceSnapshot()) {
+            // A changed setting (such as a preferred mirror) is compared and sent on the next sync.
+            runCatching { get<CoreBackgroundSyncScheduler>().enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING) }
+                .onFailure { Logger.w { "Could not schedule a sync for changed source settings" } }
+        }
         super.onDestroyView(view)
     }
+
+    private fun sourcePreferenceSnapshot(): Map<Long, Map<String, *>> =
+        presenter.extension?.sources.orEmpty()
+            .filterIsInstance<ConfigurableSource>()
+            .associate { source -> source.id to runCatching { HashMap(source.sourcePreferences().all) }.getOrElse { emptyMap() } }
 
     fun onExtensionUninstalled() {
         router.popCurrentController()

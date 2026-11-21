@@ -51,6 +51,19 @@ class CoreTrackingCapabilityCacheTest {
     }
 
     @Test
+    fun `source and plugin settings are remembered like tracking`() = runTest {
+        val file = File(directory, "caps-settings.json")
+        CoreTrackingCapabilityCache(file).onNegotiated(
+            capabilities(trackerCredentials = false, "comic.source_preference", "novel.plugin_setting", "book.entry"),
+        )
+
+        val restarted = CoreTrackingCapabilityCache(file)
+        assertTrue(restarted.advertises(SyncEntityType(EpigraphCoreEntityType.COMIC_SOURCE_PREFERENCE)))
+        assertTrue(restarted.advertises(SyncEntityType(EpigraphCoreEntityType.NOVEL_PLUGIN_SETTING)))
+        assertFalse(restarted.advertises(SyncEntityType(EpigraphCoreEntityType.BOOK_ENTRY)))
+    }
+
+    @Test
     fun `unreadable cache advertises nothing`() = runTest {
         val file = File(directory, "tracker-capabilities-v1.json").apply { writeText("{not json") }
 

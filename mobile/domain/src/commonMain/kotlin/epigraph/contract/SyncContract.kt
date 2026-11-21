@@ -71,6 +71,8 @@ fun SyncCommand.operationWireName(): String = when (this) {
     is SyncCommand.UpsertBookBookmark -> "upsert_book_bookmark"
     is SyncCommand.UpsertBookHighlight -> "upsert_book_highlight"
     is SyncCommand.SetBookCategoryAssignments -> "set_book_category_assignments"
+    is SyncCommand.SetSourcePreference -> "set_source_preference"
+    is SyncCommand.SetNovelPluginSetting -> "set_novel_plugin_setting"
 }
 
 @Serializable
@@ -343,6 +345,87 @@ sealed interface SyncCommand {
             require(fields.map(TrackingFieldPatch::field).distinct().size == fields.size) {
                 "tracking patch must not contain duplicate fields"
             }
+        }
+    }
+
+    /**
+     * One comic extension setting (for example a preferred mirror) chosen on this device. Only
+     * simple values whose key names no credential, session or cache are synced; see
+     * [SourcePreferenceRules]. [value] holds a JSON boolean, string or array of strings, as
+     * [valueType] says.
+     */
+    @Serializable
+    @SerialName("set_source_preference")
+    data class SetSourcePreference(
+        override val entityId: EpigraphEntityId,
+        val sourceId: String,
+        val key: String,
+        val valueType: String,
+        val value: kotlinx.serialization.json.JsonElement,
+    ) : SyncCommand {
+        init {
+            require(entityId.value == SourcePreferenceRules.entityIdFor(sourceId, key)) {
+                "source preference entity ID must match its source and key"
+            }
+            val typed = requireNotNull(SourcePreferenceValue.fromTyped(valueType, value)) {
+                "source preference value must match its type"
+            }
+            require(SourcePreferenceRules.isSyncable(sourceId, key, typed)) {
+                "source preference is not syncable"
+            }
+        }
+
+        val typedValue: SourcePreferenceValue
+            get() = checkNotNull(SourcePreferenceValue.fromTyped(valueType, value))
+
+        companion object {
+            fun of(sourceId: String, key: String, value: SourcePreferenceValue) = SetSourcePreference(
+                entityId = EpigraphEntityId(SourcePreferenceRules.entityIdFor(sourceId, key)),
+                sourceId = sourceId,
+                key = key,
+                valueType = value.valueType,
+                value = value.toJson(),
+            )
+        }
+    }
+
+    /**
+     * One LNReader novel plugin setting (`pluginSettings`, for example a preferred translation)
+     * chosen on this device. The same value rules as [SetSourcePreference] apply; see
+     * [NovelPluginSettingRules].
+     */
+    @Serializable
+    @SerialName("set_novel_plugin_setting")
+    data class SetNovelPluginSetting(
+        override val entityId: EpigraphEntityId,
+        val pluginId: String,
+        val key: String,
+        val valueType: String,
+        val value: kotlinx.serialization.json.JsonElement,
+    ) : SyncCommand {
+        init {
+            require(entityId.value == NovelPluginSettingRules.entityIdFor(pluginId, key)) {
+                "novel plugin setting entity ID must match its plugin and key"
+            }
+            val typed = requireNotNull(SourcePreferenceValue.fromTyped(valueType, value)) {
+                "novel plugin setting value must match its type"
+            }
+            require(NovelPluginSettingRules.isSyncable(pluginId, key, typed)) {
+                "novel plugin setting is not syncable"
+            }
+        }
+
+        val typedValue: SourcePreferenceValue
+            get() = checkNotNull(SourcePreferenceValue.fromTyped(valueType, value))
+
+        companion object {
+            fun of(pluginId: String, key: String, value: SourcePreferenceValue) = SetNovelPluginSetting(
+                entityId = EpigraphEntityId(NovelPluginSettingRules.entityIdFor(pluginId, key)),
+                pluginId = pluginId,
+                key = key,
+                valueType = value.valueType,
+                value = value.toJson(),
+            )
         }
     }
 

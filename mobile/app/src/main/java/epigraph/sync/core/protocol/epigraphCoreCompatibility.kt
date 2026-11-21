@@ -32,6 +32,10 @@ object EpigraphCoreEntityType {
     const val COMIC_CHAPTER_STATE = "comic.chapter_state"
     const val COMIC_TRACKING = "comic.tracking"
     const val NOVEL_TRACKING = "novel.tracking"
+    /** One comic extension setting (for example a preferred mirror), keyed by source and key. */
+    const val COMIC_SOURCE_PREFERENCE = "comic.source_preference"
+    /** One LNReader novel plugin setting (for example a preferred translation), keyed by plugin and key. */
+    const val NOVEL_PLUGIN_SETTING = "novel.plugin_setting"
 }
 
 sealed interface CoreCompatibility {

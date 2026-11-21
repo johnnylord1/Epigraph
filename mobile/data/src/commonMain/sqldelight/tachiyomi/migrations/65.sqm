@@ -1,0 +1,13 @@
+-- Comic extension settings (for example a preferred mirror) now sync with the paired desktop as
+-- comic.source_preference records. This table remembers, per setting, the value both sides last
+-- agreed on and the Core version it came from, so a local edit is told apart from a desktop edit
+-- and a value written here from the desktop is never sent back.
+-- New table only: no data changes, and an older build simply ignores it.
+CREATE TABLE IF NOT EXISTS epigraph_source_preference_agreement(
+    scope_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    core_server_version INTEGER NOT NULL DEFAULT 0 CHECK(core_server_version >= 0),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(scope_id, entity_id)
+);

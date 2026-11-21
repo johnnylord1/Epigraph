@@ -94,7 +94,13 @@ class CoreTrackingCapabilityCache(
     )
 
     companion object {
-        private val TRACKING_TYPES = setOf("comic.tracking", "novel.tracking")
+        // Also holds the extension-settings type: those writes are queued offline too.
+        private val TRACKING_TYPES = setOf(
+            "comic.tracking",
+            "novel.tracking",
+            "comic.source_preference",
+            "novel.plugin_setting",
+        )
         private const val MAX_FILE_BYTES = 16 * 1024L
         private val json = Json { ignoreUnknownKeys = true }
 

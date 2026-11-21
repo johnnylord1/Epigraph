@@ -75,6 +75,8 @@ class SqlDelightCoreReplicaStore(
             // Local library rows stay untouched; the library repairs publish what the Core lacks.
             aethon_syncQueries.deleteAllCoreReplicaRecords()
             aethon_syncQueries.deleteAllCoreReplicaTombstones()
+            // Agreed extension settings name versions of the previous server's records.
+            epigraph_source_preferenceQueries.deleteAllSourcePreferenceAgreements()
         }
     }
 

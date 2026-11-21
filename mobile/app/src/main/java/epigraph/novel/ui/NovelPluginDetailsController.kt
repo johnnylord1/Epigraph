@@ -1,6 +1,8 @@
 package epigraph.novel.ui
 
 import android.os.Bundle
+import android.view.View
+import co.touchlab.kermit.Logger
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,6 +52,8 @@ import coil3.compose.AsyncImage
 import dev.icerock.moko.resources.compose.stringResource
 import epigraph.novel.plugin.NovelPluginManager
 import epigraph.novel.plugin.model.NovelPlugin
+import epigraph.sync.core.events.CoreBackgroundSyncReason
+import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import eu.kanade.tachiyomi.ui.base.controller.BaseComposeController
 import eu.kanade.tachiyomi.util.compose.LocalBackPress
 import eu.kanade.tachiyomi.util.compose.currentOrThrow
@@ -87,9 +91,25 @@ class NovelPluginDetailsController(bundle: Bundle? = null) : BaseComposeControll
         },
     )
 
+    /** Whether a plugin setting changed here, to send it to the paired desktop on close. */
+    private var settingsChanged = false
+
     @Composable
     override fun ScreenContent() {
-        NovelPluginDetailsScreen(pluginId = args.getString(PLUGIN_ID_KEY).orEmpty())
+        NovelPluginDetailsScreen(
+            pluginId = args.getString(PLUGIN_ID_KEY).orEmpty(),
+            onSettingWritten = { settingsChanged = true },
+        )
+    }
+
+    override fun onDestroyView(view: View) {
+        if (settingsChanged) {
+            settingsChanged = false
+            // A changed setting (such as a preferred translation) is compared and sent on the next sync.
+            runCatching { get<CoreBackgroundSyncScheduler>().enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING) }
+                .onFailure { Logger.w { "Could not schedule a sync for changed novel plugin settings" } }
+        }
+        super.onDestroyView(view)
     }
 
     private companion object {
@@ -131,7 +151,7 @@ private fun parsePluginSettings(raw: JsonObject?): List<PluginSetting> =
     }
 
 @Composable
-private fun NovelPluginDetailsScreen(pluginId: String) {
+private fun NovelPluginDetailsScreen(pluginId: String, onSettingWritten: () -> Unit) {
     val context = LocalContext.current
     val onBackPress = LocalBackPress.currentOrThrow
     val manager = remember { get<NovelPluginManager>() }
@@ -158,7 +178,10 @@ private fun NovelPluginDetailsScreen(pluginId: String) {
 
     val onSettingChange: (String, JsonElement) -> Unit = { key, value ->
         values[key] = value
-        scope.launch { withIOContext { manager.writePluginSetting(pluginId, key, value) } }
+        scope.launch {
+            withIOContext { manager.writePluginSetting(pluginId, key, value) }
+            onSettingWritten()
+        }
     }
 
     SettingsScaffold(

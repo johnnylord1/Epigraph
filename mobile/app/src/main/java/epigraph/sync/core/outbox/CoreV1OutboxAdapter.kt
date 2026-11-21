@@ -2,10 +2,13 @@ package epigraph.sync.core.outbox
 
 import epigraph.contract.EpigraphSyncProtocol
 import epigraph.contract.CategoryScope
+import epigraph.contract.NovelPluginSettingRules
 import epigraph.contract.PortableChapterRef
 import epigraph.contract.PortableIdentityV3
 import epigraph.contract.PortableWorkRef
 import epigraph.contract.ReaderLocator
+import epigraph.contract.SourcePreferenceRules
+import epigraph.contract.SourcePreferenceValue
 import epigraph.contract.SyncCommand
 import epigraph.contract.SyncCommandEnvelope
 import epigraph.contract.TrackingField
@@ -242,7 +245,54 @@ class CoreV1OutboxAdapter(
         is SyncCommand.PatchTracking -> projectTracking(record, command)
         is SyncCommand.UpsertRepository -> projectNovelRepository(record, command)
         is SyncCommand.UpsertNovelPlugin -> projectNovelPlugin(record, command)
+        is SyncCommand.SetSourcePreference -> projectSourcePreference(record, command)
+        is SyncCommand.SetNovelPluginSetting -> projectNovelPluginSetting(record, command)
         else -> null
+    }
+
+    /**
+     * One comic extension setting as the full-state record the desktop validates. The rules are
+     * checked again here, so a row written by an older build can never send a credential or cache.
+     */
+    private fun projectSourcePreference(
+        record: CoreOutboxRecord,
+        command: SyncCommand.SetSourcePreference,
+    ): Projection? {
+        if (record.entityType != EpigraphCoreEntityType.COMIC_SOURCE_PREFERENCE) return null
+        if (record.entityId != SourcePreferenceRules.entityIdFor(command.sourceId, command.key)) return null
+        val value = SourcePreferenceValue.fromTyped(command.valueType, command.value) ?: return null
+        if (!SourcePreferenceRules.isSyncable(command.sourceId, command.key, value)) return null
+        val patch = buildJsonObject {
+            put("preferenceId", record.entityId)
+            put("sourceId", command.sourceId)
+            put("key", command.key)
+            put("valueType", value.valueType)
+            put("value", value.toJson())
+            put("updatedAtMs", record.createdAtEpochMillis)
+        }
+        if (patch.toString().encodeToByteArray().size > SourcePreferenceRules.MAX_RECORD_BYTES) return null
+        return Projection(record.entityId, CoreMutationOperation.MERGE, patch)
+    }
+
+    /** One novel plugin setting as the full-state record the desktop validates, checked again here. */
+    private fun projectNovelPluginSetting(
+        record: CoreOutboxRecord,
+        command: SyncCommand.SetNovelPluginSetting,
+    ): Projection? {
+        if (record.entityType != EpigraphCoreEntityType.NOVEL_PLUGIN_SETTING) return null
+        if (record.entityId != NovelPluginSettingRules.entityIdFor(command.pluginId, command.key)) return null
+        val value = SourcePreferenceValue.fromTyped(command.valueType, command.value) ?: return null
+        if (!NovelPluginSettingRules.isSyncable(command.pluginId, command.key, value)) return null
+        val patch = buildJsonObject {
+            put("settingId", record.entityId)
+            put("pluginId", command.pluginId)
+            put("key", command.key)
+            put("valueType", value.valueType)
+            put("value", value.toJson())
+            put("updatedAtMs", record.createdAtEpochMillis)
+        }
+        if (patch.toString().encodeToByteArray().size > SourcePreferenceRules.MAX_RECORD_BYTES) return null
+        return Projection(record.entityId, CoreMutationOperation.MERGE, patch)
     }
 
     /**
@@ -975,6 +1025,8 @@ class CoreV1OutboxAdapter(
             EpigraphCoreEntityType.COMIC_PAGE_BOOKMARK,
             EpigraphCoreEntityType.COMIC_TRACKING,
             EpigraphCoreEntityType.NOVEL_TRACKING,
+            EpigraphCoreEntityType.COMIC_SOURCE_PREFERENCE,
+            EpigraphCoreEntityType.NOVEL_PLUGIN_SETTING,
         )
 
         val REQUIRED_TRACKING_FIELDS = setOf(
@@ -994,6 +1046,9 @@ class CoreV1OutboxAdapter(
             EpigraphCoreEntityType.BOOK_LIBRARY_UI,
             EpigraphCoreEntityType.BOOK_PROGRESS,
             EpigraphCoreEntityType.NOVEL_PROGRESS,
+            // Android only ever replaces a setting; it never deletes one.
+            EpigraphCoreEntityType.COMIC_SOURCE_PREFERENCE,
+            EpigraphCoreEntityType.NOVEL_PLUGIN_SETTING,
         )
     }
 }

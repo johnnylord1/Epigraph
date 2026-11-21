@@ -14,6 +14,10 @@ import epigraph.sync.EpigraphLibraryMutationRouter
 import epigraph.sync.EpigraphBookMutationRouter
 import epigraph.sync.EpigraphCategoryMutationRouter
 import epigraph.sync.EpigraphTrackingMutationRouter
+import epigraph.sync.EpigraphSourcePreferenceSync
+import epigraph.sync.SourcePreferenceKind
+import epigraph.sync.core.sourceprefs.AndroidNovelPluginSettingStore
+import epigraph.sync.core.sourceprefs.AndroidSourcePreferenceStore
 import epigraph.sync.TrackingSyncGate
 import epigraph.sync.ClientMutationIdFactory
 import epigraph.sync.EpigraphMutationCoordinator
@@ -405,6 +409,27 @@ fun epigraphSyncModule(app: Application) = module {
         )
     }
     single {
+        EpigraphSourcePreferenceSync(
+            coordinator = get(),
+            deviceId = DeviceId(get<CoreDeviceIdentityProvider>().currentDeviceId()),
+            mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
+            scopeProvider = get(),
+            gate = get(),
+            store = AndroidSourcePreferenceStore(app, get<eu.kanade.tachiyomi.extension.ExtensionManager>()),
+        )
+    }
+    single(named(NOVEL_PLUGIN_SETTING_SYNC)) {
+        EpigraphSourcePreferenceSync(
+            coordinator = get(),
+            deviceId = DeviceId(get<CoreDeviceIdentityProvider>().currentDeviceId()),
+            mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
+            scopeProvider = get(),
+            gate = get(),
+            store = AndroidNovelPluginSettingStore(get<epigraph.novel.plugin.NovelPluginManager>()),
+            kind = SourcePreferenceKind.NovelPlugin,
+        )
+    }
+    single {
         EpigraphBookMutationRouter(
             coordinator = get(),
             deviceId = DeviceId(get<CoreDeviceIdentityProvider>().currentDeviceId()),
@@ -605,6 +630,12 @@ fun epigraphSyncModule(app: Application) = module {
             ),
             replicaAppliedHooks = listOf(
                 CoreReplicaAppliedHook { now -> get<EpigraphTrackingMutationRouter>().reconcileWithReplica(now) },
+                // Comic extension settings, such as a preferred mirror, follow the paired desktop.
+                CoreReplicaAppliedHook { now -> get<EpigraphSourcePreferenceSync>().reconcile(now) },
+                // Novel plugin settings, such as a preferred translation, too.
+                CoreReplicaAppliedHook { now ->
+                    get<EpigraphSourcePreferenceSync>(named(NOVEL_PLUGIN_SETTING_SYNC)).reconcile(now)
+                },
             ),
             policyHooks = listOf(get<LocalNovelDependencyPublisher>()),
             clock = System::currentTimeMillis,
@@ -625,3 +656,4 @@ private const val PORTABLE_COMICS_PROVIDER = "epigraphPortableComicsProvider"
 private const val PORTABLE_NOVELS_PROVIDER = "epigraphPortableNovelsProvider"
 private const val EXTENSION_INVENTORY_REPLICA = "epigraphExtensionInventoryReplica"
 private const val NOVEL_PLUGIN_REPLICA = "epigraphNovelPluginReplica"
+private const val NOVEL_PLUGIN_SETTING_SYNC = "epigraphNovelPluginSettingSync"
