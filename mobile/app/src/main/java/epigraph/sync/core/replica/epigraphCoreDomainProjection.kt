@@ -16,7 +16,9 @@ import app.cash.sqldelight.db.SqlDriver
 import epigraph.sync.portable.PortableChapterBindingRecord
 import epigraph.sync.portable.PortableWorkBindingRecord
 import epigraph.sync.portable.SqlDelightPortableBindingStore
+import epigraph.sync.EpigraphCategoryMutationRouter
 import epigraph.sync.TrackerSyncKeys
+import epigraph.sync.suwayomiProfileIdForEntity
 import epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID
 import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
@@ -47,9 +49,8 @@ import yokai.data.Database
  * Projects the Core's confirmed records into the existing local library tables.
  *
  * Core records remain the source of truth. This class only applies records that have already been
- * authenticated and durably written by [SqlDelightCoreReplicaStore], and therefore never emits a
- * local outbox command. Unknown/future entity types are intentionally ignored so a newer Core can
- * still be paired with an older APK without corrupting its local library.
+ * authenticated by Core. When a category joins a populated local folder, the existing assignments
+ * are queued in the same transaction. Unknown entity types are ignored for compatibility.
  */
 class EpigraphCoreDomainProjection(
     private val json: Json = Json {
@@ -59,6 +60,11 @@ class EpigraphCoreDomainProjection(
     private val privateBookStorageDirectory: File? = null,
     /** Records a synced novel's plugin as a novel source, so it shows by name before it is installed. */
     private val rememberNovelSource: (sourceId: Long, name: String?) -> Unit = { _, _ -> },
+    /**
+     * When a remote comic category joins a local Comics folder that already holds comics, queues
+     * those comics' category assignments inside the same transaction.
+     */
+    private val onComicCategoryJoined: ((database: Database, localCategoryId: Long, categoryEntityId: String) -> Unit)? = null,
 ) : CoreReplicaProjection {
     override suspend fun replaceScope(
         database: Database,
@@ -1902,7 +1908,7 @@ class EpigraphCoreDomainProjection(
         }
     }
 
-    private fun projectCategory(database: Database, entityId: String, record: JsonObject, scope: String) {
+    private suspend fun projectCategory(database: Database, entityId: String, record: JsonObject, scope: String) {
         val name = record.string("name")?.takeIf { it.isNotBlank() } ?: return
         val position = record.long("order")?.coerceAtLeast(0) ?: 0
         val previous = database.aethon_syncQueries
@@ -2634,9 +2640,14 @@ class EpigraphCoreDomainProjection(
         }?.let { other ->
             database.aethon_syncQueries.selectCategoryIdentityByEntityIdAndScope(entityId, other).executeAsOneOrNull()
         }
+        val joined = if (existing == null && sibling == null) {
+            joinableFolder(database, entityId, name, scope)
+        } else {
+            null
+        }
         val localId = existing?.local_category_id
             ?: sibling?.local_category_id
-            ?: joinableFolder(database, entityId, name, scope)
+            ?: joined?.localCategoryId
             ?: run {
                 database.categoriesQueries.insert(
                     name = name,
@@ -2662,28 +2673,41 @@ class EpigraphCoreDomainProjection(
             sortOrder = position,
             updatedAt = updatedAt,
         )
+        if (joined?.publishComicAssignments == true) {
+            onComicCategoryJoined?.invoke(database, localId, entityId)
+        }
         return localId
     }
+
+    private data class JoinedFolder(
+        val localCategoryId: Long,
+        val publishComicAssignments: Boolean = false,
+    )
 
     /**
      * Comics and Books & novels keep separate folder lists on both devices, so a comic category only
      * joins a Comics folder and a novel or book category only a Books & novels folder of the same
      * name (novels and books share that list). Nothing is merged where it could lose an assignment:
-     * - a folder that already holds comics or books of [scope] without being bound in [scope] keeps
-     *   them local (comics are bound by [epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook],
-     *   books on their next edit);
+     * - a comic folder that already holds comics (either unbound or still bound to a previous Core)
+     *   is joined only when [onComicCategoryJoined] can publish its assignments in the same
+     *   transaction; otherwise it stays untouched so [epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook]
+     *   can bind it and publish them;
+     * - a Books folder that already holds books without being bound in BOOK keeps them local until
+     *   their next edit;
      * - a folder bound in [scope] is only taken over when that binding is left over from an earlier
      *   pairing: a novel or book category neither in the confirmed replica nor queued, or a comic
-     *   category of another server on a folder without comics (with comics, the folder is bound
-     *   by name through the create hook, which also publishes its assignments).
+     *   category of another server in the same profile.
      */
-    private fun joinableFolder(database: Database, entityId: String, name: String, scope: String): Long? {
+    private fun joinableFolder(database: Database, entityId: String, name: String, scope: String): JoinedFolder? {
         val entityType = when (scope) {
             "MANGA" -> "comic.category"
             "NOVEL" -> "novel.category"
             "BOOK" -> "book.category"
             else -> return null
         }
+        val canPublishComicAssignments = scope == "MANGA" &&
+            onComicCategoryJoined != null &&
+            EpigraphCategoryMutationRouter.canBindComicCategoryEntity(entityId)
         val wanted = name.trim()
         val folders = if (scope == "MANGA") {
             database.categoriesQueries.findAllComics().executeAsList()
@@ -2697,25 +2721,32 @@ class EpigraphCoreDomainProjection(
                 .selectCategoryIdentityByLocalIdAndScope(folder._id, scope)
                 .executeAsOneOrNull()
             if (bound == null) {
-                val holdsUnpublished = when (scope) {
-                    "MANGA" -> database.aethon_syncQueries.folderHoldsComics(folder._id).executeAsOne()
-                    "BOOK" -> database.aethon_syncQueries.folderHoldsBooks(folder._id).executeAsOne()
-                    else -> false
+                if (scope == "MANGA" && database.aethon_syncQueries.folderHoldsComics(folder._id).executeAsOne()) {
+                    if (canPublishComicAssignments) {
+                        return JoinedFolder(folder._id, publishComicAssignments = true)
+                    }
+                    continue
                 }
-                if (holdsUnpublished) continue
-                return folder._id
+                if (scope == "BOOK" && database.aethon_syncQueries.folderHoldsBooks(folder._id).executeAsOne()) {
+                    continue
+                }
+                return JoinedFolder(folder._id)
             }
-            val stale = if (scope == "MANGA") {
+            if (scope == "MANGA") {
                 val boundServer = suwayomiServerOf(bound.entity_id)
-                boundServer != null &&
-                    boundServer != suwayomiServerOf(entityId) &&
-                    !database.aethon_syncQueries.folderHoldsComics(folder._id).executeAsOne()
-            } else {
-                !database.aethon_syncQueries.isCategoryEntityLive(entityType, bound.entity_id).executeAsOne()
+                val differentServer = boundServer != null && boundServer != suwayomiServerOf(entityId)
+                val profile = suwayomiProfileIdForEntity(entityId)
+                val sameProfile = profile != null && profile == suwayomiProfileIdForEntity(bound.entity_id)
+                if (!differentServer || !sameProfile) continue
+                val holdsComics = database.aethon_syncQueries.folderHoldsComics(folder._id).executeAsOne()
+                if (holdsComics && !canPublishComicAssignments) continue
+                database.aethon_syncQueries.deleteCategoryIdentityInScope(bound.entity_id, scope)
+                return JoinedFolder(folder._id, publishComicAssignments = holdsComics)
             }
+            val stale = !database.aethon_syncQueries.isCategoryEntityLive(entityType, bound.entity_id).executeAsOne()
             if (stale) {
                 database.aethon_syncQueries.deleteCategoryIdentityInScope(bound.entity_id, scope)
-                return folder._id
+                return JoinedFolder(folder._id)
             }
         }
         return null

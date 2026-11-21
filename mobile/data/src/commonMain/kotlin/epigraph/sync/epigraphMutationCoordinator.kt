@@ -81,32 +81,7 @@ class EpigraphMutationCoordinator(
                 "a local mutation batch must not contain duplicate idempotency keys"
             }
 
-            // A large batch (the progress backfill) asks once which of its entities have unsent rows,
-            // instead of once per command; most have none to fold into.
-            val mayFold = foldCandidates(mutation.envelopes)
-            mutation.envelopes.forEach { envelope ->
-                val createdAt = mutation.envelopeCreatedAt[envelope.clientMutationId]
-                    ?.also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
-                    ?: coreTime(createdAtEpochMillis)
-                val entityKey = envelope.deviceId.value to envelope.command.entityId.value
-                val (queued, queuedAt) = if (mayFold == null || entityKey in mayFold) {
-                    foldIntoUnsent(envelope, createdAt)
-                } else {
-                    envelope to createdAt
-                }
-                mayFold?.add(entityKey)
-                aethon_syncQueries.enqueueMutation(
-                    clientMutationId = queued.clientMutationId.value,
-                    deviceId = queued.deviceId.value,
-                    scopeId = queued.scopeId.value,
-                    entityType = queued.entityType.value,
-                    entityId = queued.command.entityId.value,
-                    operation = queued.command.operationWireName(),
-                    payloadJson = json.encodeToString(queued),
-                    createdAt = queuedAt,
-                    nextAttemptAt = createdAtEpochMillis,
-                )
-            }
+            enqueueEnvelopesInTransaction(mutation.envelopes, mutation.envelopeCreatedAt, createdAtEpochMillis)
             mutation.suwayomiMutations.forEach { intent ->
                 aethon_suwayomi_mutation_queueQueries.enqueue(
                     operationId = intent.operationId,
@@ -125,9 +100,68 @@ class EpigraphMutationCoordinator(
         // The domain write and outbox insert are already durable. A scheduler failure must not
         // turn a successful local mutation into an error or cause the caller to retry it twice.
         if (transactionResult.second) {
-            runCatching { onLocalMutationEnqueued?.invoke() }
+            notifyLocalMutationEnqueued()
         }
         return transactionResult.first
+    }
+
+    /**
+     * Enqueues [envelopes] inside the caller's already-open [database] write transaction so domain
+     * writes and outbox inserts commit or roll back together. Wakes sync after the outer commit.
+     */
+    fun enqueueInTransaction(
+        database: Database,
+        envelopes: List<SyncCommandEnvelope>,
+        createdAtEpochMillis: Long,
+    ) {
+        require(createdAtEpochMillis >= 0) { "mutation timestamp must be epoch milliseconds" }
+        if (envelopes.isEmpty()) return
+        val idempotencyKeys = envelopes.map { it.deviceId.value to it.clientMutationId.value }
+        require(idempotencyKeys.distinct().size == idempotencyKeys.size) {
+            "a local mutation batch must not contain duplicate idempotency keys"
+        }
+        database.transaction {
+            database.enqueueEnvelopesInTransaction(envelopes, emptyMap(), createdAtEpochMillis)
+            afterCommit(::notifyLocalMutationEnqueued)
+        }
+    }
+
+    /** Wakes the sync scheduler after a transaction that called [enqueueInTransaction] committed. */
+    private fun notifyLocalMutationEnqueued() {
+        runCatching { onLocalMutationEnqueued?.invoke() }
+    }
+
+    private fun Database.enqueueEnvelopesInTransaction(
+        envelopes: List<SyncCommandEnvelope>,
+        envelopeCreatedAt: Map<ClientMutationId, Long>,
+        createdAtEpochMillis: Long,
+    ) {
+        // A large batch (the progress backfill) asks once which of its entities have unsent rows,
+        // instead of once per command; most have none to fold into.
+        val mayFold = foldCandidates(envelopes)
+        envelopes.forEach { envelope ->
+            val createdAt = envelopeCreatedAt[envelope.clientMutationId]
+                ?.also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
+                ?: coreTime(createdAtEpochMillis)
+            val entityKey = envelope.deviceId.value to envelope.command.entityId.value
+            val (queued, queuedAt) = if (mayFold == null || entityKey in mayFold) {
+                foldIntoUnsent(envelope, createdAt)
+            } else {
+                envelope to createdAt
+            }
+            mayFold?.add(entityKey)
+            aethon_syncQueries.enqueueMutation(
+                clientMutationId = queued.clientMutationId.value,
+                deviceId = queued.deviceId.value,
+                scopeId = queued.scopeId.value,
+                entityType = queued.entityType.value,
+                entityId = queued.command.entityId.value,
+                operation = queued.command.operationWireName(),
+                payloadJson = json.encodeToString(queued),
+                createdAt = queuedAt,
+                nextAttemptAt = createdAtEpochMillis,
+            )
+        }
     }
 
     /**

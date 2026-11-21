@@ -132,6 +132,7 @@ import epigraph.sync.core.replica.SqlDelightCoreLamportSource
 import epigraph.sync.core.replica.CoreReplicaApplier
 import epigraph.sync.core.replica.CoreReplicaCheckpointReader
 import epigraph.sync.core.replica.CoreReplicaCheckpointResetter
+import epigraph.sync.core.work.CoreQueueHandOver
 import epigraph.sync.core.replica.CoreReplicaRecordReader
 import epigraph.sync.core.replica.CoreReplicaTombstoneReader
 import epigraph.sync.core.replica.CoreReplicaStore
@@ -223,6 +224,20 @@ fun epigraphSyncModule(app: Application) = module {
     single { SyncPolicyResolver(get()) }
     single<EpigraphSyncScopeProvider> {
         CoreCredentialScopeProvider(get(), SharedPreferencesLastPairedProfileStore(app))
+    }
+    single {
+        CoreQueueHandOver(
+            database = get(),
+            owner = object : CoreQueueHandOver.Owner {
+                private val preferences = app.getSharedPreferences(CORE_QUEUE_OWNER_PREFERENCES, Context.MODE_PRIVATE)
+                override fun get(): String? = preferences.getString(CORE_QUEUE_OWNER_KEY, null)
+                override fun set(serverId: String) {
+                    check(preferences.edit().putString(CORE_QUEUE_OWNER_KEY, serverId).commit()) {
+                        "Could not persist the Core queue owner"
+                    }
+                }
+            },
+        )
     }
     single { EpigraphCorePairingActivation(get(), get(), get(), get()) }
     single { AndroidPairingDeviceProvider(app) }
@@ -463,11 +478,19 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreSyncWakeStore> { SqlDelightCoreSyncWakeStore(get()) }
     single {
         val sources = lazy { get<SourceManager>() }
+        val categories = lazy { get<EpigraphCategoryMutationRouter>() }
         EpigraphCoreDomainProjection(
             privateBookStorageDirectory = File(app.filesDir, "books"),
             rememberNovelSource = { id, name ->
                 sources.value.rememberNovelSources(listOf(id))
                 if (name != null) sources.value.rememberSourceNames(mapOf(id to name))
+            },
+            onComicCategoryJoined = { database, localCategoryId, categoryEntityId ->
+                categories.value.enqueueJoinedComicCategoryAssignmentsInTransaction(
+                    database,
+                    localCategoryId,
+                    categoryEntityId,
+                )
             },
         )
     }
@@ -639,12 +662,15 @@ fun epigraphSyncModule(app: Application) = module {
             ),
             policyHooks = listOf(get<LocalNovelDependencyPublisher>()),
             clock = System::currentTimeMillis,
+            queueHandOver = get(),
         )
     }
 }
 
 private const val CORE_COVER_QUEUE_PREFERENCES = "aethon_core_cover_queue_v1"
 private const val CORE_SERVER_CLOCK_PREFERENCES = "epigraph_core_server_clock_v1"
+private const val CORE_QUEUE_OWNER_PREFERENCES = "epigraph_core_queue_owner_v1"
+private const val CORE_QUEUE_OWNER_KEY = "server_id"
 private const val CORE_SERVER_CLOCK_OFFSET_KEY = "offset_ms"
 private const val CORE_COVER_QUEUE_CURSOR = "next_missing_cover"
 

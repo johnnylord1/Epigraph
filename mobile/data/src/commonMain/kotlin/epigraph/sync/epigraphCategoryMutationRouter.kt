@@ -197,32 +197,7 @@ class EpigraphCategoryMutationRouter(
                 return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
             }
             val scopeId = suwayomiComicScopeForCategory(categoryEntityId, scopes.comics)
-            val portableStore = SqlDelightPortableBindingStore(this)
-            val envelopes = aethon_syncQueries.selectMangaIdsByCategory(localCategoryId).executeAsList().mapNotNull { mangaId ->
-                val identity = aethon_syncQueries
-                    .selectIdentityByLocalReference("MANGA", mangaId.toString())
-                    .executeAsOneOrNull()
-                    ?: return@mapNotNull null
-                val portableWork = portableStore
-                    .workByLocalReference(mangaId.toString())
-                    ?.takeIf { it.resolution.state.name == "BOUND" }
-                    ?.ref
-                if (portableWork !is PortableWorkRef.Comic &&
-                    !isLegacySuwayomiAssignment(identity.entity_id, categoryEntityId)
-                ) {
-                    return@mapNotNull null
-                }
-                val workEntity = portableWork?.let(PortableIdentityV3::workId)?.let(::EpigraphEntityId)
-                    ?: EpigraphEntityId(identity.entity_id)
-                SyncCommandEnvelope(
-                    protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
-                    deviceId = deviceId,
-                    clientMutationId = mutationIds.next(),
-                    scopeId = scopeId,
-                    entityType = COMIC_CATEGORY_ASSIGNMENT,
-                    command = SyncCommand.SetCategoryAssignment(workEntity, EpigraphEntityId(categoryEntityId), true, portableWork),
-                )
-            }
+            val envelopes = comicCategoryAssignmentEnvelopes(localCategoryId, categoryEntityId, scopeId)
             aethon_syncQueries.upsertCategoryScope(categoryId = localCategoryId, contentScope = "MANGA")
             aethon_syncQueries.upsertCategoryIdentity(
                 entityId = categoryEntityId,
@@ -233,6 +208,57 @@ class EpigraphCategoryMutationRouter(
                 updatedAt = now,
             )
             LocalMutationResult(CategoryMutationResult(envelopes.size), envelopes)
+        }
+    }
+
+    /**
+     * Publishes the comic assignments a local folder already holds when a remote comic category
+     * joins that folder inside the replica's write transaction, so binding the folder and queueing
+     * its assignments commit or roll back together.
+     */
+    fun enqueueJoinedComicCategoryAssignmentsInTransaction(
+        database: Database,
+        localCategoryId: Long,
+        categoryEntityId: String,
+        nowEpochMillis: Long = timestamp(),
+    ) {
+        if (!canBindComicCategoryEntity(categoryEntityId)) return
+        val profileId = suwayomiProfileIdForEntity(categoryEntityId) ?: return
+        val scopeId = SyncScopeId("comics:profile:$profileId")
+        val envelopes = database.comicCategoryAssignmentEnvelopes(localCategoryId, categoryEntityId, scopeId)
+        coordinator.enqueueInTransaction(database, envelopes, nowEpochMillis)
+    }
+
+    private fun Database.comicCategoryAssignmentEnvelopes(
+        localCategoryId: Long,
+        categoryEntityId: String,
+        scopeId: SyncScopeId,
+    ): List<SyncCommandEnvelope> {
+        val portableStore = SqlDelightPortableBindingStore(this)
+        return aethon_syncQueries.selectMangaIdsByCategory(localCategoryId).executeAsList().mapNotNull { mangaId ->
+            val identity = aethon_syncQueries
+                .selectIdentityByLocalReference("MANGA", mangaId.toString())
+                .executeAsOneOrNull()
+                ?: return@mapNotNull null
+            val portableWork = portableStore
+                .workByLocalReference(mangaId.toString())
+                ?.takeIf { it.resolution.state.name == "BOUND" }
+                ?.ref
+            if (portableWork !is PortableWorkRef.Comic &&
+                !isLegacySuwayomiAssignment(identity.entity_id, categoryEntityId)
+            ) {
+                return@mapNotNull null
+            }
+            val workEntity = portableWork?.let(PortableIdentityV3::workId)?.let(::EpigraphEntityId)
+                ?: EpigraphEntityId(identity.entity_id)
+            SyncCommandEnvelope(
+                protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
+                deviceId = deviceId,
+                clientMutationId = mutationIds.next(),
+                scopeId = scopeId,
+                entityType = COMIC_CATEGORY_ASSIGNMENT,
+                command = SyncCommand.SetCategoryAssignment(workEntity, EpigraphEntityId(categoryEntityId), true, portableWork),
+            )
         }
     }
 
@@ -376,15 +402,19 @@ class EpigraphCategoryMutationRouter(
         val maxNameUtf8Bytes: Int?,
     )
 
-    private companion object {
-        const val SUWAYOMI_CATEGORY_NAME_MAX_BYTES = 256
-        val BOOKS_SCOPE = SyncScopeId("books:global")
-        val BOOK_CATEGORY = SyncEntityType("book.category")
-        val BOOK_CATEGORY_ASSIGNMENT = SyncEntityType("book.category_assignment")
-        val NOVEL_CATEGORY = SyncEntityType("novel.category")
-        val NOVEL_CATEGORY_ASSIGNMENT = SyncEntityType("novel.category_assignment")
-        val COMIC_CATEGORY = SyncEntityType("comic.category")
-        val COMIC_CATEGORY_ASSIGNMENT = SyncEntityType("comic.category_assignment")
+    companion object {
+        /** True when [entityId] identifies a Suwayomi profile category whose assignments can sync. */
+        fun canBindComicCategoryEntity(entityId: String): Boolean =
+            suwayomiCategoryIdForEntity(entityId) != null && suwayomiProfileIdForEntity(entityId) != null
+
+        private const val SUWAYOMI_CATEGORY_NAME_MAX_BYTES = 256
+        private val BOOKS_SCOPE = SyncScopeId("books:global")
+        private val BOOK_CATEGORY = SyncEntityType("book.category")
+        private val BOOK_CATEGORY_ASSIGNMENT = SyncEntityType("book.category_assignment")
+        private val NOVEL_CATEGORY = SyncEntityType("novel.category")
+        private val NOVEL_CATEGORY_ASSIGNMENT = SyncEntityType("novel.category_assignment")
+        private val COMIC_CATEGORY = SyncEntityType("comic.category")
+        private val COMIC_CATEGORY_ASSIGNMENT = SyncEntityType("comic.category_assignment")
     }
 }
 

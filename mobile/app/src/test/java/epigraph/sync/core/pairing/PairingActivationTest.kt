@@ -97,6 +97,57 @@ class PairingActivationTest {
         assertEquals("another-session", store.saved?.pairingSessionId)
     }
 
+    @Test
+    fun `activation leaves the outbox for the newly paired server's sync worker`() = runTest {
+        val driver = app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver(
+            app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver.IN_MEMORY,
+            java.util.Properties().apply { put("foreign_keys", "true") },
+        ).also { yokai.data.Database.Schema.create(it) }
+        try {
+            val database = yokai.data.Database(
+                driver,
+                tachiyomi.data.Chapters.Adapter(yokai.data.memoColumnAdapter),
+                tachiyomi.data.Mangas.Adapter(yokai.data.memoColumnAdapter),
+            )
+            val handler = yokai.data.AndroidDatabaseHandler(
+                database,
+                driver,
+                kotlinx.coroutines.Dispatchers.IO,
+                kotlinx.coroutines.Dispatchers.IO,
+            )
+            database.aethon_syncQueries.enqueueMutation(
+                clientMutationId = "blocked-from-a",
+                deviceId = DEVICE_ID,
+                scopeId = "comics:profile:$PROFILE_ID",
+                entityType = "comic.entry",
+                entityId = "comic:one",
+                operation = "set_library_membership",
+                payloadJson = "{}",
+                createdAt = 100,
+                nextAttemptAt = Long.MAX_VALUE,
+            )
+            database.aethon_syncQueries.markMutationFailed(
+                nextAttemptAt = Long.MAX_VALUE,
+                lastError = "blocked:old_core",
+                deviceId = DEVICE_ID,
+                clientMutationId = "blocked-from-a",
+            )
+            val activation = EpigraphCorePairingActivation(
+                EpigraphCorePairingEngine(ApprovedTransport(), clock = PairingClock { NOW }),
+                RecordingCredentialStore(),
+                RecordingSelectionStore(),
+                checkpointResetter = epigraph.sync.core.replica.SqlDelightCoreReplicaStore(handler),
+            )
+
+            val result = activation.pairAndPersist(v2BundleJson("server-b"), device())
+
+            assertInstanceOf(PairingActivationResult.Activated::class.java, result)
+            assertEquals(1L, database.aethon_syncQueries.blockedMutationCount().executeAsOne())
+        } finally {
+            driver.close()
+        }
+    }
+
     private class ApprovedTransport : PairingTransport {
         var claimCount = 0
 
@@ -196,6 +247,22 @@ class PairingActivationTest {
             tlsCertSha256 = FINGERPRINT,
         ),
     )
+
+    private fun v2BundleJson(serverId: String): String =
+        Json.encodeToString(
+            SyncdBootstrapBundle(
+                schemaVersion = 2,
+                serverId = serverId,
+                pairingSessionId = SESSION_ID,
+                pairingCode = PAIRING_CODE,
+                syncdBaseUrl = ORIGIN,
+                profileId = PROFILE_ID,
+                expiresAtMs = EXPIRES_AT,
+                tlsCertSha256 = FINGERPRINT,
+                mdnsServiceName = "_epigraph-syncd._tcp.local.",
+                claimUrl = "$ORIGIN/v1/pairing/claim",
+            ),
+        )
 
     private fun device() = PairingDevice(
         id = DEVICE_ID,

@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.Json
 import app.cash.sqldelight.db.SqlDriver
 import tachiyomi.data.Aethon_syncQueries
+import yokai.data.Database
 import yokai.data.DatabaseHandler
 
 /**
@@ -65,18 +66,14 @@ class SqlDelightCoreReplicaStore(
 
     override suspend fun reset() {
         databaseHandler.await(inTransaction = true) {
-            // A replay cursor is scoped by server history. Pairing a different Core must not
-            // reuse a numeric cursor from the previous server; clear inbox deduplication too,
-            // otherwise a coincident global event id could be discarded after re-pairing.
-            aethon_syncQueries.deleteAllCoreReplicaCheckpoints()
-            aethon_syncQueries.deleteAllCoreReplicaInboxEvents()
-            // Confirmed rows describe the previous server. A snapshot diffed against them would read
-            // every local work the new Core has not received yet as a remote removal and demote it.
-            // Local library rows stay untouched; the library repairs publish what the Core lacks.
-            aethon_syncQueries.deleteAllCoreReplicaRecords()
-            aethon_syncQueries.deleteAllCoreReplicaTombstones()
-            // Agreed extension settings name versions of the previous server's records.
-            epigraph_source_preferenceQueries.deleteAllSourcePreferenceAgreements()
+            clearCoreReplicaHistory()
+        }
+    }
+
+    override suspend fun resetAfterHistoryRewind() {
+        databaseHandler.await(inTransaction = true) {
+            clearCoreReplicaHistory()
+            discardCoreReplicaWaits()
         }
     }
 
@@ -276,6 +273,22 @@ class SqlDelightCoreReplicaStore(
             is CoreReplayCoverage.Filtered -> "$FILTERED_COVERAGE_PREFIX${coverage.scopeId}"
         }
     }
+}
+
+/** Clears the replay cursor, deduplication and mirror for the discarded server history. */
+internal fun Database.clearCoreReplicaHistory() {
+    aethon_syncQueries.deleteAllCoreReplicaCheckpoints()
+    aethon_syncQueries.deleteAllCoreReplicaInboxEvents()
+    // A snapshot diffed against the old mirror could demote local works the new Core has never seen.
+    aethon_syncQueries.deleteAllCoreReplicaRecords()
+    aethon_syncQueries.deleteAllCoreReplicaTombstones()
+    epigraph_source_preferenceQueries.deleteAllSourcePreferenceAgreements()
+}
+
+/** Drops waits and their receipts when their acknowledged server versions can no longer arrive. */
+internal fun Database.discardCoreReplicaWaits() {
+    aethon_syncQueries.deleteReceiptsOfReplicaWaits()
+    aethon_syncQueries.deleteAllReplicaWaits()
 }
 
 /** Atomic, process-safe Lamport allocator backed by the same SQLDelight database as the outbox. */

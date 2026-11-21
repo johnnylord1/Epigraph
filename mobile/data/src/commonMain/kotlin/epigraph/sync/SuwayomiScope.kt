@@ -29,7 +29,7 @@ internal fun suwayomiChapterIdForEntity(entityId: String): Long? =
 internal fun suwayomiCategoryIdForEntity(entityId: String): Long? =
     suwayomiNumericIdForEntity(entityId, ":category:")
 
-internal fun suwayomiProfileIdForEntity(entityId: String): String? {
+fun suwayomiProfileIdForEntity(entityId: String): String? {
     val profileAndRemote = when {
         entityId.startsWith(LEGACY_PROFILE_PREFIX) -> entityId.removePrefix(LEGACY_PROFILE_PREFIX)
         entityId.startsWith(SERVER_PREFIX) -> {

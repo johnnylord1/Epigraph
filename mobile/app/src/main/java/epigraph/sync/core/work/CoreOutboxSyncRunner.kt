@@ -441,7 +441,7 @@ class SnapshotCoreReplicaSync(
                         publishedVersion < checkpoint.lastGlobalEventId &&
                         historyResetter != null
                     ) {
-                        historyResetter.reset()
+                        historyResetter.resetAfterHistoryRewind()
                         when (
                             val snapshot = applier.fetchAndApplySnapshot(http, accessToken, scopeId, capabilities, credentials.serverId)
                         ) {
@@ -821,6 +821,8 @@ class CoreOutboxSyncRunner(
      * run's start time would not see them. Null keeps the run's start time.
      */
     private val clock: (() -> Long)? = null,
+    /** Retries what a previous Core refused once this phone syncs with another one. */
+    private val queueHandOver: CoreQueueHandOver? = null,
 ) {
     /** [backfill] runs after the replica pass, when the Core answered this run; see [CoreRunBackfill]. */
     suspend fun run(
@@ -972,6 +974,22 @@ class CoreOutboxSyncRunner(
                     pendingBefore,
                     CoreUserActionReason.CORE_INCOMPATIBLE,
                 )
+            }
+            try {
+                queueHandOver?.handTo(session.serverId)?.let { released ->
+                    if (BuildConfig.DEBUG) {
+                        Log.w(
+                            "EpigraphCoreSync",
+                            "queue handed to server=${session.serverId.take(8)} " +
+                                "requeued=${released.requeued} waits=${released.waits}",
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                reportCoreSyncFailure("queue.handover", failure)
+                return CoreOutboxSyncOutcome.Retry(pendingBefore, CoreOutboxRetryReason.REPLICA)
             }
             negotiatedHooks.forEach { hook ->
                 try {

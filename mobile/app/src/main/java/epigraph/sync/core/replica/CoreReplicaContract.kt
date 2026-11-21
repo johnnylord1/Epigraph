@@ -131,6 +131,9 @@ object CoreHeldVersions {
  */
 fun interface CoreReplicaCheckpointResetter {
     suspend fun reset()
+
+    /** Also discards confirmations tied to server versions that no longer exist. */
+    suspend fun resetAfterHistoryRewind() = reset()
 }
 
 /** Read-only access to records already authenticated and committed by the replica transaction. */
