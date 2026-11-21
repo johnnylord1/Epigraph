@@ -484,11 +484,12 @@ async fn pending_projection_counts_in(
     sqlx::query_as(
         r#"
         SELECT COUNT(*) AS total,
-               COALESCE(SUM(operation_name <> 'UpdateChaptersProgress'), 0) AS catalog
+               COALESCE(SUM(operation_name NOT IN ('UpdateChaptersProgress', ?)), 0) AS catalog
         FROM suwayomi_projection_outbox
         WHERE status IN ('pending', 'in_flight', 'retry')
         "#,
     )
+    .bind(source_preferences::UPDATE_SOURCE_PREFERENCE_OPERATION)
     .fetch_one(pool)
     .await
     .context("failed to count pending Suwayomi projections")
@@ -541,13 +542,19 @@ async fn not_found_works_in(pool: &sqlx::SqlitePool) -> anyhow::Result<Vec<NotFo
 pub struct ProjectionStatusCounts {
     pub pending: i64,
     /// Persisted blocked rows and chapter retries waiting for a missing chapter after the
-    /// confirmation budget. The latter keep their durable retry state and slow backoff.
+    /// confirmation budget. The latter keep their durable retry state and slow backoff. A source
+    /// preference this desktop's extension does not offer (not installed, or an older version) is
+    /// left out: only installing or updating the extension here settles it, the Core keeps the
+    /// value, and counting it made every paired device report a blocked sync.
     pub blocked: i64,
     pub in_flight: i64,
-    /// Rows other than chapter progress still to project, which hold the catalog revisions back.
+    /// Rows other than chapter progress and source preferences still to project, which hold the
+    /// catalog revisions back. A source preference is not part of the library, categories or
+    /// extension inventory the revisions describe.
     pub catalog_pending: i64,
     /// Blocked rows that hold the catalog revisions back. A work this desktop could not find is
-    /// not part of its library, so the revisions describe that library correctly without it.
+    /// not part of its library, so the revisions describe that library correctly without it; nor is
+    /// a source preference.
     pub catalog_blocked: i64,
     /// The part of [Self::blocked] for works this desktop could not find. Only the user can settle
     /// them here (install the extension or migrate the work), so they are not sync work in flight.
@@ -563,27 +570,34 @@ pub async fn projection_status_counts(
         SELECT
             COALESCE(SUM(CASE WHEN status IN ('pending', 'retry') AND NOT waiting THEN 1 ELSE 0 END), 0)
                 AS pending,
-            COALESCE(SUM(CASE WHEN status = 'blocked' OR waiting THEN 1 ELSE 0 END), 0) AS blocked,
+            COALESCE(SUM(CASE WHEN (status = 'blocked' AND NOT preference_not_offered) OR waiting
+                THEN 1 ELSE 0 END), 0) AS blocked,
             COALESCE(SUM(CASE WHEN status = 'in_flight' THEN 1 ELSE 0 END), 0) AS in_flight,
             COALESCE(SUM(CASE WHEN status IN ('pending', 'retry', 'in_flight') AND NOT waiting
-                AND operation_name <> 'UpdateChaptersProgress' THEN 1 ELSE 0 END), 0) AS catalog_pending,
-            COALESCE(SUM(CASE WHEN status = 'blocked' AND last_error IS NOT ? THEN 1 ELSE 0 END), 0)
-                AS catalog_blocked,
+                AND operation_name NOT IN ('UpdateChaptersProgress', ?) THEN 1 ELSE 0 END), 0)
+                AS catalog_pending,
+            COALESCE(SUM(CASE WHEN status = 'blocked' AND last_error IS NOT ? AND operation_name <> ?
+                THEN 1 ELSE 0 END), 0) AS catalog_blocked,
             COALESCE(SUM(CASE WHEN status = 'blocked' AND last_error IS ? THEN 1 ELSE 0 END), 0)
                 AS not_found
         FROM (
             SELECT status, operation_name, last_error,
                 (status = 'retry' AND operation_name = 'UpdateChaptersProgress'
-                    AND last_error IS ? AND attempt_count >= ?) AS waiting
+                    AND last_error IS ? AND attempt_count >= ?) AS waiting,
+                (operation_name = ? AND last_error IS ?) AS preference_not_offered
             FROM suwayomi_projection_outbox
             WHERE profile_id = ?
         )
         "#,
     )
+    .bind(source_preferences::UPDATE_SOURCE_PREFERENCE_OPERATION)
     .bind(PORTABLE_WORK_NOT_FOUND)
+    .bind(source_preferences::UPDATE_SOURCE_PREFERENCE_OPERATION)
     .bind(PORTABLE_WORK_NOT_FOUND)
     .bind(WAITING_CHAPTER_CODE)
     .bind(MAX_CONFIRMATION_ATTEMPTS)
+    .bind(source_preferences::UPDATE_SOURCE_PREFERENCE_OPERATION)
+    .bind(SOURCE_PREFERENCE_NOT_OFFERED)
     .bind(profile_id)
     .fetch_one(pool)
     .await
@@ -4256,6 +4270,55 @@ mod tests {
         assert_eq!(
             pending_projection_counts_in(&pool).await.unwrap(),
             PendingProjectionCounts { total: 5, catalog: 2 }
+        );
+    }
+
+    #[tokio::test]
+    async fn source_preferences_never_hold_catalog_revisions() {
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let preference = source_preferences::UPDATE_SOURCE_PREFERENCE_OPERATION;
+        // A phone chose preferences for an extension this desktop does not have installed.
+        for (id, status, attempts, error) in [
+            ("trying", "retry", 2, Some(COMMAND_FAILED)),
+            ("not_installed", "blocked", 4, Some(SOURCE_PREFERENCE_NOT_OFFERED)),
+            ("rejected", "blocked", 1, Some("command_rejected")),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', ?, '{}', 'comic.source_preference', ?, 1, ?, ?, 0, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(preference)
+            .bind(id)
+            .bind(status)
+            .bind(attempts)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            projection_status_counts(&pool, "main").await.unwrap(),
+            ProjectionStatusCounts {
+                pending: 1,
+                // Only the rejected row: the one not offered waits for the extension instead.
+                blocked: 1,
+                in_flight: 0,
+                catalog_pending: 0,
+                catalog_blocked: 0,
+                not_found: 0,
+            }
+        );
+        assert_eq!(
+            pending_projection_counts_in(&pool).await.unwrap(),
+            PendingProjectionCounts { total: 1, catalog: 0 }
         );
     }
 
