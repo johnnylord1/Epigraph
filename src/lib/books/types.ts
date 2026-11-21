@@ -50,6 +50,11 @@ export interface BookEntry {
   spineCount?: number;
   sectionsSummary?: BookSectionSummaryItem[];
   sectionCount?: number;
+  /** Synced cover the desktop backend owns; carried through so writes do not drop it. */
+  hasCover?: boolean;
+  coverAssetSha256?: string;
+  coverAssetByteSize?: number;
+  coverAssetMimeType?: string;
 }
 
 export interface BookProgress {

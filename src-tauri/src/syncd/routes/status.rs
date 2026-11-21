@@ -128,8 +128,14 @@ pub struct SyncStatusResponse {
     pub min_replayable_server_version: i64,
     pub comic_authority_mode: &'static str,
     pub suwayomi_projection_pending: i64,
+    /// Blocked projections a device can wait on, leaving out works this desktop could not find
+    /// (see [Self::suwayomi_projection_not_found]).
     pub suwayomi_projection_blocked: i64,
     pub suwayomi_projection_in_flight: i64,
+    /// Projections for works this desktop could not find, for example because their extension is
+    /// not installed here or their source moved. The desktop lists them for the user; they do not
+    /// keep a device from finishing its sync, since no retry from that device can settle them.
+    pub suwayomi_projection_not_found: i64,
     /// Pending or in-flight projections that change the library or its categories, leaving out
     /// chapter progress, which a library catalog read cannot undo.
     pub suwayomi_catalog_projection_pending: i64,
@@ -200,11 +206,13 @@ pub async fn get_sync_status(
         in_flight,
         catalog_pending,
         catalog_blocked,
+        not_found,
     } =
         suwayomi_projection::projection_status_counts(&state.pool, profile_id)
             .await
             .map_err(|_| AppError::Internal("Failed to load Suwayomi projection status.".to_string()))?;
 
+    let blocked = waitable_blocked(blocked, not_found);
     let ready = pending == 0 && blocked == 0 && in_flight == 0;
     let revisions =
         announced_revisions(catalog_revision::current(profile_id), catalog_blocked, catalog_pending);
@@ -220,12 +228,20 @@ pub async fn get_sync_status(
         suwayomi_projection_pending: pending,
         suwayomi_projection_blocked: blocked,
         suwayomi_projection_in_flight: in_flight,
+        suwayomi_projection_not_found: not_found,
         suwayomi_catalog_projection_pending: catalog_pending,
         ready,
         comic_library_revision,
         comic_extensions_revision,
         comic_manifest_revision,
     }))
+}
+
+/// Blocked rows a device should wait on. A work this desktop could not find stays blocked until
+/// the user installs its extension or migrates it here, so a device that counted it would report a
+/// blocked sync (and stop sending its own backlog) over something only this desktop can settle.
+fn waitable_blocked(blocked: i64, not_found: i64) -> i64 {
+    (blocked - not_found).max(0)
 }
 
 /// Revisions are announced while no library change waits to be projected or is blocked. Pending
@@ -259,6 +275,15 @@ mod tests {
         assert_eq!(announced_revisions(revisions(), 0, 1), None);
         assert_eq!(announced_revisions(revisions(), 1, 0), None);
         assert_eq!(announced_revisions(None, 0, 0), None);
+    }
+
+    #[test]
+    fn works_this_desktop_could_not_find_do_not_block_devices() {
+        assert_eq!(waitable_blocked(173, 173), 0);
+        assert_eq!(waitable_blocked(5, 2), 3);
+        assert_eq!(waitable_blocked(0, 0), 0);
+        // Counts read in one query never go negative, but the guard keeps the field valid.
+        assert_eq!(waitable_blocked(1, 2), 0);
     }
 
     #[test]

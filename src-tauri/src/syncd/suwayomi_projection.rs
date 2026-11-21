@@ -238,6 +238,9 @@ pub fn spawn_projection_task(
                     tracing::warn!(error = %error, "failed to requeue blocked Suwayomi projections")
                 }
             }
+            if let Err(error) = limit_not_found_requeue(&state.pool).await {
+                tracing::warn!(error = %error, "failed to limit requeued projections of works not found");
+            }
             match block_foreign_server_projections(&state.pool, super::db::now_ms()).await {
                 Ok(0) => {}
                 Ok(count) => {
@@ -485,6 +488,48 @@ async fn pending_projection_counts_in(
     .context("failed to count pending Suwayomi projections")
 }
 
+/// A work a paired device synced that this desktop could not find in Suwayomi, with how many of
+/// its changes wait for it. Only the user can settle these here (install the source's extension or
+/// migrate the work), so the desktop lists them instead of counting them as sync in flight.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotFoundWork {
+    pub source_id: String,
+    /// The work's key on its source, the only name the desktop has for a work it never saw.
+    pub manga_key: String,
+    pub changes: i64,
+}
+
+/// At most this many works are listed; a longer list would not help the user act on them.
+const NOT_FOUND_WORKS_LIMIT: i64 = 50;
+
+pub async fn not_found_works(state: &SharedAppState) -> anyhow::Result<Vec<NotFoundWork>> {
+    not_found_works_in(&state.pool).await
+}
+
+async fn not_found_works_in(pool: &sqlx::SqlitePool) -> anyhow::Result<Vec<NotFoundWork>> {
+    sqlx::query_as(
+        r#"
+        SELECT source_id, manga_key, COUNT(*) AS changes
+        FROM (
+            SELECT CAST(json_extract(variables_json, '$.portableWorkRef.sourceId') AS TEXT) AS source_id,
+                   CAST(json_extract(variables_json, '$.portableWorkRef.mangaKey') AS TEXT) AS manga_key
+            FROM suwayomi_projection_outbox
+            WHERE status = 'blocked' AND last_error = ?
+        )
+        WHERE source_id IS NOT NULL AND manga_key IS NOT NULL
+        GROUP BY source_id, manga_key
+        ORDER BY changes DESC, manga_key
+        LIMIT ?
+        "#,
+    )
+    .bind(PORTABLE_WORK_NOT_FOUND)
+    .bind(NOT_FOUND_WORKS_LIMIT)
+    .fetch_all(pool)
+    .await
+    .context("failed to list works this desktop could not find")
+}
+
 /// A profile's projection counts for `/v1/sync/status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromRow)]
 pub struct ProjectionStatusCounts {
@@ -498,6 +543,9 @@ pub struct ProjectionStatusCounts {
     /// Blocked rows that hold the catalog revisions back. A work this desktop could not find is
     /// not part of its library, so the revisions describe that library correctly without it.
     pub catalog_blocked: i64,
+    /// The part of [Self::blocked] for works this desktop could not find. Only the user can settle
+    /// them here (install the extension or migrate the work), so they are not sync work in flight.
+    pub not_found: i64,
 }
 
 pub async fn projection_status_counts(
@@ -514,7 +562,9 @@ pub async fn projection_status_counts(
             COALESCE(SUM(CASE WHEN status IN ('pending', 'retry', 'in_flight') AND NOT waiting
                 AND operation_name <> 'UpdateChaptersProgress' THEN 1 ELSE 0 END), 0) AS catalog_pending,
             COALESCE(SUM(CASE WHEN status = 'blocked' AND last_error IS NOT ? THEN 1 ELSE 0 END), 0)
-                AS catalog_blocked
+                AS catalog_blocked,
+            COALESCE(SUM(CASE WHEN status = 'blocked' AND last_error IS ? THEN 1 ELSE 0 END), 0)
+                AS not_found
         FROM (
             SELECT status, operation_name, last_error,
                 (status = 'retry' AND operation_name = 'UpdateChaptersProgress'
@@ -524,6 +574,7 @@ pub async fn projection_status_counts(
         )
         "#,
     )
+    .bind(PORTABLE_WORK_NOT_FOUND)
     .bind(PORTABLE_WORK_NOT_FOUND)
     .bind(WAITING_CHAPTER_CODE)
     .bind(MAX_CONFIRMATION_ATTEMPTS)
@@ -1307,6 +1358,28 @@ async fn requeue_recoverable_blocked(pool: &sqlx::SqlitePool, now: i64) -> anyho
     .execute(pool)
     .await
     .context("failed to requeue recoverable blocked Suwayomi projections")?;
+    Ok(result.rows_affected())
+}
+
+/// Leaves a requeued work this desktop could not find one look instead of a full cycle. A restart
+/// rarely makes such a work appear (an extension installed meanwhile does, and one look finds it),
+/// while a full cycle searched its source again for every one of its changes over about 15
+/// minutes, held later rows behind them and showed paired devices sync still in flight. Runs at
+/// daemon start right after [requeue_recoverable_blocked]; idempotent.
+async fn limit_not_found_requeue(pool: &sqlx::SqlitePool) -> anyhow::Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET attempt_count = ?
+        WHERE status = 'retry' AND last_error = ? AND attempt_count < ?
+        "#,
+    )
+    .bind(MAX_CONFIRMATION_ATTEMPTS - 1)
+    .bind(PORTABLE_WORK_NOT_FOUND)
+    .bind(MAX_CONFIRMATION_ATTEMPTS - 1)
+    .execute(pool)
+    .await
+    .context("failed to limit requeued Suwayomi projections of works not found")?;
     Ok(result.rows_affected())
 }
 
@@ -3460,6 +3533,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_work_not_found_gets_one_look_after_a_restart() {
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        for (id, error, version) in [
+            ("missing-1", PORTABLE_WORK_NOT_FOUND, 1),
+            ("missing-2", PORTABLE_WORK_NOT_FOUND, 2),
+            ("mismatch", "confirmation_mismatch", 3),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateManga', '{"id":7}', 'comic.library', ?, ?, 'blocked', 5, 99, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(id)
+            .bind(version)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(requeue_recoverable_blocked(&pool, 500).await.unwrap(), 3);
+        assert_eq!(limit_not_found_requeue(&pool).await.unwrap(), 2);
+        assert_eq!(limit_not_found_requeue(&pool).await.unwrap(), 0, "idempotent");
+
+        // The claim adds the attempt: the next miss reaches the limit and blocks the row again.
+        let claimed = claim_next_at(&pool, 500).await.unwrap().map(|row| row.operation_id);
+        assert_eq!(claimed.as_deref(), Some("missing-1"));
+        let attempts: i64 = sqlx::query_scalar(
+            "SELECT attempt_count FROM suwayomi_projection_outbox WHERE operation_id = 'missing-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(attempts, MAX_CONFIRMATION_ATTEMPTS);
+        let mismatch: i64 = sqlx::query_scalar(
+            "SELECT attempt_count FROM suwayomi_projection_outbox WHERE operation_id = 'mismatch'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(mismatch, 0, "other recoverable rows keep their full cycle");
+    }
+
+    #[tokio::test]
     async fn startup_requeues_only_recoverable_blocked_rows() {
         let temp = crate::syncd::test_dir::tempdir().unwrap();
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
@@ -4033,6 +4157,7 @@ mod tests {
                 in_flight: 0,
                 catalog_pending: 2,
                 catalog_blocked: 1,
+                not_found: 1,
             }
         );
         assert_eq!(projection_status_counts(&pool, "other").await.unwrap().pending, 0);
@@ -4040,6 +4165,117 @@ mod tests {
         assert_eq!(
             pending_projection_counts_in(&pool).await.unwrap(),
             PendingProjectionCounts { total: 5, catalog: 2 }
+        );
+    }
+
+    /// Replays a desktop start and the status reads on a copy of a real Core database, which the
+    /// small seeds of the other tests do not resemble (tens of thousands of changes, several
+    /// devices, rows left by older versions). Never point it at a live database: it migrates and
+    /// writes. Run by hand:
+    /// `EPIGRAPH_SYNCD_REPLAY_DIR=<folder with a copy of syncd.sqlite> cargo test --lib
+    /// real_core_copy -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "needs a copy of a real Core database"]
+    async fn real_core_copy_restarts_without_holding_devices_on_works_not_found() {
+        let Some(dir) = std::env::var_os("EPIGRAPH_SYNCD_REPLAY_DIR") else {
+            panic!("EPIGRAPH_SYNCD_REPLAY_DIR names the folder with the copy");
+        };
+        let config = crate::syncd::config::SyncdConfig::for_test(dir.into());
+        let pool = db::connect(&config).await.unwrap();
+        let profiles: Vec<String> =
+            sqlx::query_scalar("SELECT DISTINCT profile_id FROM suwayomi_projection_outbox")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let before: Vec<(String, ProjectionStatusCounts)> = {
+            let mut counts = Vec::new();
+            for profile in &profiles {
+                counts.push((profile.clone(), projection_status_counts(&pool, profile).await.unwrap()));
+            }
+            counts
+        };
+        let works = not_found_works_in(&pool).await.unwrap();
+        println!("before restart: {before:?}");
+        println!("works not found: {works:#?}");
+        for (_, counts) in &before {
+            assert_eq!(counts.blocked, counts.not_found, "only works not found are blocked");
+        }
+        let listed: i64 = works.iter().map(|work| work.changes).sum();
+        let not_found: i64 = before.iter().map(|(_, counts)| counts.not_found).sum();
+        if (works.len() as i64) < NOT_FOUND_WORKS_LIMIT {
+            assert_eq!(listed, not_found, "every blocked change belongs to a listed work");
+        }
+
+        // The start sequence of spawn_projection_task, without the runtime.
+        let now = db::now_ms();
+        let requeued = requeue_recoverable_blocked(&pool, now).await.unwrap();
+        let limited = limit_not_found_requeue(&pool).await.unwrap();
+        block_foreign_server_projections(&pool, now).await.unwrap();
+        rearm_missing_chapter_retries(&pool, now).await.unwrap();
+        println!("restart: requeued {requeued}, of them works not found {limited}");
+        assert_eq!(limited as i64, not_found);
+
+        // Each requeued change is claimed once in commit order; none holds the queue behind it.
+        let mut claimed = 0_i64;
+        while let Some(row) = claim_next_at(&pool, now).await.unwrap() {
+            assert_eq!(row.attempt_count, MAX_CONFIRMATION_ATTEMPTS - 1, "{}", row.operation_id);
+            claimed += 1;
+            assert!(claimed <= requeued as i64, "a row was claimed twice");
+        }
+        println!("claimable right after the restart: {claimed}");
+        assert_eq!(claimed, requeued as i64);
+    }
+
+    #[tokio::test]
+    async fn works_this_desktop_could_not_find_are_listed_with_their_changes() {
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        let work = |source: Value, key: &str| {
+            json!({ "portableWorkRef": { "type": "comic", "sourceId": source, "mangaKey": key } }).to_string()
+        };
+        for (id, status, error, variables) in [
+            ("a1", "blocked", Some(PORTABLE_WORK_NOT_FOUND), work(json!("6247824327199706550"), "/series/a")),
+            ("a2", "blocked", Some(PORTABLE_WORK_NOT_FOUND), work(json!("6247824327199706550"), "/series/a")),
+            // A numeric source id reads the same as a string one.
+            ("b1", "blocked", Some(PORTABLE_WORK_NOT_FOUND), work(json!(7537715367149829912u64), "/b")),
+            // Rows that are not waiting on a missing work stay out.
+            ("rejected", "blocked", Some("command_rejected"), work(json!("1"), "/c")),
+            ("pending", "pending", None, work(json!("1"), "/d")),
+            ("no-ref", "blocked", Some(PORTABLE_WORK_NOT_FOUND), "{}".to_string()),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateChaptersProgress', ?, 'comic.history', ?, 1, ?, 1, 0, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(variables)
+            .bind(id)
+            .bind(status)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            not_found_works_in(&pool).await.unwrap(),
+            vec![
+                NotFoundWork {
+                    source_id: "6247824327199706550".to_string(),
+                    manga_key: "/series/a".to_string(),
+                    changes: 2,
+                },
+                NotFoundWork {
+                    source_id: "7537715367149829912".to_string(),
+                    manga_key: "/b".to_string(),
+                    changes: 1,
+                },
+            ]
         );
     }
 

@@ -278,6 +278,16 @@ export interface SyncdSyncProgress {
   appliedProjections?: number;
   /** Which works changed in Suwayomi; absent from older Cores. */
   landed?: SyncdLandedWorks | null;
+  /** Works a paired device synced that this computer could not find; absent from older Cores. */
+  notFoundWorks?: SyncdNotFoundWork[];
+}
+
+/** A synced work this computer could not find in Suwayomi, with how many changes wait for it. */
+export interface SyncdNotFoundWork {
+  sourceId: string;
+  /** The work's key on its source: the only name the desktop has for a work it never saw. */
+  mangaKey: string;
+  changes: number;
 }
 
 /** What synced changes reached Suwayomi, after the cursor the caller asked from. */

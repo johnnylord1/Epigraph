@@ -89,6 +89,25 @@ describe("firstRunSyncRemaining", () => {
 });
 
 describe("first-run background sync", () => {
+  it("adds how long is left once the pace is steady", async () => {
+    // 10 items every 3 s poll: after 21 s the 1,000 - 70 = 930 left take 279 s, about 5 min.
+    let left = 1_000;
+    mocks.progress.mockImplementation(async () => {
+      const progress = { ...idle, pendingProjections: left, pendingUploads: 0 };
+      left -= 10;
+      return progress;
+    });
+    startFirstRunBackgroundSync({ profileId: "main", waitForUploads: true, waitForReplication: false });
+    await vi.advanceTimersByTimeAsync(18_000);
+    expect(mocks.showToast).toHaveBeenLastCalledWith("first-run-sync", expect.objectContaining({
+      body: "940 items left: works, reading progress and details.",
+    }));
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(mocks.showToast).toHaveBeenLastCalledWith("first-run-sync", expect.objectContaining({
+      body: "930 items left: works, reading progress and details. About 5 min left.",
+    }));
+  });
+
   it("shows progress until everything is imported, then reads the library back and reports it", async () => {
     mocks.progress
       .mockResolvedValueOnce({ ...idle, pendingProjections: 80, pendingUploads: 20 })

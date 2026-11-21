@@ -361,6 +361,9 @@ pub struct LocalSyncProgress {
     pub applied_projections: u64,
     /// Which works changed in Suwayomi after `landedSince`, so the UI reads only those.
     pub landed: LandedWorksView,
+    /// Works a paired device synced that this desktop could not find, so the user can install
+    /// their source or migrate them. Their changes wait here without holding the sync.
+    pub not_found_works: Vec<suwayomi_projection::NotFoundWork>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,6 +399,12 @@ pub async fn get_local_sync_progress(
         pending_library_uploads: super::status::pending_library_uploads(),
         applied_projections: suwayomi_projection::applied_projection_count(),
         landed: landed_works::view(query.landed_since),
+        not_found_works: suwayomi_projection::not_found_works(&state)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(error = %error, "could not list works this desktop could not find");
+                Vec::new()
+            }),
     }))
 }
 

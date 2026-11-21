@@ -510,6 +510,16 @@ fn cover_asset_metadata(value: &Value) -> Option<BookCoverAssetMetadata> {
     })
 }
 
+/// The cover the Core last streamed or accepted for this book.
+fn core_book_cover_metadata(entry: &Value) -> Option<BookCoverAssetMetadata> {
+    let book_id = canonical_book_id_for_entry(entry).or_else(|| book_entry_entity_id(entry))?;
+    CORE_BOOK_ENTRIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&book_id)
+        .and_then(cover_asset_metadata)
+}
+
 fn apply_cover_asset_metadata(value: &mut Value, metadata: Option<&BookCoverAssetMetadata>) {
     let Some(object) = value.as_object_mut() else {
         return;
@@ -618,7 +628,9 @@ async fn enrich_book_cover_assets(
         } else {
             match next_path.as_deref() {
                 Some(path) => inspect_local_book_cover(Path::new(path)).await?,
-                None => None,
+                // No local cover file and no cover fields in the write: the frontend does not
+                // carry the synced cover, so its absence says nothing. Keep the Core's.
+                None => core_book_cover_metadata(entry),
             }
         };
         apply_cover_asset_metadata(entry, metadata.as_ref());
@@ -4907,6 +4919,7 @@ pub async fn notify_book_state_written(
     let _ = enrich_book_asset_metadata(&previous_snapshot, &mut previous);
     let _ = enrich_book_cover_assets(&previous_snapshot, &mut previous).await;
     let remote_applies_kept = keep_remote_book_applies(&previous, &mut next);
+    let unloaded_books_kept = keep_books_the_frontend_has_not_loaded(&previous, &mut next);
     let asset_metadata_changed = enrich_book_asset_metadata(&previous, &mut next)?;
     let cover_assets_changed = enrich_book_cover_assets(&previous, &mut next).await?;
     let projected_history_changed = project_latest_book_history(&previous, &mut next);
@@ -4915,6 +4928,7 @@ pub async fn notify_book_state_written(
         || asset_metadata_changed
         || cover_assets_changed
         || remote_applies_kept
+        || unloaded_books_kept
     {
         // Keep the Rust-owned history collection in the canonical JSON even
         // while the current frontend is unaware of that field. This write does
@@ -5007,6 +5021,7 @@ async fn catch_up_novel_categories(
 /// desktop was off, and the republish runs before this desktop pulls that change, so entities the
 /// Core already settled are left to the Core. With `keep_existing`, what this desktop holds is
 /// still sent when it is newer than the Core's copy: progress read while away must not be lost.
+/// Either way, an entity the Core already holds exactly as this desktop does is not sent again.
 fn retain_republish_mutations(
     mutations: Vec<SerializableMutationInput>,
     snapshots: &[SnapshotResponse],
@@ -5026,7 +5041,6 @@ fn retain_republish_mutations(
         .collect::<HashSet<_>>();
     let existing = snapshots
         .iter()
-        .filter(|_| keep_existing)
         .flat_map(|snapshot| {
             snapshot.entities.iter().map(move |entity| {
                 (
@@ -5048,12 +5062,61 @@ fn retain_republish_mutations(
                 mutation.entity_type_label(),
                 mutation.entity_id(),
             );
-            !tombstoned.contains(&key)
-                && existing
-                    .get(&key)
-                    .is_none_or(|record| local_mutation_is_newer(mutation, record))
+            if tombstoned.contains(&key) {
+                return false;
+            }
+            let Some(record) = existing.get(&key) else {
+                return true;
+            };
+            // Resending what the Core already holds only bumps its clock, and every other
+            // device then applies the same record again.
+            !mutation_matches_record(mutation, record)
+                && (!keep_existing || local_mutation_is_newer(mutation, record))
         })
         .collect()
+}
+
+/// Whether a merge would leave the Core's record as it is: every field the patch carries already
+/// has that value there. The record's own clock is not part of what it says.
+fn mutation_matches_record(mutation: &SerializableMutationInput, record: &Value) -> bool {
+    if mutation.op_label() != "merge" {
+        return false;
+    }
+    let Ok(serialized) = serde_json::to_value(mutation) else {
+        return false;
+    };
+    let (Some(Value::Object(patch)), Some(record)) =
+        (serialized.get("patch"), record.as_object())
+    else {
+        return false;
+    };
+    patch
+        .iter()
+        .filter(|(field, _)| field.as_str() != "recordLamport")
+        .all(|(field, value)| json_equivalent(value, record.get(field).unwrap_or(&Value::Null)))
+}
+
+/// JSON equality where `1` and `1.0` are the same number and an absent object field is `null`.
+fn json_equivalent(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => {
+            left == right || matches!((left.as_f64(), right.as_f64()), (Some(l), Some(r)) if l == r)
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left.iter().zip(right).all(|(left, right)| json_equivalent(left, right))
+        }
+        (Value::Object(left), Value::Object(right)) => left
+            .keys()
+            .chain(right.keys())
+            .all(|key| {
+                json_equivalent(
+                    left.get(key).unwrap_or(&Value::Null),
+                    right.get(key).unwrap_or(&Value::Null),
+                )
+            }),
+        _ => left == right,
+    }
 }
 
 fn parsed_record<T: serde::de::DeserializeOwned>(record: &Value) -> Option<T> {
@@ -6323,15 +6386,107 @@ fn upsert_book_entry(
         target.extend(fields);
     }
     note_remote_book_apply(superseded, &next);
-    if let Some(index) = state
+    let index = state
         .books
         .iter()
-        .position(|entry| book_entry_entity_id(entry).as_deref() == Some(book_id.as_str()))
-    {
+        .position(|entry| book_entry_entity_id(entry).as_deref() == Some(book_id.as_str()));
+    note_remote_book_added(&book_id, &next, index.is_none());
+    if let Some(index) = index {
         state.books[index] = next;
     } else {
         state.books.push(next);
     }
+}
+
+/// Books a remote apply added that the frontend has not loaded yet, with what the apply wrote.
+/// The frontend writes its own copy of the books back whole, and a copy taken before the apply
+/// lacks the book. That absence is not a removal: published as one, it deleted the book on every
+/// device. The frontend can only remove a book it has.
+static UNLOADED_REMOTE_BOOKS: std::sync::Mutex<BTreeMap<String, Value>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+fn note_remote_book_added(book_id: &str, entry: &Value, added: bool) {
+    let mut unloaded = UNLOADED_REMOTE_BOOKS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if added || unloaded.contains_key(book_id) {
+        unloaded.insert(book_id.to_string(), entry.clone());
+    }
+}
+
+/// The frontend read the books state: the books in it are now its own to keep or remove.
+pub fn note_book_state_loaded_by_frontend(contents: &str) {
+    let Ok(state) = serde_json::from_str::<Value>(contents) else {
+        return;
+    };
+    let Some(books) = state.get("books").and_then(Value::as_array) else {
+        return;
+    };
+    let mut unloaded = UNLOADED_REMOTE_BOOKS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    for entry in books {
+        if let Some(book_id) = book_entry_entity_id(entry) {
+            unloaded.remove(&book_id);
+        }
+    }
+}
+
+/// Puts back the books a remote apply added after the frontend last loaded the state, with their
+/// progress, bookmarks and category assignment, when its write lacks them.
+fn keep_books_the_frontend_has_not_loaded(
+    previous: &PersistedBookLibraryState,
+    next: &mut PersistedBookLibraryState,
+) -> bool {
+    let mut unloaded = UNLOADED_REMOTE_BOOKS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if unloaded.is_empty() {
+        return false;
+    }
+    let in_next: HashSet<String> = next.books.iter().filter_map(book_entry_entity_id).collect();
+    // A write that has the book came from a frontend that loaded it.
+    unloaded.retain(|book_id, _| !in_next.contains(book_id));
+    let mut kept = false;
+    for (book_id, applied) in unloaded.iter() {
+        let entry = previous
+            .books
+            .iter()
+            .find(|entry| book_entry_entity_id(entry).as_deref() == Some(book_id.as_str()))
+            .unwrap_or(applied);
+        next.books.push(entry.clone());
+        if !next.book_progress.iter().any(|progress| &progress.book_id == book_id) {
+            next.book_progress.extend(
+                previous
+                    .book_progress
+                    .iter()
+                    .filter(|progress| &progress.book_id == book_id)
+                    .cloned(),
+            );
+        }
+        let next_bookmarks: HashSet<String> = next
+            .book_bookmarks
+            .iter()
+            .map(bookmark_entity_id_for_book)
+            .collect();
+        next.book_bookmarks.extend(
+            previous
+                .book_bookmarks
+                .iter()
+                .filter(|bookmark| {
+                    &bookmark.book_id == book_id
+                        && !next_bookmarks.contains(&bookmark_entity_id_for_book(bookmark))
+                })
+                .cloned(),
+        );
+        if let Some(category_ids) = previous.books_category_assignments.get(book_id) {
+            next.books_category_assignments
+                .entry(book_id.clone())
+                .or_insert_with(|| category_ids.clone());
+        }
+        kept = true;
+    }
+    kept
 }
 
 /// The synchronized fields of a desktop book entry, keyed the way its mutations are.
@@ -6592,6 +6747,10 @@ fn delete_book_entry(state: &mut PersistedBookLibraryState, book_id: &str) {
         .unwrap_or_else(|error| error.into_inner())
         .remove(book_id);
     let local_book_id = local_book_id_for_canonical_id(state, book_id);
+    UNLOADED_REMOTE_BOOKS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(&local_book_id);
     state
         .books
         .retain(|entry| book_entry_entity_id(entry).as_deref() != Some(local_book_id.as_str()));
@@ -11506,6 +11665,9 @@ mod tests {
                 "id": "novel:fixture.plugin:%2Fnovel%2Fopaque",
                 "title": "Local",
                 "path": "/novel/opaque",
+                // Saved entries always carry both; without them each diff reads the clock.
+                "addedAt": 1000,
+                "updatedAt": 1000,
                 "source": { "pluginId": "fixture.plugin" }
             })],
             chapters: vec![json!({
@@ -13627,6 +13789,130 @@ mod tests {
         assert_eq!(book_entry_mutations(&repeated), 0);
     }
 
+    /// Mutations of any kind that touch the book with this fingerprint. Other tests add books to
+    /// the same globals concurrently, so counting every mutation would race.
+    fn mutations_for(mutations: &[SerializableMutationInput], fingerprint: &str) -> usize {
+        mutations
+            .iter()
+            .filter(|mutation| {
+                serde_json::to_value(mutation)
+                    .ok()
+                    .and_then(|value| value_string_field(&value, "entityId"))
+                    .is_some_and(|entity_id| entity_id.contains(fingerprint))
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_frontend_write_from_before_a_remote_add_does_not_delete_the_book() {
+        let fingerprint = "e5".repeat(32);
+        let stale = PersistedBookLibraryState::default();
+        let mut on_disk = stale.clone();
+        upsert_book_entry(&mut on_disk, synced_pdf(&fingerprint, 1, 10), None, None);
+        let book_id = book_entry_entity_id(&on_disk.books[0]).unwrap();
+        on_disk
+            .books_category_assignments
+            .insert(book_id.clone(), vec!["category-1".to_string()]);
+        let has_book = |state: &PersistedBookLibraryState| {
+            state
+                .books
+                .iter()
+                .any(|entry| book_entry_entity_id(entry).as_deref() == Some(book_id.as_str()))
+        };
+
+        // The frontend writes the list it loaded before the apply added the book.
+        let mut written = stale.clone();
+        assert!(keep_books_the_frontend_has_not_loaded(&on_disk, &mut written));
+        assert!(has_book(&written));
+        assert_eq!(
+            written.books_category_assignments.get(&book_id),
+            Some(&vec!["category-1".to_string()])
+        );
+        assert_eq!(
+            mutations_for(&diff_book_mutations(&on_disk, &written), &fingerprint),
+            0
+        );
+
+        // Once the frontend has loaded the book, leaving it out is a removal.
+        note_book_state_loaded_by_frontend(&serde_json::to_string(&on_disk).unwrap());
+        let mut removed = stale.clone();
+        keep_books_the_frontend_has_not_loaded(&on_disk, &mut removed);
+        assert!(!has_book(&removed));
+        assert_eq!(
+            book_entry_mutations(
+                &diff_book_mutations(&on_disk, &removed)
+                    .into_iter()
+                    .filter(|mutation| mutations_for(std::slice::from_ref(mutation), &fingerprint) > 0)
+                    .collect::<Vec<_>>()
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn a_frontend_write_that_has_the_remote_book_counts_as_loading_it() {
+        let fingerprint = "f6".repeat(32);
+        let mut on_disk = PersistedBookLibraryState::default();
+        upsert_book_entry(&mut on_disk, synced_pdf(&fingerprint, 1, 10), None, None);
+        let book_id = book_entry_entity_id(&on_disk.books[0]).unwrap();
+
+        let mut with_book = on_disk.clone();
+        keep_books_the_frontend_has_not_loaded(&on_disk, &mut with_book);
+        let mut without_book = PersistedBookLibraryState::default();
+        keep_books_the_frontend_has_not_loaded(&with_book, &mut without_book);
+
+        assert!(!without_book
+            .books
+            .iter()
+            .any(|entry| book_entry_entity_id(entry).as_deref() == Some(book_id.as_str())));
+    }
+
+    #[tokio::test]
+    async fn a_write_without_cover_fields_keeps_the_cover_the_core_has() {
+        let _guard = CORE_BOOK_ENTRIES_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let fingerprint = "a7".repeat(32);
+        let cover_sha = "b8".repeat(32);
+        let mut record = synced_pdf(&fingerprint, 1, 10);
+        record.has_cover = true;
+        record.cover_asset_sha256 = Some(cover_sha.clone());
+        record.cover_asset_byte_size = Some(4096);
+        record.cover_asset_mime_type = Some("image/jpeg".to_string());
+        let mut streamed = PersistedBookLibraryState::default();
+        upsert_book_entry(&mut streamed, record, None, None);
+
+        // The frontend reloaded the books and dropped the fields it does not know.
+        let mut stripped = streamed.clone();
+        for field in [
+            "hasCover",
+            "coverAssetSha256",
+            "coverAssetByteSize",
+            "coverAssetMimeType",
+        ] {
+            stripped.books[0].as_object_mut().unwrap().remove(field);
+        }
+        let previous = stripped.clone();
+        let mut next = stripped.clone();
+        next.books[0]["tocCount"] = json!(3);
+
+        assert!(enrich_book_cover_assets(&previous, &mut next).await.unwrap());
+
+        assert_eq!(next.books[0]["hasCover"], json!(true));
+        assert_eq!(next.books[0]["coverAssetSha256"], json!(cover_sha));
+        let mut diff = diff_book_mutations(&streamed, &next);
+        drop_book_entries_the_core_has(&mut diff);
+        let patch = diff
+            .iter()
+            .find_map(|mutation| match mutation {
+                SerializableMutationInput::BookEntry { patch, .. } => patch.clone(),
+                _ => None,
+            })
+            .expect("the toc change is published");
+        assert!(patch.has_cover);
+        assert_eq!(patch.cover_asset_sha256.as_deref(), Some(cover_sha.as_str()));
+    }
+
     #[test]
     fn an_apply_keeps_what_the_frontend_wrote_while_it_ran() {
         let book = |id: &str, title: &str| json!({ "id": id, "title": title, "subtype": "epub" });
@@ -13974,6 +14260,69 @@ mod tests {
         );
 
         assert_eq!(kept, ["read-here"]);
+    }
+
+    #[test]
+    fn republish_after_reconciling_skips_what_the_core_already_holds() {
+        let book_patch = json!({
+            "assetFingerprint": "sha256:a", "mimeType": "application/epub+zip", "byteSize": 10,
+            "coverAssetSha256": null, "coverAssetByteSize": null, "coverAssetMimeType": null,
+            "title": "Book", "author": "A", "description": null, "subtype": "epub",
+            "pageCount": null, "tocCount": 29, "spineCount": 3, "sectionCount": 2,
+            "sectionsSummaryJson": [{ "id": "s1", "label": "One", "href": "a.xhtml", "depth": 0 }],
+            "hasCover": false, "createdAtMs": 1, "bookUpdatedAtMs": 20,
+        });
+        let mut book_record = book_patch.clone();
+        book_record["bookId"] = json!("same");
+        book_record["recordLamport"] = json!(7);
+        book_record.as_object_mut().unwrap().remove("description");
+        let novel_patch = json!({
+            "identityKey": "k", "title": "Novel", "author": null, "description": null,
+            "coverUrl": null, "path": "/n", "status": "ongoing", "tags": ["x"],
+            "source": { "pluginId": "p", "sourceId": "s" }, "addedAtMs": 1, "updatedAtMs": 20,
+        });
+        let mut novel_record = novel_patch.clone();
+        novel_record["novelId"] = json!("same");
+        novel_record["recordLamport"] = json!(7);
+        let snapshot = replica_snapshot(
+            vec![
+                core_entity("book.entry", "same", book_record.clone()),
+                core_entity("book.entry", "changed", book_record),
+                core_entity("novel.entry", "same", novel_record.clone()),
+                core_entity("novel.entry", "changed", novel_record),
+            ],
+            Vec::new(),
+        );
+        let book = |id: &str, title: &str| {
+            let mut patch = book_patch.clone();
+            patch["title"] = json!(title);
+            SerializableMutationInput::BookEntry {
+                base: republish_base(id),
+                patch: Some(patch_from(patch)),
+            }
+        };
+        let novel = |id: &str, title: &str| {
+            let mut patch = novel_patch.clone();
+            patch["title"] = json!(title);
+            SerializableMutationInput::NovelEntry {
+                base: republish_base(id),
+                patch: Some(patch_from(patch)),
+            }
+        };
+        let mutations = vec![
+            book("same", "Book"),
+            book("changed", "Renamed"),
+            book("missing", "Book"),
+            novel("same", "Novel"),
+            novel("changed", "Renamed"),
+        ];
+
+        let kept = retain_republish_mutations(mutations, std::slice::from_ref(&snapshot), false)
+            .iter()
+            .map(|mutation| format!("{}:{}", mutation.entity_type_label(), mutation.entity_id()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(kept, ["book.entry:changed", "book.entry:missing", "novel.entry:changed"]);
     }
 
     #[test]

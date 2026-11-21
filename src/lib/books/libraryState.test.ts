@@ -150,6 +150,29 @@ describe("book library state storage", () => {
     expect(state.books[0]?.hardcoverCoverUrl).toBe("https://assets.hardcover.app/covers/book.jpg");
   });
 
+  it("keeps the synced cover fields the backend owns", async () => {
+    const coverAssetSha256 = "b8".repeat(32);
+    invokeMock.mockResolvedValueOnce(JSON.stringify({
+      ...createState(),
+      books: createState().books.map((book) => ({
+        ...book,
+        hasCover: true,
+        coverAssetSha256,
+        coverAssetByteSize: 4096,
+        coverAssetMimeType: "image/jpeg",
+      })),
+    }));
+
+    const state = await loadBookLibraryState();
+
+    expect(state.books[0]).toMatchObject({
+      hasCover: true,
+      coverAssetSha256,
+      coverAssetByteSize: 4096,
+      coverAssetMimeType: "image/jpeg",
+    });
+  });
+
   it("starts with empty book state when no desktop state exists", async () => {
     invokeMock.mockResolvedValueOnce(null);
 

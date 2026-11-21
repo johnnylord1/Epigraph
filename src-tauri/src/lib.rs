@@ -4990,6 +4990,9 @@ fn read_book_library_state(profile_id: Option<String>) -> Result<Option<String>,
     }
 
     let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
+    if book_library_write_notifies_replication(profile_id.as_deref()) {
+        syncd_replication::note_book_state_loaded_by_frontend(&text);
+    }
     Ok(Some(text))
 }
 

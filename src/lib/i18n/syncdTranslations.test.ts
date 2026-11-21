@@ -55,7 +55,7 @@ describe("active Syncd translations", () => {
 
     const settingsSource = readFileSync(resolve("src/components/settings/Settings.svelte"), "utf8");
 
-    expect(keys).toHaveLength(121);
+    expect(keys).toHaveLength(126);
     expect(keys).toContain("settings_inline_desktopSyncPairing");
     expect(keys).toContain("settings_inline_connecting");
     expect(keys).toContain("syncd_status_tls_mismatch");

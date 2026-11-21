@@ -44,6 +44,7 @@
     type SyncdRuntimeIdentity,
   } from "../../lib/syncdDesktop";
   import { pairingVerificationCode } from "../../lib/syncPairingVerification";
+  import { loadNotFoundWorks, type NotFoundWorkView } from "../../lib/syncdNotFoundWorks";
 
   interface Props {
     profileId?: string | null;
@@ -69,6 +70,8 @@
   let candidates = $state<SyncdDesktopDiscoveryCandidate[]>([]);
   let persistedSessions = $state<PersistedSyncSessionView[]>([]);
   let pairedDevices = $state<SyncdPairedDeviceView[]>([]);
+  /* Works a paired device synced that this computer could not find; read when the details open. */
+  let notFoundWorks = $state<NotFoundWorkView[]>([]);
   let replicationSnapshot = $state<SyncdReplicationSnapshot | null>(null);
   let lastReconnectStatuses = $state<Record<string, SyncdReconnectStatus>>({});
   let loadingCandidates = $state(false);
@@ -328,6 +331,15 @@
   function showView(view: SyncdModalView) {
     modalView = view;
     if (modalBodyElement) modalBodyElement.scrollTop = 0;
+    if (view === "details") void refreshNotFoundWorks();
+  }
+
+  async function refreshNotFoundWorks() {
+    try {
+      notFoundWorks = await loadNotFoundWorks();
+    } catch {
+      // The last list stays; opening the details again reads it anew.
+    }
   }
 
   function closeModal() {
@@ -1328,6 +1340,20 @@
                 <p class="syncd-note"><Info size={16} />{$_("syncd_modal_pairedDeviceInactiveHint")}</p>
                 <div><button class="syncd-btn" type="button" data-testid="syncd-remove-inactive-devices" disabled={pairedDeviceScopeBusy !== null} onclick={removeInactiveDevices}>{pairedDeviceScopeBusy === "inactive" ? $_("syncd_action_removing") : $_("syncd_action_removeInactiveDevices", { count: inactiveDeviceIds.length })}</button></div>
               {/if}
+            </div>
+          {/if}
+          {#if notFoundWorks.length > 0}
+            <div class="syncd-permissions syncd-pane" data-testid="syncd-not-found-works">
+              <h3>{$_("syncd_modal_notFoundWorks")}</h3>
+              <div class="syncd-list">
+                {#each notFoundWorks as work (work.key)}
+                  <div class="syncd-list__item" data-testid="syncd-not-found-work">
+                    <span class="syncd-list__icon" aria-hidden="true"><Warning size={18} /></span>
+                    <div><strong>{work.title}</strong><small>{work.sourceName ?? $_("syncd_modal_notFoundWorkSourceMissing")} · {work.changes === 1 ? $_("syncd_modal_notFoundWorkChange") : $_("syncd_modal_notFoundWorkChanges", { count: work.changes })}</small></div>
+                  </div>
+                {/each}
+              </div>
+              <p class="syncd-note"><Info size={16} />{$_("syncd_modal_notFoundWorksHint")}</p>
             </div>
           {/if}
           {#if persistedSessions.length > 0}<div class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-persisted-sessions">{#each persistedSessions as session (session.sessionKey)}<span data-testid="syncd-persisted-session-item">{session.sessionKey}</span>{/each}</div>{/if}

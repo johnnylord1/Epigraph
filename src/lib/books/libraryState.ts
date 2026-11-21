@@ -102,6 +102,10 @@ function normalizeLoadedBook(book: any): BookEntry {
     spineCount: typeof book?.spineCount === "number" ? book.spineCount : undefined,
     sectionsSummary: Array.isArray(book?.sectionsSummary) ? book.sectionsSummary : undefined,
     sectionCount: typeof book?.sectionCount === "number" ? book.sectionCount : undefined,
+    hasCover: typeof book?.hasCover === "boolean" ? book.hasCover : undefined,
+    coverAssetSha256: typeof book?.coverAssetSha256 === "string" ? book.coverAssetSha256 : undefined,
+    coverAssetByteSize: typeof book?.coverAssetByteSize === "number" ? book.coverAssetByteSize : undefined,
+    coverAssetMimeType: typeof book?.coverAssetMimeType === "string" ? book.coverAssetMimeType : undefined,
   };
 }
 

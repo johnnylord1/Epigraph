@@ -9,6 +9,7 @@ import {
 } from "../syncdDesktop";
 import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "./firstRunSyncReadiness";
 import { notifyInBackground } from "../backgroundNotifications";
+import { createSyncEta, syncEtaText } from "./syncEta";
 import { translate } from "../i18n/runtime";
 import { addSystemNotification, finishProgressToast, showProgressToast } from "../../store/state.svelte";
 
@@ -166,6 +167,7 @@ function follow(marker: Marker) {
   let previous: number | null | undefined;
   let lastAdvance = Date.now();
   let coreSeenAt = Date.now();
+  const eta = createSyncEta();
 
   const release = () => {
     if (id !== runId) return;
@@ -256,10 +258,15 @@ function follow(marker: Marker) {
       }
       total = Math.max(total, remaining ?? 0);
       const done = remaining === null ? 0 : total - remaining;
+      const etaSeconds = replicating ? eta.sample(now, remaining) : null;
       showProgressToast(TOAST_ID, {
         kind: "info",
         title: translate("firstRun.sync.toastRunning"),
-        body: remaining === null || !replicating ? undefined : translate("firstRun.sync.toastRunningBody", { remaining }),
+        body: remaining === null || !replicating
+          ? undefined
+          : etaSeconds === null
+            ? translate("firstRun.sync.toastRunningBody", { remaining })
+            : translate("firstRun.sync.toastRunningBodyEta", { remaining, eta: syncEtaText(etaSeconds) }),
         progress: remaining !== null && total > 0
           ? { current: done, total, percent: Math.floor((done / total) * 100) }
           : undefined,

@@ -33,6 +33,10 @@ const MAX_RETRY: Duration = Duration::from_secs(30 * 60);
 /// How long one source keeps its slot in a pass. A large library on one slow source would
 /// otherwise hold the pass, and every other source's next turn, until its last work.
 const QUEUE_BUDGET: Duration = Duration::from_secs(120);
+/// A whole pass is abandoned after this long. Every source keeps to [`QUEUE_BUDGET`] between
+/// works, but one call that never returns would otherwise stop hydration until the Core restarts.
+/// Dropping the pass rolls back any open transaction; its works are listed again next pass.
+const PASS_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// A source that failed again waits this long before its next turn, doubling up to the cap.
 const SOURCE_BASE_COOLDOWN: Duration = Duration::from_secs(30);
 const SOURCE_MAX_COOLDOWN: Duration = Duration::from_secs(15 * 60);
@@ -111,9 +115,21 @@ pub fn spawn_hydration_task(
             tokio::select! {
                 _ = ticker.tick() => {
                     tokio::select! {
-                        result = hydrate_profiles(&state, &mut retries, &mut sources) => {
-                            if let Err(error) = result {
-                                tracing::warn!(error = %error, "failed to complete synced comics");
+                        result = tokio::time::timeout(
+                            PASS_TIMEOUT,
+                            hydrate_profiles(&state, &mut retries, &mut sources),
+                        ) => {
+                            match result {
+                                Ok(Ok(())) => {}
+                                Ok(Err(error)) => {
+                                    tracing::warn!(error = %error, "failed to complete synced comics");
+                                }
+                                Err(_) => {
+                                    tracing::warn!(
+                                        timeout_s = PASS_TIMEOUT.as_secs(),
+                                        "a synced comics pass did not finish in time; it starts over next pass"
+                                    );
+                                }
                             }
                         }
                         _ = wait_for_shutdown_request(&mut shutdown) => break,
