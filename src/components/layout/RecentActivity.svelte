@@ -12,6 +12,8 @@
   import { startLocalFlareSolverrAndEnable } from "../../lib/flaresolverr";
   import { finishLibraryUpdateToast, retryComicsLibrarySourceUpdate } from "../../lib/library/updateRuntime";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
+  import { presentBook } from "../../lib/books/presentation";
+  import type { BookEntry, BookProgress } from "../../lib/books/types";
   import { fetchSyncedComicHistory } from "../../lib/history/syncedComicHistory";
   import { groupReadingSessions } from "../../lib/history/sessions";
   import { groupRefreshedNovelChaptersForNotifications, refreshNovelLibraryFromSources } from "../../lib/novels/libraryRefresh";
@@ -37,6 +39,7 @@
     dismissLibraryUpdateIssues,
     dismissLibraryUpdateNotification,
     dismissSystemNotification,
+    openBookReader,
     openMangaDetail,
     recordLibraryUpdateIssues,
     recordNovelUpdateNotifications,
@@ -117,8 +120,9 @@
 
   interface Session {
     key:               string;
-    kind:              "comic" | "novel";
+    kind:              "comic" | "novel" | "book";
     novelId:           string | null;
+    bookId:            string | null;
     mangaId:           number;
     mangaTitle:        string;
     thumbnailUrl:      string;
@@ -161,6 +165,7 @@
         key:               `comic:${latest.chapterId}`,
         kind:              "comic",
         novelId:           null,
+        bookId:            null,
         mangaId:           latest.mangaId,
         mangaTitle:        latest.mangaTitle,
         thumbnailUrl:      latest.thumbnailUrl,
@@ -180,6 +185,7 @@
         key:               `novel:${anchor.novel.id}:${anchor.entry.chapterId ?? anchor.entry.readAt}`,
         kind:              "novel",
         novelId:           anchor.novel.id,
+        bookId:            null,
         mangaId:           0,
         mangaTitle:        anchor.novel.title,
         thumbnailUrl:      anchor.novel.coverUrl ?? "",
@@ -189,6 +195,40 @@
         chapterCount:      group.length,
         readAt:            anchor.entry.readAt,
       };
+    });
+  }
+
+  /** EPUB and PDF books, one row each, at the time their position was last saved. */
+  function buildBookSessions(books: BookEntry[], progress: BookProgress[], clearedAt: number): Session[] {
+    const progressById = new Map(progress.map((entry) => [entry.bookId, entry] as const));
+    return books.flatMap((book): Session[] => {
+      const entry = progressById.get(book.id);
+      if (!entry || !(entry.lastReadAt > clearedAt)) return [];
+      const presented = presentBook(book, entry);
+      return [{
+        key:               `book:${book.id}`,
+        kind:              "book",
+        novelId:           null,
+        bookId:            book.id,
+        mangaId:           0,
+        mangaTitle:        presented.title,
+        thumbnailUrl:      presented.coverSrc ?? "",
+        latestChapterId:   0,
+        latestChapterName: presented.progressSummary,
+        firstChapterName:  presented.progressSummary,
+        chapterCount:      1,
+        readAt:            entry.lastReadAt,
+      }];
+    });
+  }
+
+  /** Book covers are already resolved asset URLs; comic and novel covers go through the cover cache. */
+  function sessionCover(session: Session): string {
+    if (session.kind === "book") return session.thumbnailUrl;
+    return resolveMangaCoverUrl(session.thumbnailUrl, {
+      context: "activity",
+      persistence: "persistent",
+      cacheGeneration: store.libraryCoverCacheGeneration,
     });
   }
 
@@ -211,6 +251,7 @@
     [
       ...buildSessions(store.history),
       ...buildNovelSessions(novelLibraryState ? getNovelReadingHistory(novelLibraryState) : []),
+      ...buildBookSessions(store.books, store.bookProgress, store.historyClearedAt),
     ].sort((left, right) => right.readAt - left.readAt),
   );
   const updateNotifications = $derived((store.libraryUpdateNotifications ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
@@ -303,6 +344,11 @@
   }
 
   function resume(session: Session) {
+    if (session.kind === "book" && session.bookId) {
+      closeActivityPanel();
+      openBookReader(session.bookId);
+      return;
+    }
     if (session.kind === "novel" && session.novelId) {
       openNovel(session.novelId);
       return;
@@ -629,7 +675,7 @@
                   <button class="activity-item with-thumb event" onclick={() => resume(session)}>
                     <div class="thumb-wrap">
                       {#if session.thumbnailUrl}
-                        <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
+                        <img src={sessionCover(session)} alt={session.mangaTitle} class="thumb" />
                       {:else}
                         <span class="thumb" aria-hidden="true"></span>
                       {/if}
@@ -662,7 +708,7 @@
               </div>
             </section>
           {:else}
-            {#each groups as { label, items }}
+            {#each groups as { label, items } (label)}
               <section class="activity-section">
                 <div class="day-title">
                   <span>{label}</span>
@@ -672,7 +718,7 @@
                     <button class="activity-item with-thumb event" onclick={() => resume(session)}>
                       <div class="thumb-wrap">
                         {#if session.thumbnailUrl}
-                          <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
+                          <img src={sessionCover(session)} alt={session.mangaTitle} class="thumb" />
                         {:else}
                           <span class="thumb" aria-hidden="true"></span>
                         {/if}
