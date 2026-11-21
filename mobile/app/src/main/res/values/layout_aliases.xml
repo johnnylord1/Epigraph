@@ -17,4 +17,6 @@
          because their holders bind LocalBook instead of LibraryManga. -->
     <item name="book_library_grid_item" type="layout">@layout/manga_grid_item</item>
     <item name="book_library_list_item" type="layout">@layout/manga_list_item</item>
+    <!-- EPUB/PDF rows in Recents clone the manga row, with a holder that binds LocalBook. -->
+    <item name="recent_local_book_item" type="layout">@layout/recent_manga_item</item>
 </resources>

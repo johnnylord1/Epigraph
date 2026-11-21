@@ -444,6 +444,23 @@ class LocalBookRepositoryImpl(
         handler.awaitOneOrNull { local_booksQueries.findProgress(bookId) }
             ?.let { decodeLocator(it.locator_json, bookId) }
 
+    override suspend fun recentlyRead(readAfter: Long): List<LocalBookRecentRead> =
+        handler.awaitList { local_booksQueries.findRecentlyRead(readAfter) }.mapNotNull { row ->
+            // A row that breaks the book invariants must not hide the rest of Recents.
+            runCatching {
+                LocalBookRecentRead(
+                    book = mapBook(
+                        row.book_id, row.content_type, row.sha256, row.display_name, row.author,
+                        row.description, row.cover_path, row.cover_asset_sha256, row.cover_asset_byte_size,
+                        row.cover_asset_mime_type, row.private_path, row.mime_type, row.byte_size,
+                        row.imported_at, row.updated_at, row.chapter_count, row.page_count,
+                    ),
+                    progression = row.read_progression.coerceIn(0.0, 1.0),
+                    lastReadAt = row.last_read_at,
+                )
+            }.getOrNull()
+        }
+
     override suspend fun getChapterState(bookId: String): LocalBookChapterState =
         handler.await(inTransaction = true) {
             val reading = local_booksQueries.findReadingState(bookId).executeAsOneOrNull()

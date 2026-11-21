@@ -17,7 +17,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.manga.chapter.BaseChapterHolder
 import eu.kanade.tachiyomi.ui.manga.chapter.BaseChapterItem
 
-class RecentMangaItem(
+open class RecentMangaItem(
     val mch: MangaChapterHistory = MangaChapterHistory.createBlank(),
     chapter: Chapter = ChapterImpl(),
     header: AbstractHeaderItem<*>?,
@@ -61,15 +61,14 @@ class RecentMangaItem(
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (other is RecentMangaItem) {
-            return if (mch.manga.id == null) {
-                (header as? RecentMangaHeaderItem)?.recentsType ==
-                    (other.header as? RecentMangaHeaderItem)?.recentsType
-            } else {
-                chapter.id == other.chapter.id
-            }
+        if (other == null || this::class != other::class) return false
+        other as RecentMangaItem
+        return if (mch.manga.id == null) {
+            (header as? RecentMangaHeaderItem)?.recentsType ==
+                (other.header as? RecentMangaHeaderItem)?.recentsType
+        } else {
+            chapter.id == other.chapter.id
         }
-        return false
     }
 
     override fun hashCode(): Int {
@@ -85,7 +84,7 @@ class RecentMangaItem(
      * stores these values after a full submission so repeated presenter emissions with
      * identical content don't trigger another notifyDataSetChanged + visible-row rebind.
      */
-    internal fun bindingContentSignature(): Int {
+    internal open fun bindingContentSignature(): Int {
         var result = getLayoutRes()
         fun include(value: Any?) {
             result = 31 * result + (value?.hashCode() ?: 0)

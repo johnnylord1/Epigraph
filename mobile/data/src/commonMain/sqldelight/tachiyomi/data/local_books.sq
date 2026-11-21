@@ -120,6 +120,14 @@ SELECT * FROM local_books
 WHERE content_type = :contentType
 ORDER BY display_name COLLATE NOCASE;
 
+-- Books with a saved reading position, most recently read first, for Recents.
+findRecentlyRead:
+SELECT B.*, P.progression AS read_progression, P.updated_at AS last_read_at
+FROM local_books B
+JOIN local_book_progress P ON P.book_id = B.book_id
+WHERE P.updated_at > :readAfter
+ORDER BY P.updated_at DESC;
+
 findById:
 SELECT * FROM local_books
 WHERE book_id = :bookId;

@@ -70,6 +70,17 @@ class LocalBooksSchemaTest {
         val progress = queries.findProgress("epub-${"a".repeat(64)}").executeAsOne()
         assertEquals("{\"cfi\":\"aethon-spine:2\"}", progress.locator_json)
         assertEquals(0.75, progress.progression)
+
+        val epub = queries.findRecentlyRead(0).executeAsOne()
+        assertEquals("EPUB", epub.content_type)
+        assertEquals(4L, epub.last_read_at)
+        assertEquals(0.75, epub.read_progression)
+        assertEquals(emptyList<Any>(), queries.findRecentlyRead(4).executeAsList())
+
+        queries.upsertProgress("pdf-${"b".repeat(64)}", "{\"page\":2}", 0.25, 5)
+        assertEquals(listOf("PDF", "EPUB"), queries.findRecentlyRead(0).executeAsList().map { it.content_type })
+        assertEquals("PDF", queries.findRecentlyRead(4).executeAsOne().content_type)
+        assertEquals(progress, queries.findProgress(epub.book_id).executeAsOne())
     }
 
     @Test

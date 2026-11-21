@@ -37,6 +37,9 @@ interface LocalBookRepository {
 
     suspend fun getProgress(bookId: String): ReaderLocator?
 
+    /** Books with a reading position saved after [readAfter], most recently read first. */
+    suspend fun recentlyRead(readAfter: Long): List<LocalBookRecentRead>
+
     suspend fun getChapterState(bookId: String): LocalBookChapterState
 
     /** Records how far the position has read the book, and the position accounted for. */

@@ -1,5 +1,8 @@
 package eu.kanade.tachiyomi.ui.recents
 
+import epigraph.books.local.LocalBook
+import epigraph.books.local.LocalBookRecentRead
+import epigraph.contract.ContentType
 import eu.kanade.tachiyomi.data.database.models.ChapterHistory
 import eu.kanade.tachiyomi.data.database.models.ChapterImpl
 import eu.kanade.tachiyomi.data.database.models.HistoryImpl
@@ -31,6 +34,59 @@ class RecentMangaItemTest {
 
         assertNotEquals(original.bindingContentSignature(), changed.bindingContentSignature())
     }
+
+    @Test
+    fun `book item is not equal to continue reading footer in either direction`() {
+        val header = RecentMangaHeaderItem(RecentMangaHeaderItem.CONTINUE_READING)
+        val footer = RecentMangaItem(header = header)
+        val book = bookItem(header = header)
+
+        assertNotEquals(footer, book)
+        assertNotEquals(book, footer)
+    }
+
+    @Test
+    fun `book item binding signature changes when progress or read time changes`() {
+        val original = bookItem(progression = 0.25, lastReadAt = 100L)
+        val same = bookItem(progression = 0.25, lastReadAt = 100L)
+        val progressed = bookItem(progression = 0.50, lastReadAt = 100L)
+        val reRead = bookItem(progression = 0.25, lastReadAt = 200L)
+
+        assertEquals(original, same)
+        assertEquals(original.bindingContentSignature(), same.bindingContentSignature())
+        assertNotEquals(original.bindingContentSignature(), progressed.bindingContentSignature())
+        assertNotEquals(original.bindingContentSignature(), reRead.bindingContentSignature())
+    }
+
+    private fun bookItem(
+        bookId: String = "book-1",
+        progression: Double = 0.25,
+        lastReadAt: Long = 100L,
+        header: RecentMangaHeaderItem? = null,
+    ): RecentLocalBookItem = RecentLocalBookItem(
+        recent = LocalBookRecentRead(
+            book = LocalBook(
+                bookId = bookId,
+                contentType = ContentType.EPUB,
+                sha256 = "a".repeat(64),
+                displayName = "Dune",
+                author = "Frank Herbert",
+                description = null,
+                coverPath = null,
+                coverAssetSha256 = null,
+                coverAssetByteSize = null,
+                coverAssetMimeType = null,
+                privatePath = "/books/dune.epub",
+                mimeType = "application/epub+zip",
+                byteSize = 1024L,
+                importedAt = 50L,
+                updatedAt = 50L,
+            ),
+            progression = progression,
+            lastReadAt = lastReadAt,
+        ),
+        header = header,
+    )
 
     private fun item(extraLastRead: Long = 20L): RecentMangaItem {
         val manga = MangaImpl(id = 1L, source = 2L, url = "/series").apply {

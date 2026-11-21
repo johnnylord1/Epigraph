@@ -4,6 +4,7 @@ import yokai.util.koin.get
 import android.view.View
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.content.ContextCompat
+import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
 import coil3.asImage
 import coil3.load
@@ -122,7 +123,10 @@ class RecentMangaHeaderItem(
 
         private fun bindSource(item: RecentMangaHeaderItem) {
             val context = view.context
-            val name = item.sourceName ?: context.getString(MR.strings.unknown)
+            // A source header without a source groups the EPUB/PDF books.
+            val isBooks = item.sourceId == null
+            val name = item.sourceName
+                ?: context.getString(if (isBooks) MR.strings.local_books_title else MR.strings.unknown)
             sourceBinding.title.text = name
 
             val source = item.sourceId?.toLongOrNull()
@@ -151,6 +155,7 @@ class RecentMangaHeaderItem(
                 }
             }
 
+            sourceBinding.overflow.isVisible = !isBooks
             sourceBinding.overflow.setOnClickListener { anchor ->
                 val sourceId = item.sourceId ?: return@setOnClickListener
                 val popup = PopupMenu(anchor.context, anchor)

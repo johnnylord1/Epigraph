@@ -1,5 +1,6 @@
 package yokai.domain.recents
 
+import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.core.preference.PreferenceStore
 import eu.kanade.tachiyomi.core.preference.getEnum
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys
@@ -12,6 +13,8 @@ class RecentsPreferences(private val preferenceStore: PreferenceStore) {
     fun showRecentsRemHistory() = preferenceStore.getBoolean(PreferenceKeys.showRemHistoryInRecents, true)
 
     fun showReadInAllRecents() = preferenceStore.getBoolean(PreferenceKeys.showReadInAllRecents, false)
+
+    fun bookHistoryClearedAt() = preferenceStore.getLong(Preference.appStateKey("book_history_cleared_at"), 0L)
 
     fun showTitleFirstInRecents() =
         preferenceStore.getBoolean(PreferenceKeys.showTitleFirstInRecents, false)

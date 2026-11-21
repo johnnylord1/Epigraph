@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.recents
 
+import epigraph.books.ui.LocalBookDetailsController
+import epigraph.books.ui.LocalBookReaderActivity
 import android.app.Activity
 import android.graphics.Color
 import android.os.Build
@@ -821,6 +823,11 @@ class RecentsController(bundle: Bundle? = null) :
     }
 
     override fun onCoverClick(position: Int) {
+        (adapter.getItem(position) as? RecentLocalBookItem)?.let { book ->
+            if (adapter.isInSelectionMode) return
+            router.pushController(LocalBookDetailsController(book.bookId).withFadeTransaction())
+            return
+        }
         val manga = (adapter.getItem(position) as? RecentMangaItem)?.mch?.manga ?: return
         router.pushController(MangaDetailsController(manga).withFadeTransaction())
     }
@@ -875,7 +882,10 @@ class RecentsController(bundle: Bundle? = null) :
 
     override fun onItemClick(view: View?, position: Int): Boolean {
         val item = adapter.getItem(position) ?: return false
-        if (item is RecentMangaItem) {
+        if (item is RecentLocalBookItem) {
+            if (adapter.isInSelectionMode) return false
+            openBook(item)
+        } else if (item is RecentMangaItem) {
             // While in multi-select, a tap toggles selection instead of
             // opening the reader. Footer rows (mch.manga.id == null) keep
             // their existing "jump to other tab" behaviour.
@@ -900,6 +910,17 @@ class RecentsController(bundle: Bundle? = null) :
             }
         } else if (item is RecentMangaHeaderItem) return false
         return true
+    }
+
+    /** Opens the reader, or the details page when the file still has to be downloaded or relinked. */
+    private fun openBook(item: RecentLocalBookItem) {
+        val activity = activity ?: return
+        val book = item.recent.book
+        if (book.isAvailable) {
+            startActivity(LocalBookReaderActivity.intent(activity, book.bookId))
+        } else {
+            router.pushController(LocalBookDetailsController(book.bookId).withFadeTransaction())
+        }
     }
 
     private fun openChapter(view: View?, manga: Manga, chapter: Chapter) {

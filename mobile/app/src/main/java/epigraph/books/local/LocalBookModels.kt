@@ -7,6 +7,14 @@ import epigraph.contract.ReaderLocator
 import java.io.File
 import kotlinx.serialization.Serializable
 
+/** A book this device has a reading position for, and when that position was last saved. */
+data class LocalBookRecentRead(
+    val book: LocalBook,
+    /** Fraction of the whole document read, from 0 to 1. */
+    val progression: Double,
+    val lastReadAt: Long,
+)
+
 data class LocalBook(
     val bookId: String,
     val contentType: ContentType,

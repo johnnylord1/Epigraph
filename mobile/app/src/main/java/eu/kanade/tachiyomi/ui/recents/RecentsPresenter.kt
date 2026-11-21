@@ -38,6 +38,9 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.search.FuzzyMatcher
+import co.touchlab.kermit.Logger
+import epigraph.books.local.LocalBookRecentRead
+import epigraph.books.local.LocalBookRepository
 import yokai.util.koin.injectLazy
 import yokai.data.DatabaseHandler
 import yokai.domain.chapter.interactor.GetChapter
@@ -69,6 +72,7 @@ class RecentsPresenter(
     private val chapterStateWriter: SyncedChapterStateWriter by injectLazy()
     private val getHistory: GetHistory by injectLazy()
     private val upsertHistory: UpsertHistory by injectLazy()
+    private val localBookRepository: LocalBookRepository by injectLazy()
 
     private var recentsJob: Job? = null
     private var initialized = false
@@ -84,6 +88,8 @@ class RecentsPresenter(
     private val newAdditionsHeader = RecentMangaHeaderItem(RecentMangaHeaderItem.NEWLY_ADDED)
     private val newChaptersHeader = RecentMangaHeaderItem(RecentMangaHeaderItem.NEW_CHAPTERS)
     private val continueReadingHeader = RecentMangaHeaderItem(RecentMangaHeaderItem.CONTINUE_READING)
+    /** Groups EPUB/PDF rows when History is grouped by source; a null source id marks it. */
+    private val booksSourceHeader = RecentMangaHeaderItem(recentsType = RecentMangaHeaderItem.SOURCE)
     // FlexibleAdapter dedups items by their header's equals/hashCode, so we
     // memoize per-(sourceId,tab) to keep one stable header instance for the
     // life of the current presenter. Cleared when the recent list resets.
@@ -484,6 +490,8 @@ class RecentsPresenter(
                 Pair(it, chapter)
             }
         }
+        val replacesList = isOnFirstPage || !updatePageCount
+        val recentBooks = if (customViewType == null && !viewType.isUpdates) recentBooks(replacesList) else emptyList()
         val newItems = if (query.isEmpty() && !isUngrouped) {
             val nChaptersItems =
                 pairs.asSequence()
@@ -501,9 +509,13 @@ class RecentsPresenter(
                     .map { RecentMangaItem(it.first, it.second, newChaptersHeader) }
                     .toMutableList()
             val cReadingItems =
-                pairs.filter { it.first.history.id != null }
+                mergeByLastRead(
+                    pairs.filter { it.first.history.id != null }
+                        .map { RecentMangaItem(it.first, it.second, continueReadingHeader) },
+                    recentBooks.filter { showRead || it.progression < 1.0 }
+                        .map { RecentLocalBookItem(it, continueReadingHeader) },
+                )
                     .take(UPDATES_READING_LIMIT_UPPER - nChaptersItems.size)
-                    .map { RecentMangaItem(it.first, it.second, continueReadingHeader) }
                     .toMutableList()
             if (nChaptersItems.isNotEmpty()) {
                 nChaptersItems.add(RecentMangaItem(header = newChaptersHeader))
@@ -529,18 +541,23 @@ class RecentsPresenter(
                 val recencyOf: (Pair<MangaChapterHistory, Chapter>) -> Long = {
                     if (viewType.isUpdates) it.second.date_fetch else it.first.history.last_read
                 }
-                pairs.groupBy { it.first.manga.source }
-                    .toList()
-                    .sortedByDescending { (_, sourcePairs) ->
-                        sourcePairs.maxOfOrNull(recencyOf) ?: 0L
-                    }
-                    .flatMap { (sourceId, sourcePairs) ->
+                val sourceGroups = pairs.groupBy { it.first.manga.source }
+                    .map { (sourceId, sourcePairs) ->
                         val name = sourceManager.getOrStub(sourceId).name
                         val header = sourceHeaderFor(sourceId, name)
                         sourcePairs
                             .sortedByDescending(recencyOf)
                             .map { RecentMangaItem(it.first, it.second, header) }
                     }
+                // Books join once, as their own group: later pages would split the group.
+                val bookGroup = recentBooks.takeIf { replacesList && viewType.isHistory }.orEmpty()
+                    .map { RecentLocalBookItem(it, booksSourceHeader) }
+                (sourceGroups + listOf(bookGroup))
+                    .filter { it.isNotEmpty() }
+                    .sortedByDescending { group ->
+                        group.maxOf { if (viewType.isUpdates) it.chapter.date_fetch else it.mch.history.last_read }
+                    }
+                    .flatten()
             } else if (viewType.isUpdates) {
                 val map =
                     TreeMap<Date, MutableList<Pair<MangaChapterHistory, Chapter>>> { d1, d2 ->
@@ -557,11 +574,16 @@ class RecentsPresenter(
                         }
                 }
             } else {
-                pairs.map { RecentMangaItem(it.first, it.second, null) }
+                val mangaItems = pairs.map { RecentMangaItem(it.first, it.second, null) }
+                // A book belongs on this page when it was read no earlier than the page's oldest
+                // entry; once history runs out, every remaining book does.
+                val oldest = mangaItems.minOfOrNull { it.mch.history.last_read }
+                val books = recentBooks.filter { finished || oldest == null || it.lastReadAt >= oldest }
+                mergeByLastRead(mangaItems, books.map { RecentLocalBookItem(it, null) })
             }
         }
         if (customViewType == null) {
-            recentItems = if (isOnFirstPage || !updatePageCount) {
+            recentItems = if (replacesList) {
                 newItems
             } else {
                 recentItems + newItems
@@ -584,6 +606,53 @@ class RecentsPresenter(
                     shouldMoveToTop = false
                 }
             }
+        }
+    }
+
+    /** Books read on this device that are not on screen yet and match the search. */
+    private suspend fun recentBooks(replacesList: Boolean): List<LocalBookRecentRead> {
+        val books = try {
+            localBookRepository.recentlyRead(recentsPreferences.bookHistoryClearedAt().get())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Logger.w(e) { "Could not read recent books" }
+            return emptyList()
+        }
+        val includedBookIds = if (replacesList) {
+            emptySet()
+        } else {
+            recentItems.asSequence().filterIsInstance<RecentLocalBookItem>().map { it.bookId }.toSet()
+        }
+        return books.filter { recent ->
+            val book = recent.book
+            book.bookId !in includedBookIds && (
+                query.isBlank() ||
+                    FuzzyMatcher.matches(query, book.displayName, 70) ||
+                    book.author?.let { FuzzyMatcher.matches(query, it, 70) } == true
+                )
+        }
+    }
+
+    /**
+     * Places each book before the first manga row read earlier than it, leaving the manga rows in
+     * the order their query returned.
+     */
+    private fun mergeByLastRead(
+        mangaItems: List<RecentMangaItem>,
+        bookItems: List<RecentLocalBookItem>,
+    ): List<RecentMangaItem> {
+        if (bookItems.isEmpty()) return mangaItems
+        return buildList(mangaItems.size + bookItems.size) {
+            var mangaIndex = 0
+            // Book rows come from the repository in descending read order.
+            for (book in bookItems) {
+                while (mangaIndex < mangaItems.size && mangaItems[mangaIndex].mch.history.last_read >= book.recent.lastReadAt) {
+                    add(mangaItems[mangaIndex++])
+                }
+                add(book)
+            }
+            addAll(mangaItems.subList(mangaIndex, mangaItems.size))
         }
     }
 
@@ -817,8 +886,10 @@ class RecentsPresenter(
     }
 
     fun deleteAllHistory() {
+        val clearedAt = System.currentTimeMillis()
         presenterScope.launchNonCancellableIO {
             handler.await { historyQueries.deleteAll() }
+            recentsPreferences.bookHistoryClearedAt().set(clearedAt)
             withUIContext {
                 view?.activity?.toast(MR.strings.clear_history_completed)
                 getRecents()

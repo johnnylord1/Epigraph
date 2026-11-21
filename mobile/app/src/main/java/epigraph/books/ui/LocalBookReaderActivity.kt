@@ -3479,13 +3479,28 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         pdfReflowTextView?.let(::applyPdfReflowStyle)
     }
 
+    private fun stopEpubWebViews(navigator: EpubNavigatorFragment?) {
+        val root = navigator?.publicationView ?: return
+        fun visit(view: View) {
+            if (view is WebView) {
+                runCatching { view.stopLoading() }
+            }
+            if (view is ViewGroup) {
+                for (index in 0 until view.childCount) visit(view.getChildAt(index))
+            }
+        }
+        visit(root)
+    }
+
     override fun onDestroy() {
         closeReaderSettingsPanel()
         clearPdfSpread()
         releasePdfContinuous()
         releaseEpubScroller()
-        opened?.close()
+        stopEpubWebViews(epubNavigator)
+        val openedToClose = opened
         opened = null
+        val deferCloseForWebView = epubNavigator != null && openedToClose is OpenedBookReader.Epub
         pdfView?.recycle()
         pdfView = null
         pdfSecondaryView?.recycle()
@@ -3502,6 +3517,19 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         readerProgressBar = null
         readerBinding = null
         super.onDestroy()
+        if (openedToClose != null) {
+            if (deferCloseForWebView) {
+                // Readium's WebViewServer serves entries on Chromium's IO thread; closing the
+                // ZipFile before the navigator fragment and WebView finish tearing down can throw
+                // an uncaught IllegalStateException ("zip file closed") across JNI.
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                    { runCatching { openedToClose.close() } },
+                    EPUB_CLOSE_DELAY_MS,
+                )
+            } else {
+                runCatching { openedToClose.close() }
+            }
+        }
     }
 
     private fun finishWithError(message: String) {
@@ -3518,6 +3546,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         private const val MAX_ANNOTATION_TEXT = 160
         private const val MAX_HIGHLIGHT_TEXT = 4_000
         private const val MAX_SELECTION_QUERY = 500
+        private const val EPUB_CLOSE_DELAY_MS = 500L
         private const val DEFAULT_HIGHLIGHT_COLOR = 0x66ffcc00L
         private const val READER_PROGRESS_MAX = 100
         private const val CHAPTER_END_FRACTION = 0.98f
