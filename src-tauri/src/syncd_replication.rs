@@ -1574,6 +1574,8 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: Option<Value>,
+        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        event_clock: Option<EventClock>,
     },
 }
 
@@ -5574,24 +5576,31 @@ fn diff_novel_plugin_setting_mutations(
 ) -> Vec<SerializableMutationInput> {
     let scope_id = novels_scope_id(local_profile_id);
     let before = syncable_novel_plugin_settings(previous);
-    let updated_at_ms = now_ms();
     syncable_novel_plugin_settings(next)
         .into_iter()
         .filter(|(setting, value)| before.get(setting) != Some(value))
-        .map(|((plugin_id, key), value)| SerializableMutationInput::NovelPluginSetting {
-            base: SerializableMutationBase {
-                client_mutation_id: Uuid::now_v7().to_string(),
-                scope_id: scope_id.clone(),
-                entity_id: novel_plugin_settings::entity_id_for(&plugin_id, &key),
-                op: MutationOperation::Merge,
-                lamport: updated_at_ms,
-            },
-            patch: Some(novel_plugin_settings::core_record(
-                &plugin_id,
-                &key,
-                &value,
-                updated_at_ms,
-            )),
+        .map(|((plugin_id, key), value)| {
+            // `novel.plugin_setting` lives in `tracking_records` and uses causal `EventClock`
+            // LWW: without a clock, a desktop edit loses to any device (such as Android) that
+            // already stamped the setting.
+            let clock = category_edit_clock();
+            let updated_at_ms = clock.physical_ms;
+            SerializableMutationInput::NovelPluginSetting {
+                base: SerializableMutationBase {
+                    client_mutation_id: Uuid::now_v7().to_string(),
+                    scope_id: scope_id.clone(),
+                    entity_id: novel_plugin_settings::entity_id_for(&plugin_id, &key),
+                    op: MutationOperation::Merge,
+                    lamport: updated_at_ms,
+                },
+                patch: Some(novel_plugin_settings::core_record(
+                    &plugin_id,
+                    &key,
+                    &value,
+                    updated_at_ms,
+                )),
+                event_clock: Some(clock),
+            }
         })
         .collect()
 }
@@ -15060,6 +15069,20 @@ mod tests {
         assert_eq!(serialized["op"], "merge");
         assert_eq!(serialized["patch"]["value"], "web");
         assert_eq!(serialized["patch"]["valueType"], "string");
+        let first_clock: EventClock =
+            serde_json::from_value(serialized["eventClock"].clone()).unwrap();
+        assert!(first_clock.physical_ms > 0);
+        assert_eq!(first_clock.device_generation_id, DESKTOP_CATEGORY_CLOCK_GENERATION);
+        assert_eq!(serialized["patch"]["updatedAtMs"], first_clock.physical_ms);
+        let second = diff_novel_plugin_setting_mutations(
+            "main",
+            &plugin_settings_document("web"),
+            &plugin_settings_document("webplus"),
+        );
+        let second_clock: EventClock =
+            serde_json::from_value(serde_json::to_value(&second[0]).unwrap()["eventClock"].clone())
+                .unwrap();
+        assert!(second_clock.physical_ms > first_clock.physical_ms);
         assert!(novel_plugin_settings::validate_patch(
             &serialized["entityId"].as_str().unwrap().to_string(),
             &serialized["patch"]
