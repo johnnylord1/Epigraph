@@ -143,6 +143,47 @@
       gap: 14px 10px;
     }
   }
+  .works-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 18px;
+    align-items: stretch;
+  }
+  @media (max-width: 720px) {
+    .works-split {
+      grid-template-columns: 1fr;
+    }
+  }
+  .works-pane {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.015);
+    min-width: 0;
+  }
+  .works-pane-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+    gap: 16px 12px;
+    align-content: start;
+  }
+  .works-pane-footer {
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.84rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
   .work-item {
     display: flex;
     flex-direction: column;
@@ -255,6 +296,16 @@
       <h2 id="works-heading" class="section-title">Shared works</h2>
     </div>
     <div id="works-grid" class="works-grid"></div>
+    <div id="works-split" class="works-split" hidden>
+      <div class="works-pane works-pane--comics">
+        <div id="works-comics-grid" class="works-pane-grid"></div>
+        <footer class="works-pane-footer">Comics</footer>
+      </div>
+      <div class="works-pane works-pane--books">
+        <div id="works-books-grid" class="works-pane-grid"></div>
+        <footer class="works-pane-footer">Books</footer>
+      </div>
+    </div>
   </section>
 
   <section id="invalid" class="invalid-card">
@@ -412,16 +463,32 @@
       } catch (_) {}
     }
 
+    function classifyWorkKind(w, srcIdx, relUrl, webUrl) {
+      var rawKind = typeof w[5] === "string" ? w[5].trim().toLowerCase() : "";
+      if (rawKind === "b" || rawKind === "book") return "book";
+      if (rawKind === "c" || rawKind === "comic") return "comic";
+      if (srcIdx < 0 && !relUrl && !safeWebUrl(webUrl)) return "book";
+      return "comic";
+    }
+
     function renderManifest(manifest) {
       if (!manifest || manifest.v !== 1 || !Array.isArray(manifest.w) || !manifest.w.length) return false;
       var sources = Array.isArray(manifest.s) ? manifest.s : [];
       var works = manifest.w;
       var grid = document.getElementById("works-grid");
+      var splitEl = document.getElementById("works-split");
+      var comicsGrid = document.getElementById("works-comics-grid");
+      var booksGrid = document.getElementById("works-books-grid");
       grid.innerHTML = "";
+      comicsGrid.innerHTML = "";
+      booksGrid.innerHTML = "";
       var coverEls = [];
 
       var hasAnyLink = false;
       var hasImportableWork = false;
+      var comicItems = [];
+      var bookItems = [];
+      var allItems = [];
       works.forEach(function (w, idx) {
         if (!Array.isArray(w)) return;
         var srcIdx = typeof w[0] === "number" ? w[0] : -1;
@@ -434,6 +501,7 @@
         var href = resolveWorkHref(w[3], relUrl, srcName);
         if (href) hasAnyLink = true;
         var coverUrl = safeWebUrl(w[4]);
+        var kind = classifyWorkKind(w, srcIdx, relUrl, w[3]);
 
         var item = document.createElement("article");
         item.className = "work-item";
@@ -494,11 +562,28 @@
           meta.appendChild(srcEl);
         }
         item.appendChild(meta);
-        grid.appendChild(item);
+        allItems.push(item);
+        if (kind === "book") {
+          bookItems.push(item);
+        } else {
+          comicItems.push(item);
+        }
       });
 
-      var count = grid.childElementCount;
+      var count = allItems.length;
       if (!count) return false;
+      var hasBoth = comicItems.length > 0 && bookItems.length > 0;
+      if (hasBoth) {
+        grid.hidden = true;
+        splitEl.hidden = false;
+        comicItems.forEach(function (el) { comicsGrid.appendChild(el); });
+        bookItems.forEach(function (el) { booksGrid.appendChild(el); });
+      } else {
+        grid.hidden = false;
+        splitEl.hidden = true;
+        allItems.forEach(function (el) { grid.appendChild(el); });
+      }
+
       var countLabel = count === 1 ? "1 work shared" : (count + " works shared");
       document.getElementById("works-heading").textContent = "Works (" + count + ")";
       statusEl.textContent = hasAnyLink
@@ -606,10 +691,6 @@
       }
       if (!viewOnly && !openEl.hidden) window.location.href = target;
     })();
-
-    window.addEventListener("hashchange", function () {
-      location.reload();
-    });
   })();
 </script>
 </body>
