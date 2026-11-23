@@ -20,7 +20,6 @@
     --accent-hover: #d8c9ff;
     --on-accent: #241748;
     --accent-dim: rgba(201, 181, 255, 0.12);
-    --radius: 10px;
   }
   * { box-sizing: border-box; }
   body {
@@ -96,7 +95,7 @@
     font-size: 0.9rem;
     font-weight: 600;
     text-decoration: none;
-    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+    transition: background 120ms ease, border-color 120ms ease;
   }
   a.btn-primary {
     background: var(--accent);
@@ -119,7 +118,7 @@
     background: var(--surface);
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
   }
   .section-head {
     display: flex;
@@ -133,43 +132,21 @@
     font-weight: 600;
     color: var(--muted);
   }
-  .zoom-hint {
-    font-size: 0.8rem;
-    color: var(--muted);
-  }
-  .collage-wrap {
-    width: 100%;
-    overflow: auto;
-    border-radius: var(--radius);
-    background: #070609;
-    border: 1px solid var(--border);
-  }
-  .collage-wrap img {
-    display: block;
-    width: 100%;
-    height: auto;
-    cursor: zoom-in;
-  }
-  .collage-wrap.is-zoomed img {
-    width: auto;
-    max-width: none;
-    cursor: zoom-out;
-  }
   .works-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
-    gap: 16px 14px;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 18px 14px;
   }
   @media (max-width: 520px) {
     .works-grid {
-      grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
       gap: 14px 10px;
     }
   }
   .work-item {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 8px;
     min-width: 0;
   }
   .work-cover {
@@ -184,6 +161,11 @@
     place-items: center;
     text-decoration: none;
     color: var(--fg);
+    transition: border-color 120ms ease, transform 120ms ease;
+  }
+  a.work-cover:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
   }
   .work-cover img {
     position: absolute;
@@ -213,9 +195,9 @@
   }
   a.work-title,
   span.work-title {
-    font-size: 0.86rem;
+    font-size: 0.88rem;
     font-weight: 600;
-    line-height: 1.32;
+    line-height: 1.34;
     color: var(--fg);
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -234,7 +216,7 @@
     text-decoration-color: var(--accent-hover);
   }
   .work-source {
-    font-size: 0.75rem;
+    font-size: 0.76rem;
     color: var(--muted);
     white-space: nowrap;
     overflow: hidden;
@@ -268,16 +250,6 @@
     </div>
   </section>
 
-  <section id="collage-section" class="section-card" hidden>
-    <div class="section-head">
-      <h2 class="section-title">Preview collage</h2>
-      <span class="zoom-hint">Click image to toggle high-res zoom</span>
-    </div>
-    <div id="collage-wrap" class="collage-wrap">
-      <img id="collage-img" alt="Shared works cover collage" />
-    </div>
-  </section>
-
   <section id="works-section" class="section-card" hidden>
     <div class="section-head">
       <h2 id="works-heading" class="section-title">Shared works</h2>
@@ -294,7 +266,6 @@
 
 <script>
   (function () {
-    var fallback = "https://github.com/johnnylord1/Epigraph/releases";
     var rawHash = location.hash.slice(1).trim();
     var searchParams = new URLSearchParams(location.search);
     var token = "";
@@ -345,16 +316,7 @@
     document.getElementById("invalid").hidden = true;
     document.getElementById("ready").hidden = false;
 
-    // Show large zoomable collage image whenever a hosted image token is present.
     var collageUrl = resolveHostedUrl(imgParam) || resolveHostedUrl(token);
-    if (collageUrl) {
-      var collageSec = document.getElementById("collage-section");
-      var collageImg = document.getElementById("collage-img");
-      var collageWrap = document.getElementById("collage-wrap");
-      collageImg.src = collageUrl;
-      collageImg.onload = function () { collageSec.hidden = false; };
-      collageWrap.onclick = function () { collageWrap.classList.toggle("is-zoomed"); };
-    }
 
     var PALETTES = [
       { bg: "#211d3a", fg: "#e5b8d9" },
@@ -382,38 +344,111 @@
       }
     }
 
+    function resolveWorkHref(webUrl, relUrl, srcName, title) {
+      var direct = safeWebUrl(webUrl) || safeWebUrl(relUrl);
+      if (direct) return direct;
+      var lowerSrc = (srcName || "").toLowerCase();
+      if (relUrl && relUrl.charAt(0) === "/") {
+        if (lowerSrc.indexOf("mangadex") !== -1) return "https://mangadex.org" + relUrl;
+        if (lowerSrc.indexOf("manganato") !== -1 || lowerSrc.indexOf("manganelo") !== -1) return "https://www.natomanga.com" + relUrl;
+        if (lowerSrc.indexOf("mangakakalot") !== -1) return "https://www.mangakakalot.gg" + relUrl;
+      }
+      var q = encodeURIComponent(((srcName ? srcName + " " : "") + title).trim());
+      return "https://www.google.com/search?q=" + q;
+    }
+
+    // Exact shareCollageLayout math from sharePayload.ts / LibraryShareCard.kt so we can crop
+    // individual cover cards directly from the hosted collage PNG in memory when hotlinking is blocked.
+    function shareCollageLayout(count) {
+      var total = Math.max(0, Math.floor(count));
+      if (total === 0) return { columns: 0, rows: 0, covers: 0, overflow: 0 };
+      var cells = Math.min(total, 40);
+      var covers = total > cells ? cells - 1 : cells;
+      var overflow = total - covers;
+      var best = { columns: 1, rows: cells, score: Infinity };
+      var cellAspect = 1 / 1.78;
+      var targetAspect = 1.3;
+      for (var cols = 1; cols <= Math.min(cells, 8); cols += 1) {
+        var rows = Math.ceil(cells / cols);
+        var empty = rows * cols - cells;
+        var aspect = (cols * cellAspect) / rows;
+        var score = Math.abs(Math.log(aspect / targetAspect)) + empty * 0.35;
+        if (score < best.score) best = { columns: cols, rows: rows, score: score };
+      }
+      return { columns: best.columns, rows: best.rows, covers: covers, overflow: overflow };
+    }
+
+    function cropCoversFromCollage(imgEl, workCount, coverEls) {
+      try {
+        var layout = shareCollageLayout(workCount);
+        if (layout.covers === 0) return;
+        var padding = 40, headerHeight = 84, cellWidth = 200, coverHeight = 300;
+        var cellHeight = 300 + 12 + 21 * 2;
+        var gapX = 24, gapY = 28;
+        var gridWidth = layout.columns * cellWidth + (layout.columns - 1) * gapX;
+        var baseWidth = padding * 2 + Math.max(gridWidth, 440);
+        var scale = imgEl.naturalWidth / baseWidth;
+        if (!scale || scale <= 0) return;
+        var gridX = (baseWidth - gridWidth) / 2;
+        var gridY = padding + headerHeight;
+
+        var canvas = document.createElement("canvas");
+        var outW = Math.round(cellWidth * scale);
+        var outH = Math.round(coverHeight * scale);
+        canvas.width = outW;
+        canvas.height = outH;
+        var ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        for (var c = 0; c < layout.covers && c < coverEls.length; c += 1) {
+          var targetCoverEl = coverEls[c];
+          if (!targetCoverEl || targetCoverEl.dataset.hasDirectCover === "1") continue;
+          var x = (gridX + (c % layout.columns) * (cellWidth + gapX)) * scale;
+          var y = (gridY + Math.floor(c / layout.columns) * (cellHeight + gapY)) * scale;
+          ctx.clearRect(0, 0, outW, outH);
+          ctx.drawImage(imgEl, x, y, outW, outH, 0, 0, outW, outH);
+          var dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+          var croppedImg = document.createElement("img");
+          croppedImg.src = dataUrl;
+          croppedImg.alt = "";
+          targetCoverEl.appendChild(croppedImg);
+        }
+      } catch (_) {}
+    }
+
     function renderManifest(manifest) {
       if (!manifest || !Array.isArray(manifest.w) || manifest.w.length === 0) return;
       var sources = Array.isArray(manifest.s) ? manifest.s : [];
       var works = manifest.w;
       var countLabel = works.length === 1 ? "1 work shared" : (works.length + " works shared");
-      statusEl.textContent = countLabel + " · Click any title below to open its page, or import all in Epigraph.";
+      statusEl.textContent = countLabel + " · Click any card or title below to open its page.";
       document.getElementById("works-heading").textContent = "Works (" + works.length + ")";
 
       var grid = document.getElementById("works-grid");
       grid.innerHTML = "";
+      var coverEls = [];
+
       works.forEach(function (w, idx) {
         if (!Array.isArray(w)) return;
         var srcIdx = typeof w[0] === "number" ? w[0] : -1;
         var relUrl = typeof w[1] === "string" ? w[1] : "";
         var title = typeof w[2] === "string" ? w[2].trim() : "";
         if (!title) return;
-        var webUrl = safeWebUrl(w[3]) || safeWebUrl(relUrl);
-        var coverUrl = safeWebUrl(w[4]);
         var srcEntry = (srcIdx >= 0 && srcIdx < sources.length && Array.isArray(sources[srcIdx])) ? sources[srcIdx] : null;
         var srcName = srcEntry && typeof srcEntry[1] === "string" ? srcEntry[1] : "";
+        var href = resolveWorkHref(w[3], relUrl, srcName, title);
+        var coverUrl = safeWebUrl(w[4]);
 
         var item = document.createElement("article");
         item.className = "work-item";
 
         var pal = PALETTES[idx % PALETTES.length];
-        var coverEl = document.createElement(webUrl ? "a" : "div");
+        var coverEl = document.createElement("a");
         coverEl.className = "work-cover";
-        if (webUrl) {
-          coverEl.href = webUrl;
-          coverEl.target = "_blank";
-          coverEl.rel = "noopener noreferrer";
-        }
+        coverEl.href = href;
+        coverEl.target = "_blank";
+        coverEl.rel = "noopener noreferrer";
+        coverEl.title = title;
 
         var mono = document.createElement("div");
         mono.className = "work-monogram";
@@ -428,29 +463,33 @@
           img.alt = "";
           img.loading = "lazy";
           img.referrerPolicy = "no-referrer";
-          img.onerror = function () { img.remove(); };
+          img.onload = function () {
+            coverEl.dataset.hasDirectCover = "1";
+          };
+          img.onerror = function () {
+            if (!img.dataset.triedProxy) {
+              img.dataset.triedProxy = "1";
+              img.src = "https://wsrv.nl/?url=" + encodeURIComponent(coverUrl);
+            } else {
+              img.remove();
+            }
+          };
           coverEl.appendChild(img);
         }
+        coverEls.push(coverEl);
         item.appendChild(coverEl);
 
         var meta = document.createElement("div");
         meta.className = "work-meta";
-        if (webUrl) {
-          var link = document.createElement("a");
-          link.className = "work-title";
-          link.href = webUrl;
-          link.target = "_blank";
-          link.rel = "noopener noreferrer";
-          link.textContent = title;
-          link.title = title;
-          meta.appendChild(link);
-        } else {
-          var span = document.createElement("span");
-          span.className = "work-title";
-          span.textContent = title;
-          span.title = title;
-          meta.appendChild(span);
-        }
+        var link = document.createElement("a");
+        link.className = "work-title";
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = title;
+        link.title = title;
+        meta.appendChild(link);
+
         if (srcName) {
           var srcEl = document.createElement("span");
           srcEl.className = "work-source";
@@ -462,6 +501,15 @@
       });
 
       document.getElementById("works-section").hidden = false;
+
+      if (collageUrl) {
+        var hiddenCollage = new Image();
+        hiddenCollage.crossOrigin = "anonymous";
+        hiddenCollage.onload = function () {
+          cropCoversFromCollage(hiddenCollage, works.length, coverEls);
+        };
+        hiddenCollage.src = collageUrl;
+      }
     }
 
     async function decodeInlineToken(inlineToken) {
