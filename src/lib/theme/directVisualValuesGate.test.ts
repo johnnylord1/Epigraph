@@ -19,14 +19,12 @@ type AllowlistEntry = {
 };
 
 const ALLOWLIST: Record<string, AllowlistEntry> = {
-  "src/assets/epigraph-icon-splash.svg": { count: 1, status: "Active exception", reason: "Brand asset." },
-  "src/assets/epigraph-icon-wordmark.svg": { count: 1, status: "Active exception", reason: "Brand asset." },
-  "src/assets/epigraph-icon.svg": { count: 2, status: "Active exception", reason: "Brand asset." },
   "src/components/pages/BrowseV3.svelte": { count: 16, status: "Active exception", reason: "External provider branding and inline provider SVG assets." },
   "src/components/pages/NovelDetail.svelte": { count: 5, status: "Active exception", reason: "Standalone exported HTML document palette." },
   "src/lib/reader/prosePalette.ts": { count: 27, status: "Active exception", reason: "Independent user-selectable prose palettes and swatches." },
   "src/components/settings/ThemeEditor.svelte": { count: 3, status: "Active exception", reason: "Color-input normalization fallback." },
   "src/lib/assets/serviceIconResolver.ts": { count: 3, status: "Active exception", reason: "Generated fallback service asset." },
+  "src/lib/library/shareImage.ts": { count: 13, status: "Active exception", reason: "Canvas-rendered share collage PNG asset." },
   "src/lib/splashBackground.ts": { count: 11, status: "Active exception", reason: "Canvas-rendered splash asset." },
   "src/lib/syncdQr.ts": { count: 2, status: "Active exception", reason: "Runtime-generated QR SVG asset." },
   "src/lib/theme/contract.ts": { count: 297, status: "Active exception", reason: "Exact builtin authoring contracts, semantic state palettes, and registry swatches." },

@@ -132,8 +132,8 @@ EOF
                   "$out/share/icons/hicolor/''${size}@2/apps/epigraph.png"
               done
 
-              install -Dm644 "${./src/assets/epigraph-icon.svg}" \
-                "$out/share/icons/hicolor/scalable/apps/epigraph.svg"
+              install -Dm644 "${./src/assets/epigraph-desktop-icon.png}" \
+                "$out/share/icons/hicolor/512x512/apps/epigraph.png"
 
               wrapProgram $out/bin/epigraph \
                 --prefix XDG_DATA_DIRS : "${lib.makeSearchPath "share/gsettings-schemas" [
