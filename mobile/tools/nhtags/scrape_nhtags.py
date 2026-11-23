@@ -1,4 +1,4 @@
-"""Scrape nhentai.net tag namespaces into JSON files.
+"""Build JSON tag-taxonomy assets from nhentai.net index pages.
 
 Output mirrors `app/src/main/assets/ehtags/`:
   app/src/main/assets/nhtags/<namespace>.json -> ["namespace:foo", "namespace:bar", ...]
@@ -8,6 +8,11 @@ Each namespace's index page (e.g. https://nhentai.net/tags/?page=N) lists tag li
 of the form ``<a href="/tag/<slug>/" class="tag tag-NNN"><span class="name">visible name</span>...</a>``.
 We pull the visible name (with spaces) so autocomplete suggestions read naturally;
 nhentai's search syntax accepts both spaced and dashed forms when quoted.
+
+This utility requests paginated tag index pages and stores tag names/slugs only;
+it does not fetch gallery pages, images, or chapters. HTTP 403/429 responses are
+retried with bounded backoff. It does not hand requests to FlareSolverr and exits
+with an error after retries are exhausted. Check the upstream terms before use.
 """
 
 from __future__ import annotations
@@ -54,7 +59,7 @@ LAST_PAGE_RE = re.compile(
 
 
 def fetch(session: requests.Session, url: str, retries: int = 6) -> str:
-    """GET with exponential backoff, retrying through Cloudflare 403 / 429 throttling."""
+    """GET with bounded backoff; stop with an error if repeated requests are refused or throttled."""
     last_err: Exception | None = None
     for attempt in range(retries):
         try:

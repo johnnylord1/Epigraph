@@ -34,7 +34,8 @@
 - Preserve upstream Apache-2.0 license files and attribution.
 - Preserve local user changes. If the worktree is dirty, touch only files required for the task.
 - Keep desktop UI changes out of Core/mobile work. Backend, protocol, lifecycle, and invisible bridge changes are allowed only when they preserve the existing desktop surface.
-- Update `docs/roadmap.md` or focused docs only when the task materially changes release status, project decisions, or documented milestones.
+- Before each push, PR, or release, compare the final diff with relevant docs. Update `README.md`, `docs/`, `CHANGELOG.md`, `.github/SECURITY.md`, or `.github/CONTRIBUTING.md` if changed behavior, setup/configuration, Tauri/Core/Syncd contracts, migrations, security, compatibility, or support/release steps would make them stale.
+- For shared Core/Syncd changes, review Android docs too. If no docs need edits, state `Documentation impact: none — <reason>` in the PR or final publication summary; do not document internal-only refactors.
 
 ## Product And Default-User Experience
 

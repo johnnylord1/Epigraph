@@ -228,9 +228,10 @@ also supporting an external server configured by the user.
   artifacts are staged in a candidate profile, checked for package/version and
   registered-source identity, health-checked, then promoted as a transaction.
   An update journal supports recovery after interruption.
-- Optional FlareSolverr integration can be configured for source access that
-  requires a local or Docker anti-bot service; it is not required for the
-  desktop shell or local content.
+- Optional FlareSolverr support can run a managed local service or connect to a
+  configured local/Docker service for source requests that require anti-bot
+  handling. It is not required for the desktop shell or local content; see the
+  [third-party integration notes](third-party-integrations.md).
 
 Implementation: [runtime supervisor](../src-tauri/src/suwayomi_runtime.rs),
 [runtime updater](../src-tauri/src/suwayomi_update.rs),

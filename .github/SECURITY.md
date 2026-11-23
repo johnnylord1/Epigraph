@@ -2,13 +2,14 @@
 
 ## Supported versions
 
-Security fixes target the latest published desktop release and the current `main` branch. Older development builds are not maintained.
+Security fixes target the latest published release for each platform and the current `main` branch. The public repository contains the Android project under `mobile/`; the Android source on `main` is in scope alongside the desktop app and Core/Syncd services.
 
-| Version | Supported |
+| Surface | Supported |
 | --- | --- |
-| Latest release | Yes |
-| `main` | Yes |
-| Older builds | No |
+| Latest desktop release | Yes |
+| Latest Android release | Yes |
+| Current `main` branch, including `mobile/` | Yes |
+| Older releases and development builds | No |
 
 ## Reporting a vulnerability
 
@@ -17,6 +18,7 @@ Do not open a public issue for a suspected vulnerability.
 Use the repository's **Security** tab to create a private security advisory. Include:
 
 - the affected version and platform;
+- for Android reports, the app version, Android version, and device model;
 - clear reproduction steps;
 - the expected and observed behavior;
 - the potential impact;
@@ -26,4 +28,4 @@ Please allow time for triage before disclosing details publicly. The maintainer 
 
 ## Sensitive areas
 
-Pairing credentials, updater signing material, tracker tokens, source cookies, profile databases, backup archives, and Syncd authentication data must never be attached to an issue or committed to the repository.
+Pairing credentials, updater signing material, tracker tokens, source cookies, plugin or source credentials, profile databases, backup archives, and Syncd authentication data must never be attached to an issue or committed to the repository.
