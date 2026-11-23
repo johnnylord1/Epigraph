@@ -344,7 +344,7 @@
       }
     }
 
-    function resolveWorkHref(webUrl, relUrl, srcName, title) {
+    function resolveWorkHref(webUrl, relUrl, srcName) {
       var direct = safeWebUrl(webUrl) || safeWebUrl(relUrl);
       if (direct) return direct;
       var lowerSrc = (srcName || "").toLowerCase();
@@ -353,8 +353,7 @@
         if (lowerSrc.indexOf("manganato") !== -1 || lowerSrc.indexOf("manganelo") !== -1) return "https://www.natomanga.com" + relUrl;
         if (lowerSrc.indexOf("mangakakalot") !== -1) return "https://www.mangakakalove.com" + relUrl;
       }
-      var q = encodeURIComponent(((srcName ? srcName + " " : "") + title).trim());
-      return "https://www.google.com/search?q=" + q;
+      return null;
     }
 
     // Exact shareCollageLayout math from sharePayload.ts / LibraryShareCard.kt so we can crop
@@ -428,6 +427,7 @@
       grid.innerHTML = "";
       var coverEls = [];
 
+      var hasAnyLink = false;
       works.forEach(function (w, idx) {
         if (!Array.isArray(w)) return;
         var srcIdx = typeof w[0] === "number" ? w[0] : -1;
@@ -436,18 +436,21 @@
         if (!title) return;
         var srcEntry = (srcIdx >= 0 && srcIdx < sources.length && Array.isArray(sources[srcIdx])) ? sources[srcIdx] : null;
         var srcName = srcEntry && typeof srcEntry[1] === "string" ? srcEntry[1] : "";
-        var href = resolveWorkHref(w[3], relUrl, srcName, title);
+        var href = resolveWorkHref(w[3], relUrl, srcName);
+        if (href) hasAnyLink = true;
         var coverUrl = safeWebUrl(w[4]);
 
         var item = document.createElement("article");
         item.className = "work-item";
 
         var pal = PALETTES[idx % PALETTES.length];
-        var coverEl = document.createElement("a");
-        coverEl.className = "work-cover";
-        coverEl.href = href;
-        coverEl.target = "_blank";
-        coverEl.rel = "noopener noreferrer";
+        var coverEl = document.createElement(href ? "a" : "div");
+        coverEl.className = href ? "work-cover" : "work-cover is-static";
+        if (href) {
+          coverEl.href = href;
+          coverEl.target = "_blank";
+          coverEl.rel = "noopener noreferrer";
+        }
         coverEl.title = title;
 
         var mono = document.createElement("div");
@@ -481,11 +484,13 @@
 
         var meta = document.createElement("div");
         meta.className = "work-meta";
-        var link = document.createElement("a");
-        link.className = "work-title";
-        link.href = href;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
+        var link = document.createElement(href ? "a" : "span");
+        link.className = href ? "work-title" : "work-title is-static";
+        if (href) {
+          link.href = href;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+        }
         link.textContent = title;
         link.title = title;
         meta.appendChild(link);
@@ -499,6 +504,10 @@
         item.appendChild(meta);
         grid.appendChild(item);
       });
+
+      statusEl.textContent = hasAnyLink
+        ? (countLabel + " · Click any card or title below to open its page.")
+        : countLabel;
 
       document.getElementById("works-section").hidden = false;
 
