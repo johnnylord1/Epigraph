@@ -242,10 +242,10 @@
         <span class="brand-dot" aria-hidden="true"></span>
         <h1>Epigraph</h1>
       </div>
-      <p id="status" class="subtitle">Opening shared works in Epigraph…</p>
+      <p id="status" class="subtitle" role="status">Loading shared works…</p>
     </div>
     <div class="actions">
-      <a class="btn btn-primary" id="open" href="#">Open in Epigraph</a>
+      <a class="btn btn-primary" id="open" href="#" hidden>Open in Epigraph</a>
       <a class="btn btn-secondary" id="download" href="https://github.com/johnnylord1/Epigraph/releases" target="_blank" rel="noopener noreferrer">Download on GitHub</a>
     </div>
   </section>
@@ -266,6 +266,7 @@
 
 <script>
   (function () {
+    window.addEventListener("hashchange", function () { location.reload(); });
     var rawHash = location.hash.slice(1).trim();
     var searchParams = new URLSearchParams(location.search);
     var token = "";
@@ -277,7 +278,7 @@
       token = (parts[0] || "").trim();
       for (var i = 1; i < parts.length; i += 1) {
         var kv = parts[i].split("=");
-        if (kv[0] === "img" && kv[1]) imgParam = decodeURIComponent(kv[1]).trim();
+        if (kv[0] === "img" && kv[1]) imgParam = kv[1].trim();
         if (kv[0] === "view" && kv[1] === "1") viewOnly = true;
       }
     } else {
@@ -306,8 +307,10 @@
 
     var appUrl = "epigraph://import?p=" + encodeURIComponent(token);
     var android = /Android/i.test(navigator.userAgent);
+    var fallback = new URL(location.href);
+    fallback.searchParams.set("view", "1");
     var target = android
-      ? "intent://import?p=" + encodeURIComponent(token) + "#Intent;scheme=epigraph;S.browser_fallback_url=" + encodeURIComponent(location.href) + ";end"
+      ? "intent://import?p=" + encodeURIComponent(token) + "#Intent;scheme=epigraph;S.browser_fallback_url=" + encodeURIComponent(fallback.href) + ";end"
       : appUrl;
 
     var openEl = document.getElementById("open");
@@ -356,8 +359,7 @@
       return null;
     }
 
-    // Exact shareCollageLayout math from sharePayload.ts / LibraryShareCard.kt so we can crop
-    // individual cover cards directly from the hosted collage PNG in memory when hotlinking is blocked.
+    // Same grid and spacing as sharePayload.ts and LibraryShareCard.kt.
     function shareCollageLayout(count) {
       var total = Math.max(0, Math.floor(count));
       if (total === 0) return { columns: 0, rows: 0, covers: 0, overflow: 0 };
@@ -391,43 +393,35 @@
         var gridX = (baseWidth - gridWidth) / 2;
         var gridY = padding + headerHeight;
 
-        var canvas = document.createElement("canvas");
-        var outW = Math.round(cellWidth * scale);
-        var outH = Math.round(coverHeight * scale);
-        canvas.width = outW;
-        canvas.height = outH;
-        var ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
         for (var c = 0; c < layout.covers && c < coverEls.length; c += 1) {
           var targetCoverEl = coverEls[c];
           if (!targetCoverEl || targetCoverEl.dataset.hasDirectCover === "1") continue;
-          var x = (gridX + (c % layout.columns) * (cellWidth + gapX)) * scale;
-          var y = (gridY + Math.floor(c / layout.columns) * (cellHeight + gapY)) * scale;
-          ctx.clearRect(0, 0, outW, outH);
-          ctx.drawImage(imgEl, x, y, outW, outH, 0, 0, outW, outH);
-          var dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+          var x = gridX + (c % layout.columns) * (cellWidth + gapX);
+          var y = gridY + Math.floor(c / layout.columns) * (cellHeight + gapY);
+          // CSS clipping also works for hosts that allow displaying, but not reading, the PNG.
           var croppedImg = document.createElement("img");
-          croppedImg.src = dataUrl;
+          croppedImg.src = imgEl.src;
           croppedImg.alt = "";
-          targetCoverEl.appendChild(croppedImg);
+          croppedImg.style.inset = (-100 * y / coverHeight) + "% auto auto " + (-100 * x / cellWidth) + "%";
+          croppedImg.style.width = (100 * baseWidth / cellWidth) + "%";
+          croppedImg.style.height = (100 * imgEl.naturalHeight / scale / coverHeight) + "%";
+          croppedImg.style.maxWidth = "none";
+          croppedImg.style.objectFit = "fill";
+          targetCoverEl.firstChild.after(croppedImg);
         }
       } catch (_) {}
     }
 
     function renderManifest(manifest) {
-      if (!manifest || !Array.isArray(manifest.w) || manifest.w.length === 0) return;
+      if (!manifest || manifest.v !== 1 || !Array.isArray(manifest.w) || !manifest.w.length) return false;
       var sources = Array.isArray(manifest.s) ? manifest.s : [];
       var works = manifest.w;
-      var countLabel = works.length === 1 ? "1 work shared" : (works.length + " works shared");
-      statusEl.textContent = countLabel + " · Click any card or title below to open its page.";
-      document.getElementById("works-heading").textContent = "Works (" + works.length + ")";
-
       var grid = document.getElementById("works-grid");
       grid.innerHTML = "";
       var coverEls = [];
 
       var hasAnyLink = false;
+      var hasImportableWork = false;
       works.forEach(function (w, idx) {
         if (!Array.isArray(w)) return;
         var srcIdx = typeof w[0] === "number" ? w[0] : -1;
@@ -435,6 +429,7 @@
         var title = typeof w[2] === "string" ? w[2].trim() : "";
         if (!title) return;
         var srcEntry = (srcIdx >= 0 && srcIdx < sources.length && Array.isArray(sources[srcIdx])) ? sources[srcIdx] : null;
+        if (srcEntry && /^-?\d{1,20}$/.test(srcEntry[0]) && srcEntry[0] !== "0" && relUrl) hasImportableWork = true;
         var srcName = srcEntry && typeof srcEntry[1] === "string" ? srcEntry[1] : "";
         var href = resolveWorkHref(w[3], relUrl, srcName);
         if (href) hasAnyLink = true;
@@ -450,11 +445,13 @@
           coverEl.href = href;
           coverEl.target = "_blank";
           coverEl.rel = "noopener noreferrer";
+          coverEl.setAttribute("aria-label", title);
         }
         coverEl.title = title;
 
         var mono = document.createElement("div");
         mono.className = "work-monogram";
+        mono.setAttribute("aria-hidden", "true");
         mono.style.background = pal.bg;
         mono.style.color = pal.fg;
         mono.textContent = monogramFor(title);
@@ -470,16 +467,11 @@
             coverEl.dataset.hasDirectCover = "1";
           };
           img.onerror = function () {
-            if (!img.dataset.triedProxy) {
-              img.dataset.triedProxy = "1";
-              img.src = "https://wsrv.nl/?url=" + encodeURIComponent(coverUrl);
-            } else {
-              img.remove();
-            }
+            img.remove();
           };
           coverEl.appendChild(img);
         }
-        coverEls.push(coverEl);
+        coverEls[idx] = coverEl;
         item.appendChild(coverEl);
 
         var meta = document.createElement("div");
@@ -505,39 +497,65 @@
         grid.appendChild(item);
       });
 
+      var count = grid.childElementCount;
+      if (!count) return false;
+      var countLabel = count === 1 ? "1 work shared" : (count + " works shared");
+      document.getElementById("works-heading").textContent = "Works (" + count + ")";
       statusEl.textContent = hasAnyLink
         ? (countLabel + " · Click any card or title below to open its page.")
         : countLabel;
 
       document.getElementById("works-section").hidden = false;
+      openEl.hidden = !hasImportableWork;
 
       if (collageUrl) {
         var hiddenCollage = new Image();
-        hiddenCollage.crossOrigin = "anonymous";
         hiddenCollage.onload = function () {
           cropCoversFromCollage(hiddenCollage, works.length, coverEls);
         };
         hiddenCollage.src = collageUrl;
       }
+      return true;
     }
 
     async function decodeInlineToken(inlineToken) {
-      if (!inlineToken || inlineToken.indexOf("d.") !== 0 || typeof DecompressionStream === "undefined") return null;
+      if (!/^d\.[A-Za-z0-9_-]{8,1400000}$/.test(inlineToken || "") || typeof DecompressionStream === "undefined") return null;
       try {
         var b64 = inlineToken.slice(2).replace(/-/g, "+").replace(/_/g, "/");
         while (b64.length % 4 !== 0) b64 += "=";
         var bin = atob(b64);
         var bytes = new Uint8Array(bin.length);
         for (var i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-        var ds = new DecompressionStream("gzip");
-        var writer = ds.writable.getWriter();
-        writer.write(bytes).catch(function () {});
-        writer.close().catch(function () {});
-        var text = await new Response(ds.readable).text();
-        return JSON.parse(text);
+        var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+        var inflated = await readLimitedBytes(stream, 1024 * 1024);
+        return JSON.parse(new TextDecoder().decode(inflated));
       } catch (_) {
         return null;
       }
+    }
+
+    async function readLimitedBytes(stream, maxBytes) {
+      var reader = stream.getReader();
+      var chunks = [];
+      var length = 0;
+      try {
+        for (;;) {
+          var part = await reader.read();
+          if (part.done) break;
+          length += part.value.length;
+          if (length > maxBytes) throw new Error("Shared data exceeds the size limit");
+          chunks.push(part.value);
+        }
+      } finally {
+        await reader.cancel();
+      }
+      var bytes = new Uint8Array(length);
+      var offset = 0;
+      chunks.forEach(function (chunk) {
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+      });
+      return bytes;
     }
 
     function extractInlineTokenFromPng(bytes) {
@@ -567,24 +585,31 @@
       var inline = token.indexOf("d.") === 0 ? token : null;
       var manifest = await decodeInlineToken(inline);
       if (!manifest && collageUrl) {
+        var controller = new AbortController();
+        var timeout = setTimeout(function () { controller.abort(); }, 10000);
         try {
-          var resp = await fetch(collageUrl);
-          if (resp.ok) {
-            var buf = new Uint8Array(await resp.arrayBuffer());
+          var resp = await fetch(collageUrl, { signal: controller.signal });
+          if (resp.ok && resp.body) {
+            var buf = await readLimitedBytes(resp.body, 16 * 1024 * 1024);
             inline = extractInlineTokenFromPng(buf);
             manifest = await decodeInlineToken(inline);
           }
-        } catch (_) {}
+        } catch (_) {
+          // A removed or expired image can't provide the embedded list.
+        } finally {
+          clearTimeout(timeout);
+        }
       }
-      if (manifest) renderManifest(manifest);
+      if (!renderManifest(manifest)) {
+        statusEl.textContent = "This shared list is unavailable or has expired.";
+        return;
+      }
+      if (!viewOnly && !openEl.hidden) window.location.href = target;
     })();
 
-    // Attempt to open the installed Epigraph app automatically unless opened via "View list" (view=1).
-    if (!viewOnly) {
-      setTimeout(function () {
-        window.location.href = target;
-      }, 80);
-    }
+    window.addEventListener("hashchange", function () {
+      location.reload();
+    });
   })();
 </script>
 </body>
