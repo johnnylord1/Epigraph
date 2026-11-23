@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Open in Epigraph</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f5f2;
+    --card: #ffffff;
+    --border: rgba(29, 28, 26, 0.1);
+    --fg: #1d1c1a;
+    --muted: #6b6862;
+    --accent: #6c5ce7;
+    --accent-hover: #5b4bd6;
+    --on-accent: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0a0e;
+      --card: #15131c;
+      --border: rgba(180, 166, 227, 0.16);
+      --fg: #e9e7ed;
+      --muted: #9b95a6;
+      --accent: #b4a6e3;
+      --accent-hover: #c5baf0;
+      --on-accent: #14111d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem 1rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  main {
+    width: 100%;
+    max-width: 24rem;
+    padding: 2rem 1.5rem;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    text-align: center;
+  }
+  h1 {
+    font-size: 1.35rem;
+    margin: 0 0 .5rem;
+  }
+  p {
+    color: var(--muted);
+    margin: 0 0 1.4rem;
+    font-size: .95rem;
+  }
+  .actions {
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+    align-items: center;
+  }
+  a.button {
+    display: inline-block;
+    width: 100%;
+    padding: .8rem 1.4rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  a.button:hover { background: var(--accent-hover); }
+  a.secondary {
+    color: var(--muted);
+    font-size: .9rem;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  a.secondary:hover { color: var(--fg); }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Epigraph</h1>
+  <div id="ready" hidden>
+    <p id="status">Opening shared works in Epigraph…</p>
+    <div class="actions">
+      <a class="button" id="open" href="#">Open in Epigraph</a>
+      <a class="secondary" id="download" href="https://github.com/johnnylord1/Epigraph/releases">Don't have Epigraph? Download on GitHub</a>
+    </div>
+  </div>
+  <div id="invalid">
+    <p>This shared library link is incomplete or invalid.</p>
+    <div class="actions">
+      <a class="button" href="https://github.com/johnnylord1/Epigraph/releases">Get Epigraph on GitHub</a>
+    </div>
+  </div>
+</main>
+<script>
+  // The shared work token stays in the URL fragment, which browsers never send to this server.
+  (function () {
+    var fallback = "https://github.com/johnnylord1/Epigraph/releases";
+    var token = location.hash.slice(1).trim();
+    if (!token) {
+      var params = new URLSearchParams(location.search);
+      token = (params.get("p") || "").trim();
+    }
+    var valid = /^(d\.[A-Za-z0-9_-]{8,16384}|[lcikpa]\.[A-Za-z0-9_-]{1,64}|u\.[A-Za-z0-9]{1,16}\.[A-Za-z0-9_-]{1,64})$/.test(token);
+    if (!valid) return;
+
+    var appUrl = "epigraph://import?p=" + encodeURIComponent(token);
+    var android = /Android/i.test(navigator.userAgent);
+    var target = android
+      ? "intent://import?p=" + encodeURIComponent(token) + "#Intent;scheme=epigraph;S.browser_fallback_url=" + encodeURIComponent(fallback) + ";end"
+      : appUrl;
+
+    var openEl = document.getElementById("open");
+    var statusEl = document.getElementById("status");
+    openEl.href = target;
+    document.getElementById("invalid").hidden = true;
+    document.getElementById("ready").hidden = false;
+
+    var appOpened = false;
+    function markOpened() { appOpened = true; }
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) markOpened();
+    });
+    window.addEventListener("pagehide", markOpened);
+    window.addEventListener("blur", markOpened);
+
+    // Trigger the app launch right away; if Epigraph is not installed, send the user to GitHub.
+    setTimeout(function () {
+      window.location.href = target;
+    }, 60);
+
+    if (!android) {
+      setTimeout(function () {
+        if (!appOpened && !document.hidden) {
+          statusEl.textContent = "Epigraph wasn't detected on this device. Redirecting to GitHub…";
+          window.location.replace(fallback);
+        }
+      }, 1800);
+    }
+  })();
+</script>
+</body>
+</html>
