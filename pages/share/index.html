@@ -299,6 +299,7 @@
     var searchParams = new URLSearchParams(location.search);
     var token = "";
     var imgParam = searchParams.get("img") || "";
+    var viewOnly = searchParams.get("view") === "1";
 
     if (rawHash) {
       var parts = rawHash.split("&");
@@ -306,6 +307,7 @@
       for (var i = 1; i < parts.length; i += 1) {
         var kv = parts[i].split("=");
         if (kv[0] === "img" && kv[1]) imgParam = decodeURIComponent(kv[1]).trim();
+        if (kv[0] === "view" && kv[1] === "1") viewOnly = true;
       }
     } else {
       token = (searchParams.get("p") || "").trim();
@@ -519,10 +521,12 @@
       if (manifest) renderManifest(manifest);
     })();
 
-    // Attempt to open the installed Epigraph app automatically while keeping this page open.
-    setTimeout(function () {
-      window.location.href = target;
-    }, 80);
+    // Attempt to open the installed Epigraph app automatically unless opened via "View list" (view=1).
+    if (!viewOnly) {
+      setTimeout(function () {
+        window.location.href = target;
+      }, 80);
+    }
   })();
 </script>
 </body>
