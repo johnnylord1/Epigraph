@@ -5,120 +5,336 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
-<title>Open in Epigraph</title>
+<title>Shared Works · Epigraph</title>
 <style>
   :root {
-    color-scheme: light dark;
-    --bg: #f6f5f2;
-    --card: #ffffff;
-    --border: rgba(29, 28, 26, 0.1);
-    --fg: #1d1c1a;
-    --muted: #6b6862;
-    --accent: #6c5ce7;
-    --accent-hover: #5b4bd6;
-    --on-accent: #ffffff;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0b0a0e;
-      --card: #15131c;
-      --border: rgba(180, 166, 227, 0.16);
-      --fg: #e9e7ed;
-      --muted: #9b95a6;
-      --accent: #b4a6e3;
-      --accent-hover: #c5baf0;
-      --on-accent: #14111d;
-    }
+    color-scheme: dark;
+    --bg: #0b0a0e;
+    --surface: #15141b;
+    --surface-high: #1e1c26;
+    --border: rgba(201, 181, 255, 0.14);
+    --border-strong: rgba(201, 181, 255, 0.28);
+    --fg: #e7e4ee;
+    --muted: #9f98ad;
+    --accent: #c9b5ff;
+    --accent-hover: #d8c9ff;
+    --on-accent: #241748;
+    --accent-dim: rgba(201, 181, 255, 0.12);
+    --radius: 10px;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding: 1.5rem 1rem;
+    padding: 24px 16px 48px;
     background: var(--bg);
     color: var(--fg);
-    font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    font: 15px/1.5 "Inter", "Outfit", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   }
-  main {
+  .shell {
     width: 100%;
-    max-width: 24rem;
-    padding: 2rem 1.5rem;
-    border-radius: 16px;
+    max-width: 1040px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .hero {
+    padding: 20px 22px;
+    border-radius: 14px;
     border: 1px solid var(--border);
-    background: var(--card);
-    text-align: center;
+    background: var(--surface);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .brand {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 200px;
+  }
+  .brand-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .brand-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 12px rgba(201, 181, 255, 0.55);
   }
   h1 {
-    font-size: 1.35rem;
-    margin: 0 0 .5rem;
+    font-size: 1.25rem;
+    font-weight: 650;
+    margin: 0;
+    letter-spacing: -0.01em;
   }
-  p {
+  .subtitle {
+    margin: 0;
     color: var(--muted);
-    margin: 0 0 1.4rem;
-    font-size: .95rem;
+    font-size: 0.9rem;
   }
   .actions {
     display: flex;
-    flex-direction: column;
-    gap: .75rem;
+    flex-wrap: wrap;
+    gap: 10px;
     align-items: center;
   }
-  a.button {
-    display: inline-block;
-    width: 100%;
-    padding: .8rem 1.4rem;
-    border-radius: 999px;
-    background: var(--accent);
-    color: var(--on-accent);
+  a.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 16px;
+    border-radius: 8px;
+    font-size: 0.9rem;
     font-weight: 600;
     text-decoration: none;
+    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
   }
-  a.button:hover { background: var(--accent-hover); }
-  a.secondary {
+  a.btn-primary {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  a.btn-primary:hover { background: var(--accent-hover); }
+  a.btn-secondary {
+    background: var(--surface-high);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+  }
+  a.btn-secondary:hover {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+  }
+  .section-card {
+    padding: 18px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .section-title {
+    margin: 0;
+    font-size: 0.92rem;
+    font-weight: 600;
     color: var(--muted);
-    font-size: .9rem;
-    text-decoration: underline;
-    text-underline-offset: 3px;
   }
-  a.secondary:hover { color: var(--fg); }
-  [hidden] { display: none; }
+  .zoom-hint {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .collage-wrap {
+    width: 100%;
+    overflow: auto;
+    border-radius: var(--radius);
+    background: #070609;
+    border: 1px solid var(--border);
+  }
+  .collage-wrap img {
+    display: block;
+    width: 100%;
+    height: auto;
+    cursor: zoom-in;
+  }
+  .collage-wrap.is-zoomed img {
+    width: auto;
+    max-width: none;
+    cursor: zoom-out;
+  }
+  .works-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
+    gap: 16px 14px;
+  }
+  @media (max-width: 520px) {
+    .works-grid {
+      grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+      gap: 14px 10px;
+    }
+  }
+  .work-item {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+  }
+  .work-cover {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--surface-high);
+    display: grid;
+    place-items: center;
+    text-decoration: none;
+    color: var(--fg);
+  }
+  .work-cover img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .work-monogram {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    padding: 12px;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 2.1rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    user-select: none;
+  }
+  .work-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  a.work-title,
+  span.work-title {
+    font-size: 0.86rem;
+    font-weight: 600;
+    line-height: 1.32;
+    color: var(--fg);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+  a.work-title {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-color: rgba(201, 181, 255, 0.45);
+    text-underline-offset: 2px;
+  }
+  a.work-title:hover {
+    color: var(--accent-hover);
+    text-decoration-color: var(--accent-hover);
+  }
+  .work-source {
+    font-size: 0.75rem;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .invalid-card {
+    max-width: 28rem;
+    margin: 48px auto;
+    padding: 28px 24px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    text-align: center;
+  }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<main>
-  <h1>Epigraph</h1>
-  <div id="ready" hidden>
-    <p id="status">Opening shared works in Epigraph…</p>
-    <div class="actions">
-      <a class="button" id="open" href="#">Open in Epigraph</a>
-      <a class="secondary" id="download" href="https://github.com/johnnylord1/Epigraph/releases">Don't have Epigraph? Download on GitHub</a>
+<div class="shell">
+  <section id="ready" class="hero" hidden>
+    <div class="brand">
+      <div class="brand-row">
+        <span class="brand-dot" aria-hidden="true"></span>
+        <h1>Epigraph</h1>
+      </div>
+      <p id="status" class="subtitle">Opening shared works in Epigraph…</p>
     </div>
-  </div>
-  <div id="invalid">
-    <p>This shared library link is incomplete or invalid.</p>
     <div class="actions">
-      <a class="button" href="https://github.com/johnnylord1/Epigraph/releases">Get Epigraph on GitHub</a>
+      <a class="btn btn-primary" id="open" href="#">Open in Epigraph</a>
+      <a class="btn btn-secondary" id="download" href="https://github.com/johnnylord1/Epigraph/releases" target="_blank" rel="noopener noreferrer">Download on GitHub</a>
     </div>
-  </div>
-</main>
+  </section>
+
+  <section id="collage-section" class="section-card" hidden>
+    <div class="section-head">
+      <h2 class="section-title">Preview collage</h2>
+      <span class="zoom-hint">Click image to toggle high-res zoom</span>
+    </div>
+    <div id="collage-wrap" class="collage-wrap">
+      <img id="collage-img" alt="Shared works cover collage" />
+    </div>
+  </section>
+
+  <section id="works-section" class="section-card" hidden>
+    <div class="section-head">
+      <h2 id="works-heading" class="section-title">Shared works</h2>
+    </div>
+    <div id="works-grid" class="works-grid"></div>
+  </section>
+
+  <section id="invalid" class="invalid-card">
+    <h1>Epigraph</h1>
+    <p class="subtitle" style="margin: 8px 0 18px;">This shared library link is incomplete or invalid.</p>
+    <a class="btn btn-primary" href="https://github.com/johnnylord1/Epigraph/releases">Download on GitHub</a>
+  </section>
+</div>
+
 <script>
-  // The shared work token stays in the URL fragment, which browsers never send to this server.
   (function () {
     var fallback = "https://github.com/johnnylord1/Epigraph/releases";
-    var token = location.hash.slice(1).trim();
-    if (!token) {
-      var params = new URLSearchParams(location.search);
-      token = (params.get("p") || "").trim();
+    var rawHash = location.hash.slice(1).trim();
+    var searchParams = new URLSearchParams(location.search);
+    var token = "";
+    var imgParam = searchParams.get("img") || "";
+
+    if (rawHash) {
+      var parts = rawHash.split("&");
+      token = (parts[0] || "").trim();
+      for (var i = 1; i < parts.length; i += 1) {
+        var kv = parts[i].split("=");
+        if (kv[0] === "img" && kv[1]) imgParam = decodeURIComponent(kv[1]).trim();
+      }
+    } else {
+      token = (searchParams.get("p") || "").trim();
     }
-    var valid = /^(d\.[A-Za-z0-9_-]{8,16384}|[lcikpa]\.[A-Za-z0-9_-]{1,64}|u\.[A-Za-z0-9]{1,16}\.[A-Za-z0-9_-]{1,64})$/.test(token);
-    if (!valid) return;
+
+    var tokenRe = /^(d\.[A-Za-z0-9_-]{8,16384}|[lcikpa]\.[A-Za-z0-9_-]{1,64}|u\.[A-Za-z0-9]{1,16}\.[A-Za-z0-9_-]{1,64})$/;
+    if (!tokenRe.test(token)) return;
+
+    function resolveHostedUrl(t) {
+      if (!t) return null;
+      var m = /^([lcikpa])\.([A-Za-z0-9_-]{1,64})$/.exec(t);
+      if (m) {
+        var p = m[1], id = m[2];
+        if (p === "i") return "https://iili.io/" + id + ".png";
+        if (p === "k") return "https://kappa.lol/" + id + ".png";
+        if (p === "p") return "https://pomf2.lain.la/f/" + id + ".png";
+        if (p === "a") return "https://x0.at/" + id + ".png";
+        if (p === "l") return "https://litter.catbox.moe/" + id + ".png";
+        if (p === "c") return "https://files.catbox.moe/" + id + ".png";
+      }
+      var u = /^u\.([A-Za-z0-9]{1,16})\.([A-Za-z0-9_-]{1,64})$/.exec(t);
+      if (u) return "https://" + u[1] + ".uguu.se/" + u[2] + ".png";
+      return null;
+    }
 
     var appUrl = "epigraph://import?p=" + encodeURIComponent(token);
     var android = /Android/i.test(navigator.userAgent);
     var target = android
-      ? "intent://import?p=" + encodeURIComponent(token) + "#Intent;scheme=epigraph;S.browser_fallback_url=" + encodeURIComponent(fallback) + ";end"
+      ? "intent://import?p=" + encodeURIComponent(token) + "#Intent;scheme=epigraph;S.browser_fallback_url=" + encodeURIComponent(location.href) + ";end"
       : appUrl;
 
     var openEl = document.getElementById("open");
@@ -127,27 +343,186 @@
     document.getElementById("invalid").hidden = true;
     document.getElementById("ready").hidden = false;
 
-    var appOpened = false;
-    function markOpened() { appOpened = true; }
-    document.addEventListener("visibilitychange", function () {
-      if (document.hidden) markOpened();
-    });
-    window.addEventListener("pagehide", markOpened);
-    window.addEventListener("blur", markOpened);
+    // Show large zoomable collage image whenever a hosted image token is present.
+    var collageUrl = resolveHostedUrl(imgParam) || resolveHostedUrl(token);
+    if (collageUrl) {
+      var collageSec = document.getElementById("collage-section");
+      var collageImg = document.getElementById("collage-img");
+      var collageWrap = document.getElementById("collage-wrap");
+      collageImg.src = collageUrl;
+      collageImg.onload = function () { collageSec.hidden = false; };
+      collageWrap.onclick = function () { collageWrap.classList.toggle("is-zoomed"); };
+    }
 
-    // Trigger the app launch right away; if Epigraph is not installed, send the user to GitHub.
+    var PALETTES = [
+      { bg: "#211d3a", fg: "#e5b8d9" },
+      { bg: "#17352c", fg: "#b7de9a" },
+      { bg: "#37231e", fg: "#f0c39b" },
+      { bg: "#1b2c3b", fg: "#a8d2f0" },
+      { bg: "#2d1f36", fg: "#d7b5f5" },
+      { bg: "#2b291c", fg: "#e6da9c" }
+    ];
+
+    function monogramFor(title) {
+      var words = (title || "").replace(/[^A-Za-z0-9\u00C0-\u024F]+/g, " ").trim().split(/\s+/).filter(Boolean);
+      if (words.length === 0) return "?";
+      if (words.length === 1) return words[0].slice(0, 2);
+      return (words[0][0] + words[1][0]).toUpperCase();
+    }
+
+    function safeWebUrl(raw) {
+      if (typeof raw !== "string" || !raw.trim()) return null;
+      try {
+        var u = new URL(raw.trim());
+        return (u.protocol === "http:" || u.protocol === "https:") ? u.href : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function renderManifest(manifest) {
+      if (!manifest || !Array.isArray(manifest.w) || manifest.w.length === 0) return;
+      var sources = Array.isArray(manifest.s) ? manifest.s : [];
+      var works = manifest.w;
+      var countLabel = works.length === 1 ? "1 work shared" : (works.length + " works shared");
+      statusEl.textContent = countLabel + " · Click any title below to open its page, or import all in Epigraph.";
+      document.getElementById("works-heading").textContent = "Works (" + works.length + ")";
+
+      var grid = document.getElementById("works-grid");
+      grid.innerHTML = "";
+      works.forEach(function (w, idx) {
+        if (!Array.isArray(w)) return;
+        var srcIdx = typeof w[0] === "number" ? w[0] : -1;
+        var relUrl = typeof w[1] === "string" ? w[1] : "";
+        var title = typeof w[2] === "string" ? w[2].trim() : "";
+        if (!title) return;
+        var webUrl = safeWebUrl(w[3]) || safeWebUrl(relUrl);
+        var coverUrl = safeWebUrl(w[4]);
+        var srcEntry = (srcIdx >= 0 && srcIdx < sources.length && Array.isArray(sources[srcIdx])) ? sources[srcIdx] : null;
+        var srcName = srcEntry && typeof srcEntry[1] === "string" ? srcEntry[1] : "";
+
+        var item = document.createElement("article");
+        item.className = "work-item";
+
+        var pal = PALETTES[idx % PALETTES.length];
+        var coverEl = document.createElement(webUrl ? "a" : "div");
+        coverEl.className = "work-cover";
+        if (webUrl) {
+          coverEl.href = webUrl;
+          coverEl.target = "_blank";
+          coverEl.rel = "noopener noreferrer";
+        }
+
+        var mono = document.createElement("div");
+        mono.className = "work-monogram";
+        mono.style.background = pal.bg;
+        mono.style.color = pal.fg;
+        mono.textContent = monogramFor(title);
+        coverEl.appendChild(mono);
+
+        if (coverUrl) {
+          var img = document.createElement("img");
+          img.src = coverUrl;
+          img.alt = "";
+          img.loading = "lazy";
+          img.referrerPolicy = "no-referrer";
+          img.onerror = function () { img.remove(); };
+          coverEl.appendChild(img);
+        }
+        item.appendChild(coverEl);
+
+        var meta = document.createElement("div");
+        meta.className = "work-meta";
+        if (webUrl) {
+          var link = document.createElement("a");
+          link.className = "work-title";
+          link.href = webUrl;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = title;
+          link.title = title;
+          meta.appendChild(link);
+        } else {
+          var span = document.createElement("span");
+          span.className = "work-title";
+          span.textContent = title;
+          span.title = title;
+          meta.appendChild(span);
+        }
+        if (srcName) {
+          var srcEl = document.createElement("span");
+          srcEl.className = "work-source";
+          srcEl.textContent = srcName;
+          meta.appendChild(srcEl);
+        }
+        item.appendChild(meta);
+        grid.appendChild(item);
+      });
+
+      document.getElementById("works-section").hidden = false;
+    }
+
+    async function decodeInlineToken(inlineToken) {
+      if (!inlineToken || inlineToken.indexOf("d.") !== 0 || typeof DecompressionStream === "undefined") return null;
+      try {
+        var b64 = inlineToken.slice(2).replace(/-/g, "+").replace(/_/g, "/");
+        while (b64.length % 4 !== 0) b64 += "=";
+        var bin = atob(b64);
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+        var ds = new DecompressionStream("gzip");
+        var writer = ds.writable.getWriter();
+        writer.write(bytes);
+        writer.close();
+        var text = await new Response(ds.readable).text();
+        return JSON.parse(text);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function extractInlineTokenFromPng(bytes) {
+      if (!bytes || bytes.length < 33) return null;
+      var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      var offset = 8;
+      var decoder = new TextDecoder();
+      while (offset + 12 <= bytes.length) {
+        var len = view.getUint32(offset, false);
+        var type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+        var next = offset + 12 + len;
+        if (next > bytes.length) return null;
+        if (type === "tEXt") {
+          var data = bytes.subarray(offset + 8, offset + 8 + len);
+          var sep = data.indexOf(0);
+          if (sep > 0 && decoder.decode(data.subarray(0, sep)) === "epigraph-share") {
+            return decoder.decode(data.subarray(sep + 1)).trim();
+          }
+        }
+        if (type === "IEND") break;
+        offset = next;
+      }
+      return null;
+    }
+
+    (async function () {
+      var inline = token.indexOf("d.") === 0 ? token : null;
+      if (!inline && collageUrl) {
+        try {
+          var resp = await fetch(collageUrl);
+          if (resp.ok) {
+            var buf = new Uint8Array(await resp.arrayBuffer());
+            inline = extractInlineTokenFromPng(buf);
+          }
+        } catch (_) {}
+      }
+      var manifest = await decodeInlineToken(inline);
+      if (manifest) renderManifest(manifest);
+    })();
+
+    // Attempt to open the installed Epigraph app automatically while keeping this page open.
     setTimeout(function () {
       window.location.href = target;
-    }, 60);
-
-    if (!android) {
-      setTimeout(function () {
-        if (!appOpened && !document.hidden) {
-          statusEl.textContent = "Epigraph wasn't detected on this device. Redirecting to GitHub…";
-          window.location.replace(fallback);
-        }
-      }, 1800);
-    }
+    }, 80);
   })();
 </script>
 </body>
