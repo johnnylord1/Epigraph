@@ -36,6 +36,11 @@
 - Exception (tracker sync v1, user-approved): tracker logins/tokens may travel only as `tracker.credential` over the paired, certificate-pinned Core session, and only when the Core advertises `supportsTrackerCredentialsV1`. They are sealed with the Android Keystore in `noBackupFilesDir`, never enter backup, snapshots, change feeds, or logs, and are wiped on unpair. See `docs/audit/TRACKER_SYNC_CONTRACT.md`.
 - The UI must never report `synced` while the outbox has pending commands.
 
+## Documentation Impact Before Publication
+
+- Before each push, PR, or release, compare the final Android diff with `README.md`, `CHANGELOG.md`, `.github/`, and `docs/`. Update relevant docs if changed behavior, setup, permissions/security, sync contracts, persisted data/backups/migrations, support, or release procedures would make them stale.
+- For shared Core/Syncd changes, review desktop docs too. If no docs need edits, state `Documentation impact: none — <reason>` in the PR or final publication summary; do not document internal-only refactors.
+
 ## Security
 
 - Do not ship upstream Firebase/Crashlytics configuration.

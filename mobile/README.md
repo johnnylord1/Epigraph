@@ -15,7 +15,7 @@
   <a href="https://github.com/johnnylord1/Epigraph/issues">Issues</a>
 </p>
 
-[![CI](https://github.com/johnnylord1/Epigraph/actions/workflows/build_push.yml/badge.svg?branch=mobile&labelColor=27303D)](https://github.com/johnnylord1/Epigraph/actions/workflows/build_push.yml?query=branch%3Amobile)
+[![Build Android](https://github.com/johnnylord1/Epigraph/actions/workflows/build-android.yml/badge.svg?branch=main&labelColor=27303D)](https://github.com/johnnylord1/Epigraph/actions/workflows/build-android.yml?query=branch%3Amain)
 [![License: Apache-2.0](https://img.shields.io/github/license/johnnylord1/Epigraph?labelColor=27303D&color=0877d2)](https://github.com/johnnylord1/Epigraph/blob/main/LICENSE)
 
 </div>
@@ -24,7 +24,8 @@
 [![Epigraph Beta](https://img.shields.io/github/v/release/johnnylord1/Epigraph?maxAge=3600&label=Beta&labelColor=2c2c47&color=1c1c39&filter=v*-b*)](https://github.com/johnnylord1/Epigraph/releases)
 [![Epigraph Nightly](https://img.shields.io/github/v/release/johnnylord1/Epigraph?maxAge=3600&label=Nightly&labelColor=B11A3B&color=1c1c39)](https://github.com/johnnylord1/Epigraph/releases)
 
-Epigraph Mobile is the native Android client of Epigraph. It brings manga,
+Epigraph Mobile is the native Android client of Epigraph. Its source lives in
+`mobile/` on the public `main` branch. It brings manga,
 novel, EPUB, and PDF reading, library organization, source discovery, and
 offline progress to phones and tablets while the [main branch](https://github.com/johnnylord1/Epigraph/tree/main)
 contains the desktop Tauri application and the PC-hosted Core/Syncd services.
@@ -42,10 +43,13 @@ contracts:
   <img src="https://github.com/johnnylord1/Epigraph/raw/refs/heads/main/docs/assets/epigraph-hero-banner.png" alt="Epigraph desktop reader and recommendations" width="78%" />
 </p>
 
-| Client | Branch | Package or identity |
+| Client | Source location | Package or identity |
 | --- | --- | --- |
-| Android | [mobile](https://github.com/johnnylord1/Epigraph/tree/main/mobile) | <code>app.epigraph.mobile</code> |
-| Desktop | [main](https://github.com/johnnylord1/Epigraph/tree/main) | <code>dev.epigraph.app</code> · <code>epigraph</code> |
+| Android | [`mobile/` on `main`](https://github.com/johnnylord1/Epigraph/tree/main/mobile) | <code>app.epigraph.mobile</code> |
+| Desktop and Core/Syncd | [`main`](https://github.com/johnnylord1/Epigraph/tree/main) | <code>dev.epigraph.app</code> · <code>epigraph</code> |
+
+The separate `mobile` branch is an older Android-root snapshot. New contributions
+belong under `mobile/` on `main`, where the current Android workflow runs.
 
 ## Android identity and migration
 
@@ -81,8 +85,8 @@ them.
 
 ## Build
 
-Open the repository in Android Studio or run Gradle from the
-<code>mobile</code> branch.
+Open the Android project in Android Studio or run Gradle from the `mobile/`
+project directory on `main`.
 
 ~~~bash
 ./gradlew assembleDevDebug
@@ -103,6 +107,10 @@ workflow status are available from
 
 The mobile build also validates SQLDelight migrations and the compatibility
 contracts used by the desktop Core/Syncd boundary.
+
+Android release notes are maintained in [`CHANGELOG.md`](CHANGELOG.md). The
+shared repository's [third-party integration notes](https://github.com/johnnylord1/Epigraph/blob/main/docs/third-party-integrations.md)
+describe source repositories, plugins, metadata assets, and optional network helpers.
 
 ## Foundation and credits
 

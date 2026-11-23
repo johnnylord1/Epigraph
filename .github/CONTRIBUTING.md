@@ -6,7 +6,7 @@ Thanks for improving Epigraph. Keep changes focused, explain the user impact, an
 
 1. Search existing issues and pull requests.
 2. Open an issue for a large behavior change or a change to persisted data, pairing, backups, source contracts, or the managed runtime.
-3. Branch from `main` for desktop work. Android work belongs on the `mobile` branch.
+3. Branch from `main` for contributions. The current public Android source is under `mobile/` on `main`; open Android changes against that path. The separate `mobile` branch is an older Android-root snapshot, not the current contribution target.
 4. Never commit credentials, local profiles, downloaded content, signing keys, or private repository URLs.
 
 ## Desktop setup
@@ -51,3 +51,5 @@ pnpm release:verify
 - Use descriptive commits such as `fix: restore source count after repository refresh`.
 
 By contributing, you agree that your contribution is licensed under the repository's [Apache License 2.0](../LICENSE).
+
+When adding or changing a third-party source, catalog, plugin, parser, or network helper, document its upstream URL, the exact code or metadata Epigraph distributes, its license or terms reference, and how requests are routed. A catalog entry does not establish affiliation with an upstream project or permission to redistribute its content.

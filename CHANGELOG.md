@@ -4,6 +4,159 @@ All notable user-facing changes to Epigraph are documented here.
 
 ## [Unreleased]
 
+## [0.0.27] - 2026-11-20
+
+### Changed
+
+- Large first-time phone syncs can be cancelled, avoid downloading the phone's own upload, and detect when a device is unpaired during sync. Changes are ordered using the computer's clock to tolerate a phone with an inaccurate clock.
+- Comics reopen at their last reading page when Suwayomi has lost the saved page, and restored comics keep their progress while chapters refresh.
+
+## [0.0.26] - 2026-11-12
+
+### Changed
+
+- Sync reads the library less often during long runs, applies phone changes while the desktop is in the background, and restores progress when a book file has moved.
+- Library refresh work is batched and paced; idle toolbar animation uses less CPU.
+
+### Fixed
+
+- The mass migration menu opens again.
+
+## [0.0.25] - 2026-11-03
+
+### Changed
+
+- Library changes from a phone appear while a longer sync is still being applied. Browse analysis reloads after sync, and users can start an analysis from Settings.
+
+## [0.0.24] - 2026-11-03
+
+### Changed
+
+- Unreading a chapter on desktop syncs to phones without an older mark overriding newer state.
+- Background services stop after the last paired device disconnects; idle animation and cover loading use less work.
+
+## [0.0.23] - 2026-11-02
+
+### Fixed
+
+- Phone reading progress reaches comics known through the desktop's source listing, without resetting page position when the desktop has not opened a chapter.
+- A comic the desktop cannot resolve no longer blocks sync to other devices.
+
+## [0.0.22] - 2026-10-30
+
+### Changed
+
+- Single-title migration searches sources in parallel and displays candidates as they arrive. List mode, date sorting, filters, and category membership use the current library data.
+- Backup restore uses the first-run flow, preserves Mihon category order, and can be retried after interruption. Extension repositories load in parallel while retaining the last available list after a failure.
+- Reading progress reaches paired devices in seconds; first-run setup can continue while sync finishes in the background.
+
+## [0.0.21] - 2026-10-26
+
+### Changed
+
+- First-run setup can continue once a phone's library and folders arrive while reading progress continues syncing in the background.
+
+## [0.0.20] - 2026-10-26
+
+### Changed
+
+- A server-rejected sync change is retried without holding up later changes, and large queues are processed faster.
+- First-run setup can continue while chapter progress finishes syncing. Comic strip pages keep their width and open at the top when taller than the reader window.
+
+## [0.0.19] - 2026-10-25
+
+### Changed
+
+- Comic favorites and folder changes reach paired phones sooner. Sources that take longer to answer during server startup are retried after readiness.
+
+## [0.0.18] - 2026-10-24
+
+### Changed
+
+- Read-state changes reach phones sooner. Devices skip rebuilding the comic library when the server reports that it has not changed.
+
+## [0.0.17] - 2026-10-24
+
+### Changed
+
+- Comic progress sync batches chapters, sends chapter lists from the desktop to newly paired phones, and lets library changes arrive while progress is still being saved.
+
+## [0.0.16] - 2026-10-23
+
+### Changed
+
+- First-run sync waits for reading progress recorded on the phone before pairing. Tracker connections run in the background, and library views reload when synced changes arrive.
+
+## [0.0.15] - 2026-10-22
+
+### Changed
+
+- Comics synced from phones appear in the desktop library with covers, details, chapters, and reading progress. First-run setup waits for the library and tracker logins before showing tracker status.
+
+## [0.0.14] - 2026-10-22
+
+### Added
+
+- Paired computers sync comic libraries, categories, reading state, and extension repositories in both directions. Works can arrive with chapters and progress when their source is offline.
+
+### Changed
+
+- First-run sync and source setup can be deferred; source discovery reports unavailable sources individually.
+
+## [0.0.13] - 2026-10-21
+
+### Changed
+
+- First-run setup includes theme previews and clearer setup choices. Library and tracker changes arriving from a paired device appear without reopening setup.
+
+## [0.0.12] - 2026-10-21
+
+### Changed
+
+- First-run setup no longer blocks library updates after it is complete.
+
+### Fixed
+
+- If Suwayomi is not ready during setup, users can continue while the app checks again in the background.
+
+## [0.0.11] - 2026-10-19
+
+### Added
+
+- Epigraph can keep running in the Windows notification area and report new chapters or extension updates. Backup restore previews repositories and plugins it will install.
+
+### Changed
+
+- Paired devices share novel repositories and plugins. The activity center groups library update results and can dismiss old entries.
+
+## [0.0.10] - 2026-10-18
+
+### Added
+
+- A phone camera can scan the desktop pairing QR code. In-app QR pairing requires Epigraph Mobile 0.1.0-alpha.12 or later; PIN and bundle pairing remain available.
+
+## [0.0.9] - 2026-10-15
+
+### Changed
+
+- Settings can restart first-run setup without removing library data, sources, or preferences.
+
+### Fixed
+
+- Interrupted Suwayomi updates recover automatically, and a failed or stalled server start no longer requires manual file cleanup before retrying.
+- Sync catches up shortly after the server restarts.
+
+## [0.0.8] - 2026-10-14
+
+### Changed
+
+- Library updates stop cleanly at a title boundary, avoid overlapping runs, and report completion only after the current run settles.
+- Newer phones can sync with this desktop when they send fields it does not recognize; recreated or uniquely relocated chapters can be matched again.
+
+### Fixed
+
+- The sync service shuts down cleanly when its log is no longer being read.
+
 ## [0.0.7] - 2026-10-13
 
 ### Changed

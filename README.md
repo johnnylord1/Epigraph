@@ -2,7 +2,7 @@
 
 # Epigraph
 
-**A desktop reading library for comics, novels, EPUB, and PDF.**
+**Local-first reading across desktop and Android: comics, novels, EPUB, and PDF.**
 
 <img src="docs/assets/epigraph-readme-cover.webp" alt="Epigraph, read across formats" width="100%">
 
@@ -14,11 +14,13 @@
 
 Epigraph brings source-based comics and novels together with local EPUB and PDF books in one native desktop workspace. It keeps each format's reader and data model intact while sharing discovery, downloads, recommendations, themes, and cross-device identity.
 
+Epigraph Mobile is the native Android client. Its source is in [`mobile/`](mobile/) on the public `main` branch and shares the Core/Syncd contracts with desktop.
+
 ## Install
 
 The current Windows x64 installer is available on the [Releases page](https://github.com/johnnylord1/Epigraph/releases/latest). The installer runs per user and lets you choose the destination directory.
 
-Epigraph can manage its bundled Suwayomi runtime or connect to an external Suwayomi server. Content extensions and repositories are configured by the user; Epigraph does not include third-party catalogs.
+Epigraph can manage its bundled Suwayomi runtime or connect to an external Suwayomi server. Comic extensions come from external Suwayomi stores; desktop novel discovery uses the LNReader plugin catalog. These sources provide plugin metadata or code, not reading content. See the [third-party integration notes](docs/third-party-integrations.md) for source boundaries and the optional anti-bot helper.
 
 ## One library, several ways to read
 
@@ -79,11 +81,12 @@ its SHA-256, so a fresh checkout does not depend on an ignored local bundle.
 ## Project map
 
 - The repository root contains the Tauri desktop app, Epigraph Core, Syncd, and desktop documentation.
-- [`mobile/`](mobile/) contains Epigraph Mobile, the native Android client (a separate Gradle build).
+- [`mobile/`](mobile/) contains Epigraph Mobile, the native Android client (a separate Gradle build) on the public `main` branch. The older `mobile` branch is not the current contribution target.
 - [`docs/desktop-features.md`](docs/desktop-features.md) documents implemented desktop capabilities and their boundaries.
+- [`docs/third-party-integrations.md`](docs/third-party-integrations.md) documents source catalogs, plugins, metadata assets, and optional network helpers.
 - [`docs/screenshots`](docs/screenshots) contains the current desktop interface gallery.
 - [`docs/roadmap.md`](docs/roadmap.md) tracks planned work.
-- [`CHANGELOG.md`](CHANGELOG.md) records user-facing release changes.
+- [`CHANGELOG.md`](CHANGELOG.md) records desktop release changes; [`mobile/CHANGELOG.md`](mobile/CHANGELOG.md) records Android changes.
 
 ## Contributing and security
 
