@@ -522,8 +522,8 @@
         for (var i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
         var ds = new DecompressionStream("gzip");
         var writer = ds.writable.getWriter();
-        writer.write(bytes);
-        writer.close();
+        writer.write(bytes).catch(function () {});
+        writer.close().catch(function () {});
         var text = await new Response(ds.readable).text();
         return JSON.parse(text);
       } catch (_) {
@@ -556,16 +556,17 @@
 
     (async function () {
       var inline = token.indexOf("d.") === 0 ? token : null;
-      if (!inline && collageUrl) {
+      var manifest = await decodeInlineToken(inline);
+      if (!manifest && collageUrl) {
         try {
           var resp = await fetch(collageUrl);
           if (resp.ok) {
             var buf = new Uint8Array(await resp.arrayBuffer());
             inline = extractInlineTokenFromPng(buf);
+            manifest = await decodeInlineToken(inline);
           }
         } catch (_) {}
       }
-      var manifest = await decodeInlineToken(inline);
       if (manifest) renderManifest(manifest);
     })();
 
