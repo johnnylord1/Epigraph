@@ -179,6 +179,16 @@ class LibraryCategoryAdapter(val controller: LibraryController?) :
         }
     }
 
+    fun allIndexOf(book: epigraph.books.local.LocalBook): List<Int> {
+        return currentItems.mapIndexedNotNull { index, it ->
+            if (it is LibraryBookItem && it.book.bookId == book.bookId) {
+                index
+            } else {
+                null
+            }
+        }
+    }
+
     private fun launchFilter() {
         // Cancel-and-replace so updateDataSet calls can't interleave when the controller
         // mutates state from multiple paths (setItems, setFilter+requestFilter, flow re-emits).

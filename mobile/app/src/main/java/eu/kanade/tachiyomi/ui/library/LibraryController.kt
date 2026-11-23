@@ -107,11 +107,19 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.source.BrowseSourceType
 import eu.kanade.tachiyomi.ui.source.globalsearch.GlobalSearchController
 import epigraph.books.local.LocalBook
+import epigraph.books.importing.LocalBookPrivateImporter
 import epigraph.books.local.LocalBookImportService
 import epigraph.books.local.LocalBookRepository
 import epigraph.books.ui.LocalBookReaderActivity
 import epigraph.books.ui.LocalBookDetailsController
 import epigraph.books.ui.UnifiedLibraryBooksView
+import epigraph.library.LibraryShareCard
+import epigraph.library.LibraryShareCardWork
+import epigraph.library.LibraryShareText
+import epigraph.library.LibraryShareWork
+import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.system.toast
+import android.content.ClipData
 import epigraph.sync.core.assets.BookAssetCoordinator
 import epigraph.ui.motion.CoverReturnChangeHandler
 import epigraph.ui.motion.ListEntryAnimation
@@ -164,6 +172,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.random.Random
 import kotlin.random.nextInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
@@ -446,9 +455,16 @@ open class LibraryController(
         get() = this is FilteredLibraryController
 
     /**
-     * Currently selected mangas.
+     * Currently selected mangas and local books.
      */
     private val selectedMangas = mutableSetOf<Manga>()
+    private val selectedBooks = mutableSetOf<LocalBook>()
+
+    private val hasSelection: Boolean
+        get() = selectedMangas.isNotEmpty() || selectedBooks.isNotEmpty()
+
+    private val totalSelectionCount: Int
+        get() = selectedMangas.size + selectedBooks.size
 
     private var mAdapter: LibraryCategoryAdapter? = null
     private var libraryRecyclerPool: RecyclerView.RecycledViewPool? = null
@@ -503,15 +519,18 @@ open class LibraryController(
     }
 
     fun applySelectionStateTo(adapter: LibraryCategoryAdapter) {
-        val targetMode = if (selectedMangas.isNotEmpty()) {
+        val targetMode = if (hasSelection) {
             SelectableAdapter.Mode.MULTI
         } else {
             SelectableAdapter.Mode.SINGLE
         }
         if (adapter.mode != targetMode) adapter.mode = targetMode
-        if (selectedMangas.isEmpty()) return
+        if (!hasSelection) return
         selectedMangas.forEach { manga ->
             adapter.allIndexOf(manga).forEach { adapter.addSelection(it) }
+        }
+        selectedBooks.forEach { book ->
+            adapter.allIndexOf(book).forEach { adapter.addSelection(it) }
         }
     }
 
@@ -2567,6 +2586,7 @@ open class LibraryController(
 
     override fun onDestroyActionMode(mode: ActionMode?) {
         selectedMangas.clear()
+        selectedBooks.clear()
         actionMode = null
         lastClickPosition = -1
         forEachLibraryAdapter { ad, _ ->
@@ -2585,7 +2605,7 @@ open class LibraryController(
         if (!changed) return
 
         if (!selected) lastClickPosition = -1
-        val targetMode = if (selectedMangas.isEmpty()) {
+        val targetMode = if (!hasSelection) {
             SelectableAdapter.Mode.SINGLE
         } else {
             SelectableAdapter.Mode.MULTI
@@ -2602,19 +2622,56 @@ open class LibraryController(
                 delay(100)
                 forEachLibraryAdapter { ad, _ -> ad.isLongPressDragEnabled = false }
             }
-        } else if (selectedMangas.isEmpty()) {
+        } else if (!hasSelection) {
+            forEachLibraryAdapter { ad, _ -> ad.isLongPressDragEnabled = canDrag() }
+        }
+        updateHeaders(previousMode != activeAdapter.mode)
+    }
+
+    private fun setSelection(book: LocalBook, selected: Boolean) {
+        val activeAdapter = currentLibraryAdapter ?: return
+        val previousMode = activeAdapter.mode
+        val changed = if (selected) {
+            selectedBooks.removeAll { it.bookId == book.bookId }
+            selectedBooks.add(book)
+        } else {
+            selectedBooks.removeAll { it.bookId == book.bookId }
+        }
+        if (!changed) return
+
+        if (!selected) lastClickPosition = -1
+        val targetMode = if (!hasSelection) {
+            SelectableAdapter.Mode.SINGLE
+        } else {
+            SelectableAdapter.Mode.MULTI
+        }
+        forEachLibraryAdapter { ad, recycler ->
+            if (ad.mode != targetMode) ad.mode = targetMode
+            ad.allIndexOf(book).forEach { position ->
+                if (selected) ad.addSelection(position) else ad.removeSelection(position)
+                (recycler.findViewHolderForAdapterPosition(position) as? LibraryHolder)?.toggleActivation()
+            }
+        }
+        if (selected) {
+            launchUI {
+                delay(100)
+                forEachLibraryAdapter { ad, _ -> ad.isLongPressDragEnabled = false }
+            }
+        } else if (!hasSelection) {
             forEachLibraryAdapter { ad, _ -> ad.isLongPressDragEnabled = canDrag() }
         }
         updateHeaders(previousMode != activeAdapter.mode)
     }
 
     private fun updateHeaders(changedMode: Boolean = false) {
-        val headerPositions = adapter.getHeaderPositions()
+        val activeAdapter = currentLibraryAdapter ?: adapter
+        val activeRecycler = currentLibraryRecycler
+        val headerPositions = activeAdapter.getHeaderPositions()
         headerPositions.forEach {
             if (changedMode) {
-                adapter.notifyItemChanged(it)
+                activeAdapter.notifyItemChanged(it)
             } else {
-                (binding.libraryGridRecycler.recycler.findViewHolderForAdapterPosition(it) as? LibraryHeaderHolder)?.setSelection()
+                (activeRecycler.findViewHolderForAdapterPosition(it) as? LibraryHeaderHolder)?.setSelection()
             }
         }
     }
@@ -2648,8 +2705,11 @@ open class LibraryController(
 
     private fun toggleSelection(position: Int) {
         val activeAdapter = currentLibraryAdapter ?: return
-        val item = activeAdapter.getItem(position) as? LibraryMangaItem ?: return
-        setSelection(item.manga.manga, !activeAdapter.isSelected(position))
+        when (val item = activeAdapter.getItem(position)) {
+            is LibraryMangaItem -> setSelection(item.manga.manga, !activeAdapter.isSelected(position))
+            is LibraryBookItem -> setSelection(item.book, !activeAdapter.isSelected(position))
+            else -> return
+        }
         invalidateActionMode()
     }
 
@@ -2669,20 +2729,19 @@ open class LibraryController(
     override fun onItemClick(view: View?, position: Int): Boolean {
         val activeAdapter = currentLibraryAdapter ?: return false
         val rawItem = activeAdapter.getItem(position)
+        if (activeAdapter.mode == SelectableAdapter.Mode.MULTI && (rawItem is LibraryMangaItem || rawItem is LibraryBookItem)) {
+            snack?.dismiss()
+            lastClickPosition = position
+            toggleSelection(position)
+            return false
+        }
         if (rawItem is LibraryBookItem) {
             router.pushController(LocalBookDetailsController(rawItem.book.bookId).withFadeTransaction())
             return false
         }
         val item = rawItem as? LibraryMangaItem ?: return false
-        return if (activeAdapter.mode == SelectableAdapter.Mode.MULTI) {
-            snack?.dismiss()
-            lastClickPosition = position
-            toggleSelection(position)
-            false
-        } else {
-            openManga(item.manga.manga, view?.findViewById(R.id.card))
-            false
-        }
+        openManga(item.manga.manga, view?.findViewById(R.id.card))
+        return false
     }
 
     private fun saveStaggeredState() {
@@ -2766,14 +2825,12 @@ open class LibraryController(
     override fun onItemLongClick(position: Int) {
         val activeAdapter = currentLibraryAdapter ?: return
         val item = activeAdapter.getItem(position)
-        if (item is LibraryBookItem) {
-            showBookActions(item.book)
-            return
-        }
-        if (item !is LibraryMangaItem) return
+        if (item !is LibraryMangaItem && item !is LibraryBookItem) return
         snack?.dismiss()
         if (libraryLayout == LibraryItem.LAYOUT_COVER_ONLY_GRID && actionMode == null) {
-            snack = view?.snack(item.manga.manga.title) {
+            val title = (item as? LibraryMangaItem)?.manga?.manga?.title
+                ?: (item as? LibraryBookItem)?.book?.displayName.orEmpty()
+            snack = view?.snack(title) {
                 anchorView = activityBinding?.bottomNav
                 view.elevation = 15f.dpToPx
             }
@@ -2830,9 +2887,11 @@ open class LibraryController(
 
     private fun setSelection(position: Int, selected: Boolean = true) {
         val activeAdapter = currentLibraryAdapter ?: return
-        val item = activeAdapter.getItem(position) as? LibraryMangaItem ?: return
-
-        setSelection(item.manga.manga, selected)
+        when (val item = activeAdapter.getItem(position)) {
+            is LibraryMangaItem -> setSelection(item.manga.manga, selected)
+            is LibraryBookItem -> setSelection(item.book, selected)
+            else -> return
+        }
         invalidateActionMode()
     }
 
@@ -3387,6 +3446,7 @@ open class LibraryController(
 
     private fun setBooksMode(enabled: Boolean, force: Boolean = false) {
         if (booksMode == enabled && !force) return
+        destroyActionModeIfNeeded()
         booksMode = enabled
         args.putBoolean(ARG_BOOKS_MODE, enabled)
 
@@ -3591,14 +3651,18 @@ open class LibraryController(
     }
 
     override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
-        val count = selectedMangas.size
-        // Destroy action mode if there are no items selected.
+        val count = totalSelectionCount
+        val hasRemoteManga = selectedMangas.any { it.source != LocalSource.ID }
         val migrationItem = menu.findItem(R.id.action_migrate)
         val shareItem = menu.findItem(R.id.action_share)
         val categoryItem = menu.findItem(R.id.action_move_to_category)
-        categoryItem.isVisible = presenter.isCategoryMoreThanOne()
-        migrationItem.isVisible = selectedMangas.any { it.source != LocalSource.ID }
-        shareItem.isVisible = migrationItem.isVisible
+        val downloadUnreadItem = menu.findItem(R.id.action_download_unread)
+        val relinkItem = menu.findItem(R.id.action_relink_file)
+        categoryItem.isVisible = if (booksMode) true else presenter.isCategoryMoreThanOne()
+        migrationItem.isVisible = hasRemoteManga
+        downloadUnreadItem?.isVisible = hasRemoteManga
+        relinkItem?.isVisible = selectedBooks.size == 1 && selectedMangas.isEmpty()
+        shareItem.isVisible = count > 0
         if (count == 0) {
             destroyActionModeIfNeeded()
         } else {
@@ -3610,9 +3674,38 @@ open class LibraryController(
 
     override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
         when (item.itemId) {
-            R.id.action_move_to_category -> showChangeMangaCategoriesSheet()
+            R.id.action_move_to_category -> {
+                if (selectedBooks.isNotEmpty()) {
+                    showBooksCategories(selectedBooks.toList(), selectedMangas.toList())
+                } else {
+                    showChangeMangaCategoriesSheet()
+                }
+            }
+            R.id.action_relink_file -> {
+                val target = selectedBooks.singleOrNull() ?: return true
+                destroyActionModeIfNeeded()
+                launchBooksRelink(target)
+            }
             R.id.action_share -> shareManga()
             R.id.action_delete -> {
+                if (selectedMangas.isEmpty() && selectedBooks.isNotEmpty()) {
+                    val booksToRemove = selectedBooks.toList()
+                    activity!!.materialAlertDialog()
+                        .setTitle(MR.strings.remove_from_library)
+                        .setMessage(
+                            if (booksToRemove.size == 1) {
+                                activity!!.getString(MR.strings.local_books_remove_message, booksToRemove.first().displayName)
+                            } else {
+                                activity!!.getString(MR.strings.remove_from_library)
+                            },
+                        )
+                        .setPositiveButton(MR.strings.remove) { _, _ ->
+                            removeSelectedBooks(booksToRemove)
+                        }
+                        .setNegativeButton(AR.string.cancel, null)
+                        .show()
+                    return true
+                }
                 val options = arrayOf(
                     MR.strings.remove_downloads,
                     MR.strings.remove_from_library,
@@ -3631,8 +3724,10 @@ open class LibraryController(
                     }
                     .setPositiveButton(MR.strings.remove) { dialog, _ ->
                         val listView = (dialog as AlertDialog).listView
+                        val booksToRemove = selectedBooks.toList()
                         if (listView.isItemChecked(1)) {
                             deleteMangasFromLibrary()
+                            if (booksToRemove.isNotEmpty()) removeSelectedBooks(booksToRemove)
                         } else {
                             val mangas = selectedMangas.toList()
                             presenter.confirmDeletion(mangas, false)
@@ -3650,7 +3745,7 @@ open class LibraryController(
                 activity!!.materialAlertDialog()
                     .setMessage(MR.strings.mark_all_chapters_as_read)
                     .setPositiveButton(MR.strings.mark_as_read) { _, _ ->
-                        markReadStatus(MR.strings.marked_as_read, true)
+                        markSelectionReadStatus(MR.strings.marked_as_read, true)
                     }
                     .setNegativeButton(AR.string.cancel, null)
                     .show()
@@ -3659,7 +3754,7 @@ open class LibraryController(
                 activity!!.materialAlertDialog()
                     .setMessage(MR.strings.mark_all_chapters_as_unread)
                     .setPositiveButton(MR.strings.mark_as_unread) { _, _ ->
-                        markReadStatus(MR.strings.marked_as_unread, false)
+                        markSelectionReadStatus(MR.strings.marked_as_unread, false)
                     }
                     .setNegativeButton(AR.string.cancel, null)
                     .show()
@@ -3680,6 +3775,18 @@ open class LibraryController(
     }
 
     private fun selectAllInActiveCategory() {
+        if (booksMode) {
+            val pageAdapter = currentLibraryAdapter ?: return
+            val positions = (0 until pageAdapter.itemCount).filter {
+                val item = pageAdapter.getItem(it)
+                item is LibraryMangaItem || item is LibraryBookItem
+            }
+            if (positions.isEmpty()) return
+            val allAlready = positions.all { pageAdapter.isSelected(it) }
+            positions.forEach { setSelection(it, !allAlready) }
+            invalidateActionMode()
+            return
+        }
         if (isTabbedMode) {
             val pageAdapter = currentLibraryAdapter ?: return
             val mangas = (0 until pageAdapter.itemCount).mapNotNull {
@@ -3692,6 +3799,113 @@ open class LibraryController(
         } else {
             val headerPos = mAdapter?.indexOf(activeCategory) ?: -1
             if (headerPos >= 0) selectAll(headerPos)
+        }
+    }
+
+    private fun showBooksCategories(targetBooks: List<LocalBook>, targetNovels: List<Manga>) = viewScope.launch {
+        val context = activity ?: return@launch
+        val books = unifiedBooksView ?: return@launch
+        val categories = books.assignableCategories
+        val getCategories: yokai.domain.category.interactor.GetCategories = get()
+        val setMangaCategories: yokai.domain.category.interactor.SetMangaCategories = get()
+        suspend fun applyChanges(changes: Map<Long, Boolean>) = withContext(Dispatchers.IO) {
+            targetBooks.forEach { book ->
+                changes.forEach { (id, enabled) -> localBookRepository.setCategory(book.bookId, id, enabled) }
+            }
+            targetNovels.forEach { novel ->
+                val mangaId = novel.id ?: return@forEach
+                val current = getCategories.awaitByMangaId(mangaId).mapNotNull { it.id?.toLong() }.toMutableSet()
+                changes.forEach { (id, enabled) -> if (enabled) current.add(id) else current.remove(id) }
+                setMangaCategories.await(mangaId, current.toList())
+            }
+        }
+        val createCategory = {
+            ManageCategoryDialog(null, CategoryLibrary.BOOKS) { newId ->
+                viewScope.launch {
+                    if (newId != null) {
+                        applyChanges(mapOf(newId.toLong() to true))
+                        books.reloadCategories()
+                        destroyActionModeIfNeeded()
+                    }
+                }
+            }.show(context)
+        }
+        if (categories.isEmpty()) {
+            createCategory()
+            return@launch
+        }
+        val currentByBook = targetBooks.associate { it.bookId to books.categoryIdsOf(it.bookId).toSet() }
+        val currentNovelCategories = withContext(Dispatchers.IO) {
+            targetNovels.map { novel ->
+                novel.id?.let { getCategories.awaitByMangaId(it) }.orEmpty().mapNotNull { it.id?.toLong() }.toSet()
+            }
+        }
+        if (!isAttached) return@launch
+        val checked = BooleanArray(categories.size) { index ->
+            val catId = categories[index].id
+            catId != null && targetBooks.all { catId in currentByBook[it.bookId].orEmpty() } &&
+                currentNovelCategories.all { catId.toLong() in it }
+        }
+        val changes = mutableMapOf<Long, Boolean>()
+        AlertDialog.Builder(context)
+            .setTitle(MR.strings.move_to_categories)
+            .setMultiChoiceItems(categories.map { it.name }.toTypedArray(), checked) { _, which, isChecked ->
+                categories[which].id?.let { changes[it.toLong()] = isChecked }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .setNeutralButton(context.getString(MR.strings.new_category)) { _, _ -> createCategory() }
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                viewScope.launch {
+                    runCatching {
+                        if (changes.isNotEmpty()) applyChanges(changes)
+                    }.onFailure { books.showStatus(it.message ?: "Categories could not be saved") }
+                    books.reloadCategories()
+                    destroyActionModeIfNeeded()
+                }
+            }
+            .show()
+    }
+
+    private fun removeSelectedBooks(booksToRemove: List<LocalBook>) {
+        if (booksToRemove.isEmpty()) return
+        destroyActionModeIfNeeded()
+        viewScope.launch {
+            runCatching {
+                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    booksToRemove.forEach { book ->
+                        localBookRepository.remove(book.bookId, removeFile = true)
+                    }
+                }
+            }.onFailure { unifiedBooksView?.showStatus(it.message ?: "Book could not be removed") }
+        }
+    }
+
+    private fun markSelectionReadStatus(resource: StringResource, markRead: Boolean) {
+        val booksToMark = selectedBooks.toList()
+        if (booksToMark.isNotEmpty()) {
+            viewScope.launch {
+                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    booksToMark.forEach { book ->
+                        val helper = epigraph.books.reader.BookChapterProgress(book, null)
+                        localBookRepository.resetChaptersRead(book.bookId, if (markRead) helper.chapterCount else 0)
+                        localBookRepository.saveProgress(
+                            book.bookId,
+                            if (markRead) helper.end() else helper.startOf(0),
+                        )
+                    }
+                }
+                unifiedBooksView?.reload()
+            }
+        }
+        if (selectedMangas.isNotEmpty()) {
+            markReadStatus(resource, markRead)
+        } else {
+            destroyActionModeIfNeeded()
+            snack?.dismiss()
+            snack = view?.snack(resource, Snackbar.LENGTH_SHORT) {
+                anchorView = anchorView()
+                view.elevation = 15f.dpToPx
+            }
         }
     }
 
@@ -3727,15 +3941,148 @@ open class LibraryController(
         (activity as? MainActivity)?.setUndoSnackBar(snack)
     }
 
+    @Volatile
+    private var preparingShare = false
+
+    /**
+     * Shares the selected works as the Epigraph share card (their covers and names) together with
+     * a markdown list of their titles linked to their pages, ready to post in Discord or any chat.
+     */
     private fun shareManga() {
         val context = view?.context ?: return
         val mangas = selectedMangas.toList()
-        val urlList = presenter.getMangaUrls(mangas)
-        if (urlList.isEmpty()) return
-        val urls = presenter.getMangaUrls(mangas).joinToString("\n")
+        val books = selectedBooks.toList()
+        val totalWorks = mangas.size + books.size
+        if (totalWorks == 0 || preparingShare) return
+        preparingShare = true
+        viewScope.launchIO {
+            try {
+                val workUrls = mangas.associate { it.id to presenter.getMangaUrl(it) }
+                val baseText = LibraryShareText.buildText(
+                    mangas.map { LibraryShareWork(it.title, workUrls[it.id]) } +
+                        books.map { LibraryShareWork(it.displayName, null) },
+                )
+                val extensionManager: eu.kanade.tachiyomi.extension.ExtensionManager = yokai.util.koin.get()
+                val sourceManager: eu.kanade.tachiyomi.source.SourceManager = yokai.util.koin.get()
+                val installedExtBySourceId = buildMap {
+                    extensionManager.installedExtensionsFlow.value.forEach { ext ->
+                        ext.sources.forEach { src -> putIfAbsent(src.id, ext) }
+                    }
+                }
+                val manifest = epigraph.library.LibraryShareLink.buildManifest(
+                    mangas.map { manga ->
+                        val ext = installedExtBySourceId[manga.source]
+                        val src = sourceManager.get(manga.source)
+                        epigraph.library.LibraryShareLink.WorkInput(
+                            title = manga.title,
+                            sourceId = manga.source,
+                            url = manga.url,
+                            sourceName = src?.name ?: ext?.name,
+                            sourceLang = src?.lang ?: ext?.lang,
+                            pkgName = ext?.pkgName,
+                            repoUrl = ext?.repoUrl,
+                            webUrl = workUrls[manga.id],
+                            coverUrl = manga.thumbnail_url,
+                            kind = if (booksMode || src is epigraph.novel.source.NovelSource) "book" else "comic",
+                        )
+                    } + books.map { book ->
+                        epigraph.library.LibraryShareLink.WorkInput(
+                            title = book.displayName,
+                            sourceId = null,
+                            url = null,
+                            kind = "book",
+                        )
+                    },
+                )
+                val inlineToken = if (manifest.works.isNotEmpty()) {
+                    epigraph.library.LibraryShareLink.encodeManifest(manifest)
+                } else {
+                    null
+                }
+
+                var pngBytes: ByteArray? = null
+                val image = runCatching {
+                    // Only the works the card shows need a cover; the last cell counts the rest.
+                    val coverCount = LibraryShareText.collageLayout(totalWorks).covers
+                    val mangaCoverTarget = mangas.take(coverCount)
+                    val remainingCoverSlots = (coverCount - mangaCoverTarget.size).coerceAtLeast(0)
+                    val bookCoverTarget = books.take(remainingCoverSlots)
+                    val mangaCovers = LibraryShareCard.loadCovers(context, mangaCoverTarget)
+                    val bookImporter: LocalBookPrivateImporter = get()
+                    val bookCovers = LibraryShareCard.loadBookCovers(context, bookCoverTarget) { book ->
+                        bookImporter.materializeCover(java.io.File(book.privatePath), book.contentType, book.sha256)
+                    }
+                    val allCovers = mangaCovers + bookCovers
+                    val allTitles = mangas.map { it.title } + books.map { it.displayName }
+                    val card = LibraryShareCard.render(
+                        context,
+                        allTitles.mapIndexed { index, title -> LibraryShareCardWork(title, allCovers.getOrNull(index)) },
+                        context.getString(MR.plurals.library_share_card_count, totalWorks, totalWorks),
+                    ) { count -> context.getString(MR.plurals.library_share_more, count, count) }
+                    try {
+                        val bytes = LibraryShareCard.encodePngBytes(card, inlineToken)
+                        pngBytes = bytes
+                        LibraryShareCard.writePngBytes(context, bytes).getUriCompat(context)
+                    } finally {
+                        card.recycle()
+                    }
+                }.onFailure { Logger.e(it) { "Unable to create the library share card" } }.getOrNull()
+
+                val capturedPngBytes = pngBytes
+                val hostedImageUrl = if (
+                    inlineToken != null &&
+                    capturedPngBytes != null
+                ) {
+                    epigraph.library.LibraryShareLink.uploadCardPng(capturedPngBytes)
+                } else {
+                    null
+                }
+                val importToken = epigraph.library.LibraryShareLink.chooseShareLinkToken(inlineToken, hostedImageUrl)
+                val buttons = importToken?.let { token ->
+                    val viewLabel = context.getString(MR.strings.library_share_view_list)
+                    val viewUrl = epigraph.library.LibraryShareLink.buildShareWebUrl(token, hostedImageUrl, viewOnly = true)
+                    val viewButton = "[$viewLabel](<$viewUrl>)"
+                    val canImport = manifest.works.any { it.sourceId != null && it.url.isNotEmpty() }
+                    if (canImport) {
+                        val addLabel = context.getString(MR.strings.library_share_open_in_epigraph)
+                        val addUrl = epigraph.library.LibraryShareLink.buildShareWebUrl(token, hostedImageUrl)
+                        val both = "[$addLabel](<$addUrl>) · $viewButton"
+                        both.takeIf { it.length <= 1_900 } ?: viewButton
+                    } else {
+                        viewButton
+                    }.takeIf { it.length <= 1_900 }
+                }
+                val text = if (hostedImageUrl != null) {
+                    listOfNotNull(buttons, "[Previews]($hostedImageUrl)").joinToString("\n\n")
+                } else {
+                    buttons ?: baseText
+                }
+                withContext(Dispatchers.Main) {
+                    if (!isAttached) return@withContext
+                    if (image == null && hostedImageUrl == null) {
+                        context.toast(MR.strings.library_share_image_failed)
+                    }
+                    // Discord uses the hosted preview. Keep the local PNG for a share without an upload.
+                    sendShare(context, text, image.takeIf { hostedImageUrl == null })
+                }
+            } finally {
+                preparingShare = false
+            }
+        }
+    }
+
+    private fun sendShare(context: Context, text: String, image: Uri?) {
+        if (!isAttached || (image == null && text.isEmpty())) return
         val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/*"
-            putExtra(Intent.EXTRA_TEXT, urls)
+            if (text.isNotEmpty()) putExtra(Intent.EXTRA_TEXT, text)
+            if (image != null) {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, image)
+                clipData = ClipData.newRawUri(null, image)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } else {
+                type = "text/plain"
+            }
         }
         startActivity(Intent.createChooser(intent, context.getString(MR.strings.share)))
     }

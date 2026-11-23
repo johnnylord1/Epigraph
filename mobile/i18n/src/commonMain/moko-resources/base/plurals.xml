@@ -151,4 +151,12 @@
         <item quantity="one">%d work</item>
         <item quantity="other">%d works</item>
     </plurals>
+    <plurals name="library_share_card_count">
+        <item quantity="one">%d work</item>
+        <item quantity="other">%d works</item>
+    </plurals>
+    <plurals name="library_share_more">
+        <item quantity="one">+%d more</item>
+        <item quantity="other">+%d more</item>
+    </plurals>
 </resources>

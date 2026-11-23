@@ -446,9 +446,12 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         onBackPressedDispatcher.addCallback(backPressedCallback!!)
         // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
         if (!isTaskRoot && this !is SearchActivity) {
-            // A pairing link opened while the app runs lands here; the running instance below takes
-            // it when it resumes.
-            if (intent.scheme == PairingLink.APP_SCHEME && intent.data?.host == PairingLink.APP_HOST) {
+            // A pairing or library import link opened while the app runs lands here; the running
+            // instance below takes it when it resumes.
+            if (
+                intent.scheme == PairingLink.APP_SCHEME &&
+                (intent.data?.host == PairingLink.APP_HOST || intent.data?.host == epigraph.library.LibraryShareLink.APP_HOST)
+            ) {
                 pendingPairingLink = Intent(intent)
             }
             finish()
@@ -1473,6 +1476,12 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                     ensureRootTabReady(R.id.nav_library)
                     router.popToRoot()
                     router.pushController(SettingsEpigraphCoreController().withFadeTransaction())
+                } else if (
+                    intent.scheme == epigraph.library.LibraryShareLink.APP_SCHEME &&
+                    intent.data?.host == epigraph.library.LibraryShareLink.APP_HOST
+                ) {
+                    val link = intent.dataString ?: return false
+                    startActivity(epigraph.library.LibraryShareImportActivity.intent(this, link))
                 }
             }
             else -> return false

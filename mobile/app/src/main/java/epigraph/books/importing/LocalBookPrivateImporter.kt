@@ -58,6 +58,9 @@ class LocalBookPrivateImporter(
     private val stagingDirectory get() = File(storageRoot, STAGING_DIRECTORY)
     private val coverMaterializer = BookCoverMaterializer(storageRoot)
 
+    fun materializeCover(file: File, contentType: ContentType, sha256: String): File? =
+        coverMaterializer.materialize(file, contentType, sha256)
+
     /**
      * Copies and validates a source without publishing it. The returned manifest contains the
      * same immutable identity that [import] would publish, while the temporary copy is removed

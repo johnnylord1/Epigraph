@@ -123,4 +123,14 @@
         <item quantity="many">%d tipos de series</item>
         <item quantity="other">%d tipos de series</item>
     </plurals>
+    <plurals name="library_share_card_count">
+        <item quantity="one">%d obra</item>
+        <item quantity="many">%d obras</item>
+        <item quantity="other">%d obras</item>
+    </plurals>
+    <plurals name="library_share_more">
+        <item quantity="one">+%d más</item>
+        <item quantity="many">+%d más</item>
+        <item quantity="other">+%d más</item>
+    </plurals>
 </resources>

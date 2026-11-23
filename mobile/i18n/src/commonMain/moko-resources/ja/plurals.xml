@@ -71,4 +71,10 @@
     <plurals name="after_minutes">
         <item quantity="other">%1$s分後</item>
     </plurals>
+    <plurals name="library_share_card_count">
+        <item quantity="other">%d 作品</item>
+    </plurals>
+    <plurals name="library_share_more">
+        <item quantity="other">他 %d 件</item>
+    </plurals>
 </resources>

@@ -138,4 +138,14 @@
         <item quantity="many">%d obras</item>
         <item quantity="other">%d obras</item>
     </plurals>
+    <plurals name="library_share_card_count">
+        <item quantity="one">%d obra</item>
+        <item quantity="many">%d obras</item>
+        <item quantity="other">%d obras</item>
+    </plurals>
+    <plurals name="library_share_more">
+        <item quantity="one">+%d mais</item>
+        <item quantity="many">+%d mais</item>
+        <item quantity="other">+%d mais</item>
+    </plurals>
 </resources>

@@ -84,6 +84,16 @@
 
                 <data android:scheme="epigraph" android:host="pair" />
             </intent-filter>
+
+            <!-- Shared library import link handed over by the GitHub Pages bridge or opened directly. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="epigraph" android:host="import" />
+            </intent-filter>
             <meta-data android:name="android.app.searchable" android:resource="@xml/searchable"/>
         </activity>
 
@@ -332,6 +342,11 @@
 
         <activity
             android:name="epigraph.sync.core.extensions.ExtensionReconciliationActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Tachiyomi" />
+
+        <activity
+            android:name="epigraph.library.LibraryShareImportActivity"
             android:exported="false"
             android:theme="@style/Theme.Tachiyomi" />
 

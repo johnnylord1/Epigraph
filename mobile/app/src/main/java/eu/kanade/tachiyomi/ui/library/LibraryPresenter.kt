@@ -1334,6 +1334,10 @@ class LibraryPresenter(
         }
     }
 
+    /** The work's page at its source, or null when the source has none (such as local works). */
+    fun getMangaUrl(manga: Manga): String? =
+        runCatching { sourceManager.get(manga.source)?.getMangaUrl(manga) }.getOrNull()
+
     /**
      * Remove the selected manga from the library.
      *

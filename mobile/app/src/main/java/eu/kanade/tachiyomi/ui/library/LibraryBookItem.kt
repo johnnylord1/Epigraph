@@ -319,6 +319,23 @@ private class LibraryBookListHolder(
         )
         loadCover(binding.coverThumbnail, book)
         item.setUnreadBadge(binding.unreadDownloadBadge.badgeView)
+        setSelected(adapter.isSelected(flexibleAdapterPosition))
+    }
+
+    private fun setSelected(selected: Boolean) {
+        binding.card.strokeWidth = when {
+            selected -> 3.dpToPx
+            appliedOutline -> 1.dpToPx
+            else -> 0
+        }
+        arrayOf(binding.card, binding.unreadDownloadBadge.root, binding.title, binding.subtitle).forEach {
+            it.isSelected = selected
+        }
+    }
+
+    override fun toggleActivation() {
+        super.toggleActivation()
+        setSelected(adapter.isSelected(flexibleAdapterPosition))
     }
 
     override fun recycle() {

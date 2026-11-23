@@ -40,6 +40,11 @@
         app:showAsAction="never" />
 
     <item
+        android:id="@+id/action_relink_file"
+        android:title="@string/local_books_relink_file"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_share"
         android:icon="@drawable/ic_share_24dp"
         android:title="@string/share"
