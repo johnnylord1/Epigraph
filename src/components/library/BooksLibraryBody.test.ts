@@ -403,4 +403,76 @@ describe("BooksLibraryBody", () => {
     expect(importMocks.importLocalBookFile.mock.calls[0]?.[0]).toBe("C:/books/picked.epub");
     await vi.waitFor(() => expect(store.books.some((book) => book.id === "book-picked")).toBe(true));
   });
+
+  test("supports multi-selection and sharing local books without external links", async () => {
+    const { default: BooksLibraryBody } = await import("./BooksLibraryBody.svelte");
+
+    const book: BookEntry = {
+      id: "book-local-share",
+      title: "Omniscient Reader's Viewpoint",
+      author: "Sing Shong",
+      description: null,
+      coverPath: null,
+      subtype: "epub",
+      createdAt: 1,
+      updatedAt: 1,
+      importPath: "C:/books/orv.epub",
+      assetPath: "C:/books/library/orv.epub",
+      sectionsSummary: [],
+      sectionCount: 15,
+      tocCount: 15,
+      spineCount: 15,
+    };
+
+    const vm: BooksSectionVM = {
+      kind: "books",
+      sectionTabs: [],
+      collections: [],
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search books",
+        sortMode: "recentlyAdded",
+        sortDir: "desc",
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      loading: false,
+      error: null,
+      emptyMessage: "Empty",
+      cards: [],
+      typeOptions: [],
+      activeCategoryId: null,
+      activeType: "all",
+      activeStatus: "all",
+      dragDropEnabled: false,
+      importing: false,
+      dropActive: false,
+    };
+
+    const { container } = render(BooksLibraryBody, {
+      props: {
+        vm,
+        books: [book],
+        totalBooks: 1,
+        viewKey: "all",
+      },
+    });
+
+    const cardBtn = await screen.findByRole("button", { name: /Omniscient Reader's Viewpoint/i });
+    await fireEvent.contextMenu(cardBtn);
+    expect(screen.getByText("Select this work")).toBeTruthy();
+    await fireEvent.keyDown(cardBtn, { key: "Escape" });
+    await fireEvent.pointerDown(cardBtn, { button: 0 });
+    await screen.findByText("1 selected");
+    await fireEvent.pointerUp(cardBtn, { button: 0 });
+    await fireEvent.click(cardBtn);
+
+    expect(container.querySelector(".select-bar")).toBeTruthy();
+    const shareBtn = screen.getByRole("button", { name: "Share" });
+    await fireEvent.click(shareBtn);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.querySelector(".share-list")?.textContent).toBe("- Omniscient Reader's Viewpoint");
+  });
 });

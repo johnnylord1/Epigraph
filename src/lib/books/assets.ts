@@ -209,6 +209,7 @@ async function ensureCanonicalBookEntry(book: BookEntry): Promise<CanonicalBookP
 
 function resolveCoverSrc(book: Pick<BookEntry, "coverPath" | "updatedAt">): string | null {
   if (!book.coverPath) return null;
+  if (/^(?:data:|blob:|https?:)/i.test(book.coverPath)) return book.coverPath;
   const baseUrl = filePathAsStableUrl(book.coverPath, "book");
   const version = typeof book.updatedAt === "number" ? book.updatedAt : 0;
   return `${baseUrl}?v=${version}`;

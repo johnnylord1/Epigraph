@@ -128,16 +128,20 @@ export function dropCachedFileStableUrl(path: string | null | undefined, protoco
   fileSrcCache.delete(`${protocol}:${path}`);
 }
 
+function sanitizeBookStorageId(bookId: string): string {
+  return bookId.trim().replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 export async function copyImportedBook(sourcePath: string, bookId: string): Promise<string> {
-  return invoke<string>("copy_book_import", { sourcePath, bookId });
+  return invoke<string>("copy_book_import", { sourcePath, bookId: sanitizeBookStorageId(bookId) });
 }
 
 export async function writeBookAsset(bookId: string, bytesBase64: string, ext: string): Promise<string> {
-  return invoke<string>("write_book_asset", { bookId, bytesBase64, ext });
+  return invoke<string>("write_book_asset", { bookId: sanitizeBookStorageId(bookId), bytesBase64, ext });
 }
 
 export async function writeBookCover(bookId: string, bytesBase64: string, ext: string): Promise<string> {
-  return invoke<string>("write_book_cover", { bookId, bytesBase64, ext });
+  return invoke<string>("write_book_cover", { bookId: sanitizeBookStorageId(bookId), bytesBase64, ext });
 }
 
 export async function removeBookAssets(assetPath: string | null | undefined, coverPath: string | null | undefined): Promise<void> {

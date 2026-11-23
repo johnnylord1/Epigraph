@@ -7,10 +7,11 @@
   import { _, translate } from "../../lib/i18n/runtime";
   import { onMount, type ComponentProps } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { Folder, FolderSimplePlus, UploadSimple } from "phosphor-svelte";
-  import { addToast, setActiveBookId, setLibraryScrollTop, store, updateSettings, upsertBook } from "../../store/state.svelte";
+  import { Books, CheckSquare, Folder, FolderSimplePlus, ShareNetwork, Trash, UploadSimple, X } from "phosphor-svelte";
+  import { addToast, removeBook, setActiveBookId, setLibraryScrollTop, store, updateSettings, upsertBook } from "../../store/state.svelte";
   import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
   import { BookAssetResolver } from "../../lib/books/assets";
+  import { removeBookAssets } from "../../lib/books/storage";
   import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
   import { BOOK_IMPORT_EXTENSIONS, importLocalBookFile, isSupportedBookImportPath } from "../../lib/books/importFile";
   import type { BookEntry, BookProgress } from "../../lib/books/types";
@@ -32,7 +33,9 @@
     type NovelShelfCardContext,
   } from "../../lib/novels/libraryShelf";
   import type { PersistedNovelLibraryEntry } from "../../lib/novels/domain";
+  import type { Manga } from "../../lib/types";
   import ContextMenu from "../shared/ContextMenu.svelte";
+  import LibraryShareModal from "./LibraryShareModal.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import VirtualLibraryCardGrid from "./VirtualLibraryCardGrid.svelte";
 
@@ -90,7 +93,14 @@
   let prewarmEndIndex = $state(0);
   let contentWidth = $state(0);
   let contentHeight = $state(0);
-  let ctx: { x: number; y: number; book: BookEntry } | null = $state(null);
+  let ctx: { x: number; y: number; cardId: string } | null = $state(null);
+  let selectMode = $state(false);
+  let selectedCardIds = $state(new Set<string>());
+  let bulkWorking = $state(false);
+  let bulkMoveOpen = $state(false);
+  let shareMangas = $state<Manga[] | null>(null);
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let longPressedCardId: string | null = null;
   let scrollReady = false;
   let viewStateReady = false;
   let previousViewKey: string | null = null;
@@ -185,8 +195,9 @@
     const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0, (progress?.progressPercent ?? 0) > 0 || (progress?.lastReadAt ?? 0) > 0)];
     if (!hasLocalAsset) metaChips.push("Metadata only");
 
+    const cardId = createBookLibraryCardId(book.id);
     return {
-      id: createBookLibraryCardId(book.id),
+      id: cardId,
       title: presented.title,
       subtitle: formatBookFileSource(book),
       coverSrc: presented.coverSrc,
@@ -200,8 +211,8 @@
             percent: chapterCount > 0 ? Math.max(0, Math.min(1, readCount / chapterCount)) : presented.readPercent,
           }
         : null,
-      selectable: false,
-      selected: false,
+      selectable: selectMode,
+      selected: selectedCardIds.has(cardId),
       disabled: !hasLocalAsset,
       sourceMetricBanner: {
         flagLabel: "",
@@ -213,7 +224,12 @@
   }
 
   function buildRawNovelCard(entry: PersistedNovelLibraryEntry): NovelShelfCard {
-    return buildNovelShelfCard(entry, novelCardContext);
+    const raw = buildNovelShelfCard(entry, novelCardContext);
+    return {
+      ...raw,
+      selectable: selectMode,
+      selected: selectedCardIds.has(raw.id),
+    };
   }
 
   function getRawCardAt(index: number): LibraryCardVM | null {
@@ -279,6 +295,7 @@
     }
     if (nextViewKey === previousViewKey) return;
     previousViewKey = nextViewKey;
+    exitSelectMode();
     prewarmStartIndex = 0;
     prewarmEndIndex = Math.min(totalCardCount, Math.max(1, renderLimit || 48));
 
@@ -361,7 +378,66 @@
     if (paths.length) await importDroppedPaths(paths);
   }
 
-  function openBook(cardId: string) {
+  function enterSelectMode(cardId?: string) {
+    selectMode = true;
+    if (cardId !== undefined) selectedCardIds = new Set([cardId]);
+  }
+
+  function exitSelectMode() {
+    selectMode = false;
+    selectedCardIds = new Set();
+    bulkMoveOpen = false;
+    clearLongPress();
+    longPressedCardId = null;
+  }
+
+  function toggleSelect(cardId: string) {
+    const next = new Set(selectedCardIds);
+    if (next.has(cardId)) next.delete(cardId);
+    else next.add(cardId);
+    selectedCardIds = next;
+    if (next.size === 0) exitSelectMode();
+  }
+
+  function selectAll() {
+    selectedCardIds = new Set(Array.from({ length: totalCardCount }, (_, index) => getCardIdAt(index)));
+  }
+
+  function onCardPointerDown(cardId: string, event: PointerEvent) {
+    clearLongPress();
+    longPressedCardId = null;
+    if (selectMode) return;
+    if ((!bookByCardId.has(cardId) && !novelByCardId.has(cardId)) || event.button !== 0) return;
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      longPressedCardId = cardId;
+      enterSelectMode(cardId);
+    }, 500);
+  }
+
+  function clearLongPress() {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
+
+  function openBook(cardId: string, event?: MouseEvent | KeyboardEvent) {
+    clearLongPress();
+    if (event instanceof MouseEvent && longPressedCardId === cardId) {
+      longPressedCardId = null;
+      return;
+    }
+    if (selectMode) {
+      toggleSelect(cardId);
+      return;
+    }
+    if (event instanceof MouseEvent && (event.metaKey || event.ctrlKey || event.shiftKey)) {
+      event.preventDefault();
+      enterSelectMode(cardId);
+      return;
+    }
+
     const novel = novelByCardId.get(cardId);
     if (novel) {
       onOpenNovel(novel.id);
@@ -382,23 +458,33 @@
   }
 
   function openBookContext(cardId: string, event: MouseEvent) {
-    const book = bookByCardId.get(cardId);
-    if (!book) return;
+    if (!bookByCardId.has(cardId) && !novelByCardId.has(cardId)) return;
+    if (selectMode) {
+      toggleSelect(cardId);
+      return;
+    }
     event.preventDefault();
-    ctx = { x: event.clientX, y: event.clientY, book };
+    ctx = { x: event.clientX, y: event.clientY, cardId };
   }
 
-  function toggleCategory(book: BookEntry, categoryId: string) {
+  function entityIdForCard(cardId: string): string | null {
+    const book = bookByCardId.get(cardId);
+    if (book) return book.id;
+    const novel = novelByCardId.get(cardId);
+    return novel ? novel.id : null;
+  }
+
+  function toggleCategoryByEntityId(entityId: string, categoryId: string) {
     updateSettings({
       booksCategoryAssignments: toggleBookCategoryAssignment(
         store.settings.booksCategoryAssignments,
-        book.id,
+        entityId,
         categoryId,
       ),
     });
   }
 
-  function createCategoryAndAssign(book: BookEntry) {
+  function createCategoryAndAssignEntity(entityId: string) {
     const name = prompt(translate("library.category.namePrompt"));
     if (!name?.trim()) return;
 
@@ -407,16 +493,119 @@
       booksCategories: sortBooksCategories([...store.settings.booksCategories, nextCategory]),
       booksCategoryAssignments: toggleBookCategoryAssignment(
         store.settings.booksCategoryAssignments,
-        book.id,
+        entityId,
         nextCategory.id,
       ),
     });
   }
 
-  function buildContextItems(book: BookEntry): MenuEntry[] {
+  async function removeSingleLocalBook(book: BookEntry) {
+    removeBook(book.id);
+    try {
+      await removeBookAssets(book.assetPath, book.coverPath);
+    } catch {
+      // Asset cleanup is best-effort.
+    }
+  }
+
+  async function bulkMoveToCategory(categoryId: string) {
+    bulkWorking = true;
+    bulkMoveOpen = false;
+    try {
+      let nextAssignments = store.settings.booksCategoryAssignments;
+      for (const cardId of selectedCardIds) {
+        const entityId = entityIdForCard(cardId);
+        if (!entityId) continue;
+        nextAssignments = toggleBookCategoryAssignment(nextAssignments, entityId, categoryId);
+      }
+      updateSettings({ booksCategoryAssignments: nextAssignments });
+    } finally {
+      bulkWorking = false;
+      exitSelectMode();
+    }
+  }
+
+  async function bulkRemoveFromLibrary() {
+    bulkWorking = true;
+    try {
+      for (const cardId of selectedCardIds) {
+        const book = bookByCardId.get(cardId);
+        if (book) {
+          await removeSingleLocalBook(book);
+        }
+      }
+    } finally {
+      bulkWorking = false;
+      exitSelectMode();
+    }
+  }
+
+  function buildShareWorksForSelection(ids: ReadonlySet<string> = selectedCardIds): Manga[] {
+    const selected: Manga[] = [];
+    let syntheticId = -1;
+    for (let i = 0; i < totalCardCount; i += 1) {
+      const cardId = getCardIdAt(i);
+      if (!ids.has(cardId)) continue;
+      const book = bookByCardId.get(cardId);
+      if (book) {
+        const progress = bookProgressById.get(book.id);
+        const coverSrc = brokenCoverKeys.has(bookCoverKey(book)) ? null : BookAssetResolver.resolveCoverSrc(book);
+        const presented = presentBookWithCoverSrc(book, progress, coverSrc);
+        selected.push({
+          id: syntheticId--,
+          title: presented.title,
+          thumbnailUrl: presented.coverSrc ?? "",
+          inLibrary: true,
+          unreadCount: 0,
+          downloadCount: 0,
+          chapterCount: getBookChapterCount(book),
+          sourceId: "",
+          url: "",
+          realUrl: null,
+          source: {
+            id: "",
+            name: formatBookFileSource(book),
+            lang: "",
+            displayName: formatBookFileSource(book),
+          },
+        });
+        continue;
+      }
+      const novel = novelByCardId.get(cardId);
+      if (novel) {
+        const coverSrc = brokenCoverKeys.has(novelCoverKey(novel)) ? "" : (novel.coverUrl ?? "");
+        const webUrl = /^https?:\/\//i.test(novel.path) ? novel.path : null;
+        selected.push({
+          id: syntheticId--,
+          title: novel.title,
+          thumbnailUrl: coverSrc,
+          inLibrary: true,
+          unreadCount: 0,
+          downloadCount: 0,
+          chapterCount: novel.chapterCount,
+          sourceId: "",
+          url: novel.path,
+          realUrl: webUrl,
+          source: {
+            id: novel.source.pluginId,
+            name: novel.source.sourceName ?? novel.source.pluginName,
+            lang: novel.source.lang ?? "",
+            displayName: novel.source.sourceName ?? novel.source.pluginName,
+          },
+        });
+      }
+    }
+    return selected;
+  }
+
+  function buildContextItems(cardId: string): MenuEntry[] {
+    const entityId = entityIdForCard(cardId);
+    if (!entityId) return [];
+    const book = bookByCardId.get(cardId);
+
     const categoryItems: MenuEntry[] = store.settings.booksCategories.map((category) => {
       const assigned = isBookAssignedToCategory(
-        book.id,
+        entityId,
         category.id,
         store.settings.booksCategoryAssignments,
       );
@@ -426,17 +615,38 @@
           ? translate("library.category.removeFrom", { name: category.name })
           : translate("library.category.addTo", { name: category.name }),
         icon: Folder,
-        onClick: () => toggleCategory(book, category.id),
+        onClick: () => toggleCategoryByEntityId(entityId, category.id),
       };
     });
 
     return [
-      ...categoryItems,
-      ...(categoryItems.length ? ([{ separator: true } as MenuEntry]) : []),
+      ...(book
+        ? [
+            {
+              label: translate("ui_removeFromLibrary"),
+              icon: Books,
+              danger: true,
+              onClick: () => void removeSingleLocalBook(book),
+            } as MenuEntry,
+            { separator: true } as MenuEntry,
+          ]
+        : []),
+      {
+        label: translate("ui_selectThisWork"),
+        icon: CheckSquare,
+        onClick: () => enterSelectMode(cardId),
+      },
+      {
+        label: translate("library.share.action"),
+        icon: ShareNetwork,
+        onClick: () => (shareMangas = buildShareWorksForSelection(new Set([cardId]))),
+      },
+      ...(categoryItems.length ? ([{ separator: true } as MenuEntry, ...categoryItems]) : []),
+      { separator: true },
       {
         label: translate("ui_newCategory"),
         icon: FolderSimplePlus,
-        onClick: () => createCategoryAndAssign(book),
+        onClick: () => createCategoryAndAssignEntity(entityId),
       },
     ];
   }
@@ -693,6 +903,17 @@
   onMount(() => {
     let unlisten: (() => void) | undefined;
 
+    function onKeyDown(event: KeyboardEvent) {
+      if (!active || shareMangas) return;
+      if (event.key === "Escape" && selectMode) exitSelectMode();
+      if (event.key === "a" && (event.metaKey || event.ctrlKey) && selectMode) {
+        event.preventDefault();
+        selectAll();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+
     void (async () => {
       unlisten = await win.onDragDropEvent((event) => {
         if (event.payload.type === "enter") {
@@ -720,6 +941,8 @@
     });
 
     return () => {
+      clearLongPress();
+      window.removeEventListener("keydown", onKeyDown);
       dropActive = false;
       if (scrollPersistTimer !== null) {
         clearTimeout(scrollPersistTimer);
@@ -743,6 +966,65 @@
     };
   });
 </script>
+
+{#if selectMode}
+  <div class="select-bar">
+    <div class="select-bar-left">
+      <button type="button" class="sel-btn sel-cancel" onclick={exitSelectMode} title={$_("ui_cancelEsc")}>
+        <X size={13} weight="bold" />
+      </button>
+      <span class="sel-count">{$_("library.selection.count", { count: selectedCardIds.size })}</span>
+      <button type="button" class="sel-btn sel-all" onclick={selectAll} title={$_("ui_selectAll")}>
+        {$_("ui_selectAll")}
+      </button>
+    </div>
+    <div class="select-bar-right">
+      <button
+        type="button"
+        class="sel-btn"
+        disabled={selectedCardIds.size === 0}
+        onclick={() => (shareMangas = buildShareWorksForSelection())}
+      >
+        <ShareNetwork size={13} weight="bold" />
+        {$_("library.share.action")}
+      </button>
+      {#if store.settings.booksCategories.length}
+        <div class="bulk-move-wrap">
+          <button
+            type="button"
+            class="sel-btn sel-move"
+            disabled={selectedCardIds.size === 0 || bulkWorking}
+            onclick={() => (bulkMoveOpen = !bulkMoveOpen)}
+          >
+            <Folder size={13} weight="bold" />
+            {$_("ui_moveToFolder")}
+          </button>
+          {#if bulkMoveOpen}
+            <div class="bulk-folder-list">
+              {#each store.settings.booksCategories as category (category.id)}
+                <button type="button" class="bulk-folder-item" onclick={() => bulkMoveToCategory(category.id)}>
+                  <Folder size={11} weight="bold" />
+                  {category.name}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+      {#if [...selectedCardIds].some((id) => bookByCardId.has(id))}
+        <button
+          type="button"
+          class="sel-btn sel-remove"
+          disabled={selectedCardIds.size === 0 || bulkWorking}
+          onclick={bulkRemoveFromLibrary}
+        >
+          <Trash size={13} weight="bold" />
+          {$_("ui_remove")}
+        </button>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <div class="content" class:library-scroll-active={isScrolling} bind:this={contentEl} onscroll={handleContentScroll}>
   {#if totalCardCount === 0 && filtersActive && onClearFilters}
@@ -782,8 +1064,12 @@
       scrollElement={contentEl}
       {showProgress}
       {showOutline}
-      onOpen={(cardId) => openBook(cardId)}
+      showSelectableState={selectMode}
+      onOpen={(cardId, event) => openBook(cardId, event)}
       onContextMenu={openBookContext}
+      onPointerDown={onCardPointerDown}
+      onPointerUp={() => clearLongPress()}
+      onPointerLeave={() => clearLongPress()}
       onCoverLoad={handleCoverLoad}
       onCoverError={handleCoverError}
       onVisibleRangeChange={handleVisibleRangeChange}
@@ -807,7 +1093,19 @@
 </div>
 
 {#if ctx}
-  <ContextMenu x={ctx.x} y={ctx.y} items={buildContextItems(ctx.book)} onClose={() => ctx = null} />
+  <ContextMenu x={ctx.x} y={ctx.y} items={buildContextItems(ctx.cardId)} onClose={() => (ctx = null)} />
+{/if}
+
+{#if shareMangas}
+  <LibraryShareModal
+    mangas={shareMangas}
+    coverScope={{
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+      coverCacheGeneration: 0,
+    }}
+    onClose={() => (shareMangas = null)}
+  />
 {/if}
 
 <style>
@@ -882,5 +1180,146 @@
     font-size: var(--text-xs);
     color: var(--text-muted);
     letter-spacing: var(--tracking-wide);
+  }
+
+  .select-bar {
+    position: relative;
+    z-index: var(--component-library-header-z-index);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    padding: var(--sp-2) var(--sp-6);
+    background: var(--component-library-select-bar-bg);
+    border-bottom: 1px solid var(--component-library-accent-border);
+    flex-shrink: 0;
+    animation: fadeIn 0.1s ease both;
+  }
+
+  .select-bar-left {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+  }
+
+  .select-bar-right {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    position: relative;
+  }
+
+  .sel-count {
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    color: var(--component-library-accent-fg);
+    letter-spacing: var(--tracking-wide);
+  }
+
+  .sel-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    letter-spacing: 0;
+    text-transform: none;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-dim);
+    background: var(--component-button-bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
+    white-space: nowrap;
+  }
+
+  .sel-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: var(--component-library-border-strong);
+  }
+
+  .sel-btn:disabled {
+    opacity: var(--component-library-disabled-opacity);
+    cursor: not-allowed;
+  }
+
+  .sel-cancel {
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .sel-cancel:hover {
+    background: var(--component-button-bg-hover);
+    border-color: var(--component-library-border-dim);
+  }
+
+  .sel-move {
+    color: var(--component-library-accent-fg);
+    border-color: var(--component-library-accent-border);
+    background: var(--component-library-accent-muted-bg);
+  }
+
+  .sel-move:hover:not(:disabled) {
+    background: var(--component-library-accent-border);
+  }
+
+  .sel-remove {
+    color: var(--component-library-danger-fg);
+    border-color: var(--component-library-danger-border);
+  }
+
+  .sel-remove:hover:not(:disabled) {
+    background: var(--component-library-danger-bg-hover);
+  }
+
+  .sel-all {
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .bulk-move-wrap {
+    position: relative;
+  }
+
+  .bulk-folder-list {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: var(--component-library-dropdown-z-index);
+    background: var(--component-library-select-menu-bg);
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    min-width: 160px;
+    box-shadow: var(--component-library-select-menu-shadow);
+    animation: fadeIn 0.1s ease both;
+  }
+
+  .bulk-folder-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--t-base), color var(--t-base);
+  }
+
+  .bulk-folder-item:hover {
+    background: var(--bg-hover, var(--bg-base));
+    color: var(--text-primary);
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 </style>

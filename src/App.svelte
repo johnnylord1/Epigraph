@@ -259,6 +259,7 @@
 
   let themeEditorOpen   = $state(false);
   let themeEditorEditId = $state<string | null>(null);
+  let pendingShareImportLink = $state<string | null>(null);
   const activeReaderChapter = $derived(store.activeChapter);
   const activeReaderChapterId = $derived(store.activeChapter?.id ?? null);
   const readerRenderKey = $derived(activeReaderChapterId === null ? null : `${activeReaderChapterId}:${store.readerSessionId}`);
@@ -273,7 +274,8 @@
     | "novelReader"
     | "themeEditor"
     | "mangaPreview"
-    | "searchPalette";
+    | "searchPalette"
+    | "libraryImport";
 
   const lazyLoaders: Record<LazyKey, () => Promise<LazyModule>> = {
     novelRuntimeHost: () => import("./components/novels/NovelRuntimeHost.svelte"),
@@ -285,6 +287,7 @@
     themeEditor: () => import("./components/settings/ThemeEditor.svelte"),
     mangaPreview: () => import("./components/shared/MangaPreview.svelte"),
     searchPalette: () => import("./components/search/SearchPalette.svelte"),
+    libraryImport: () => import("./components/library/LibraryImportModal.svelte"),
   };
 
   let NovelRuntimeHostComponent = $state<any>(null);
@@ -302,6 +305,7 @@
   let ThemeEditorComponent = $state<any>(null);
   let MangaPreviewComponent = $state<any>(null);
   let SearchPaletteComponent = $state<any>(null);
+  let LibraryImportComponent = $state<any>(null);
   let lazyRetryEpoch = $state(0);
   const lazyComponentPromises = new Map<LazyKey, Promise<any>>();
   const lazyComponentRetryTimers = new Map<LazyKey, ReturnType<typeof setTimeout>>();
@@ -2931,6 +2935,32 @@
 
   $effect(() => {
     if (!shellReady || isNovelRuntimeHostWindow) return;
+    let active = true;
+    let unlistenImport: (() => void) | null = null;
+    const openLink = (link: string | null | undefined) => {
+      if (!active || !link?.trim()) return;
+      pendingShareImportLink = link.trim();
+      void import("./components/library/LibraryImportModal.svelte").then((mod) => {
+        if (active) LibraryImportComponent = mod.default;
+      });
+    };
+    void invoke<string | null>("plugin:library-share|take_pending_import_link")
+      .then((link) => openLink(link))
+      .catch(() => {});
+    void listen<string>("epigraph:share-import-link", (event) => {
+      openLink(event.payload);
+    }).then((unlisten) => {
+      if (!active) unlisten();
+      else unlistenImport = unlisten;
+    }).catch(() => {});
+    return () => {
+      active = false;
+      unlistenImport?.();
+    };
+  });
+
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) return;
     void configureLocalServerRuntime({
       serverUrl: store.runtimeServerUrl,
       updateIntensity: store.settings.libraryUpdateIntensity,
@@ -3575,6 +3605,25 @@
       {#if MangaPreviewComponent}
         {@const MangaPreviewView = MangaPreviewComponent}
         <MangaPreviewView />
+      {/if}
+      {#if pendingShareImportLink && LibraryImportComponent}
+        {@const LibraryImportView = LibraryImportComponent}
+        <LibraryImportView
+          rawLink={pendingShareImportLink}
+          onClose={() => pendingShareImportLink = null}
+          onImported={(added: number) => {
+            if (added > 0) {
+              addToast(
+                added === 1
+                  ? translate("library.import.toastAddedOne")
+                  : translate("library.import.toastAddedMany", { count: added }),
+                "success",
+              );
+              cache.invalidateGroup(CACHE_GROUPS.LIBRARY);
+              window.dispatchEvent(new CustomEvent(SERVER_READY_EVENT));
+            }
+          }}
+        />
       {/if}
       {#if ToasterComponent}
         {@const ToasterView = ToasterComponent}

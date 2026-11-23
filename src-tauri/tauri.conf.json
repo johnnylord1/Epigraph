@@ -51,6 +51,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["epigraph"]
+      }
+    },
     "shell": {
       "open": true
     },

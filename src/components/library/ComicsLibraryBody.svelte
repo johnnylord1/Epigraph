@@ -10,7 +10,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { onMount, type ComponentProps } from "svelte";
-  import { Books, CheckSquare, Folder, FolderSimplePlus, Trash, X } from "phosphor-svelte";
+  import { Books, CheckSquare, Folder, FolderSimplePlus, ShareNetwork, Trash, X } from "phosphor-svelte";
   import { createComicLibraryCardId } from "../../lib/library/cardIdentity";
   import {
     cacheLibraryCoverFromServer,
@@ -38,6 +38,7 @@
     store,
   } from "../../store/state.svelte";
   import ContextMenu from "../shared/ContextMenu.svelte";
+  import LibraryShareModal from "./LibraryShareModal.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import VirtualLibraryCardGrid from "./VirtualLibraryCardGrid.svelte";
   import { estimateLibraryVirtualRowSize } from "../../lib/library/virtualGrid";
@@ -114,6 +115,8 @@
   let selectedIds = $state(new Set<number>());
   let bulkWorking = $state(false);
   let bulkMoveOpen = $state(false);
+  /** The works the Share dialog shows, in library order; null while it is closed. */
+  let shareMangas = $state<Manga[] | null>(null);
   let failedCoverKeys = $state(new Set<string>());
   let coverRetryCounts = $state(new Map<string, number>());
   let coverWakeAttemptedKeys = $state(new Set<string>());
@@ -128,6 +131,7 @@
   let pendingCardRestore = false;
   let prevActiveMangaId: number | null = null;
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let longPressedCardId: string | null = null;
   const coverRetryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   const coverRecoveryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   const coverCacheInflight = new Set<string>();
@@ -230,6 +234,8 @@
     selectMode = false;
     selectedIds = new Set();
     bulkMoveOpen = false;
+    clearLongPress();
+    longPressedCardId = null;
   }
 
   function toggleSelect(id: number) {
@@ -245,10 +251,14 @@
   }
 
   function onCardPointerDown(cardId: string, event: PointerEvent) {
+    clearLongPress();
+    longPressedCardId = null;
+    if (selectMode) return;
     const manga = mangaByCardId.get(cardId);
     if (!manga || event.button !== 0) return;
     longPressTimer = setTimeout(() => {
       longPressTimer = null;
+      longPressedCardId = cardId;
       enterSelectMode(manga.id);
     }, 500);
   }
@@ -262,6 +272,10 @@
 
   function onOpenCard(cardId: string, event: MouseEvent | KeyboardEvent) {
     clearLongPress();
+    if (event instanceof MouseEvent && longPressedCardId === cardId) {
+      longPressedCardId = null;
+      return;
+    }
     const manga = mangaByCardId.get(cardId);
     if (!manga) return;
 
@@ -891,6 +905,8 @@
     let longTaskCount = 0;
 
     function onKeyDown(event: KeyboardEvent) {
+      // The Share dialog handles its own keys while it is open.
+      if (shareMangas) return;
       if (event.key === "Escape" && selectMode) exitSelectMode();
       if ((event.key === "a" && (event.metaKey || event.ctrlKey)) && selectMode) {
         event.preventDefault();
@@ -979,12 +995,21 @@
       <button type="button" class="sel-btn sel-cancel" onclick={exitSelectMode} title={$_("ui_cancelEsc")}>
         <X size={13} weight="bold" />
       </button>
-      <span class="sel-count">{selectedIds.size} {$_("ui_selected")}</span>
+      <span class="sel-count">{$_("library.selection.count", { count: selectedIds.size })}</span>
       <button type="button" class="sel-btn sel-all" onclick={selectAll} title={$_("ui_selectAll")}>
         {$_("ui_selectAll")}
       </button>
     </div>
     <div class="select-bar-right">
+      <button
+        type="button"
+        class="sel-btn"
+        disabled={selectedIds.size === 0}
+        onclick={() => shareMangas = mangas.filter((manga) => selectedIds.has(manga.id))}
+      >
+        <ShareNetwork size={13} weight="bold" />
+        {$_("library.share.action")}
+      </button>
       {#if categories.length}
         <div class="bulk-move-wrap">
           <button
@@ -998,7 +1023,7 @@
           </button>
           {#if bulkMoveOpen}
             <div class="bulk-folder-list">
-              {#each categories as category}
+              {#each categories as category (category.id)}
                 <button type="button" class="bulk-folder-item" onclick={() => bulkMoveToCategory(category)}>
                   <Folder size={11} weight="bold" />
                   {getCategoryDisplayName(category)}
@@ -1035,7 +1060,7 @@
 >
   {#if vm.loading}
     <div class="grid-skeleton">
-      {#each Array(12) as _}
+      {#each Array(12) as _, index (index)}
         <div class="card-skeleton">
           <div class="cover-skeleton skeleton"></div>
           <div class="title-skeleton skeleton"></div>
@@ -1099,6 +1124,9 @@
 {/if}
 {#if emptyCtx}
   <ContextMenu x={emptyCtx.x} y={emptyCtx.y} items={buildEmptyCtx()} onClose={() => emptyCtx = null} />
+{/if}
+{#if shareMangas}
+  <LibraryShareModal mangas={shareMangas} coverScope={coverCacheScope()} onClose={() => shareMangas = null} />
 {/if}
 
 <style>

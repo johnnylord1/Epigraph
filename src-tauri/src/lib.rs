@@ -2,6 +2,7 @@ mod cloudflare_solver;
 mod desktop_background;
 mod discord_cover;
 mod discord_rpc;
+mod library_share;
 mod compat;
 mod migration_journal;
 mod offline_chapter;
@@ -7744,13 +7745,34 @@ fn is_trusted_command_webview(label: &str) -> bool {
     label == MAIN_WINDOW_LABEL
 }
 
+fn has_isolated_launch_instance() -> bool {
+    std::env::var_os("EPIGRAPH_DEV_DATA_DIR").is_some()
+        || std::env::var_os("EPIGRAPH_SESSION_RECORD").is_some()
+        || is_webdriver_automation()
+        || std::env::args().any(|arg| arg.starts_with("--local-app-data-dir"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     compat::promote_legacy_environment();
     apply_automation_launch_overrides();
     ensure_process_rustls_crypto_provider();
     ensure_dev_webview2_debug_port();
-    let app = tauri::Builder::default()
+    let isolated_instance = has_isolated_launch_instance();
+    let mut builder = tauri::Builder::default();
+    if !isolated_instance {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(link) =
+                library_share::extract_import_link_from_args(args.iter().map(String::as_str))
+            {
+                library_share::handle_incoming_import_link(app, &link);
+            } else {
+                library_share::focus_main_window(app);
+            }
+        }));
+    }
+    let app = builder
+        .plugin(tauri_plugin_deep_link::init())
         .register_uri_scheme_protocol("book", |_ctx, request| serve_book_asset(request))
         .register_uri_scheme_protocol("cover", |_ctx, request| serve_library_cover_asset(request))
         .register_asynchronous_uri_scheme_protocol("offline-page", |ctx, request, responder| {
@@ -7763,6 +7785,7 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(library_share::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -7922,12 +7945,34 @@ pub fn run() {
             restart_app,
             relaunch_with_args,
         ]))
-        .setup(|app| {
+        .setup(move |app| {
             // Do not hold the first paint hostage to a potentially large legacy
             // data tree. The merge is idempotent and conflict-safe; running it
             // in the Tauri blocking pool lets the Epigraph window become usable
             // while legacy data is copied in the background.
             tauri::async_runtime::spawn_blocking(compat::migrate_legacy_storage);
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if !isolated_instance {
+                    #[cfg(any(target_os = "windows", target_os = "linux"))]
+                    let _ = app.deep_link().register_all();
+                }
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    for url in urls {
+                        library_share::handle_incoming_import_link(app.handle(), url.as_str());
+                    }
+                } else if let Some(link) = library_share::extract_import_link_from_args(
+                    std::env::args().skip(1).collect::<Vec<_>>().iter().map(String::as_str),
+                ) {
+                    library_share::handle_incoming_import_link(app.handle(), &link);
+                }
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        library_share::handle_incoming_import_link(&handle, url.as_str());
+                    }
+                });
+            }
             configure_webdriver_window(app.handle());
             renderer_recovery::install(app.handle());
             cloudflare_solver::start(app.handle());

@@ -2385,6 +2385,7 @@
     inset: calc(12px * var(--component-library-scale)) 0 0;
     z-index: var(--component-library-panel-hidden-z-index);
     display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
     min-width: 0;
@@ -2412,6 +2413,10 @@
     pointer-events: auto;
     overflow: visible;
     content-visibility: visible;
+  }
+
+  .library-section-panel.is-active:has(> :global([data-library-share])) {
+    z-index: calc(var(--component-library-header-z-index) + 1);
   }
 
   .library-hero {

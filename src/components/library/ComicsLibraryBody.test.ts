@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import type { Category, Manga } from "../../lib/types";
 import type { ComicsSectionVM } from "../../lib/library/contracts";
 import {
@@ -11,7 +12,23 @@ import {
   setSessionLibraryCoverUrl,
 } from "../../lib/library/coverCache";
 import { store } from "../../store/state.svelte";
+import { renderShareImage } from "../../lib/library/shareImage";
 import ComicsLibraryBody from "./ComicsLibraryBody.svelte";
+
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@tauri-apps/api/core")>(),
+  invoke: vi.fn(),
+}));
+
+vi.mock("../../lib/client", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../lib/client")>(),
+  gql: vi.fn(async () => null),
+}));
+
+vi.mock("../../lib/library/shareImage", () => ({
+  loadShareCovers: vi.fn(async () => []),
+  renderShareImage: vi.fn(),
+}));
 
 vi.mock("../../lib/library/coverCache", () => ({
   cacheLibraryCoverFromServer: vi.fn(async () => null),
@@ -630,5 +647,114 @@ describe("ComicsLibraryBody", () => {
     await Promise.resolve();
 
     expect(container.querySelector("img.cover")?.getAttribute("src")).not.toBe("cover://old-generation");
+  });
+
+  test("copies a folder's list and hosted image in one clipboard write, with local copy available on failure", async () => {
+    const writeText = vi.fn(async () => undefined);
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const png = new Uint8Array([137, 80, 78, 71]).buffer;
+    const imageUrl = "https://litter.catbox.moe/abc123.png";
+    const NativeURL = URL;
+    vi.stubGlobal("URL", class extends NativeURL {
+      static createObjectURL = vi.fn(() => "blob:epigraph-share");
+      static revokeObjectURL = vi.fn();
+    });
+    vi.mocked(renderShareImage).mockResolvedValue(
+      Object.assign(new Blob([], { type: "image/png" }), { arrayBuffer: async () => png }),
+    );
+    vi.mocked(invoke).mockReset().mockRejectedValueOnce("upload_failed").mockResolvedValueOnce(imageUrl);
+
+    const works = [
+      manga({ id: 1, title: "One Piece", sourceId: "42", url: "/manga/one-piece", realUrl: "https://example.com/manga/one-piece" }),
+      manga({ id: 2, title: "[Oshi] no Ko", sourceId: "42", url: "/manga/oshi-no-ko", realUrl: "https://example.com/manga/oshi-no-ko" }),
+      manga({ id: 3, title: "Local Comic", realUrl: null }),
+    ];
+
+    const vm: ComicsSectionVM = {
+      kind: "comics",
+      sectionTabs: [],
+      collections: [],
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search",
+        sortMode: "az",
+        sortDir: "asc",
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      loading: false,
+      error: null,
+      emptyMessage: "Empty",
+      cards: [],
+      selectionEnabled: true,
+      selectedIds: new Set(),
+      showBulkBar: false,
+    };
+
+    try {
+      render(ComicsLibraryBody, {
+        props: {
+          vm,
+          mangas: works,
+          categories: [],
+          categoryMangaMap: new Map(),
+          renderLimit: 48,
+          viewKey: "library",
+        },
+      });
+
+      await fireEvent.click(screen.getByRole("button", { name: /One Piece/i }), { ctrlKey: true });
+      await fireEvent.click(screen.getByRole("button", { name: /Select all/i }));
+      expect(await screen.findByText(/3 selected/i)).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole("button", { name: /^Share$/i }));
+      const dialog = await screen.findByRole("dialog", { name: /Share 3 works/i });
+      const expectedList = [
+        "- [One Piece](<https://example.com/manga/one-piece>)",
+        "- [\\[Oshi\\] no Ko](<https://example.com/manga/oshi-no-ko>)",
+        "- Local Comic",
+      ].join("\n");
+      expect(dialog.textContent).toContain(expectedList);
+
+      expect(invoke).not.toHaveBeenCalled();
+      await screen.findByRole("img", { name: /cover collage/i });
+      const copyAll = screen.getByRole("button", { name: /Copy all/i });
+      await fireEvent.click(copyAll);
+      expect((await screen.findByRole("alert")).textContent).toMatch(/upload/i);
+      expect(writeText).not.toHaveBeenCalled();
+
+      await fireEvent.click(screen.getByRole("button", { name: /Copy list/i }));
+      expect(writeText).toHaveBeenCalledWith(expectedList);
+      writeText.mockClear();
+
+      await fireEvent.click(copyAll);
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalledTimes(1);
+        const copiedText = writeText.mock.calls[0]?.[0] as string;
+        expect(copiedText).not.toContain("- [One Piece]");
+        expect(copiedText).toMatch(
+          /^\[Add all in Epigraph\]\(<https:\/\/johnnylord1\.github\.io\/Epigraph\/share\/#d\.[A-Za-z0-9_-]+&img=l\.abc123>\) · \[View list\]\(<https:\/\/johnnylord1\.github\.io\/Epigraph\/share\/#d\.[A-Za-z0-9_-]+&img=l\.abc123&view=1>\)\n\n\[Previews\]\(https:\/\/litter\.catbox\.moe\/abc123\.png\)$/,
+        );
+      });
+      expect(invoke).toHaveBeenLastCalledWith("plugin:library-share|upload_card", png);
+
+      await fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: /Share 3 works/i })).toBeNull());
+      // Closing the Share modal keeps the library selection active.
+      expect(screen.getByText(/3 selected/i)).toBeTruthy();
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+      vi.mocked(invoke).mockReset();
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+    }
   });
 });

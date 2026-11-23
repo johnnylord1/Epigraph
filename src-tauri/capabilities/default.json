@@ -5,6 +5,9 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "library-share:allow-upload-card",
+    "library-share:allow-fetch-share-payload",
+    "library-share:allow-take-pending-import-link",
     "dialog:default",
     "dialog:allow-open",
     "shell:allow-open",
