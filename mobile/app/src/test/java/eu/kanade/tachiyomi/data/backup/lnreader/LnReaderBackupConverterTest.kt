@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 
 class LnReaderBackupConverterTest {
@@ -26,6 +27,23 @@ class LnReaderBackupConverterTest {
     @AfterEach
     fun cleanUp() {
         workDir.deleteRecursively()
+    }
+
+    @Test
+    fun `real LNReader backup retains reading state during conversion`() {
+        val fixture = System.getenv("EPIGRAPH_TEST_LNREADER_BACKUP")
+        assumeTrue(!fixture.isNullOrBlank(), "Set EPIGRAPH_TEST_LNREADER_BACKUP to a real LNReader export")
+        val backup = LnReaderBackupConverter(zone = ZoneOffset.UTC).convert(File(fixture), workDir)
+        val works = backup.backupManga
+        val chapters = works.sumOf { it.chapters.size }
+        val read = works.sumOf { work -> work.chapters.count { it.read } }
+        val history = works.sumOf { it.history.size }
+        assertTrue(works.isNotEmpty())
+        assertTrue(chapters > 0)
+        assertTrue(read > 0)
+        assertTrue(history > 0)
+        assertTrue(backup.backupSources.all { it.isNovel })
+        println("LNReader fixture: works=${works.size} chapters=$chapters read=$read history=$history")
     }
 
     @Test

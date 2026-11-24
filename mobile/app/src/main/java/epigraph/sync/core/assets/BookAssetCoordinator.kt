@@ -55,7 +55,7 @@ class BookAssetCoordinator(
             val assetSession = CoreAssetSession(
                 bearerToken = token,
                 clientVersion = BuildConfig.VERSION_NAME,
-                protocolVersion = EpigraphCoreWireProtocol.CURRENT_VERSION,
+                protocolVersion = assetProtocolVersion(session),
             )
             for (row in pending) {
                 val source = File(row.local_uri)
@@ -132,7 +132,7 @@ class BookAssetCoordinator(
             val assetSession = CoreAssetSession(
                 bearerToken = token,
                 clientVersion = BuildConfig.VERSION_NAME,
-                protocolVersion = EpigraphCoreWireProtocol.CURRENT_VERSION,
+                protocolVersion = assetProtocolVersion(session),
             )
             for (row in pending) {
                 val extension = row.mime_type.coverFileExtensionOrNull()
@@ -209,7 +209,7 @@ class BookAssetCoordinator(
                     session = CoreAssetSession(
                         bearerToken = token,
                         clientVersion = BuildConfig.VERSION_NAME,
-                        protocolVersion = EpigraphCoreWireProtocol.CURRENT_VERSION,
+                        protocolVersion = assetProtocolVersion(session),
                     ),
                     destination = destination,
                 )
@@ -251,6 +251,12 @@ class BookAssetCoordinator(
             )
         }
     }
+
+    private suspend fun assetProtocolVersion(session: epigraph.sync.core.credentials.CoreCredentialSession): Int =
+        database.await {
+            val v4 = v4_syncQueries.selectV4SyncState(session.serverId, session.profileId).executeAsOneOrNull()
+            if (v4?.initial_sync_completed == 1L) 4 else EpigraphCoreWireProtocol.CURRENT_VERSION
+        }
 
     private suspend fun markCoverFailure(
         row: tachiyomi.data.SelectPendingBookCoverDownloads,

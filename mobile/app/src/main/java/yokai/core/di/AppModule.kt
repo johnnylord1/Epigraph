@@ -228,6 +228,7 @@ fun appModule(app: Application) = module {
             privateStorageDirectory = File(app.filesDir, "books"),
             structureInspector = BookStructureInspector(app),
             pdfOutlineReader = PdfiumPdfOutlineReader(app),
+            deviceIdProvider = get<epigraph.sync.core.work.CoreDeviceIdentityProvider>()::currentDeviceId,
         )
     }
     single { LocalBookImportService(app.contentResolver, get(), get(), get(), get()) }

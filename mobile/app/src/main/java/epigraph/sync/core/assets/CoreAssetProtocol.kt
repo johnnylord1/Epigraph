@@ -39,7 +39,7 @@ class CoreAssetSession(
 enum class CoreAssetMethod { HEAD, GET, PUT }
 
 /**
- * Dependency-neutral HTTP request matching syncd's `/v1/assets/:sha256` routes.
+ * Dependency-neutral HTTP request for Core's content-addressed asset routes.
  * The bearer token is ephemeral and this object must never be persisted or logged.
  */
 data class CoreAssetHttpRequest(
@@ -61,7 +61,10 @@ data class CoreAssetHttpRequest(
     }
 
     val pathAndQuery: String
-        get() = "/v1/assets/${assetId.value}?scopeId=${encodeQuery(scopeId)}"
+        get() {
+            val route = if (session.protocolVersion == 4) "v4" else "v1"
+            return "/$route/assets/${assetId.value}?scopeId=${encodeQuery(scopeId)}"
+        }
 
     fun headers(): Map<String, String> = buildMap {
         put("Authorization", "Bearer ${session.bearerToken}")

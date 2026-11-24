@@ -95,6 +95,8 @@ data class CoreCapabilities(
      * first sync does not download its own upload back after confirming it from the acknowledgements.
      */
     val supportsHeldVersionsV1: Boolean = false,
+    /** Sync V4 unified snapshot + bulk + delta + SSE sync protocol is available on this Core. */
+    val supportsSyncV4: Boolean = false,
 )
 
 @Serializable

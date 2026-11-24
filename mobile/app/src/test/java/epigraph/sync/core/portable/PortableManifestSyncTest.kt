@@ -8,6 +8,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import epigraph.contract.ComicDependency
 import epigraph.contract.DecimalSourceId
 import epigraph.contract.ExtensionStoreReference
+import epigraph.contract.NovelDependency
 import epigraph.contract.PortableIdentityV3
 import epigraph.contract.PortableEcosystem
 import epigraph.contract.PortableResolution
@@ -23,6 +24,8 @@ import epigraph.sync.core.protocol.CoreErrorEnvelope
 import epigraph.sync.core.protocol.CorePortableComicWork
 import epigraph.sync.core.protocol.CorePortableManifest
 import epigraph.sync.core.protocol.CorePortableManifestPage
+import epigraph.sync.core.protocol.CorePortableNovelManifest
+import epigraph.sync.core.protocol.CorePortableNovelWork
 import epigraph.sync.core.session.CoreEndpoint
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.session.CoreSessionTransports
@@ -40,7 +43,14 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -62,13 +72,143 @@ class PortableManifestSyncTest {
         scopes = listOf("comics:profile:$PROFILE"),
         inactivityExpiresAtMs = Long.MAX_VALUE,
         serverId = SERVER,
-        accessTokenUtf8 = byteArrayOf(1, 2, 3),
+        accessTokenUtf8 = "test-token".toByteArray(),
     )
 
     @AfterEach
     fun close() {
         session.close()
         driver.close()
+    }
+
+    @Test
+    fun `novels revalidate a complete manifest and recover when local membership is missing`() = runTest {
+        val scope = "novels:profile:$PROFILE"
+        val ref = PortableWorkRef.Novel("fixture.plugin", ProviderOwnedKey("/novel/one"))
+        val revision = "W/\"novels-v1-${"a".repeat(64)}\""
+        val fingerprint = "sha256:${"b".repeat(64)}"
+        val manifest = CorePortableNovelManifest(
+            schemaVersion = 3,
+            scopeId = scope,
+            manifestFingerprint = fingerprint,
+            generatedAtMs = NOW,
+            snapshotId = "novels-fixture",
+            snapshotFingerprint = fingerprint,
+            snapshotExpiresAtMs = NOW + 120_000,
+            page = CorePortableManifestPage(0, PAGE_SIZE, hasNextPage = false, totalCount = 1),
+            novelDependencies = listOf(NovelDependency(pluginId = ref.pluginId)),
+            works = listOf(CorePortableNovelWork(PortableIdentityV3.workId(ref), ref, ref.pluginId)),
+        )
+        val validators = mutableListOf<String?>()
+        var legacyCore = false
+        val http = EpigraphCoreHttpClient(
+            client = OkHttpClient.Builder().addInterceptor { chain ->
+                val request = chain.request()
+                val validator = request.header("If-None-Match")
+                validators += validator
+                val unchanged = !legacyCore && validator == revision
+                Response.Builder()
+                    .request(request)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(if (unchanged) 304 else 200)
+                    .message(if (unchanged) "Not Modified" else "OK")
+                    .apply { if (!legacyCore) header("ETag", revision) }
+                    .body(
+                        (if (unchanged) "" else Json.encodeToString(CorePortableNovelManifest.serializer(), manifest))
+                            .toResponseBody("application/json".toMediaType()),
+                    )
+                    .build()
+            }.build(),
+            baseUrl = ORIGIN.toHttpUrl(),
+            clientVersion = "0.1.0",
+            json = Json { ignoreUnknownKeys = true },
+            preserveInterceptorsForTests = true,
+        )
+        val sessionTransports = mockk<CoreSessionTransports>()
+        every { sessionTransports.http } returns http
+        val transports = mockk<CoreSessionTransportFactory>()
+        val hydration = mockk<PortableHydrationCoordinator>()
+        coEvery { hydration.hydrate(SERVER, PROFILE, any()) } returns mockk(relaxed = true)
+        val sync = PortableNovelManifestSync(
+            transports = transports,
+            endpoints = { CoreEndpoint(ORIGIN, discovered = false) },
+            database = handler,
+            hydration = hydration,
+            pageSize = PAGE_SIZE,
+        )
+        session.copyWithServerMetadata(scopes = listOf(scope)).use { novels ->
+            every { transports.create(novels, ORIGIN) } returns sessionTransports
+            val novelCapabilities = capabilities().copy(supportedScopes = listOf(scope))
+            assertEquals(CoreReplicaSyncOutcome.APPLIED, sync.synchronize(novels, novelCapabilities, NOW))
+            val dependencies = SqlDelightPortableDependencyStore(database)
+            assertEquals(NOW, dependencies.novels(SERVER, PROFILE).single().updatedAt)
+            assertEquals(CoreReplicaSyncOutcome.APPLIED, sync.synchronize(novels, novelCapabilities, NOW + 1))
+            assertEquals(listOf(null, revision), validators)
+            assertEquals(NOW, dependencies.novels(SERVER, PROFILE).single().updatedAt)
+            io.mockk.coVerify(exactly = 1) { hydration.hydrate(SERVER, PROFILE, NOW + 1) }
+
+            database.aethon_syncQueries.deleteStalePortableManifestMembershipsForEcosystem(
+                SERVER, PROFILE, NOW + 2, PortableEcosystem.LNREADER.name,
+            )
+            assertEquals(CoreReplicaSyncOutcome.APPLIED, sync.synchronize(novels, novelCapabilities, NOW + 3))
+            assertEquals(listOf(null, revision, null), validators)
+
+            legacyCore = true
+            assertEquals(CoreReplicaSyncOutcome.APPLIED, sync.synchronize(novels, novelCapabilities, NOW + 4))
+            assertEquals(CoreReplicaSyncOutcome.APPLIED, sync.synchronize(novels, novelCapabilities, NOW + 5))
+            assertEquals(listOf(null, revision, null, revision, null), validators)
+        }
+    }
+
+    @Test
+    fun `novels restart an incomplete local snapshot and resume when the preceding page is intact`() = runTest {
+        val scope = "novels:profile:$PROFILE"
+        val revision = "W/\"novels-v1-${"a".repeat(64)}\""
+        val fingerprint = "sha256:${"b".repeat(64)}"
+        fun page(offset: Long): CorePortableNovelManifest {
+            val ref = PortableWorkRef.Novel("fixture.plugin", ProviderOwnedKey("/novel/$offset"))
+            return CorePortableNovelManifest(
+                schemaVersion = 3,
+                scopeId = scope,
+                manifestFingerprint = fingerprint,
+                generatedAtMs = NOW,
+                snapshotId = "resumable-novels",
+                snapshotFingerprint = fingerprint,
+                snapshotExpiresAtMs = NOW + 120_000,
+                page = CorePortableManifestPage(offset, 1, hasNextPage = offset == 0L, totalCount = 2),
+                novelDependencies = listOf(NovelDependency(pluginId = ref.pluginId)),
+                works = listOf(CorePortableNovelWork(PortableIdentityV3.workId(ref), ref, ref.pluginId)),
+            )
+        }
+        val http = mockk<EpigraphCoreHttpClient>()
+        coEvery { http.portableNovelManifest(any(), PROFILE, 1, 0, null, null, null) } returns
+            CoreHttpResult.Success(page(0), revision)
+        coEvery { http.portableNovelManifest(any(), PROFILE, 1, 1, "resumable-novels", fingerprint, null) } returnsMany listOf(
+            CoreHttpResult.Failure(503, null),
+            CoreHttpResult.Failure(503, null),
+            CoreHttpResult.Success(page(1), revision),
+        )
+        coEvery { http.portableNovelManifest(any(), PROFILE, 1, 0, null, null, revision) } returns
+            CoreHttpResult.Failure(304, null)
+        val sessionTransports = mockk<CoreSessionTransports>()
+        every { sessionTransports.http } returns http
+        val transports = mockk<CoreSessionTransportFactory>()
+        val sync = PortableNovelManifestSync(transports, { CoreEndpoint(ORIGIN, false) }, handler, pageSize = 1)
+        session.copyWithServerMetadata(scopes = listOf(scope)).use { novels ->
+            every { transports.create(novels, ORIGIN) } returns sessionTransports
+            val novelCapabilities = capabilities().copy(supportedScopes = listOf(scope))
+            assertEquals(CoreReplicaSyncOutcome.RETRY, sync.synchronize(novels, novelCapabilities, NOW))
+            database.aethon_syncQueries.deleteStalePortableManifestMembershipsForEcosystem(
+                SERVER, PROFILE, NOW + 1, PortableEcosystem.LNREADER.name,
+            )
+            assertEquals(CoreReplicaSyncOutcome.RETRY, sync.synchronize(novels, novelCapabilities, NOW + 1))
+            assertEquals(CoreReplicaSyncOutcome.APPLIED, sync.synchronize(novels, novelCapabilities, NOW + 2))
+            assertEquals(CoreReplicaSyncOutcome.APPLIED, sync.synchronize(novels, novelCapabilities, NOW + 3))
+            io.mockk.coVerify(exactly = 2) { http.portableNovelManifest(any(), PROFILE, 1, 0, null, null, null) }
+            io.mockk.coVerify(exactly = 3) {
+                http.portableNovelManifest(any(), PROFILE, 1, 1, "resumable-novels", fingerprint, null)
+            }
+        }
     }
 
     @Test

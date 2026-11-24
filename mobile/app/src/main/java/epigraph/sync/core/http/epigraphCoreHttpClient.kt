@@ -50,7 +50,7 @@ import okio.buffer
  * whose status is `applied`.
  */
 sealed interface CoreHttpResult<out T> {
-    data class Success<T>(val value: T) : CoreHttpResult<T>
+    data class Success<T>(val value: T, val etag: String? = null) : CoreHttpResult<T>
 
     data class Failure(
         val statusCode: Int,
@@ -536,6 +536,7 @@ class EpigraphCoreHttpClient internal constructor(
         offset: Long = 0,
         snapshotId: String? = null,
         snapshotFingerprint: String? = null,
+        ifNoneMatch: String? = null,
     ): CoreHttpResult<CorePortableNovelManifest> {
         val canonicalProfileId = canonicalProfileId(profileId)
         require(pageSize in 1..MAX_CATALOG_PAGE_SIZE) {
@@ -546,6 +547,9 @@ class EpigraphCoreHttpClient internal constructor(
         }
         require((snapshotId == null) == (snapshotFingerprint == null)) {
             "snapshot ID and fingerprint must be supplied together"
+        }
+        require(ifNoneMatch == null || (offset == 0L && snapshotId == null)) {
+            "only the first page of a new manifest can be revalidated"
         }
         val urlBuilder = endpoint("v1/portable/novel-manifest")
             .newBuilder()
@@ -558,20 +562,30 @@ class EpigraphCoreHttpClient internal constructor(
         return execute(
             protectedRequestBuilder(url, accessToken)
                 .header("Accept", "application/json")
+                .apply { ifNoneMatch?.let { header("If-None-Match", it) } }
                 .get()
                 .build(),
+            captureEtag = true,
         )
     }
 
-    private suspend inline fun <reified T> execute(request: Request): CoreHttpResult<T> {
+    private suspend inline fun <reified T> execute(
+        request: Request,
+        captureEtag: Boolean = false,
+    ): CoreHttpResult<T> {
         return client.newCall(request).await().use { response ->
             observeServerTime(response)
+            val etag = if (captureEtag) response.header("ETag") else null
+            if (captureEtag && response.code == 304) {
+                val matches = etag != null && etag == request.header("If-None-Match")
+                return@use CoreHttpResult.Failure(if (matches) 304 else 502, null)
+            }
             val responseBody = readUtf8Bounded(response.body, maxJsonResponseBytes)
                 ?: return@use CoreHttpResult.Failure(413, null)
             if (response.isSuccessful) {
                 runCatching { json.decodeFromString<T>(responseBody) }
                     .fold(
-                        onSuccess = { CoreHttpResult.Success(it) },
+                        onSuccess = { CoreHttpResult.Success(it, etag) },
                         onFailure = {
                             CoreHttpResult.Failure(
                                 statusCode = 422,

@@ -47,6 +47,13 @@ class AndroidNovelPluginSettingStore(
         return true
     }
 
+    override suspend fun reset(sourceId: String, key: String): Boolean {
+        val declared = plugins.loadPluginSettings(sourceId) ?: return false
+        if (declared[key] !is JsonObject) return false
+        plugins.deletePluginSetting(sourceId, key)
+        return true
+    }
+
     private suspend fun declaredSettings(pluginId: String): List<OfferedSourcePreference> =
         plugins.loadPluginSettings(pluginId).orEmpty().mapNotNull { (key, element) ->
             val setting = element as? JsonObject ?: return@mapNotNull null

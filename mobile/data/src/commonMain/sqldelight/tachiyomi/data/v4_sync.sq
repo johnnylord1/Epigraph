@@ -1,0 +1,286 @@
+-- Epigraph Sync V4 tables and queries.
+
+CREATE TABLE v4_sync_state(
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    server_seq INTEGER NOT NULL DEFAULT 0 CHECK(server_seq >= 0),
+    min_replayable_seq INTEGER NOT NULL DEFAULT 0 CHECK(min_replayable_seq >= 0),
+    last_snapshot_etag TEXT,
+    hlc_last_ts_ms INTEGER NOT NULL DEFAULT 0,
+    hlc_last_counter INTEGER NOT NULL DEFAULT 0,
+    clock_offset_ms INTEGER NOT NULL DEFAULT 0,
+    initial_sync_completed INTEGER NOT NULL DEFAULT 0,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(server_id, profile_id)
+);
+
+CREATE TABLE v4_entity_map(
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    local_id TEXT,
+    hlc_ts_ms INTEGER NOT NULL DEFAULT 0,
+    hlc_counter INTEGER NOT NULL DEFAULT 0,
+    hlc_device_id TEXT NOT NULL DEFAULT '',
+    deleted INTEGER NOT NULL DEFAULT 0,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(server_id, profile_id, entity_type, entity_key)
+);
+
+CREATE INDEX idx_v4_entity_map_local
+    ON v4_entity_map(server_id, profile_id, entity_type, local_id);
+
+CREATE TABLE v4_outbox(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_mutation_id TEXT NOT NULL UNIQUE,
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    hlc_ts_ms INTEGER NOT NULL,
+    hlc_counter INTEGER NOT NULL,
+    hlc_device_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_retry_at_ms INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX idx_v4_outbox_due
+    ON v4_outbox(server_id, profile_id, next_retry_at_ms, id);
+
+CREATE INDEX idx_v4_outbox_entity
+    ON v4_outbox(server_id, profile_id, entity_type, entity_key);
+
+CREATE TABLE v4_pending_extension_prefs(
+    kind TEXT NOT NULL,
+    source_or_plugin_id TEXT NOT NULL,
+    pref_key TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    hlc_ts_ms INTEGER NOT NULL,
+    hlc_counter INTEGER NOT NULL,
+    hlc_device_id TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(kind, source_or_plugin_id, pref_key)
+);
+
+selectV4SyncState:
+SELECT * FROM v4_sync_state
+WHERE server_id = :serverId AND profile_id = :profileId;
+
+selectAllV4SyncStates:
+SELECT * FROM v4_sync_state;
+
+countLegacySyncOutboxPending:
+SELECT COUNT(*) FROM aethon_sync_outbox WHERE scope_id IN :scopeIds;
+
+countLegacySuwayomiQueuePending:
+SELECT COUNT(*) FROM aethon_suwayomi_mutation_queue WHERE profile_id = :profileId;
+
+clearLegacySyncOutbox:
+DELETE FROM aethon_sync_outbox WHERE scope_id IN :scopeIds;
+
+clearLegacySuwayomiQueue:
+DELETE FROM aethon_suwayomi_mutation_queue WHERE profile_id = :profileId;
+
+upsertV4SyncState:
+INSERT INTO v4_sync_state(
+    server_id, profile_id, server_seq, min_replayable_seq, last_snapshot_etag,
+    hlc_last_ts_ms, hlc_last_counter, clock_offset_ms, initial_sync_completed, updated_at_ms
+) VALUES (
+    :serverId, :profileId, :serverSeq, :minReplayableSeq, :lastSnapshotEtag,
+    :hlcLastTsMs, :hlcLastCounter, :clockOffsetMs, :initialSyncCompleted, :updatedAtMs
+)
+ON CONFLICT(server_id, profile_id) DO UPDATE SET
+    server_seq = excluded.server_seq,
+    min_replayable_seq = excluded.min_replayable_seq,
+    last_snapshot_etag = excluded.last_snapshot_etag,
+    hlc_last_ts_ms = excluded.hlc_last_ts_ms,
+    hlc_last_counter = excluded.hlc_last_counter,
+    clock_offset_ms = excluded.clock_offset_ms,
+    initial_sync_completed = excluded.initial_sync_completed,
+    updated_at_ms = excluded.updated_at_ms;
+
+deleteV4SyncStateForServer:
+DELETE FROM v4_sync_state WHERE server_id = :serverId;
+
+selectV4EntityMapByKey:
+SELECT * FROM v4_entity_map
+WHERE server_id = :serverId AND profile_id = :profileId
+  AND entity_type = :entityType AND entity_key = :entityKey;
+
+selectV4DomainEntityMap:
+SELECT * FROM v4_entity_map
+WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain;
+
+selectV4ActiveCategories:
+SELECT * FROM v4_entity_map
+WHERE server_id = :serverId AND profile_id = :profileId AND entity_type = 'comic.category' AND deleted = 0;
+
+selectV4EntityMapByLocalId:
+SELECT * FROM v4_entity_map
+WHERE server_id = :serverId AND profile_id = :profileId
+  AND entity_type = :entityType AND local_id = :localId;
+
+upsertV4EntityMap:
+INSERT INTO v4_entity_map(
+    server_id, profile_id, domain, entity_type, entity_key, local_id,
+    hlc_ts_ms, hlc_counter, hlc_device_id, deleted, updated_at_ms
+) VALUES (
+    :serverId, :profileId, :domain, :entityType, :entityKey, :localId,
+    :hlcTsMs, :hlcCounter, :hlcDeviceId, :deleted, :updatedAtMs
+)
+ON CONFLICT(server_id, profile_id, entity_type, entity_key) DO UPDATE SET
+    domain = excluded.domain,
+    local_id = coalesce(excluded.local_id, v4_entity_map.local_id),
+    hlc_ts_ms = excluded.hlc_ts_ms,
+    hlc_counter = excluded.hlc_counter,
+    hlc_device_id = excluded.hlc_device_id,
+    deleted = excluded.deleted,
+    updated_at_ms = excluded.updated_at_ms;
+
+deleteV4EntityMapForServer:
+DELETE FROM v4_entity_map WHERE server_id = :serverId;
+
+selectV4ComicWorks:
+SELECT m.* FROM mangas AS m
+WHERE m.source != 0
+  AND (:favoritesOnly = 0 OR m.favorite = 1)
+  AND NOT EXISTS (
+    SELECT 1 FROM aethon_content_identity AS i
+    WHERE i.content_type = 'NOVEL' AND i.local_reference = CAST(m._id AS TEXT)
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM aethon_portable_work_binding AS b
+    WHERE b.ecosystem = 'LNREADER' AND b.local_reference = CAST(m._id AS TEXT)
+  );
+
+selectV4FavoriteChapters:
+SELECT c.* FROM chapters AS c JOIN mangas AS m ON m._id = c.manga_id
+WHERE m.favorite = 1 AND m.source != 0;
+
+selectV4FavoriteCategoryAssignments:
+SELECT a.* FROM mangas_categories AS a JOIN mangas AS m ON m._id = a.manga_id
+WHERE m.favorite = 1 AND m.source != 0;
+
+selectV4FavoriteHistory:
+SELECT h.* FROM history AS h
+JOIN chapters AS c ON c._id = h.history_chapter_id
+JOIN mangas AS m ON m._id = c.manga_id
+WHERE m.favorite = 1 AND m.source != 0 AND h.history_last_read > 0;
+
+clearV4HistoryTimestamp:
+UPDATE history SET history_last_read = 0 WHERE history_chapter_id = :chapterId;
+
+enqueueV4Outbox:
+INSERT INTO v4_outbox(
+    client_mutation_id, server_id, profile_id, domain, entity_type, entity_key,
+    deleted, hlc_ts_ms, hlc_counter, hlc_device_id, payload_json, created_at_ms
+) VALUES (
+    :clientMutationId, :serverId, :profileId, :domain, :entityType, :entityKey,
+    :deleted, :hlcTsMs, :hlcCounter, :hlcDeviceId, :payloadJson, :createdAtMs
+);
+
+selectLastV4OutboxForEntity:
+SELECT * FROM v4_outbox
+WHERE server_id = :serverId
+  AND profile_id = :profileId
+  AND entity_type = :entityType
+  AND entity_key = :entityKey
+ORDER BY id DESC LIMIT 1;
+
+selectV4OutboxDue:
+SELECT * FROM v4_outbox
+WHERE server_id = :serverId
+  AND profile_id = :profileId
+  AND domain IN :domains
+  AND (
+    domain != 'preferences'
+    OR (entity_key LIKE 'comic:%' AND :syncComics = 1)
+    OR (entity_key LIKE 'novel:%' AND :syncNovels = 1)
+  )
+  AND (
+    domain != 'extensions'
+    OR (entity_type = 'extension.repo' AND (
+      (entity_key LIKE 'comic:%' AND :reconcileComicRepositories = 1)
+      OR (entity_key LIKE 'novel:%' AND :reconcileNovelRepositories = 1)
+    ))
+    OR (entity_type = 'extension.installed' AND (
+      (entity_key LIKE 'comic:%' AND :reconcileComicExtensions = 1)
+      OR (entity_key LIKE 'novel:%' AND :reconcileNovelPlugins = 1)
+    ))
+  )
+  AND next_retry_at_ms <= :nowMs
+ORDER BY id ASC
+LIMIT :limit;
+
+countV4OutboxPending:
+SELECT COUNT(*) FROM v4_outbox
+WHERE server_id = :serverId AND profile_id = :profileId;
+
+countV4OutboxPendingForDomains:
+SELECT COUNT(*) FROM v4_outbox
+WHERE server_id = :serverId
+  AND profile_id = :profileId
+  AND domain IN :domains
+  AND (
+    domain != 'preferences'
+    OR (entity_key LIKE 'comic:%' AND :syncComics = 1)
+    OR (entity_key LIKE 'novel:%' AND :syncNovels = 1)
+  )
+  AND (
+    domain != 'extensions'
+    OR (entity_type = 'extension.repo' AND (
+      (entity_key LIKE 'comic:%' AND :reconcileComicRepositories = 1)
+      OR (entity_key LIKE 'novel:%' AND :reconcileNovelRepositories = 1)
+    ))
+    OR (entity_type = 'extension.installed' AND (
+      (entity_key LIKE 'comic:%' AND :reconcileComicExtensions = 1)
+      OR (entity_key LIKE 'novel:%' AND :reconcileNovelPlugins = 1)
+    ))
+  );
+
+deleteV4OutboxByMutationIds:
+DELETE FROM v4_outbox
+WHERE client_mutation_id IN :mutationIds;
+
+recordV4OutboxFailure:
+UPDATE v4_outbox
+SET attempts = attempts + 1,
+    next_retry_at_ms = :nextRetryAtMs,
+    last_error = :lastError
+WHERE client_mutation_id = :clientMutationId;
+
+deleteV4OutboxForServer:
+DELETE FROM v4_outbox WHERE server_id = :serverId;
+
+upsertV4PendingExtensionPref:
+INSERT INTO v4_pending_extension_prefs(
+    kind, source_or_plugin_id, pref_key, payload_json,
+    hlc_ts_ms, hlc_counter, hlc_device_id, updated_at_ms
+) VALUES (
+    :kind, :sourceOrPluginId, :prefKey, :payloadJson,
+    :hlcTsMs, :hlcCounter, :hlcDeviceId, :updatedAtMs
+)
+ON CONFLICT(kind, source_or_plugin_id, pref_key) DO UPDATE SET
+    payload_json = excluded.payload_json,
+    hlc_ts_ms = excluded.hlc_ts_ms,
+    hlc_counter = excluded.hlc_counter,
+    hlc_device_id = excluded.hlc_device_id,
+    updated_at_ms = excluded.updated_at_ms;
+
+selectV4PendingExtensionPrefsForKind:
+SELECT * FROM v4_pending_extension_prefs WHERE kind = :kind;
+
+deleteV4PendingExtensionPref:
+DELETE FROM v4_pending_extension_prefs
+WHERE kind = :kind AND source_or_plugin_id = :sourceOrPluginId AND pref_key = :prefKey;
+
+clearV4PendingExtensionPrefsForServer:
+DELETE FROM v4_pending_extension_prefs
+WHERE kind >= :scopePrefix AND kind < :scopeLimit;

@@ -69,6 +69,9 @@ interface SourcePreferenceStore {
 
     /** Stores [value] as the source's setting; false when the source or setting is gone. */
     suspend fun write(sourceId: String, key: String, value: SourcePreferenceValue): Boolean
+
+    /** Removes the stored override so the source uses its default. */
+    suspend fun reset(sourceId: String, key: String): Boolean = false
 }
 
 data class SourcePreferenceSyncResult(

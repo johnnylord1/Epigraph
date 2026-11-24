@@ -366,6 +366,12 @@ fun interface CoreReplicaSyncPort {
         capabilities: CoreCapabilities,
         nowEpochMillis: Long,
     ): CoreReplicaSyncOutcome
+
+    /**
+     * Whether the confirmed Core snapshot/replay stage succeeded in the last [synchronize] call,
+     * even if an independent catalog stage asked for a retry. Null when not split by stage.
+     */
+    fun coreReplicaApplied(): Boolean? = null
 }
 
 enum class CoreReplicaSyncOutcome {
@@ -530,11 +536,19 @@ class CompositeCoreReplicaSync(
     private val portableNovelManifest: CoreReplicaSyncPort = DeferredCoreReplicaSync,
     private val revisions: CoreCatalogRevisionGate? = null,
 ) : CoreReplicaSyncPort {
+    @Volatile
+    private var lastCoreReplicaOutcome: CoreReplicaSyncOutcome? = null
+
+    override fun coreReplicaApplied(): Boolean? = lastCoreReplicaOutcome?.let {
+        it == CoreReplicaSyncOutcome.APPLIED || it == CoreReplicaSyncOutcome.DEFERRED
+    }
+
     override suspend fun synchronize(
         credentials: CoreCredentialSession,
         capabilities: CoreCapabilities,
         nowEpochMillis: Long,
     ): CoreReplicaSyncOutcome = coroutineScope {
+        lastCoreReplicaOutcome = null
         val policy = policyResolver?.let { resolver ->
             devices?.let { provider -> resolver.resolve(credentials, capabilities, provider.currentDeviceId()) }
         }
@@ -615,6 +629,7 @@ class CompositeCoreReplicaSync(
                 )
             }
         }
+        lastCoreReplicaOutcome = replicaOutcome
         // LNReader declarations are read from the replica mirror, so the inventory is built only
         // after this pass committed them; otherwise the first sync after pairing sees no repos.
         val novelPluginOutcome = if (
@@ -816,6 +831,13 @@ class CoreOutboxSyncRunner(
     private val replicaAppliedHooks: List<CoreReplicaAppliedHook> = emptyList(),
     private val policyHooks: List<CoreSyncPolicyHook> = emptyList(),
     /**
+     * Runs after the replica pass and backfill finish, so category creation (which queues
+     * assignments) lands after the library works are uploaded and extension installs never block
+     * library or reading-progress uploads. Any outbox rows queued by a hook are drained in the same
+     * run.
+     */
+    private val postBackfillHooks: List<CoreNegotiatedSessionHook> = emptyList(),
+    /**
      * The current time for each drained batch. Rows queued during a run, such as a progress backfill
      * sending while it still scans, are due only from when they were queued; a batch claiming with the
      * run's start time would not see them. Null keeps the run's start time.
@@ -823,7 +845,14 @@ class CoreOutboxSyncRunner(
     private val clock: (() -> Long)? = null,
     /** Retries what a previous Core refused once this phone syncs with another one. */
     private val queueHandOver: CoreQueueHandOver? = null,
+    /** Production Sync V4 coordinator used automatically whenever the Core advertises V4. */
+    private val v4Coordinator: epigraph.sync.v4.V4ProductionSyncCoordinator? = null,
 ) {
+    @Volatile
+    private var lastRunUsedSyncV4: Boolean = false
+
+    fun lastRunUsedV4(): Boolean = lastRunUsedSyncV4
+
     /** [backfill] runs after the replica pass, when the Core answered this run; see [CoreRunBackfill]. */
     suspend fun run(
         nowEpochMillis: Long,
@@ -1020,6 +1049,18 @@ class CoreOutboxSyncRunner(
                     CoreUserActionReason.AUTHORIZATION_REQUIRED,
                 )
             }
+            if (capabilities.supportsSyncV4 && v4Coordinator != null) {
+                lastRunUsedSyncV4 = true
+                return v4Coordinator.syncOnce(
+                    session = session,
+                    openedOrigin = connection.openedOrigin,
+                    policy = policy,
+                    nowEpochMillis = clock?.invoke()?.coerceAtLeast(nowEpochMillis) ?: nowEpochMillis,
+                    drainBookAssets = connection::drainBookAssets,
+                )
+            }
+            lastRunUsedSyncV4 = false
+
             policyHooks.forEach { hook ->
                 try {
                     hook.onPolicyResolved(policy)
@@ -1145,7 +1186,13 @@ class CoreOutboxSyncRunner(
             } else {
                 CoreReplicaSyncOutcome.DEFERRED
             }
-            if (replicaOutcome == CoreReplicaSyncOutcome.APPLIED) {
+            val coreReplicaReady = replicaOutcome == CoreReplicaSyncOutcome.APPLIED ||
+                replicaOutcome == CoreReplicaSyncOutcome.DEFERRED ||
+                (replicaOutcome == CoreReplicaSyncOutcome.RETRY && replica.coreReplicaApplied() == true)
+            if (
+                replicaOutcome == CoreReplicaSyncOutcome.APPLIED ||
+                (replicaOutcome == CoreReplicaSyncOutcome.RETRY && replica.coreReplicaApplied() == true)
+            ) {
                 replicaAppliedHooks.forEach { hook ->
                     try {
                         hook.onReplicaApplied(nowEpochMillis)
@@ -1160,7 +1207,7 @@ class CoreOutboxSyncRunner(
             // it, a first sync's backfill would send the desktop its own reading state back.
             if (
                 backfill != null &&
-                (replicaOutcome == CoreReplicaSyncOutcome.APPLIED || replicaOutcome == CoreReplicaSyncOutcome.DEFERRED) &&
+                coreReplicaReady &&
                 !(drain.transientFailure && drain.pendingCount > 0)
             ) {
                 val sent = try {
@@ -1179,6 +1226,40 @@ class CoreOutboxSyncRunner(
                     withContext(NonCancellable) { runCatching { connection.releasePrepared() } }
                 }
                 if (sent != null) drain = drain.then(sent)
+            }
+            if (
+                postBackfillHooks.isNotEmpty() &&
+                coreReplicaReady &&
+                !(drain.transientFailure && drain.pendingCount > 0)
+            ) {
+                for (hook in postBackfillHooks) {
+                    try {
+                        hook.onNegotiated(capabilities, connection)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        reportCoreSyncFailure("postBackfill.hook", failure)
+                    }
+                    if (pendingOutbox.countActive(policy) > 0L) {
+                        val hookDrain = try {
+                            drainAll().also {
+                                connection.awaitConfirmations()
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            reportCoreSyncFailure("connection.postBackfillDrain", failure)
+                            return CoreOutboxSyncOutcome.Retry(
+                                pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) },
+                                CoreOutboxRetryReason.CONNECTION,
+                            )
+                        } finally {
+                            withContext(NonCancellable) { runCatching { connection.releasePrepared() } }
+                        }
+                        drain = drain.then(hookDrain)
+                        if (drain.transientFailure && drain.pendingCount > 0) break
+                    }
+                }
             }
             val unsettledAfter = pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) }
             val uploadsLeft = uploadsStillToSend(unsettledAfter, pendingOutbox.blockedCountActive(policy))

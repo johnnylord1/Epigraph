@@ -76,6 +76,7 @@ sealed interface ReaderLocator {
         override val entityId: EpigraphEntityId,
         val cfi: String? = null,
         val progression: Double,
+        val href: String? = null,
     ) : ReaderLocator {
         @Transient
         override val contentType: ContentType = ContentType.EPUB
@@ -85,6 +86,11 @@ sealed interface ReaderLocator {
                 require(it.isNotBlank()) { "EPUB CFI must not be blank when present" }
                 require(it.length <= MAX_LOCATOR_TEXT_LENGTH) { "EPUB CFI is too long" }
                 require(it.none(Char::isISOControl)) { "EPUB CFI must not contain control characters" }
+            }
+            href?.let {
+                require(it.isNotBlank()) { "EPUB href must not be blank when present" }
+                require(it.length <= MAX_LOCATOR_TEXT_LENGTH) { "EPUB href is too long" }
+                require(it.none(Char::isISOControl)) { "EPUB href must not contain control characters" }
             }
             validateProgression(progression, "EPUB progression")
         }

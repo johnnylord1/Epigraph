@@ -1,0 +1,73 @@
+-- Sync V4 foundation tables: single cursor/clock state, single portable identity map,
+-- single durable transactional outbox, and deferred extension preference store.
+-- Rollback note: new tables only; dropping v4_sync_state, v4_entity_map, v4_outbox, and
+-- v4_pending_extension_prefs leaves all existing library and legacy sync tables intact.
+
+CREATE TABLE IF NOT EXISTS v4_sync_state(
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    server_seq INTEGER NOT NULL DEFAULT 0 CHECK(server_seq >= 0),
+    min_replayable_seq INTEGER NOT NULL DEFAULT 0 CHECK(min_replayable_seq >= 0),
+    last_snapshot_etag TEXT,
+    hlc_last_ts_ms INTEGER NOT NULL DEFAULT 0,
+    hlc_last_counter INTEGER NOT NULL DEFAULT 0,
+    clock_offset_ms INTEGER NOT NULL DEFAULT 0,
+    initial_sync_completed INTEGER NOT NULL DEFAULT 0,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(server_id, profile_id)
+);
+
+CREATE TABLE IF NOT EXISTS v4_entity_map(
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    local_id TEXT,
+    hlc_ts_ms INTEGER NOT NULL DEFAULT 0,
+    hlc_counter INTEGER NOT NULL DEFAULT 0,
+    hlc_device_id TEXT NOT NULL DEFAULT '',
+    deleted INTEGER NOT NULL DEFAULT 0,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(server_id, profile_id, entity_type, entity_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_v4_entity_map_local
+    ON v4_entity_map(server_id, profile_id, entity_type, local_id);
+
+CREATE TABLE IF NOT EXISTS v4_outbox(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_mutation_id TEXT NOT NULL UNIQUE,
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    hlc_ts_ms INTEGER NOT NULL,
+    hlc_counter INTEGER NOT NULL,
+    hlc_device_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_retry_at_ms INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_v4_outbox_due
+    ON v4_outbox(server_id, profile_id, next_retry_at_ms, id);
+
+CREATE INDEX IF NOT EXISTS idx_v4_outbox_entity
+    ON v4_outbox(server_id, profile_id, entity_type, entity_key);
+
+CREATE TABLE IF NOT EXISTS v4_pending_extension_prefs(
+    kind TEXT NOT NULL,
+    source_or_plugin_id TEXT NOT NULL,
+    pref_key TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    hlc_ts_ms INTEGER NOT NULL,
+    hlc_counter INTEGER NOT NULL,
+    hlc_device_id TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(kind, source_or_plugin_id, pref_key)
+);

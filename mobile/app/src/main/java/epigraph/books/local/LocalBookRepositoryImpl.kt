@@ -43,6 +43,7 @@ class LocalBookRepositoryImpl(
     private val privateStorageDirectory: File? = null,
     private val structureInspector: BookStructureInspector? = null,
     private val pdfOutlineReader: PdfOutlineReader? = null,
+    private val deviceIdProvider: () -> String = { "android-local" },
 ) : LocalBookRepository {
     private val coverMaterializer: BookCoverMaterializer? = privateStorageDirectory?.let(::BookCoverMaterializer)
     private val outlineLock = Mutex()
@@ -412,10 +413,16 @@ class LocalBookRepositoryImpl(
                 }
             }
         }
-        // Delete the database row only after the private asset has been removed successfully.
-        // This keeps a failed filesystem operation visible and retryable instead of silently
-        // losing the library entry while leaving an inaccessible asset behind.
-        handler.await { local_booksQueries.deleteById(bookId) }
+        // Delete the database row only after the private asset has been removed successfully, and
+        // record a durable Sync V4 tombstone in the same transaction so deleted books never resurrect.
+        handler.await(inTransaction = true) {
+            epigraph.sync.v4.V4ProductionSyncCoordinator.enqueueBookDeleteInTransaction(
+                db = this,
+                bookSha256 = book.sha256,
+                deviceId = deviceIdProvider(),
+            )
+            local_booksQueries.deleteById(bookId)
+        }
     }
 
     override suspend fun saveProgress(bookId: String, locator: ReaderLocator) {

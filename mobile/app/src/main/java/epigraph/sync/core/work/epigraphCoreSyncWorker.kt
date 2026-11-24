@@ -256,11 +256,21 @@ class EpigraphCoreSyncWorker(
         // no-ops until paired. Reading progress is not part of the catalog and its backfill scans every
         // read chapter, which took seconds on a large library, so it waits for the pass after the first
         // drain instead of delaying a desktop change.
-        phase = CoreSyncPhase.LIBRARY
-        repairLibraries(includeProgress = false, checkWithCore = false)
+        val runner = get<CoreOutboxSyncRunner>()
+        // Skip legacy V1 pre-scan when V4 is active; V4 exports & merges the entire local
+        // database natively without populating legacy V1 outbox tables.
+        if (!runner.lastRunUsedV4()) {
+            phase = CoreSyncPhase.LIBRARY
+            // Only run lightweight legacy pre-scan if no V4 state exists yet and runner isn't on V4.
+            val hasV4State = runCatching {
+                get<yokai.data.Database>().v4_syncQueries.selectAllV4SyncStates().executeAsList().isNotEmpty()
+            }.getOrDefault(false)
+            if (!hasV4State) {
+                // Defer legacy V1 repair until after runner.run() confirms the Core is not V4.
+            }
+        }
         var sentBackfill = false
         val outcome = try {
-            val runner = get<CoreOutboxSyncRunner>()
             phase = CoreSyncPhase.EXCHANGE
             // The run asks for the backfill once its replica pass shows what the desktop holds and
             // sends it while it is queued, over the same session: a second run only repeated the
@@ -292,7 +302,11 @@ class EpigraphCoreSyncWorker(
             // waiting for it to settle held each batch of reading progress for up to 15 minutes.
             // A desktop change that arrived during this pass waits for it to end; the next pass runs
             // the backfill instead, so it no longer delays that change by the length of a library scan.
-            if (backfillAsked) {
+            if (runner.lastRunUsedV4()) {
+                // Sync V4 already exported and reconciled Comics, Novels, Books, Repos,
+                // Extensions, and Preferences natively — never run legacy V1 progress backfill.
+                first
+            } else if (backfillAsked) {
                 sentBackfill = backfillQueued > 0
                 first
             } else if (deferProgress()) {

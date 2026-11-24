@@ -234,23 +234,36 @@ class EpigraphCategoryMutationRouter(
         categoryEntityId: String,
         scopeId: SyncScopeId,
     ): List<SyncCommandEnvelope> {
+        val mangaIds = aethon_syncQueries.selectMangaIdsByCategory(localCategoryId).executeAsList()
+        if (mangaIds.isEmpty()) return emptyList()
+        val references = mangaIds.map { it.toString() }.distinct()
+        val identities = HashMap<String, String>(references.size)
         val portableStore = SqlDelightPortableBindingStore(this)
-        return aethon_syncQueries.selectMangaIdsByCategory(localCategoryId).executeAsList().mapNotNull { mangaId ->
-            val identity = aethon_syncQueries
-                .selectIdentityByLocalReference("MANGA", mangaId.toString())
-                .executeAsOneOrNull()
-                ?: return@mapNotNull null
-            val portableWork = portableStore
-                .workByLocalReference(mangaId.toString())
-                ?.takeIf { it.resolution.state.name == "BOUND" }
-                ?.ref
+        val portableWorks = HashMap<String, PortableWorkRef>(references.size)
+        for (chunk in references.chunked(SQLITE_BIND_CHUNK)) {
+            aethon_syncQueries.selectIdentitiesByLocalReferences(chunk).executeAsList().forEach { row ->
+                if (row.content_type == "MANGA") {
+                    identities[row.local_reference] = row.entity_id
+                }
+            }
+            aethon_syncQueries.selectPortableWorkBindingsByLocalReferences(chunk).executeAsList().forEach { row ->
+                val localRef = row.local_reference ?: return@forEach
+                if (localRef !in portableWorks) {
+                    portableWorks[localRef] = portableStore.workRecord(row).ref
+                }
+            }
+        }
+        return mangaIds.mapNotNull { mangaId ->
+            val refKey = mangaId.toString()
+            val identityEntityId = identities[refKey] ?: return@mapNotNull null
+            val portableWork = portableWorks[refKey]
             if (portableWork !is PortableWorkRef.Comic &&
-                !isLegacySuwayomiAssignment(identity.entity_id, categoryEntityId)
+                !isLegacySuwayomiAssignment(identityEntityId, categoryEntityId)
             ) {
                 return@mapNotNull null
             }
             val workEntity = portableWork?.let(PortableIdentityV3::workId)?.let(::EpigraphEntityId)
-                ?: EpigraphEntityId(identity.entity_id)
+                ?: EpigraphEntityId(identityEntityId)
             SyncCommandEnvelope(
                 protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
                 deviceId = deviceId,
@@ -268,25 +281,39 @@ class EpigraphCategoryMutationRouter(
         target: CategoryTarget,
     ): List<SyncCommandEnvelope> {
         val novel = target.scope == CategoryScope.NOVEL
+        val expectedType = if (novel) "NOVEL" else "MANGA"
+        val mangaIds = aethon_syncQueries.selectMangaIdsByCategory(localCategoryId).executeAsList()
+        if (mangaIds.isEmpty()) return emptyList()
+        val references = mangaIds.map { it.toString() }.distinct()
+        val identities = HashMap<String, String>(references.size)
         val portableStore = SqlDelightPortableBindingStore(this)
-        return aethon_syncQueries.selectMangaIdsByCategory(localCategoryId).executeAsList().mapNotNull { mangaId ->
-            val identity = aethon_syncQueries
-                .selectIdentityByLocalReference(if (novel) "NOVEL" else "MANGA", mangaId.toString())
-                .executeAsOneOrNull()
-                ?: return@mapNotNull null
-            val portableWork = portableStore
-                .workByLocalReference(mangaId.toString())
-                ?.takeIf { it.resolution.state.name == "BOUND" }
-                ?.ref
+        val portableWorks = HashMap<String, PortableWorkRef>(references.size)
+        for (chunk in references.chunked(SQLITE_BIND_CHUNK)) {
+            aethon_syncQueries.selectIdentitiesByLocalReferences(chunk).executeAsList().forEach { row ->
+                if (row.content_type == expectedType) {
+                    identities[row.local_reference] = row.entity_id
+                }
+            }
+            aethon_syncQueries.selectPortableWorkBindingsByLocalReferences(chunk).executeAsList().forEach { row ->
+                val localRef = row.local_reference ?: return@forEach
+                if (localRef !in portableWorks) {
+                    portableWorks[localRef] = portableStore.workRecord(row).ref
+                }
+            }
+        }
+        return mangaIds.mapNotNull { mangaId ->
+            val refKey = mangaId.toString()
+            val identityEntityId = identities[refKey] ?: return@mapNotNull null
+            val portableWork = portableWorks[refKey]
             // Legacy Suwayomi comics of the category's profile also publish Core assignments (see
             // EpigraphLibraryMutationRouter); other legacy rows never left the device.
             if (!novel && portableWork !is PortableWorkRef.Comic &&
-                !isLegacySuwayomiAssignment(identity.entity_id, categoryEntity.value)
+                !isLegacySuwayomiAssignment(identityEntityId, categoryEntity.value)
             ) {
                 return@mapNotNull null
             }
             val workEntity = portableWork?.let(PortableIdentityV3::workId)?.let(::EpigraphEntityId)
-                ?: EpigraphEntityId(identity.entity_id)
+                ?: EpigraphEntityId(identityEntityId)
             SyncCommandEnvelope(
                 protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
                 deviceId = deviceId,
@@ -408,6 +435,7 @@ class EpigraphCategoryMutationRouter(
             suwayomiCategoryIdForEntity(entityId) != null && suwayomiProfileIdForEntity(entityId) != null
 
         private const val SUWAYOMI_CATEGORY_NAME_MAX_BYTES = 256
+        private const val SQLITE_BIND_CHUNK = 500
         private val BOOKS_SCOPE = SyncScopeId("books:global")
         private val BOOK_CATEGORY = SyncEntityType("book.category")
         private val BOOK_CATEGORY_ASSIGNMENT = SyncEntityType("book.category_assignment")

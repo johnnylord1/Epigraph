@@ -55,6 +55,7 @@ class CoreLiveEventSupervisor(
     private val scheduler: CoreBackgroundSyncScheduler,
     private val syncPause: CoreSyncPause = InMemoryCoreSyncPause(),
     private val catalogRevisions: CoreCatalogRevisionWatcher? = null,
+    private val v4Coordinator: epigraph.sync.v4.V4ProductionSyncCoordinator? = null,
 ) {
     private val logger = Logger.withTag(LOG_TAG)
     private val connectivity = context.applicationContext
@@ -150,6 +151,18 @@ class CoreLiveEventSupervisor(
             return
         }
 
+        if (capabilities.supportsSyncV4 && v4Coordinator != null) {
+            coroutineScope {
+                launch(CoroutineName("epigraph-v4-live-events")) {
+                    v4Coordinator.runRealtimeStream(credentials, endpoint.origin, policy)
+                }
+                launch(CoroutineName("epigraph-core-events-watch")) {
+                    watchSession(credentials, capabilities, policy.selectedScopes, epigraph.sync.v4.V4SyncDomainPolicy.from(policy))
+                }
+            }
+            return
+        }
+
         // A revoked token in one scope invalidates the credential session for all scopes. Use a
         // regular scope so the parent reloads the encrypted credential instead of leaving other
         // streams attached to a session that Core has rejected.
@@ -185,6 +198,7 @@ class CoreLiveEventSupervisor(
         credentials: CoreCredentialSession,
         capabilities: CoreCapabilities,
         selectedScopes: Set<String>,
+        selectedDomains: epigraph.sync.v4.V4SyncDomainPolicy? = null,
     ) {
         while (currentCoroutineContext().isActive) {
             delay(SESSION_WATCH_MS)
@@ -194,12 +208,13 @@ class CoreLiveEventSupervisor(
                 continue
             } ?: throw CoreLiveSessionChanged()
             val changed = latest.use { stored ->
-                val latestScopes = try {
-                    policyResolver.resolve(stored, capabilities, devices.currentDeviceId()).selectedScopes
+                val latestPolicy = try {
+                    policyResolver.resolve(stored, capabilities, devices.currentDeviceId())
                 } catch (_: Exception) {
                     return@use false
                 }
-                liveSessionChanged(credentials, selectedScopes, stored, latestScopes)
+                liveSessionChanged(credentials, selectedScopes, stored, latestPolicy.selectedScopes) ||
+                    (selectedDomains != null && epigraph.sync.v4.V4SyncDomainPolicy.from(latestPolicy) != selectedDomains)
             }
             if (changed) throw CoreLiveSessionChanged()
         }

@@ -20,6 +20,7 @@ import epigraph.sync.SourcePreferenceStore
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.sourcePreferences
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,29 +31,57 @@ import androidx.preference.R as preferenceR
  *
  * Only settings shown as a switch, a list, a multi-choice list or a text field are offered; the
  * screen is built against a store that ignores writes, so reading never changes a setting.
- * Values are read from and written to the source's own shared preferences, as the extension
- * details screen does.
+ * The offered schema is cached per `(source.id, extension.versionCode)` so subsequent syncs read
+ * values directly from SharedPreferences on [Dispatchers.IO] without touching [Dispatchers.Main].
  */
 class AndroidSourcePreferenceStore(
     context: Context,
     private val extensions: ExtensionManager,
 ) : SourcePreferenceStore {
     private val appContext = context.applicationContext
+    private val schemaCache = ConcurrentHashMap<Pair<Long, Long>, List<PreferenceSchema>>()
+
+    private data class PreferenceSchema(
+        val key: String,
+        val valueType: String,
+        val entryValues: List<String>?,
+    )
+
+    private data class VersionedSource(
+        val source: ConfigurableSource,
+        val versionCode: Long,
+    )
 
     override suspend fun installedSources(): Map<String, List<OfferedSourcePreference>> {
         // Before the extensions load, an empty map would read as "nothing installed".
         if (!extensions.isInitialized.value) error("extensions are not loaded yet")
-        val sources = configurableSources()
-        return withContext(Dispatchers.Main) {
-            sources.mapNotNull { source ->
-                try {
-                    source.id.toString() to offeredPreferences(source)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Throwable) {
-                    // One broken extension screen must not stop the others from syncing.
-                    Logger.w { "Source preferences of ${source.id} could not be read: ${failure.javaClass.simpleName}" }
-                    null
+        val sources = versionedConfigurableSources()
+        val uncached = sources.filter { !schemaCache.containsKey(it.source.id to it.versionCode) }
+        if (uncached.isNotEmpty()) {
+            withContext(Dispatchers.Main) {
+                for (entry in uncached) {
+                    try {
+                        schemaCache[entry.source.id to entry.versionCode] = inspectSchema(entry.source)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        // One broken extension screen must not stop the others from syncing.
+                        Logger.w { "Source preferences of ${entry.source.id} could not be read: ${failure.javaClass.simpleName}" }
+                    }
+                }
+            }
+        }
+        return withContext(Dispatchers.IO) {
+            sources.mapNotNull { entry ->
+                val schema = schemaCache[entry.source.id to entry.versionCode] ?: return@mapNotNull null
+                val stored = entry.source.sourcePreferences().all
+                entry.source.id.toString() to schema.map { descriptor ->
+                    OfferedSourcePreference(
+                        key = descriptor.key,
+                        valueType = descriptor.valueType,
+                        entryValues = descriptor.entryValues,
+                        current = currentValue(descriptor.valueType, stored[descriptor.key]),
+                    )
                 }
             }.toMap()
         }
@@ -70,57 +99,68 @@ class AndroidSourcePreferenceStore(
         return withContext(Dispatchers.IO) { editor.commit() }
     }
 
-    private fun configurableSources(): List<ConfigurableSource> =
+    override suspend fun reset(sourceId: String, key: String): Boolean {
+        val id = sourceId.toLongOrNull() ?: return false
+        val source = configurableSources().firstOrNull { it.id == id } ?: return false
+        return withContext(Dispatchers.IO) { source.sourcePreferences().edit().remove(key).commit() }
+    }
+
+    private fun versionedConfigurableSources(): List<VersionedSource> =
         extensions.installedExtensionsFlow.value
             .filterNot { it.isNovel }
-            .flatMap { it.sources }
-            .filterIsInstance<ConfigurableSource>()
-            .distinctBy { it.id }
+            .flatMap { ext ->
+                ext.sources.filterIsInstance<ConfigurableSource>().map { VersionedSource(it, ext.versionCode) }
+            }
+            .distinctBy { it.source.id }
+
+    private fun configurableSources(): List<ConfigurableSource> =
+        versionedConfigurableSources().map { it.source }
 
     @SuppressLint("RestrictedApi")
-    private fun offeredPreferences(source: ConfigurableSource): List<OfferedSourcePreference> {
+    private fun inspectSchema(source: ConfigurableSource): List<PreferenceSchema> {
         val themed = ContextThemeWrapper(appContext, preferenceR.style.PreferenceThemeOverlay)
         val manager = PreferenceManager(themed)
         manager.preferenceDataStore = ReadOnlyPreferenceDataStore
         val screen = manager.createPreferenceScreen(themed)
         source.setupPreferenceScreen(screen)
-        val stored = source.sourcePreferences()
-        return screen.leaves().mapNotNull { offered(it, stored) }.distinctBy { it.key }
+        return screen.leaves().mapNotNull(::describe).distinctBy { it.key }
     }
 
-    private fun offered(preference: Preference, stored: SharedPreferences): OfferedSourcePreference? {
+    private fun describe(preference: Preference): PreferenceSchema? {
         val key = preference.key?.takeIf(SourcePreferenceRules::isSyncableKey) ?: return null
-        val raw = if (stored.contains(key)) stored.all[key] else null
         return when (preference) {
-            is TwoStatePreference -> OfferedSourcePreference(
+            is TwoStatePreference -> PreferenceSchema(
                 key = key,
                 valueType = SourcePreferenceRules.VALUE_TYPE_BOOLEAN,
                 entryValues = null,
-                current = (raw as? Boolean)?.let(SourcePreferenceValue::Flag),
             )
-            is ListPreference -> OfferedSourcePreference(
+            is ListPreference -> PreferenceSchema(
                 key = key,
                 valueType = SourcePreferenceRules.VALUE_TYPE_STRING,
                 entryValues = preference.entryValues?.map(CharSequence::toString).orEmpty(),
-                current = (raw as? String)?.let(SourcePreferenceValue::Text),
             )
-            is MultiSelectListPreference -> OfferedSourcePreference(
+            is MultiSelectListPreference -> PreferenceSchema(
                 key = key,
                 valueType = SourcePreferenceRules.VALUE_TYPE_STRING_SET,
                 entryValues = preference.entryValues?.map(CharSequence::toString).orEmpty(),
-                current = (raw as? Set<*>)
-                    ?.takeIf { set -> set.all { it is String } }
-                    ?.let { set -> SourcePreferenceValue.TextSet(set.map { it as String }) },
             )
-            is EditTextPreference -> OfferedSourcePreference(
+            is EditTextPreference -> PreferenceSchema(
                 key = key,
                 valueType = SourcePreferenceRules.VALUE_TYPE_STRING,
                 entryValues = null,
-                current = (raw as? String)?.let(SourcePreferenceValue::Text),
             )
             // Anything else (custom widgets, plain links) is not a simple setting.
             else -> null
         }
+    }
+
+    private fun currentValue(valueType: String, raw: Any?): SourcePreferenceValue? = when (valueType) {
+        SourcePreferenceRules.VALUE_TYPE_BOOLEAN -> (raw as? Boolean)?.let(SourcePreferenceValue::Flag)
+        SourcePreferenceRules.VALUE_TYPE_STRING -> (raw as? String)?.let(SourcePreferenceValue::Text)
+        SourcePreferenceRules.VALUE_TYPE_STRING_SET -> (raw as? Set<*>)
+            ?.takeIf { set -> set.all { it is String } }
+            ?.let { set -> SourcePreferenceValue.TextSet(set.map { it as String }) }
+        else -> null
     }
 
     private fun PreferenceGroup.leaves(): List<Preference> =

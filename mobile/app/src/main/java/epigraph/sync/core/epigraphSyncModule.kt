@@ -57,6 +57,7 @@ import epigraph.sync.core.suwayomi.PreviousServerComicCategoryReleaser
 import epigraph.sync.core.replica.releasePreviousServerComicCategories
 import epigraph.sync.core.outbox.EpigraphCoordinatorOutboxStore
 import epigraph.sync.core.outbox.CoreLamportSource
+import epigraph.sync.core.work.CoreNegotiatedSessionHook
 import epigraph.sync.core.outbox.CoreOutboxRetryPlanner
 import epigraph.sync.core.outbox.CoreOutboxStore
 import epigraph.sync.core.outbox.CoreRequestIdSource
@@ -358,6 +359,7 @@ fun epigraphSyncModule(app: Application) = module {
         EpigraphMutationCoordinator(
             databaseHandler = get(),
             onLocalMutationEnqueued = {
+                get<epigraph.sync.v4.V4ProductionSyncCoordinator>().markLocalEditPending()
                 get<CoreBackgroundSyncScheduler>().enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
             },
             coreTime = serverClock::toCoreTime,
@@ -423,6 +425,8 @@ fun epigraphSyncModule(app: Application) = module {
             coreSourceId = EpigraphCoreSource.ID,
         )
     }
+    single { AndroidSourcePreferenceStore(app, get<eu.kanade.tachiyomi.extension.ExtensionManager>()) }
+    single { AndroidNovelPluginSettingStore(get<epigraph.novel.plugin.NovelPluginManager>()) }
     single {
         EpigraphSourcePreferenceSync(
             coordinator = get(),
@@ -430,7 +434,7 @@ fun epigraphSyncModule(app: Application) = module {
             mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
             scopeProvider = get(),
             gate = get(),
-            store = AndroidSourcePreferenceStore(app, get<eu.kanade.tachiyomi.extension.ExtensionManager>()),
+            store = get<AndroidSourcePreferenceStore>(),
         )
     }
     single(named(NOVEL_PLUGIN_SETTING_SYNC)) {
@@ -440,7 +444,7 @@ fun epigraphSyncModule(app: Application) = module {
             mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
             scopeProvider = get(),
             gate = get(),
-            store = AndroidNovelPluginSettingStore(get<epigraph.novel.plugin.NovelPluginManager>()),
+            store = get<AndroidNovelPluginSettingStore>(),
             kind = SourcePreferenceKind.NovelPlugin,
         )
     }
@@ -504,6 +508,19 @@ fun epigraphSyncModule(app: Application) = module {
     single { NovelChapterCoverageCheck(get()) }
     single { CoreReplicaApplier(get()) }
     single {
+        epigraph.sync.v4.V4ProductionSyncCoordinator(
+            context = app,
+            database = get(),
+            handler = get(),
+            tlsFactory = get(),
+            devices = get(),
+            extensions = get(),
+            novelPlugins = get(),
+            comicPreferenceStore = get(),
+            novelPreferenceStore = get(),
+        )
+    }
+    single {
         CoreLiveEventSupervisor(
             context = app,
             credentialsStore = get(),
@@ -515,6 +532,7 @@ fun epigraphSyncModule(app: Application) = module {
             applier = get(),
             scheduler = get(),
             syncPause = get(),
+            v4Coordinator = get(),
             catalogRevisions = CoreCatalogRevisionWatcher(
                 foreground = ProcessLifecycleOwner.get().lifecycle.currentStateFlow
                     .map { state -> state.isAtLeast(Lifecycle.State.STARTED) },
@@ -621,6 +639,20 @@ fun epigraphSyncModule(app: Application) = module {
             get(),
             negotiatedHooks = listOf(
                 TrackerSyncSessionHook(get<CoreTrackingCapabilityCache>(), get()),
+                // Release bindings to a previous Core before the catalog sync runs so same-name
+                // local folders are held back from duplicating while waiting for category creation.
+                CoreNegotiatedSessionHook { capabilities, connection ->
+                    if (!SuwayomiCategoryCreateHook.isEnabled(capabilities)) return@CoreNegotiatedSessionHook
+                    val channel = connection.suwayomiCommands() ?: return@CoreNegotiatedSessionHook
+                    if (channel.serverId == epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID) {
+                        return@CoreNegotiatedSessionHook
+                    }
+                    database.await(inTransaction = true) {
+                        releasePreviousServerComicCategories(this, channel.serverId, channel.profileId)
+                    }
+                },
+            ),
+            postBackfillHooks = listOf(
                 SuwayomiCategoryCreateHook(
                     categories = UnpublishedComicCategorySource {
                         database.awaitList { aethon_syncQueries.selectUnpublishedComicCategories() }
@@ -663,6 +695,7 @@ fun epigraphSyncModule(app: Application) = module {
             policyHooks = listOf(get<LocalNovelDependencyPublisher>()),
             clock = System::currentTimeMillis,
             queueHandOver = get(),
+            v4Coordinator = get(),
         )
     }
 }

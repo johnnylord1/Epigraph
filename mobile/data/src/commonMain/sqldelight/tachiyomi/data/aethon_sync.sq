@@ -801,6 +801,17 @@ WHERE membership.server_id = :serverId
   AND membership.observed_at > 0
   AND binding.ecosystem = :ecosystem;
 
+countCompleteNovelManifestMemberships:
+SELECT COUNT(*)
+FROM aethon_portable_manifest_work AS membership
+JOIN aethon_portable_work_binding AS binding ON binding.portable_id = membership.portable_id
+JOIN aethon_novel_dependency_v3 AS dependency ON dependency.server_id = membership.server_id
+    AND dependency.profile_id = membership.profile_id AND dependency.plugin_id = binding.plugin_id
+WHERE membership.server_id = :serverId
+  AND membership.profile_id = :profileId
+  AND membership.observed_at = :observedAt
+  AND binding.ecosystem = 'LNREADER';
+
 -- Cheap fingerprint of the local comic library a catalog apply reconciles.
 selectComicLibrarySignature:
 SELECT

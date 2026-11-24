@@ -24,6 +24,7 @@ import epigraph.sync.portable.SqlDelightPortableDependencyStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import yokai.data.Database
 import yokai.data.DatabaseHandler
 
 /** Imports only portable LNReader identities; provider metadata remains reconstructible locally. */
@@ -46,23 +47,36 @@ class PortableNovelManifestSync(
         if (!capabilities.supportsPortableSyncV3) return CoreReplicaSyncOutcome.DEFERRED
         val scopeId = "novels:profile:${credentials.profileId}"
         if (scopeId !in credentials.scopes) return CoreReplicaSyncOutcome.DEFERRED
-        val bootstrapId = "portable-v3:${credentials.serverId}:${credentials.profileId}:novels"
-        val previousBootstrap = database.await(inTransaction = false) {
+        val previous = database.await(inTransaction = false) {
             SqlDelightPortableBootstrapStore(this)
                 .load(credentials.serverId, credentials.profileId, PortableEcosystem.LNREADER)
         }
-        val resumeCursor = previousBootstrap
+        var cursor = previous
             ?.takeIf { it.phase == PortableBootstrapPhase.RECEIVING_MANIFEST }
             ?.currentItem
             ?.let(::decodeCursor)
-        val attemptCount = previousBootstrap?.attemptCount?.plus(1) ?: 1
-        checkpoint(
-            credentials,
-            bootstrapId,
-            PortableBootstrapPhase.NEGOTIATING,
-            attemptCount,
-            nowEpochMillis,
-            currentItem = resumeCursor?.let(::encodeCursor),
+            ?.takeIf {
+                it.nextOffset in 1 until it.totalCount && it.observedCount == it.nextOffset &&
+                    localManifestIsIntact(credentials, it.observedAt, it.nextOffset)
+            }
+        val completed = previous
+            ?.takeIf { it.phase in COMPLETE_MANIFEST_PHASES }
+            ?.currentItem
+            ?.let(::decodeCompletion)
+            ?.takeIf {
+                it.revision.isManifestRevision() &&
+                    localManifestIsIntact(credentials, it.observedAt, it.workCount)
+            }
+        val observedAt = cursor?.observedAt
+            ?: maxOf(nowEpochMillis, (previous?.updatedAt ?: 0) + 1)
+        val progress = PortableBootstrapRecord(
+            serverId = credentials.serverId,
+            profileId = credentials.profileId,
+            ecosystem = PortableEcosystem.LNREADER,
+            bootstrapId = "portable-v3:${credentials.serverId}:${credentials.profileId}:novels",
+            phase = PortableBootstrapPhase.RECEIVING_MANIFEST,
+            attemptCount = (previous?.attemptCount ?: 0) + 1,
+            updatedAt = maxOf(observedAt, nowEpochMillis),
         )
         val endpoint = try {
             endpoints.resolve(credentials).origin
@@ -71,220 +85,168 @@ class PortableNovelManifestSync(
         } catch (_: Throwable) {
             return CoreReplicaSyncOutcome.RETRY
         }
-        checkpoint(
-            credentials,
-            bootstrapId,
-            PortableBootstrapPhase.RECEIVING_MANIFEST,
-            attemptCount,
-            nowEpochMillis,
-            currentItem = resumeCursor?.let(::encodeCursor),
-        )
         val http = transports.create(credentials, endpoint).http
-        var offset = resumeCursor?.nextOffset ?: 0L
-        var expectedTotal = resumeCursor?.totalCount
-        var expectedFingerprint = resumeCursor?.manifestFingerprint
-        var expectedSnapshotId = resumeCursor?.snapshotId
-        var expectedSnapshotFingerprint = resumeCursor?.snapshotFingerprint
-        var observedCount = resumeCursor?.observedCount ?: 0L
-        var omittedCount = resumeCursor?.omittedCount ?: 0L
-        val observedAt = resumeCursor?.observedAt ?: nowEpochMillis
-        do {
-            if (observedCount >= MAX_WORKS) {
-                return CoreReplicaSyncOutcome.RETRY
-            }
+        while (true) {
+            val offset = cursor?.nextOffset ?: 0
+            if (offset >= MAX_WORKS) return CoreReplicaSyncOutcome.RETRY
             val response = credentials.withAccessTokenString { accessToken ->
                 http.portableNovelManifest(
                     accessToken,
                     credentials.profileId,
                     pageSize,
                     offset,
-                    expectedSnapshotId,
-                    expectedSnapshotFingerprint,
+                    cursor?.snapshotId,
+                    cursor?.snapshotFingerprint,
+                    ifNoneMatch = completed?.takeIf { offset == 0L }?.revision,
                 )
             }
-            val page = when (response) {
-                is CoreHttpResult.Success -> response.value
+            val result = when (response) {
+                is CoreHttpResult.Success -> response
                 is CoreHttpResult.Failure -> {
-                    if (offset > 0 && response.isExpiredSnapshot) {
-                        checkpoint(
-                            credentials,
-                            bootstrapId,
-                            PortableBootstrapPhase.RECEIVING_MANIFEST,
-                            attemptCount,
-                            nowEpochMillis,
-                            currentItem = null,
-                            lastReason = response.errorEnvelope?.error?.code,
+                    if (response.statusCode == 304 && offset == 0L && completed != null) {
+                        if (!localManifestIsIntact(credentials, completed.observedAt, completed.workCount)) {
+                            return CoreReplicaSyncOutcome.RETRY
+                        }
+                        return hydrateAndFinish(
+                            progress.copy(
+                                phase = PortableBootstrapPhase.PARTIAL,
+                                manifestFingerprint = previous.manifestFingerprint,
+                                currentItem = encodeCompletion(completed),
+                            ),
+                            omittedCount = 0,
+                            nowEpochMillis = nowEpochMillis,
                         )
-                        // The cursor was dropped, so the next attempt starts a fresh snapshot.
+                    }
+                    if (offset > 0 && response.isExpiredSnapshot) {
+                        saveCheckpoint(progress.copy(lastReason = response.errorEnvelope?.error?.code))
                         return CoreReplicaSyncOutcome.RETRY
                     }
                     return response.toOutcome()
                 }
             }
+            val page = result.value
+            val revision = result.etag?.takeIf { it.isManifestRevision() }
             if (
                 page.scopeId != scopeId ||
                 page.page.offset != offset ||
                 page.page.pageSize != pageSize ||
-                page.works.size.toLong() + page.page.omittedCount > pageSize
-            ) {
-                return CoreReplicaSyncOutcome.RETRY
-            }
-            if (expectedTotal == null) expectedTotal = page.page.totalCount
-            if (expectedFingerprint == null) expectedFingerprint = page.manifestFingerprint
-            if (expectedSnapshotId == null) expectedSnapshotId = page.snapshotId
-            if (expectedSnapshotFingerprint == null) expectedSnapshotFingerprint = page.snapshotFingerprint
-            if (
-                expectedTotal != page.page.totalCount ||
-                expectedFingerprint != page.manifestFingerprint ||
-                expectedSnapshotId != page.snapshotId ||
-                expectedSnapshotFingerprint != page.snapshotFingerprint
-            ) {
-                return CoreReplicaSyncOutcome.RETRY
-            }
-            val sourceItemCount = page.works.size.toLong() + page.page.omittedCount
-            val observedEnd = offset + sourceItemCount
-            if (
-                observedEnd > page.page.totalCount ||
-                (page.page.hasNextPage && sourceItemCount == 0L) ||
-                (!page.page.hasNextPage && observedEnd != page.page.totalCount)
-            ) {
-                return CoreReplicaSyncOutcome.RETRY
-            }
-            if (!persistPage(credentials, page, observedAt, nowEpochMillis)) {
-                return CoreReplicaSyncOutcome.RETRY
-            }
-            observedCount += sourceItemCount
-            omittedCount += page.page.omittedCount
-            if (page.page.hasNextPage) {
-                val next = offset + pageSize
-                if (next <= offset || next > Int.MAX_VALUE) return CoreReplicaSyncOutcome.RETRY
-                offset = next
-                checkpoint(
-                    credentials,
-                    bootstrapId,
-                    PortableBootstrapPhase.RECEIVING_MANIFEST,
-                    attemptCount,
-                    nowEpochMillis,
-                    manifestFingerprint = expectedSnapshotFingerprint,
-                    currentItem = encodeCursor(
-                        ManifestCursor(
-                            snapshotId = requireNotNull(expectedSnapshotId),
-                            snapshotFingerprint = requireNotNull(expectedSnapshotFingerprint),
-                            manifestFingerprint = requireNotNull(expectedFingerprint),
-                            nextOffset = offset,
-                            totalCount = requireNotNull(expectedTotal),
-                            observedCount = observedCount,
-                            omittedCount = omittedCount,
-                            observedAt = observedAt,
-                        ),
-                    ),
-                )
-            }
-        } while (page.page.hasNextPage)
+                page.page.totalCount !in 0..MAX_WORKS ||
+                (cursor != null && (
+                    cursor.totalCount != page.page.totalCount ||
+                        cursor.manifestFingerprint != page.manifestFingerprint ||
+                        cursor.snapshotId != page.snapshotId ||
+                        cursor.snapshotFingerprint != page.snapshotFingerprint ||
+                        (cursor.revision != null && cursor.revision != revision)
+                    ))
+            ) return CoreReplicaSyncOutcome.RETRY
 
-        if (observedCount != expectedTotal) return CoreReplicaSyncOutcome.RETRY
-        checkpoint(
-            credentials,
-            bootstrapId,
-            PortableBootstrapPhase.IMPORTING_REFERENCES,
-            attemptCount,
-            nowEpochMillis,
-            manifestFingerprint = expectedFingerprint,
-        )
-        database.await(inTransaction = true) {
-            aethon_syncQueries.deleteStalePortableManifestMembershipsForEcosystem(
-                serverId = credentials.serverId,
-                profileId = credentials.profileId,
-                observedAt = observedAt,
-                ecosystem = PortableEcosystem.LNREADER.name,
-            )
-        }
-        checkpoint(
-            credentials,
-            bootstrapId,
-            PortableBootstrapPhase.RESOLVING_DEPENDENCIES,
-            attemptCount,
-            nowEpochMillis,
-            manifestFingerprint = expectedFingerprint,
-        )
-        var hydrationReport: PortableHydrationReport? = null
-        try {
-            if (hydration != null) {
-                checkpoint(
-                    credentials,
-                    bootstrapId,
-                    PortableBootstrapPhase.HYDRATING_LIBRARY,
-                    attemptCount,
-                    nowEpochMillis,
-                    manifestFingerprint = expectedFingerprint,
+            // The snapshot offsets count the published works. Omissions are reported separately.
+            val itemCount = page.works.size.toLong()
+            val end = offset + itemCount
+            if (
+                itemCount > pageSize ||
+                end > page.page.totalCount ||
+                (page.page.hasNextPage && (itemCount != pageSize || end >= page.page.totalCount)) ||
+                (!page.page.hasNextPage && end != page.page.totalCount)
+            ) return CoreReplicaSyncOutcome.RETRY
+            val omittedCount = (cursor?.omittedCount ?: 0) + page.page.omittedCount
+            val next = if (page.page.hasNextPage) {
+                ManifestCursor(
+                    snapshotId = page.snapshotId,
+                    snapshotFingerprint = page.snapshotFingerprint,
+                    manifestFingerprint = page.manifestFingerprint,
+                    nextOffset = end,
+                    totalCount = page.page.totalCount,
+                    observedCount = end,
+                    omittedCount = omittedCount,
+                    observedAt = observedAt,
+                    revision = revision,
                 )
-                hydrationReport = hydration.hydrate(credentials.serverId, credentials.profileId, nowEpochMillis)
+            } else {
+                null
             }
+            val completion = revision?.takeIf { next == null && omittedCount == 0L }?.let {
+                ManifestCompletion(it, observedAt, page.page.totalCount)
+            }
+            val checkpoint = progress.copy(
+                phase = if (next == null) PortableBootstrapPhase.HYDRATING_LIBRARY else progress.phase,
+                manifestFingerprint = page.manifestFingerprint,
+                currentItem = next?.let(::encodeCursor) ?: completion?.let(::encodeCompletion),
+            )
+            val prune = next == null && omittedCount == 0L
+            val persisted = try {
+                persistPage(credentials, page, observedAt, nowEpochMillis, checkpoint, prune)
+            } catch (_: IncompleteManifest) {
+                saveCheckpoint(progress)
+                false
+            }
+            if (!persisted) {
+                return CoreReplicaSyncOutcome.RETRY
+            }
+            if (next == null) return hydrateAndFinish(checkpoint, omittedCount, nowEpochMillis)
+            cursor = next
+        }
+    }
+
+    private suspend fun hydrateAndFinish(
+        checkpoint: PortableBootstrapRecord,
+        omittedCount: Long,
+        nowEpochMillis: Long,
+    ): CoreReplicaSyncOutcome {
+        val report = try {
+            hydration?.hydrate(checkpoint.serverId, checkpoint.profileId, nowEpochMillis)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
             return CoreReplicaSyncOutcome.RETRY
         }
-        val requiresUserAction = (hydrationReport?.dependenciesRequiringUserAction ?: 0) > 0
-        val hydrationComplete = hydrationReport == null ||
-            (hydrationReport.pendingWorks == 0 && hydrationReport.pendingChapters == 0 &&
-                !hydrationReport.chaptersRemaining && !requiresUserAction)
+        val requiresUserAction = (report?.dependenciesRequiringUserAction ?: 0) > 0
+        val hydrationComplete = report == null ||
+            (report.pendingWorks == 0 && report.pendingChapters == 0 && !report.chaptersRemaining && !requiresUserAction)
         val phase = if (omittedCount == 0L && hydrationComplete) {
             PortableBootstrapPhase.COMPLETED
         } else {
             PortableBootstrapPhase.PARTIAL
         }
-        checkpoint(
-            credentials,
-            bootstrapId,
-            phase,
-            attemptCount,
-            nowEpochMillis,
-            manifestFingerprint = expectedFingerprint,
-            lastReason = if (requiresUserAction) {
-                PortableBootstrapPhase.WAITING_TRUST.name
-            } else if (omittedCount > 0) {
-                PortableResolutionReason.WORK_RESOLUTION_UNSUPPORTED.name
-            } else {
-                null
-            },
+        saveCheckpoint(
+            checkpoint.copy(
+                phase = phase,
+                lastReason = when {
+                    requiresUserAction -> PortableBootstrapPhase.WAITING_TRUST.name
+                    omittedCount > 0 -> PortableResolutionReason.WORK_RESOLUTION_UNSUPPORTED.name
+                    else -> null
+                },
+            ),
         )
         return CoreReplicaSyncOutcome.APPLIED
     }
 
-    private suspend fun checkpoint(
-        credentials: CoreCredentialSession,
-        bootstrapId: String,
-        phase: PortableBootstrapPhase,
-        attemptCount: Long,
-        updatedAt: Long,
-        manifestFingerprint: String? = null,
-        currentItem: String? = null,
-        lastReason: String? = null,
-    ) {
-        database.await(inTransaction = true) {
-            SqlDelightPortableBootstrapStore(this).upsert(
-                PortableBootstrapRecord(
-                    serverId = credentials.serverId,
-                    profileId = credentials.profileId,
-                    ecosystem = PortableEcosystem.LNREADER,
-                    bootstrapId = bootstrapId,
-                    phase = phase,
-                    manifestFingerprint = manifestFingerprint,
-                    currentItem = currentItem,
-                    attemptCount = attemptCount,
-                    lastReason = lastReason,
-                    updatedAt = updatedAt,
-                ),
-            )
-        }
+    private suspend fun saveCheckpoint(checkpoint: PortableBootstrapRecord) {
+        database.await(inTransaction = true) { SqlDelightPortableBootstrapStore(this).upsert(checkpoint) }
     }
+
+    private suspend fun localManifestIsIntact(
+        credentials: CoreCredentialSession,
+        observedAt: Long,
+        expectedWorks: Long,
+    ): Boolean = database.await(inTransaction = false) {
+        completeMembershipCount(credentials, observedAt) == expectedWorks
+    }
+
+    private fun Database.completeMembershipCount(credentials: CoreCredentialSession, observedAt: Long): Long =
+        aethon_syncQueries.countCompleteNovelManifestMemberships(
+            credentials.serverId,
+            credentials.profileId,
+            observedAt,
+        ).executeAsOne()
 
     private suspend fun persistPage(
         credentials: CoreCredentialSession,
         page: CorePortableNovelManifest,
         observedAt: Long,
         updatedAt: Long,
+        checkpoint: PortableBootstrapRecord,
+        prune: Boolean,
     ): Boolean = database.await(inTransaction = true) {
         val dependenciesByPlugin = page.novelDependencies.associateBy(NovelDependency::pluginId)
         if (dependenciesByPlugin.size != page.novelDependencies.size) return@await false
@@ -340,8 +302,29 @@ class PortableNovelManifestSync(
                 observedAt,
             )
         }
+        if (!page.page.hasNextPage && completeMembershipCount(credentials, observedAt) != page.page.totalCount) {
+            // Roll back the last page and restart without pruning an incomplete generation.
+            throw IncompleteManifest()
+        }
+        if (prune) {
+            aethon_syncQueries.deleteStalePortableManifestMembershipsForEcosystem(
+                serverId = credentials.serverId,
+                profileId = credentials.profileId,
+                observedAt = observedAt,
+                ecosystem = PortableEcosystem.LNREADER.name,
+            )
+        }
+        SqlDelightPortableBootstrapStore(this).upsert(checkpoint)
         true
     }
+
+    private fun encodeCompletion(completion: ManifestCompletion): String =
+        Json.encodeToString(ManifestCompletion.serializer(), completion)
+
+    private fun decodeCompletion(value: String): ManifestCompletion? =
+        runCatching { Json.decodeFromString(ManifestCompletion.serializer(), value) }.getOrNull()
+
+    private fun String.isManifestRevision(): Boolean = MANIFEST_REVISION.matches(this)
 
     private fun encodeCursor(cursor: ManifestCursor): String = Json.encodeToString(ManifestCursor.serializer(), cursor)
 
@@ -353,7 +336,10 @@ class PortableNovelManifestSync(
             CoreReplicaSyncOutcome.DEFERRED
         } else if (statusCode == 401 || statusCode == 403) {
             CoreReplicaSyncOutcome.NEEDS_USER_ACTION
-        } else if (statusCode == 408 || statusCode == 425 || statusCode == 429 || statusCode >= 500) {
+        } else if (
+            errorEnvelope?.error?.code == "PORTABLE_MANIFEST_SOURCE_CHANGED" ||
+            statusCode == 408 || statusCode == 425 || statusCode == 429 || statusCode >= 500
+        ) {
             CoreReplicaSyncOutcome.RETRY
         } else {
             CoreReplicaSyncOutcome.NEEDS_USER_ACTION
@@ -375,9 +361,21 @@ class PortableNovelManifestSync(
         val observedCount: Long,
         val omittedCount: Long,
         val observedAt: Long,
+        val revision: String? = null,
     )
 
+    @Serializable
+    private data class ManifestCompletion(val revision: String, val observedAt: Long, val workCount: Long)
+
+    private class IncompleteManifest : RuntimeException()
+
     private companion object {
+        val MANIFEST_REVISION = Regex("W/\"novels-v1-[0-9a-f]{64}\"")
+        val COMPLETE_MANIFEST_PHASES = setOf(
+            PortableBootstrapPhase.HYDRATING_LIBRARY,
+            PortableBootstrapPhase.COMPLETED,
+            PortableBootstrapPhase.PARTIAL,
+        )
         const val DEFAULT_PAGE_SIZE = 100L
         const val MAX_PAGE_SIZE = 250L
         const val MAX_WORKS = 50_000L

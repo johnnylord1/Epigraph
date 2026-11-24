@@ -20,9 +20,9 @@
 
 ## P2 before sync release
 
-1. **Partial:** schema 39, transaction-coupled ordered outbox, Core-v1 adapter/drainer and confirmed replica exist; legacy table projection and remaining mutation families remain.
-2. **Partial:** secure pairing/token storage, TLS fingerprint pinning, WorkManager, replay policy, snapshots, receipts, tombstones and resumable downloads are implemented; a long-lived SSE service remains.
-3. Add real LAN pairing, two-device convergence and offline tests against a running Core.
+1. **Substantially complete (Sync V4):** `V4ProductionSyncCoordinator`, `V4SyncEngine`, domain bridges, `V4SyncDomainPolicy`, and SQLDelight migration `66.sqm` -> `67.db` are implemented and covered by unit/host/migration checks.
+2. **Partial:** secure pairing/token storage, TLS fingerprint pinning, WorkManager, replay policy, snapshots, receipts, tombstones, resumable downloads, and `/v4/events` SSE support are implemented.
+3. Live-Core two-device convergence and offline tests remain skipped by default in unit runs and require a running Core for E2E certification.
 4. Add category scopes and explicit content types to Epigraph backup.
 
 ## Known integration hazards

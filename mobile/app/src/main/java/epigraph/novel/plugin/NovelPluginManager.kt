@@ -488,6 +488,11 @@ class NovelPluginManager(
         installedSources[pluginId]?.destroy()
     }
 
+    suspend fun deletePluginSetting(pluginId: String, key: String) {
+        bridge.storageDelete(pluginId, key)
+        installedSources[pluginId]?.destroy()
+    }
+
     /**
      * Check if a plugin is installed.
      */
