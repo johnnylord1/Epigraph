@@ -593,7 +593,26 @@ async fn apply_relation_deletes(
             )
     });
     let mut categories = HashMap::new();
+    let mut category_names = HashMap::new();
     if includes_folders {
+        let persisted_categories: Vec<(String, String)> = sqlx::query_as(
+            "SELECT entity_key, payload_json FROM v4_records WHERE profile_id = ? AND entity_type = 'comic.category'",
+        )
+        .bind(&session.profile_id)
+        .fetch_all(&state.pool)
+        .await?;
+        for (entity_key, payload_json) in persisted_categories {
+            if let Ok(payload) = serde_json::from_str::<Value>(&payload_json) {
+                if let Some(name) = text(&payload, "name") {
+                    category_names.insert(entity_key, name.trim().to_lowercase());
+                }
+            }
+        }
+        for record in records.iter().filter(|r| r.entity_type == "comic.category") {
+            if let Some(name) = text(&record.payload, "name") {
+                category_names.insert(record.entity_key.clone(), name.trim().to_lowercase());
+            }
+        }
         let nodes = read_nodes(
             state,
             session,
@@ -638,17 +657,27 @@ async fn apply_relation_deletes(
     }
     for record in records.iter().filter(|record| record.deleted) {
         let command = match record.entity_type.as_str() {
-            "comic.category" => categories
-                .remove(&record.entity_key)
-                .map(|id| (CommandOperation::DeleteCategory, json!({"id": id}))),
+            "comic.category" => {
+                let name = text(&record.payload, "name")
+                    .map(|n| n.trim().to_lowercase())
+                    .or_else(|| category_names.get(&record.entity_key).cloned())
+                    .unwrap_or_else(|| record.entity_key.trim().to_lowercase());
+                categories
+                    .remove(&name)
+                    .map(|id| (CommandOperation::DeleteCategory, json!({"id": id})))
+            }
             "comic.category_assignment" => {
                 let (work, folder) = record
                     .entity_key
                     .rsplit_once('|')
                     .context("Invalid V4 category assignment")?;
+                let folder_name = category_names
+                    .get(folder)
+                    .cloned()
+                    .unwrap_or_else(|| folder.trim().to_lowercase());
                 mangas
                     .get(work)
-                    .zip(categories.get(folder))
+                    .zip(categories.get(&folder_name))
                     .map(|(work, folder)| {
                         (
                             CommandOperation::UpdateMangaCategories,

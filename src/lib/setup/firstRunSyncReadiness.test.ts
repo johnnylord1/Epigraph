@@ -9,7 +9,7 @@ const { state, publish, books, novels, manga, wake } = vi.hoisted(() => ({
   state: { runtimeResolvedLocalProfileId: "main", runtimeServerUrl: "fixture", settings: { defaultLocalProfileId: "main" } },
   publish: vi.fn(), books: vi.fn(), novels: vi.fn(), manga: vi.fn(), wake: vi.fn(),
 }));
-vi.mock("../../store/state.svelte", () => ({ store: state, replaceBooksState: publish,
+vi.mock("../../store/state.svelte", () => ({ store: state, replaceBooksStateFromDisk: publish,
   setLibraryMangaSnapshot: publish, setSearchNovelLibrarySnapshot: publish, bumpContentSetupVersion: publish }));
 vi.mock("../books/libraryState", () => ({ reloadBookLibraryState: books }));
 vi.mock("../novels/libraryState", () => ({ reloadNovelLibraryState: novels }));

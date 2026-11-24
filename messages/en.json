@@ -3679,5 +3679,6 @@
   "firstRun_backup_doneLede": "Your library is in place. Check the notes below, then continue.",
   "home_metrics_titleOne": "Title",
   "home_metrics_sourceOne": "Source",
-  "library_import_ownedOtherSource": "In library ({source})"
+  "library_import_ownedOtherSource": "In library ({source})",
+  "syncd_action_findInOtherSource": "Find in another source"
 }

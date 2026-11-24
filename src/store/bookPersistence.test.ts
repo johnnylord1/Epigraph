@@ -1,9 +1,16 @@
 import { expect, it, vi } from "vitest";
-const { saved } = vi.hoisted(() => ({ saved: [] as unknown[] }));
-vi.mock("../lib/books/libraryState", async (original) => ({
-  ...await original<typeof import("../lib/books/libraryState")>(),
-  saveBookLibraryState: async (snapshot: unknown) => { saved.push(snapshot); },
+const { saved, loadBookLibraryStateMock } = vi.hoisted(() => ({
+  saved: [] as unknown[],
+  loadBookLibraryStateMock: vi.fn(),
 }));
+vi.mock("../lib/books/libraryState", async (original) => {
+  const actual = await original<typeof import("../lib/books/libraryState")>();
+  return {
+    ...actual,
+    loadBookLibraryState: loadBookLibraryStateMock,
+    saveBookLibraryState: async (snapshot: unknown) => { saved.push(snapshot); },
+  };
+});
 import { store } from "./state.svelte";
 
 it("does not flush an unhydrated book library over durable user data", async () => {
@@ -88,5 +95,45 @@ it("cancels a queued persist when replaceBooksStateFromDisk adopts a remote upda
   });
 
   await settle();
+  expect(saved.length).toBe(before);
+});
+
+it("hydrateBookLibraryState sets booksStateDiskSignature and does not clobber concurrent replaceBooksStateFromDisk", async () => {
+  const queuePersist = () => (store as unknown as { queuePersistBooksLibraryState(): void }).queuePersistBooksLibraryState();
+  const hydrate = (profileId: string) => (store as unknown as { hydrateBookLibraryState(p: string): Promise<void> }).hydrateBookLibraryState(profileId);
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  let resolveLoad!: (value: unknown) => void;
+  loadBookLibraryStateMock.mockImplementationOnce(
+    () => new Promise((resolve) => { resolveLoad = resolve; }),
+  );
+
+  const before = saved.length;
+  const hydration = hydrate("race-profile");
+
+  store.replaceBooksStateFromDisk({
+    books: [],
+    bookProgress: [],
+    bookBookmarks: [],
+    booksCategories: [{ id: "synced-cat", name: "Synced", order: 0 }],
+    booksCategoryAssignments: { "book:synced": ["synced-cat"] },
+  });
+
+  resolveLoad({
+    version: 1,
+    books: [],
+    bookProgress: [],
+    bookBookmarks: [],
+    booksCategories: [],
+    booksCategoryAssignments: {},
+    booksLibraryUi: store.settings.booksLibraryUi,
+    updatedAtMs: 1,
+  });
+  await hydration;
+  queuePersist();
+  await settle();
+
+  expect(store.settings.booksCategories).toEqual([{ id: "synced-cat", name: "Synced", order: 0, includeInUpdate: "UNSET" }]);
+  expect(store.settings.booksCategoryAssignments).toEqual({ "book:synced": ["synced-cat"] });
   expect(saved.length).toBe(before);
 });

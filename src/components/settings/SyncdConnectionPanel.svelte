@@ -342,6 +342,14 @@
     }
   }
 
+  function findNotFoundWork(work: NotFoundWorkView) {
+    if (presentation === "modal") {
+      closeModal();
+    }
+    store.openSearchSources("browse");
+    store.openSearchPalette("browse", work.title, { browseContentType: "comics" });
+  }
+
   function closeModal() {
     if (presentation === "embedded") return;
     panelMounted = false;
@@ -1350,6 +1358,7 @@
                   <div class="syncd-list__item" data-testid="syncd-not-found-work">
                     <span class="syncd-list__icon" aria-hidden="true"><Warning size={18} /></span>
                     <div><strong>{work.title}</strong><small>{work.sourceName ?? $_("syncd_modal_notFoundWorkSourceMissing")} · {work.changes === 1 ? $_("syncd_modal_notFoundWorkChange") : $_("syncd_modal_notFoundWorkChanges", { count: work.changes })}</small></div>
+                    <button class="syncd-btn" type="button" data-testid="syncd-not-found-work-find" onclick={() => findNotFoundWork(work)}>{$_("syncd_action_findInOtherSource")}</button>
                   </div>
                 {/each}
               </div>

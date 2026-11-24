@@ -3679,5 +3679,6 @@
   "firstRun_backup_doneLede": "Tu biblioteca ya está lista. Revisa las notas de abajo y continúa.",
   "home_metrics_titleOne": "Título",
   "home_metrics_sourceOne": "Fuente",
-  "library_import_ownedOtherSource": "En biblioteca ({source})"
+  "library_import_ownedOtherSource": "En biblioteca ({source})",
+  "syncd_action_findInOtherSource": "Buscar en otra fuente"
 }

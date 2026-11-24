@@ -2,7 +2,7 @@ import type { SyncdReplicationSnapshot } from "../syncdDesktop";
 import { gql } from "../client";
 import {
   bumpContentSetupVersion,
-  replaceBooksState,
+  replaceBooksStateFromDisk,
   setLibraryMangaSnapshot,
   setSearchNovelLibrarySnapshot,
   store,
@@ -43,8 +43,6 @@ export async function refreshFirstRunSyncLibrary(
   };
   assertCurrent();
   const scope = { profileId };
-  const books = await reloadBookLibraryState(scope, { strict: true });
-  assertCurrent();
   const novels = await reloadNovelLibraryState(scope, { strict: true });
   assertCurrent();
   const requiresMangaRefresh = options.requiresMangaRefresh ?? true;
@@ -65,7 +63,9 @@ export async function refreshFirstRunSyncLibrary(
   })() : null;
   assertCurrent();
   if (requiresMangaRefresh && !Array.isArray(manga?.mangas?.nodes)) throw Error("SYNC_LIBRARY_REFRESH_FAILED");
-  replaceBooksState(books);
+  const books = await reloadBookLibraryState(scope, { strict: true });
+  assertCurrent();
+  replaceBooksStateFromDisk(books);
   setSearchNovelLibrarySnapshot(novels.entries, novels.chapters);
   if (manga) {
     setLibraryMangaSnapshot(manga.mangas.nodes.map(entry => ({ ...entry,

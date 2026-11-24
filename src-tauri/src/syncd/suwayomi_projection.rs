@@ -1632,20 +1632,28 @@ async fn block_foreign_server_projections(
         SET status = 'blocked', lease_until_ms = NULL, last_error = ?, updated_at_ms = ?
         WHERE COALESCE(last_error, '') != ?
           AND entity_type IN ('comic.category', 'comic.category_assignment')
-          AND EXISTS (
-            SELECT 1 FROM comic_sync_state AS state
-            WHERE state.scope_id = 'comics:profile:' || suwayomi_projection_outbox.profile_id
-              AND state.entity_type = suwayomi_projection_outbox.entity_type
-              AND state.entity_id = suwayomi_projection_outbox.entity_id
-              AND json_valid(state.record_json)
-              AND substr(json_extract(state.record_json, '$.categoryId'), 1, 16) = 'suwayomi:server:'
-              AND substr(json_extract(state.record_json, '$.categoryId'), 1, ?) != ?
+          AND (
+            (
+              substr(entity_id, 1, 16) = 'suwayomi:server:'
+              AND substr(entity_id, 1, ?) != ?
+            )
+            OR EXISTS (
+              SELECT 1 FROM comic_sync_state AS state
+              WHERE state.scope_id = 'comics:profile:' || suwayomi_projection_outbox.profile_id
+                AND state.entity_type = suwayomi_projection_outbox.entity_type
+                AND state.entity_id = suwayomi_projection_outbox.entity_id
+                AND json_valid(state.record_json)
+                AND substr(json_extract(state.record_json, '$.categoryId'), 1, 16) = 'suwayomi:server:'
+                AND substr(json_extract(state.record_json, '$.categoryId'), 1, ?) != ?
+            )
           )
         "#,
     )
     .bind(FOREIGN_SERVER_IDENTITY)
     .bind(now)
     .bind(FOREIGN_SERVER_IDENTITY)
+    .bind(local_prefix.len() as i64)
+    .bind(&local_prefix)
     .bind(local_prefix.len() as i64)
     .bind(&local_prefix)
     .execute(pool)

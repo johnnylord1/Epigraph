@@ -3679,5 +3679,6 @@
   "firstRun_backup_doneLede": "ライブラリの準備ができました。下のお知らせを確認してから続行してください。",
   "home_metrics_titleOne": "タイトル",
   "home_metrics_sourceOne": "情報源",
-  "library_import_ownedOtherSource": "ライブラリ内 ({source})"
+  "library_import_ownedOtherSource": "ライブラリ内 ({source})",
+  "syncd_action_findInOtherSource": "別のソースで探す"
 }

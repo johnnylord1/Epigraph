@@ -3679,5 +3679,6 @@
   "firstRun_backup_doneLede": "书库已就绪。请查看下面的提示，然后继续。",
   "home_metrics_titleOne": "标题",
   "home_metrics_sourceOne": "来源",
-  "library_import_ownedOtherSource": "已在书库（{source}）"
+  "library_import_ownedOtherSource": "已在书库（{source}）",
+  "syncd_action_findInOtherSource": "在其他图源中查找"
 }

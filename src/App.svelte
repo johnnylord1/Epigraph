@@ -600,7 +600,7 @@
       if (payload.domain === "books") {
         void import("./lib/books/libraryState")
           .then(async ({ reloadBookLibraryState }) => {
-            const next = await reloadBookLibraryState({ profileId: store.runtimeResolvedLocalProfileId });
+            const next = await reloadBookLibraryState({ profileId: currentProfileId });
             if (!active) return;
             replaceBooksStateFromDisk({
               books: next.books,
@@ -637,12 +637,16 @@
     if (syncdAppliedMarks.get(payload.localProfileId) === payload.lastAppliedAtMs) return;
     syncdAppliedMarks.set(payload.localProfileId, payload.lastAppliedAtMs);
 
+    const currentProfileId =
+      normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId)
+      ?? normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId);
+
     const novelsApplied = payload.lastAppliedScopes.some((scope) => scope.startsWith("novels:profile:"));
     // Novel categories and memberships live in the shared Books category list.
     if (payload.lastAppliedScopes.includes("books:global") || novelsApplied) {
       try {
         const { reloadBookLibraryState } = await import("./lib/books/libraryState");
-        const next = await reloadBookLibraryState({ profileId: store.runtimeResolvedLocalProfileId });
+        const next = await reloadBookLibraryState({ profileId: currentProfileId ?? store.runtimeResolvedLocalProfileId });
         replaceBooksStateFromDisk({
           books: next.books,
           bookProgress: next.bookProgress,

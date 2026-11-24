@@ -33,6 +33,8 @@ vi.mock("../../store/state.svelte", async () => {
     get runtimeServerUrl() { return target.get("server") ?? ""; },
     set runtimeServerUrl(value: string) { target.set("server", value); },
     runtimeResolvedLocalProfileId: "main", settings: { defaultLocalProfileId: "main" },
+    openSearchSources: vi.fn(),
+    openSearchPalette: vi.fn(),
   } };
 });
 
@@ -611,5 +613,31 @@ describe("SyncdConnectionPanel", () => {
 
     expect(within(dialog).getByTestId("syncd-host-approve").hasAttribute("disabled")).toBe(false);
     expect(within(dialog).getAllByText(/decision timed out/i).length).toBeGreaterThan(0);
+  });
+
+  test("renders a find button on each not-found work and opens comics source search", async () => {
+    const onClose = vi.fn();
+    const notFoundMod = await import("../../lib/syncdNotFoundWorks");
+    vi.spyOn(notFoundMod, "loadNotFoundWorks").mockResolvedValue([
+      {
+        key: "src-1:work-1",
+        title: "Missing Manga",
+        sourceName: "MangaDex",
+        changes: 2,
+      },
+    ]);
+
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile", onClose },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
+    await fireEvent.click(within(dialog).getByTestId("syncd-modal-details"));
+    const findBtn = await within(dialog).findByTestId("syncd-not-found-work-find");
+    await fireEvent.click(findBtn);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(store.openSearchSources).toHaveBeenCalledWith("browse");
+    expect(store.openSearchPalette).toHaveBeenCalledWith("browse", "Missing Manga", { browseContentType: "comics" });
   });
 });

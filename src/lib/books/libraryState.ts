@@ -40,6 +40,18 @@ export interface PersistedBookLibraryState {
 }
 
 const bookLibraryStateCache = new Map<string, PersistedBookLibraryState>();
+const bookLibraryStateRevisions = new Map<string, number>();
+
+function recordBookLibraryRevision(profileId: string, parsed: unknown) {
+  if (
+    parsed
+    && typeof parsed === "object"
+    && typeof (parsed as { __diskRevision?: unknown }).__diskRevision === "number"
+    && Number.isFinite((parsed as { __diskRevision: number }).__diskRevision)
+  ) {
+    bookLibraryStateRevisions.set(profileId, (parsed as { __diskRevision: number }).__diskRevision);
+  }
+}
 
 function bookLibraryStateCacheKey(scope: BookLibraryStateScope = {}) {
   const profileId = typeof scope.profileId === "string" && scope.profileId.trim()
@@ -261,9 +273,13 @@ async function persistBookLibraryStateToDesktop(
     updatedAtMs: Date.now(),
   });
 
+  const key = bookLibraryStateCacheKey(scope);
+  const expectedRevision = bookLibraryStateRevisions.get(key) ?? null;
+
   await invoke("write_book_library_state", {
     contents: JSON.stringify(normalized, null, 2),
-    profileId: bookLibraryStateCacheKey(scope),
+    profileId: key,
+    ...(expectedRevision !== null ? { expectedRevision } : {}),
   });
 
   return persistBookLibraryStateCache(normalized, scope);
@@ -278,10 +294,12 @@ export async function loadBookLibraryState(scope: BookLibraryStateScope = {}): P
 /** Restore must not treat a UI fallback/cache as evidence that disk is empty. */
 export async function loadBookLibraryStateForRestore(scope: BookLibraryStateScope = {}): Promise<PersistedBookLibraryState> {
   if (!canUseDesktopBookStorage()) throw Error("RESTORE_BOOKS_STORAGE_UNAVAILABLE");
-  const raw = await invoke<string | null>("read_book_library_state", { profileId: bookLibraryStateCacheKey(scope) });
+  const key = bookLibraryStateCacheKey(scope);
+  const raw = await invoke<string | null>("read_book_library_state", { profileId: key });
   if (raw === null) return createEmptyState();
   try {
     const parsed = JSON.parse(raw);
+    recordBookLibraryRevision(key, parsed);
     if (!parsed || parsed.version !== 1 || !["books", "bookProgress", "bookBookmarks", "booksCategories"].every(key => Array.isArray(parsed[key]))
       || !parsed.booksCategoryAssignments || typeof parsed.booksCategoryAssignments !== "object" || Array.isArray(parsed.booksCategoryAssignments)) throw Error();
     const normalized = normalizeBookLibraryState(parsed);
@@ -294,18 +312,19 @@ export async function loadBookLibraryStateForRestore(scope: BookLibraryStateScop
 
 export async function reloadBookLibraryState(scope: BookLibraryStateScope = {}, options: { strict?: boolean } = {}): Promise<PersistedBookLibraryState> {
   if (options.strict) return persistBookLibraryStateCache(await loadBookLibraryStateForRestore(scope), scope);
-  bookLibraryStateCache.delete(bookLibraryStateCacheKey(scope));
+  const key = bookLibraryStateCacheKey(scope);
+  bookLibraryStateCache.delete(key);
 
   if (!canUseDesktopBookStorage()) {
     return persistBookLibraryStateCache(createEmptyState(), scope);
   }
 
-  const raw = await invoke<string | null>("read_book_library_state", {
-    profileId: bookLibraryStateCacheKey(scope),
-  }).catch(() => null);
+  const raw = await invoke<string | null>("read_book_library_state", { profileId: key }).catch(() => null);
   if (raw) {
     try {
-      return persistBookLibraryStateCache(normalizeBookLibraryState(JSON.parse(raw)), scope);
+      const parsed = JSON.parse(raw);
+      recordBookLibraryRevision(key, parsed);
+      return persistBookLibraryStateCache(normalizeBookLibraryState(parsed), scope);
     } catch {
       return persistBookLibraryStateCache(createEmptyState(), scope);
     }

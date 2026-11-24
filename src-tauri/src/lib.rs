@@ -5290,7 +5290,7 @@ fn read_book_library_state(profile_id: Option<String>) -> Result<Option<String>,
     let path = book_library_state_path_for_profile(profile_id.as_deref())?;
     crate::v4_desktop_sync::with_library_state_lock(profile_id.as_deref(), "books", || {
         let text = library_sqlite::load(&path)?;
-        crate::v4_desktop_sync::note_library_loaded(profile_id.as_deref(), "books");
+        let revision = crate::v4_desktop_sync::note_library_loaded(profile_id.as_deref(), "books");
         crate::v4_desktop_sync::note_books_loaded_by_frontend(
             profile_id.as_deref(),
             text.as_deref().unwrap_or(r#"{"books":[]}"#),
@@ -5300,6 +5300,20 @@ fn read_book_library_state(profile_id: Option<String>) -> Result<Option<String>,
                 syncd_replication::note_book_state_loaded_by_frontend(text);
             }
         }
+        let text = match text {
+            Some(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(mut value) => {
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("__diskRevision".into(), serde_json::json!(revision));
+                        Some(serde_json::to_string(&value).unwrap_or(raw))
+                    } else {
+                        Some(raw)
+                    }
+                }
+                Err(_) => Some(raw),
+            },
+            None => None,
+        };
         Ok(text)
     })
 }
@@ -5309,6 +5323,7 @@ fn write_book_library_state(
     contents: String,
     app: tauri::AppHandle,
     profile_id: Option<String>,
+    expected_revision: Option<u64>,
 ) -> Result<String, String> {
     let path = book_library_state_path_for_profile(profile_id.as_deref())?;
     let location = library_sqlite::database_path(&path)
@@ -5317,7 +5332,11 @@ fn write_book_library_state(
     let (location, write) =
         crate::v4_desktop_sync::with_library_state_lock(profile_id.as_deref(), "books", || {
             let previous_contents = library_sqlite::load(&path)?;
-            if crate::v4_desktop_sync::frontend_write_is_stale(profile_id.as_deref(), "books") {
+            if crate::v4_desktop_sync::frontend_write_is_stale_for_revision(
+                profile_id.as_deref(),
+                "books",
+                expected_revision,
+            ) {
                 return Ok((location.clone(), None));
             }
             let contents = crate::v4_desktop_sync::reconcile_frontend_book_write(

@@ -1857,6 +1857,7 @@ class Store {
   private booksStatePersistTask: Promise<void> | null = null;
   /** Books state as last written to or read back from disk; see queuePersistBooksLibraryState. */
   private booksStateDiskSignature: string | null = null;
+  private booksStateDiskAdoptGeneration = 0;
 
   // ── Shared category list ──────────────────────────────────────────────────
   // Single source of truth for the category list, shared between Library and
@@ -1934,9 +1935,12 @@ class Store {
     this.booksLibraryHydrated = false;
     this.booksStateDiskSignature = null;
 
+    const adoptGenerationBeforeLoad = this.booksStateDiskAdoptGeneration;
+
     try {
       const snapshot = await loadBookLibraryState({ profileId });
       if (this.booksStateScopeKey !== profileId) return;
+      if (this.booksStateDiskAdoptGeneration !== adoptGenerationBeforeLoad) return;
       const validBookIds = new Set(snapshot.books.map((book) => book.id));
 
       this.books = snapshot.books;
@@ -1955,6 +1959,7 @@ class Store {
       if (this.activeBookReaderId && !validBookIds.has(this.activeBookReaderId)) {
         this.activeBookReaderId = null;
       }
+      this.booksStateDiskSignature = this.booksPersistSignature();
     } finally {
       if (this.booksStateScopeKey === profileId) {
         this.booksStateHydrated = true;
@@ -2526,6 +2531,7 @@ class Store {
 
   /** Adopts the books state Syncd replication just wrote, without echoing it back to disk. */
   replaceBooksStateFromDisk(snapshot: BooksRestoreHydrationInput) {
+    this.booksStateDiskAdoptGeneration += 1;
     this.booksStatePersistQueued = false;
     this.replaceBooksState(snapshot);
     this.booksStateDiskSignature = this.booksPersistSignature();

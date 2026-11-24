@@ -25,6 +25,7 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdForceReplicationReconnect: vi.fn(),
   syncdGetActiveHostPairing: vi.fn(async () => null),
   syncdGetRuntimeIdentity: vi.fn(async () => ({ pid: 100, serverId: "browser-audit", deviceName: "Browser audit" })),
+  syncdGetSyncProgressIfRunning: vi.fn(async () => null),
   syncdGetReplicationState: vi.fn(async () => ({
     localProfileId: "main",
     activeSessionKey: null,

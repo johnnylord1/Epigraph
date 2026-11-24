@@ -56,6 +56,8 @@ static REGISTRY: OnceLock<Arc<Mutex<V4DesktopRegistry>>> = OnceLock::new();
 static CURSOR_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static FRONTEND_LOADED_BOOKS: OnceLock<StdMutex<HashMap<String, HashSet<String>>>> =
     OnceLock::new();
+static FRONTEND_LOADED_BOOK_CATEGORIES: OnceLock<StdMutex<HashMap<String, HashSet<String>>>> =
+    OnceLock::new();
 static FRONTEND_LOADED_NOVELS: OnceLock<StdMutex<HashMap<String, HashSet<String>>>> =
     OnceLock::new();
 static LIBRARY_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<StdMutex<()>>>>> = OnceLock::new();
@@ -81,6 +83,10 @@ fn cursor_lock() -> &'static Mutex<()> {
 
 fn loaded_books() -> &'static StdMutex<HashMap<String, HashSet<String>>> {
     FRONTEND_LOADED_BOOKS.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+fn loaded_book_categories() -> &'static StdMutex<HashMap<String, HashSet<String>>> {
+    FRONTEND_LOADED_BOOK_CATEGORIES.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
 fn loaded_novels() -> &'static StdMutex<HashMap<String, HashSet<String>>> {
@@ -283,25 +289,40 @@ pub fn note_library_loaded(profile_id: Option<&str>, domain: &str) -> u64 {
 
 /// True when a queued frontend document was read before a remote SQLite apply.
 pub fn frontend_write_is_stale(profile_id: Option<&str>, domain: &str) -> bool {
+    frontend_write_is_stale_for_revision(profile_id, domain, None)
+}
+
+/// True when a queued frontend document was read at `expected_revision` (or without a revision
+/// token) before a newer SQLite apply.
+pub fn frontend_write_is_stale_for_revision(
+    profile_id: Option<&str>,
+    domain: &str,
+    expected_revision: Option<u64>,
+) -> bool {
     let revisions = library_revisions()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    revisions
-        .get(&library_state_key(profile_id, domain))
-        .is_some_and(|(disk_revision, frontend_revision)| disk_revision > frontend_revision)
+    let entry = revisions.get(&library_state_key(profile_id, domain));
+    match expected_revision {
+        Some(expected) => entry.is_some_and(|(disk_revision, _)| *disk_revision > expected),
+        None => entry.is_some_and(|(disk_revision, frontend_revision)| disk_revision > frontend_revision),
+    }
 }
 
-/// Advances the monotonic disk revision after every SQLite save. Remote applies intentionally do
-/// not advance the frontend revision; a later explicit read does.
+/// Advances the monotonic remote-apply revision after a remote SQLite apply so any queued or
+/// in-flight frontend write carrying an older revision token is rejected as stale. Frontend
+/// saves do not advance the remote revision, so consecutive frontend saves from the same loaded
+/// snapshot continue to succeed until a remote apply intervenes.
 pub fn note_library_saved(profile_id: Option<&str>, domain: &str, frontend_write: bool) {
     let key = library_state_key(profile_id, domain);
     let mut revisions = library_revisions()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = revisions.entry(key).or_default();
-    entry.0 = entry.0.saturating_add(1);
     if frontend_write {
         entry.1 = entry.0;
+    } else {
+        entry.0 = entry.0.saturating_add(1);
     }
 }
 
@@ -367,11 +388,23 @@ pub fn note_books_loaded_by_frontend(profile_id: Option<&str>, contents: &str) {
     let Ok(doc) = serde_json::from_str::<Value>(contents) else {
         return;
     };
+    let profile = profile_key(profile_id);
     let keys = keyed_values(&doc, "books", None);
     loaded_books()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(profile_key(profile_id), keys);
+        .insert(profile.clone(), keys);
+    let category_ids: HashSet<String> = doc
+        .get("booksCategories")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|cat| cat.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect();
+    loaded_book_categories()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(profile, category_ids);
 }
 
 pub fn note_novels_loaded_by_frontend(profile_id: Option<&str>, contents: &str) {
@@ -529,12 +562,26 @@ pub fn reconcile_frontend_book_write(
     }
     let Some(previous_raw) = previous_contents else {
         let keys = keyed_values(&next, "books", None);
+        let profile = profile_key(profile_id);
         loaded_books()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .entry(profile_key(profile_id))
+            .entry(profile.clone())
             .or_default()
             .extend(keys);
+        let category_ids: HashSet<String> = next
+            .get("booksCategories")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|cat| cat.get("id").and_then(Value::as_str).map(str::to_owned))
+            .collect();
+        loaded_book_categories()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(profile)
+            .or_default()
+            .extend(category_ids);
         return serde_json::to_string(&next).map_err(|error| error.to_string());
     };
     let previous: Value = serde_json::from_str(previous_raw).map_err(|error| error.to_string())?;
@@ -623,6 +670,51 @@ pub fn reconcile_frontend_book_write(
         merge_array_rows(&mut next, &previous, field, id_field, &allowed);
     }
     merge_book_assignments(&mut next, &previous, &restored_ids);
+    let loaded_categories = loaded_book_categories()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+        .cloned()
+        .unwrap_or_default();
+    let restored_book_category_ids: HashSet<String> = previous
+        .get("booksCategoryAssignments")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter(|(book_id, _)| restored_ids.contains(*book_id))
+        .flat_map(|(_, cats)| cats.as_array().into_iter().flatten())
+        .filter_map(|cat_id| cat_id.as_str().map(str::to_owned))
+        .collect();
+    let preserve_category_ids: HashSet<String> = previous
+        .get("booksCategories")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|cat| cat.get("id").and_then(Value::as_str).map(str::to_owned))
+        .filter(|id| !loaded_categories.contains(id) || restored_book_category_ids.contains(id))
+        .collect();
+    merge_array_rows(
+        &mut next,
+        &previous,
+        "booksCategories",
+        "id",
+        &preserve_category_ids,
+    );
+    let next_category_ids: HashSet<String> = next
+        .get("booksCategories")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|cat| cat.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect();
+    {
+        let mut categories_map = loaded_book_categories()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let entry = categories_map.entry(key.clone()).or_default();
+        entry.retain(|id| next_category_ids.contains(id));
+        entry.extend(next_category_ids);
+    }
     let previous_keys = keyed_values(&previous, "books", None);
     let added = keyed_values(&next, "books", None)
         .difference(&previous_keys)
@@ -1745,5 +1837,102 @@ mod tests {
         assert_eq!(first.items[0].payload["title"], json!("v1"));
         assert_eq!(second.items[0].payload["title"], json!("v2"));
         assert!(second.items[0].hlc > first.items[0].hlc);
+    }
+
+    #[test]
+    fn stale_write_with_older_revision_is_rejected_even_after_concurrent_read() {
+        let profile = "test-stale-revision-token";
+        let initial_rev = note_library_loaded(Some(profile), "books");
+        note_library_saved(Some(profile), "books", false);
+        let _concurrent_read_rev = note_library_loaded(Some(profile), "books");
+        assert!(frontend_write_is_stale_for_revision(
+            Some(profile),
+            "books",
+            Some(initial_rev),
+        ));
+    }
+
+    #[test]
+    fn reconcile_frontend_book_write_preserves_empty_disk_categories() {
+        let profile = "test-preserve-empty-categories";
+        let previous = json!({
+            "books": [],
+            "booksCategories": [
+                { "id": "cat-empty", "name": "Empty Shelf", "order": 0 }
+            ],
+            "booksCategoryAssignments": {}
+        })
+        .to_string();
+        let next = json!({
+            "books": [],
+            "booksCategories": [],
+            "booksCategoryAssignments": {}
+        })
+        .to_string();
+        let reconciled = reconcile_frontend_book_write(Some(profile), Some(&previous), &next).unwrap();
+        let parsed: Value = serde_json::from_str(&reconciled).unwrap();
+        let categories = parsed["booksCategories"].as_array().unwrap();
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0]["id"], json!("cat-empty"));
+    }
+
+    #[test]
+    fn reconcile_frontend_book_write_allows_deleting_loaded_category() {
+        let profile = "test-delete-loaded-category";
+        let loaded_state = json!({
+            "books": [],
+            "booksCategories": [
+                { "id": "cat-loaded", "name": "Loaded", "order": 0 }
+            ],
+            "booksCategoryAssignments": {}
+        })
+        .to_string();
+        note_books_loaded_by_frontend(Some(profile), &loaded_state);
+
+        let previous = json!({
+            "books": [],
+            "booksCategories": [
+                { "id": "cat-loaded", "name": "Loaded", "order": 0 },
+                { "id": "cat-unloaded", "name": "Unloaded", "order": 1 }
+            ],
+            "booksCategoryAssignments": {}
+        })
+        .to_string();
+        let next = json!({
+            "books": [],
+            "booksCategories": [],
+            "booksCategoryAssignments": {}
+        })
+        .to_string();
+        let reconciled = reconcile_frontend_book_write(Some(profile), Some(&previous), &next).unwrap();
+        let parsed: Value = serde_json::from_str(&reconciled).unwrap();
+        let categories = parsed["booksCategories"].as_array().unwrap();
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0]["id"], json!("cat-unloaded"));
+    }
+
+    #[test]
+    fn consecutive_frontend_saves_with_same_revision_are_both_accepted() {
+        let profile = "test-consecutive-frontend-saves";
+        let rev = note_library_loaded(Some(profile), "books");
+        assert!(!frontend_write_is_stale_for_revision(
+            Some(profile),
+            "books",
+            Some(rev),
+        ));
+        // Save #1 from frontend must NOT invalidate Save #2 from the same loaded snapshot.
+        note_library_saved(Some(profile), "books", true);
+        assert!(!frontend_write_is_stale_for_revision(
+            Some(profile),
+            "books",
+            Some(rev),
+        ));
+        // Only an intervening remote apply marks the old revision token stale.
+        note_library_saved(Some(profile), "books", false);
+        assert!(frontend_write_is_stale_for_revision(
+            Some(profile),
+            "books",
+            Some(rev),
+        ));
     }
 }

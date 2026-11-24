@@ -127,7 +127,7 @@ const ADD_EXTENSION_STORE_QUERY: &str = r#"
 const LIST_EXTENSIONS_QUERY: &str = r#"
   query EpigraphListExtensions {
     extensions {
-      nodes { pkgName isInstalled }
+      nodes { pkgName apkName isInstalled }
     }
   }
 "#;
@@ -135,7 +135,7 @@ const LIST_EXTENSIONS_QUERY: &str = r#"
 const FETCH_EXTENSIONS_QUERY: &str = r#"
   mutation EpigraphFetchExtensions {
     fetchExtensions(input: {}) {
-      extensions { pkgName isInstalled }
+      extensions { pkgName apkName isInstalled }
     }
   }
 "#;
@@ -581,6 +581,94 @@ fn listed_extension<'a>(nodes: Option<&'a Value>, pkg_name: &str) -> Option<&'a 
         .find(|extension| extension.get("pkgName").and_then(Value::as_str) == Some(pkg_name))
 }
 
+fn normalize_extension_jar_filename(raw_name: &str) -> Option<String> {
+    if raw_name.is_empty()
+        || raw_name.contains('/')
+        || raw_name.contains('\\')
+        || raw_name.contains("..")
+        || raw_name.contains('\0')
+        || raw_name.contains(':')
+    {
+        return None;
+    }
+    let mut components = std::path::Path::new(raw_name).components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(_)), None) => {}
+        _ => return None,
+    }
+    if raw_name.ends_with(".jar") {
+        Some(raw_name.to_string())
+    } else if let Some(stem) = raw_name.strip_suffix(".apk") {
+        if stem.is_empty() {
+            None
+        } else {
+            Some(format!("{stem}.jar"))
+        }
+    } else {
+        None
+    }
+}
+
+fn remove_stale_extension_jar_if_uninstalled(
+    suwayomi_root: &std::path::Path,
+    is_installed: bool,
+    apk_name: Option<&str>,
+) -> bool {
+    if is_installed {
+        return false;
+    }
+    let Some(jar_filename) = apk_name.and_then(normalize_extension_jar_filename) else {
+        return false;
+    };
+    let extensions_dir = suwayomi_root.join("extensions");
+    let Ok(canonical_extensions_dir) = std::fs::canonicalize(&extensions_dir) else {
+        return false;
+    };
+    let candidate = canonical_extensions_dir.join(&jar_filename);
+    let Ok(metadata) = std::fs::symlink_metadata(&candidate) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return false;
+    }
+    let Ok(canonical_candidate) = std::fs::canonicalize(&candidate) else {
+        return false;
+    };
+    if canonical_candidate.parent() != Some(canonical_extensions_dir.as_path()) {
+        return false;
+    }
+    match std::fs::remove_file(&canonical_candidate) {
+        Ok(()) => {
+            tracing::info!(
+                jar = %jar_filename,
+                "Removed stale uninstalled extension jar before install"
+            );
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn is_file_already_exists_error(error: &AppError) -> bool {
+    format!("{error:?}").contains("FileAlreadyExistsException")
+}
+
+fn extract_jar_filename_from_error(error: &AppError) -> Option<String> {
+    let debug = format!("{error:?}");
+    let jar_end = debug.find(".jar")? + 4;
+    let prefix = &debug[..jar_end];
+    let start = prefix
+        .rfind(['/', '\\', ' ', '"', '\''])
+        .map(|idx| idx + 1)
+        .unwrap_or(0);
+    let candidate = &debug[start..jar_end];
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate.to_string())
+    }
+}
+
 /// Installs an extension from the desktop runtime's own repositories. A package the runtime
 /// does not offer is answered with `available: false` so the caller can stop retrying it.
 async fn install_extension_confirmed(
@@ -633,9 +721,38 @@ async fn install_extension_confirmed(
     if listed.get("isInstalled").and_then(Value::as_bool) == Some(true) {
         return Ok(json!({ "pkgName": pkg_name, "available": true, "isInstalled": true }));
     }
-    let data =
-        suwayomi_catalog::execute_graphql_document(state, session, document, variables, true)
-            .await?;
+    let apk_name = listed.get("apkName").and_then(Value::as_str);
+    let suwayomi_root = crate::syncd::extension_store_seed::active_profile_root();
+    remove_stale_extension_jar_if_uninstalled(&suwayomi_root, false, apk_name);
+
+    let data = match suwayomi_catalog::execute_graphql_document(
+        state,
+        session,
+        document,
+        variables.clone(),
+        true,
+    )
+    .await
+    {
+        Ok(data) => data,
+        Err(error) if is_file_already_exists_error(&error) => {
+            let extracted = extract_jar_filename_from_error(&error);
+            let fallback_name = extracted.as_deref().or(apk_name);
+            if remove_stale_extension_jar_if_uninstalled(&suwayomi_root, false, fallback_name) {
+                suwayomi_catalog::execute_graphql_document(
+                    state,
+                    session,
+                    document,
+                    variables,
+                    true,
+                )
+                .await?
+            } else {
+                return Err(error);
+            }
+        }
+        Err(error) => return Err(error),
+    };
     let installed = data
         .get("updateExtension")
         .and_then(|value| value.get("extension"))
@@ -1276,5 +1393,53 @@ mod tests {
             json!({ "id": 3, "position": -1 }),
         )
         .is_err());
+    }
+
+    #[test]
+    fn stale_extension_jar_cleanup_normalizes_apk_and_enforces_safety_boundaries() {
+        let temp = tempfile::tempdir().unwrap();
+        let extensions_dir = temp.path().join("extensions");
+        std::fs::create_dir_all(&extensions_dir).unwrap();
+
+        let stale_jar = extensions_dir.join("tachiyomi-en.comix-v1.6.65.jar");
+        std::fs::write(&stale_jar, b"stale").unwrap();
+        let outside_jar = temp.path().join("outside.jar");
+        std::fs::write(&outside_jar, b"keep").unwrap();
+
+        // Never touches files when isInstalled == true.
+        assert!(!remove_stale_extension_jar_if_uninstalled(
+            temp.path(),
+            true,
+            Some("tachiyomi-en.comix-v1.6.65.apk"),
+        ));
+        assert!(stale_jar.exists());
+
+        // Rejects path traversal, separators, drive prefixes, and non-apk/jar names.
+        for bad in [
+            "../outside.jar",
+            "..\\outside.jar",
+            "sub/tachiyomi-en.comix-v1.6.65.jar",
+            "C:tachiyomi-en.comix-v1.6.65.jar",
+            ".jar",
+            ".apk",
+            "tachiyomi-en.comix-v1.6.65.txt",
+            "",
+        ] {
+            assert!(!remove_stale_extension_jar_if_uninstalled(
+                temp.path(),
+                false,
+                Some(bad),
+            ));
+        }
+        assert!(outside_jar.exists());
+
+        // Removes stale .jar when given matching .apk name and isInstalled == false.
+        assert!(remove_stale_extension_jar_if_uninstalled(
+            temp.path(),
+            false,
+            Some("tachiyomi-en.comix-v1.6.65.apk"),
+        ));
+        assert!(!stale_jar.exists());
+        assert!(outside_jar.exists());
     }
 }

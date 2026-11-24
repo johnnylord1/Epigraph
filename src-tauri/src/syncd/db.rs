@@ -5288,7 +5288,8 @@ fn suwayomi_numeric_id_for_profile(
         if profile_marker == 0 {
             return None;
         }
-        if local_server_id.is_some_and(|server_id| server_id != &value[..profile_marker]) {
+        let expected_server_id = local_server_id?;
+        if expected_server_id != &value[..profile_marker] {
             return None;
         }
         &value[profile_marker + ":profile:".len()..]

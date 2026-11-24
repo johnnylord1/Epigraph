@@ -289,4 +289,23 @@ describe("B4 strict synchronization refresh", () => {
     expect(await loadBookLibraryState({ profileId: "test" })).toEqual(value);
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
+
+  it("records __diskRevision from read_book_library_state, passes expectedRevision on write, and strips __diskRevision from saved contents", async () => {
+    (globalThis as any).window = { __TAURI_INTERNALS__: {} };
+    const payload = { ...createState(), __diskRevision: 7 };
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValueOnce(JSON.stringify(payload));
+    invokeMock.mockResolvedValueOnce("ok");
+
+    const loaded = await reloadBookLibraryState({ profileId: "rev-test" });
+    await saveBookLibraryState(loaded, { profileId: "rev-test" });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "read_book_library_state", { profileId: "rev-test" });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "write_book_library_state", expect.objectContaining({
+      profileId: "rev-test",
+      expectedRevision: 7,
+    }));
+    const savedContents = JSON.parse(invokeMock.mock.calls[1][1].contents);
+    expect(savedContents.__diskRevision).toBeUndefined();
+  });
 });
