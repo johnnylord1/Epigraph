@@ -1066,6 +1066,13 @@ async fn mirror_profile(
     session: &AuthenticatedSession,
 ) -> anyhow::Result<usize> {
     let profile_id = session.profile_id.as_str();
+    if crate::syncd::v4::db::load_watermark(&state.pool, profile_id)
+        .await
+        .map(|w| w.current_seq > 0)
+        .unwrap_or(false)
+    {
+        return Ok(0);
+    }
     let scope_id = format!("comics:profile:{profile_id}");
 
     let trackers = fetch_trackers(state, session).await?;
@@ -2050,5 +2057,61 @@ mod tests {
             None
         );
         assert_eq!(desktop_login_change(Some(&pending), None), None);
+    }
+
+    #[tokio::test]
+    async fn mirror_profile_skips_v4_active_profiles() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut config = crate::syncd::config::SyncdConfig::from_env();
+        config.data_dir = temp.path().to_path_buf();
+        config.db_path = temp.path().join("syncd.sqlite");
+        let pool = db::connect(&config).await.unwrap();
+        let advertised =
+            crate::syncd::config::SyncdAdvertisedEndpointResolver::from_config(&config).unwrap();
+        let descriptor =
+            crate::syncd::discovery::SyncdDiscoveryDescriptorProvider::from_config(&config)
+                .unwrap();
+        let manager =
+            crate::syncd::discovery::SyncdDiscoveryProviderManager::from_config(&config).unwrap();
+        let initial_status = manager.initial_status(&config, &advertised);
+        let (change_sender, _) = tokio::sync::broadcast::channel(16);
+        let (pairing_status_sender, _) = tokio::sync::broadcast::channel(16);
+        let state = std::sync::Arc::new(crate::syncd::models::AppState {
+            config,
+            advertised_endpoint_resolver: advertised,
+            discovery_descriptor_provider: descriptor,
+            client_discovery_contract_provider: Default::default(),
+            client_discovery_guidance_provider: Default::default(),
+            discovery_provider_manager: manager,
+            discovery_provider_state: std::sync::Arc::new(tokio::sync::RwLock::new(initial_status)),
+            discovery_provider_runtime: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            pool: pool.clone(),
+            change_sender,
+            pairing_status_sender,
+            mutation_gate: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            tls_cert_sha256: "test".to_string(),
+            device_presence: Default::default(),
+            own_echoes: Default::default(),
+        });
+
+        sqlx::query(
+            "INSERT INTO v4_profile_watermarks (profile_id, current_seq, updated_at_ms) VALUES (?, ?, ?)",
+        )
+        .bind("main")
+        .bind(2_i64)
+        .bind(1_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let session = AuthenticatedSession {
+            token_id: MIRROR_TOKEN_ID.to_string(),
+            device_id: MIRROR_DEVICE_ID.to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics".to_string()]),
+            mutation_receipt: None,
+        };
+        let changed = mirror_profile(&state, &session).await.unwrap();
+        assert_eq!(changed, 0);
     }
 }

@@ -984,3 +984,411 @@ async fn bootstrap_session_creation_rejects_non_loopback_lan_callers() {
     let local_resp = app.clone().oneshot(local_req).await.unwrap();
     assert_eq!(local_resp.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn marco4_multi_profile_isolation_across_all_v4_endpoints() {
+    let (_temp, state, app, _, _) = build_v4_test_env().await;
+    let token_main = db::issue_local_authority_token(&state.pool, &state.config, "phone-main", "main")
+        .await
+        .unwrap()
+        .access_token;
+    let token_secondary = db::issue_local_authority_token(
+        &state.pool,
+        &state.config,
+        "phone-secondary",
+        "secondary",
+    )
+    .await
+    .unwrap()
+    .access_token;
+
+    let now = db::now_ms();
+
+    // 1. /v4/sync/bulk on both profiles
+    let (status, _, _) = v4_request(
+        &app,
+        Method::POST,
+        "/v4/sync/bulk",
+        &token_main,
+        Some(json!({
+            "items": [{
+                "clientMutationId": "mut-main-1",
+                "domain": "books",
+                "entityType": "book.work",
+                "entityKey": "book-main-1",
+                "hlc": { "tsMs": now, "counter": 0, "deviceId": "phone-main" },
+                "deleted": false,
+                "payload": { "title": "Main Book", "progress": 0.25 }
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, _) = v4_request(
+        &app,
+        Method::POST,
+        "/v4/sync/bulk",
+        &token_secondary,
+        Some(json!({
+            "items": [{
+                "clientMutationId": "mut-sec-1",
+                "domain": "books",
+                "entityType": "book.work",
+                "entityKey": "book-sec-1",
+                "hlc": { "tsMs": now + 1, "counter": 0, "deviceId": "phone-secondary" },
+                "deleted": false,
+                "payload": { "title": "Secondary Book", "progress": 0.75 }
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // 2. /v4/deltas on both profiles
+    let (status, _, _) = v4_request(
+        &app,
+        Method::POST,
+        "/v4/deltas",
+        &token_main,
+        Some(json!({
+            "items": [{
+                "clientMutationId": "mut-main-2",
+                "domain": "books",
+                "entityType": "book.work",
+                "entityKey": "book-main-2",
+                "hlc": { "tsMs": now + 2, "counter": 0, "deviceId": "phone-main" },
+                "deleted": false,
+                "payload": { "title": "Main Delta Book" }
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, _) = v4_request(
+        &app,
+        Method::POST,
+        "/v4/deltas",
+        &token_secondary,
+        Some(json!({
+            "items": [{
+                "clientMutationId": "mut-sec-2",
+                "domain": "books",
+                "entityType": "book.work",
+                "entityKey": "book-sec-2",
+                "hlc": { "tsMs": now + 3, "counter": 0, "deviceId": "phone-secondary" },
+                "deleted": false,
+                "payload": { "title": "Secondary Delta Book" }
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // 3. /v4/tracker-credentials on both profiles
+    let (status, _, _) = v4_request(
+        &app,
+        Method::PUT,
+        "/v4/tracker-credentials/anilist",
+        &token_main,
+        Some(json!({
+            "baseRevision": 0,
+            "token": "main-secret-token",
+            "username": "main-user"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, _) = v4_request(
+        &app,
+        Method::PUT,
+        "/v4/tracker-credentials/myanimelist",
+        &token_secondary,
+        Some(json!({
+            "baseRevision": 0,
+            "token": "sec-secret-token",
+            "username": "sec-user"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // 4. Verify /v4/snapshot isolation
+    let (status, _, main_snap) =
+        v4_request(&app, Method::GET, "/v4/snapshot", &token_main, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let main_ids: Vec<&str> = main_snap["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["entityKey"].as_str().unwrap())
+        .collect();
+    assert!(main_ids.contains(&"book-main-1"));
+    assert!(main_ids.contains(&"book-main-2"));
+    assert!(!main_ids.iter().any(|id| id.contains("sec")));
+
+    let (status, _, sec_snap) =
+        v4_request(&app, Method::GET, "/v4/snapshot", &token_secondary, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let sec_ids: Vec<&str> = sec_snap["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["entityKey"].as_str().unwrap())
+        .collect();
+    assert!(sec_ids.contains(&"book-sec-1"));
+    assert!(sec_ids.contains(&"book-sec-2"));
+    assert!(!sec_ids.iter().any(|id| id.contains("main")));
+
+    // 5. Verify /v4/changes isolation
+    let (status, _, main_changes) =
+        v4_request(&app, Method::GET, "/v4/changes?sinceSeq=0", &token_main, None).await;
+    assert_eq!(status, StatusCode::OK);
+    for item in main_changes["changes"].as_array().unwrap() {
+        assert!(!item["entityKey"].as_str().unwrap().contains("sec"));
+    }
+
+    // 6. Verify /v4/tracker-credentials isolation
+    let (status, _, main_creds) =
+        v4_request(&app, Method::GET, "/v4/tracker-credentials", &token_main, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let main_creds_str = main_creds.to_string();
+    assert!(main_creds_str.contains("anilist"));
+    assert!(!main_creds_str.contains("myanimelist"));
+    assert!(!main_creds_str.contains("sec-user"));
+
+    let (status, _, sec_creds) = v4_request(
+        &app,
+        Method::GET,
+        "/v4/tracker-credentials",
+        &token_secondary,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let sec_creds_str = sec_creds.to_string();
+    assert!(sec_creds_str.contains("myanimelist"));
+    assert!(!sec_creds_str.contains("anilist"));
+    assert!(!sec_creds_str.contains("main-user"));
+}
+
+#[tokio::test]
+async fn marco4_extended_offline_divergence_and_merge() {
+    let (_temp, state, app, token_phone, _) = build_v4_test_env().await;
+    let token_desktop =
+        db::issue_local_authority_token(&state.pool, &state.config, "desktop-a", "profile-alpha")
+            .await
+            .unwrap()
+            .access_token;
+    let _ = token_desktop.clone();
+
+    let now = db::now_ms();
+
+    // Seed initial library: book-a, book-b (bound), book-c
+    let (status, _, _) = v4_request(
+        &app,
+        Method::POST,
+        "/v4/sync/bulk",
+        &token_phone,
+        Some(json!({
+            "items": [
+                {
+                    "clientMutationId": "seed-a",
+                    "domain": "books",
+                    "entityType": "book.work",
+                    "entityKey": "book-a",
+                    "hlc": { "tsMs": now, "counter": 0, "deviceId": "phone" },
+                    "deleted": false,
+                    "payload": { "title": "Book A", "chapter": 1 }
+                },
+                {
+                    "clientMutationId": "seed-b",
+                    "domain": "books",
+                    "entityType": "book.work",
+                    "entityKey": "book-b",
+                    "hlc": { "tsMs": now, "counter": 1, "deviceId": "phone" },
+                    "deleted": false,
+                    "payload": { "title": "Book B", "chapter": 3 }
+                },
+                {
+                    "clientMutationId": "seed-c",
+                    "domain": "books",
+                    "entityType": "book.work",
+                    "entityKey": "book-c",
+                    "hlc": { "tsMs": now, "counter": 2, "deviceId": "phone" },
+                    "deleted": false,
+                    "payload": { "title": "Book C", "chapter": 2 }
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Phone offline: reads chapters on book-a, adds bookmark on book-a, deletes book-b
+    let (status, _, _) = v4_request(
+        &app,
+        Method::POST,
+        "/v4/deltas",
+        &token_phone,
+        Some(json!({
+            "items": [
+                {
+                    "clientMutationId": "phone-a",
+                    "domain": "books",
+                    "entityType": "book.work",
+                    "entityKey": "book-a",
+                    "hlc": { "tsMs": now + 10, "counter": 0, "deviceId": "phone" },
+                    "deleted": false,
+                    "payload": { "title": "Book A", "chapter": 12 }
+                },
+                {
+                    "clientMutationId": "phone-bm",
+                    "domain": "books",
+                    "entityType": "book.bookmark",
+                    "entityKey": "bookmark-a-1",
+                    "hlc": { "tsMs": now + 11, "counter": 0, "deviceId": "phone" },
+                    "deleted": false,
+                    "payload": { "bookId": "book-a", "page": 42 }
+                },
+                {
+                    "clientMutationId": "phone-del-b",
+                    "domain": "books",
+                    "entityType": "book.work",
+                    "entityKey": "book-b",
+                    "hlc": { "tsMs": now + 12, "counter": 0, "deviceId": "phone" },
+                    "deleted": true,
+                    "payload": null
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Desktop concurrently: reads chapters on book-c, edits book-c
+    let (status, _, _) = v4_request(
+        &app,
+        Method::POST,
+        "/v4/deltas",
+        &token_desktop,
+        Some(json!({
+            "items": [
+                {
+                    "clientMutationId": "desktop-c",
+                    "domain": "books",
+                    "entityType": "book.work",
+                    "entityKey": "book-c",
+                    "hlc": { "tsMs": now + 15, "counter": 0, "deviceId": "desktop" },
+                    "deleted": false,
+                    "payload": { "title": "Book C (Edited)", "chapter": 9 }
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Both devices fetch /v4/snapshot -> verify convergence, 0 progress loss, 0 duplicates, 0 resurrection
+    let (status_p, _, snap_phone) =
+        v4_request(&app, Method::GET, "/v4/snapshot", &token_phone, None).await;
+    let (status_d, _, snap_desktop) =
+        v4_request(&app, Method::GET, "/v4/snapshot", &token_desktop, None).await;
+    assert_eq!(status_p, StatusCode::OK);
+    assert_eq!(status_d, StatusCode::OK);
+    assert_eq!(snap_phone["records"], snap_desktop["records"]);
+
+    let records = snap_phone["records"].as_array().unwrap();
+    assert_eq!(records.len(), 4); // book-a, book-b (tombstone), book-c, bookmark-a-1
+
+    let book_a = records.iter().find(|r| r["entityKey"] == "book-a").unwrap();
+    assert_eq!(book_a["payload"]["chapter"], 12);
+    assert_eq!(book_a["deleted"], false);
+
+    let bookmark = records
+        .iter()
+        .find(|r| r["entityKey"] == "bookmark-a-1")
+        .unwrap();
+    assert_eq!(bookmark["payload"]["page"], 42);
+
+    let book_b = records.iter().find(|r| r["entityKey"] == "book-b").unwrap();
+    assert_eq!(book_b["deleted"], true);
+
+    let book_c = records.iter().find(|r| r["entityKey"] == "book-c").unwrap();
+    assert_eq!(book_c["payload"]["chapter"], 9);
+    assert_eq!(book_c["payload"]["title"], "Book C (Edited)");
+}
+
+#[tokio::test]
+async fn marco4_thirty_consecutive_empty_reconnects_under_500ms_p95() {
+    let (_temp, _state, app, token_a, _) = build_v4_test_env().await;
+
+    let now = db::now_ms();
+    let (status, _, _) = v4_request(
+        &app,
+        Method::POST,
+        "/v4/sync/bulk",
+        &token_a,
+        Some(json!({
+            "items": [{
+                "clientMutationId": "idle-1",
+                "domain": "books",
+                "entityType": "book.work",
+                "entityKey": "book-1",
+                "hlc": { "tsMs": now, "counter": 0, "deviceId": "a" },
+                "deleted": false,
+                "payload": { "title": "Idle Book" }
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, headers, snap) =
+        v4_request(&app, Method::GET, "/v4/snapshot", &token_a, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let etag = headers.get("etag").unwrap().to_str().unwrap().to_string();
+    let current_seq = snap["serverSeq"].as_i64().unwrap();
+
+    let mut latencies_ms = Vec::with_capacity(30);
+    for _ in 0..30 {
+        let start = std::time::Instant::now();
+
+        let (c_status, _, c_body) = v4_request(
+            &app,
+            Method::GET,
+            &format!("/v4/changes?sinceSeq={current_seq}"),
+            &token_a,
+            None,
+        )
+        .await;
+        assert_eq!(c_status, StatusCode::OK);
+        assert_eq!(c_body["hasMore"], false);
+        assert!(c_body["changes"].as_array().unwrap().is_empty());
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/v4/snapshot")
+            .header(CLIENT_VERSION_HEADER, "0.1.0")
+            .header(CLIENT_PROTOCOL_HEADER, "4")
+            .header("authorization", format!("Bearer {token_a}"))
+            .header("if-none-match", etag.as_str())
+            .body(Body::empty())
+            .unwrap();
+        let s_resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(s_resp.status(), StatusCode::NOT_MODIFIED);
+
+        latencies_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    latencies_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let p95_idx = ((latencies_ms.len() as f64) * 0.95).ceil() as usize - 1;
+    let p95_ms = latencies_ms[p95_idx.min(latencies_ms.len() - 1)];
+    eprintln!("marco4_30_empty_reconnects_p95_ms={p95_ms:.3}");
+    assert!(
+        p95_ms < 500.0,
+        "p95 empty reconnect latency {p95_ms:.3}ms exceeded 500ms"
+    );
+}

@@ -168,6 +168,13 @@ async fn mirror_profile(
     profile_id: &str,
     root_dir: &Path,
 ) -> anyhow::Result<usize> {
+    if crate::syncd::v4::db::load_watermark(&state.pool, profile_id)
+        .await
+        .map(|w| w.current_seq > 0)
+        .unwrap_or(false)
+    {
+        return Ok(0);
+    }
     let files: Vec<SettingsFile> = source_settings_files(root_dir)
         .into_iter()
         .map(|(source_id, explicit_keys, stamp)| SettingsFile {
@@ -646,6 +653,55 @@ mod tests {
         assert_eq!(pattern, "comic.source_preference::-12::%");
         assert!(source_preferences::entity_id_for("-12", "key").starts_with(&pattern[..pattern.len() - 1]));
         assert!(!source_preferences::entity_id_for("-123", "key").starts_with(&pattern[..pattern.len() - 1]));
+    }
+
+    #[tokio::test]
+    async fn mirror_profile_skips_v4_active_profiles() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut config = crate::syncd::config::SyncdConfig::from_env();
+        config.data_dir = temp.path().to_path_buf();
+        config.db_path = temp.path().join("syncd.sqlite");
+        let pool = db::connect(&config).await.unwrap();
+        let advertised =
+            crate::syncd::config::SyncdAdvertisedEndpointResolver::from_config(&config).unwrap();
+        let descriptor =
+            crate::syncd::discovery::SyncdDiscoveryDescriptorProvider::from_config(&config)
+                .unwrap();
+        let manager =
+            crate::syncd::discovery::SyncdDiscoveryProviderManager::from_config(&config).unwrap();
+        let initial_status = manager.initial_status(&config, &advertised);
+        let (change_sender, _) = tokio::sync::broadcast::channel(16);
+        let (pairing_status_sender, _) = tokio::sync::broadcast::channel(16);
+        let state = std::sync::Arc::new(crate::syncd::models::AppState {
+            config,
+            advertised_endpoint_resolver: advertised,
+            discovery_descriptor_provider: descriptor,
+            client_discovery_contract_provider: Default::default(),
+            client_discovery_guidance_provider: Default::default(),
+            discovery_provider_manager: manager,
+            discovery_provider_state: std::sync::Arc::new(tokio::sync::RwLock::new(initial_status)),
+            discovery_provider_runtime: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            pool: pool.clone(),
+            change_sender,
+            pairing_status_sender,
+            mutation_gate: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            tls_cert_sha256: "test".to_string(),
+            device_presence: Default::default(),
+            own_echoes: Default::default(),
+        });
+
+        sqlx::query(
+            "INSERT INTO v4_profile_watermarks (profile_id, current_seq, updated_at_ms) VALUES (?, ?, ?)",
+        )
+        .bind("main")
+        .bind(3_i64)
+        .bind(1_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let published = mirror_profile(&state, "main", temp.path()).await.unwrap();
+        assert_eq!(published, 0);
     }
 
     #[test]
