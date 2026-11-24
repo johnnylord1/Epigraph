@@ -15,6 +15,7 @@ import epigraph.sync.core.work.CoreDeviceIdentityProvider
 import epigraph.sync.core.work.CoreOutboxRetryReason
 import epigraph.sync.core.work.CoreOutboxSyncOutcome
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
+import epigraph.sync.core.work.CoreSyncReleaseLog
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import kotlinx.coroutines.CancellationException
@@ -251,12 +252,18 @@ class V4ProductionSyncCoordinator(
                     BookAssetDrainReport(0, 0, 0, 0)
                 }
                 val elapsedMs = (System.nanoTime() - startedNs) / 1_000_000
-                logger.i {
-                    "V4 sync complete in ${elapsedMs}ms: seq=${result.serverSeq} " +
-                        "uploaded=${result.uploadedCount} applied=${result.appliedCount} " +
-                        "pending=${result.pendingOutboxCount} noop=${result.wasNoOpReconnect} " +
-                        "assets=${assets.succeeded}/${assets.attempted}"
-                }
+                val summary = CoreSyncReleaseLog.formatV4Synced(
+                    elapsedMs = elapsedMs,
+                    seq = result.serverSeq,
+                    uploaded = result.uploadedCount,
+                    applied = result.appliedCount,
+                    pending = result.pendingOutboxCount,
+                    noop = result.wasNoOpReconnect,
+                    assetsSucceeded = assets.succeeded,
+                    assetsAttempted = assets.attempted,
+                )
+                logger.i { summary }
+                CoreSyncReleaseLog.info(summary)
                 val report = CoreOutboxDrainReport(
                     claimed = result.uploadedCount,
                     submitted = result.uploadedCount,
@@ -276,8 +283,16 @@ class V4ProductionSyncCoordinator(
             }
             is V4SyncRunResult.Failed -> {
                 if (hadLocalEdits) localEditsPending.set(true)
-                logger.w { "V4 sync failed status=${result.statusCode} reason=${result.reason}" }
+                val elapsedMs = (System.nanoTime() - startedNs) / 1_000_000
                 val pending = SqlDelightV4SyncStore(database).countPendingOutbox(session.serverId, session.profileId)
+                val summary = CoreSyncReleaseLog.formatV4Failed(
+                    elapsedMs = elapsedMs,
+                    statusCode = result.statusCode,
+                    retryable = result.retryable,
+                    pending = pending,
+                )
+                logger.w { summary }
+                CoreSyncReleaseLog.warn(summary)
                 CoreOutboxSyncOutcome.Retry(pending, CoreOutboxRetryReason.CONNECTION)
             }
         }
@@ -299,6 +314,8 @@ class V4ProductionSyncCoordinator(
                 }
                 if (policy.syncComics) v4_syncQueries.clearLegacySuwayomiQueue(profileId)
             }
+        }.onFailure { err ->
+            if (err is CancellationException) throw err
         }
     }
 

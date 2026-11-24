@@ -22,6 +22,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
     ): List<V4OutgoingItem> = handler.await(inTransaction = true) {
         val works = v4_syncQueries.selectV4ComicWorks(favoritesOnly = 1).executeAsList()
         val categories = categoriesQueries.findAllComics().executeAsList()
+            .filterNot { categoryKey(it.name) == "completed" }
         val categoryBindings = v4_syncQueries.selectV4ActiveCategories(serverId, profileId)
             .executeAsList()
             .associate { it.local_id to it.entity_key }

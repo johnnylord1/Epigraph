@@ -681,22 +681,62 @@ class CompositeCoreReplicaSync(
             reportCoreSyncFailure(name, failure)
             CoreReplicaSyncOutcome.RETRY
         }
-        if (BuildConfig.DEBUG) {
-            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
-            runCatching { Log.d("EpigraphCoreSync", "$name sync outcome: ${outcome.name} in ${elapsedMs}ms") }
-        }
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+        CoreSyncReleaseLog.info(CoreSyncReleaseLog.formatStageOutcome(name, outcome.name, elapsedMs))
         return outcome
     }
+}
+
+internal object CoreSyncReleaseLog {
+    const val TAG = "EpigraphCoreSync"
+
+    fun info(message: String) {
+        runCatching { Log.i(TAG, message) }
+    }
+
+    fun warn(message: String) {
+        runCatching { Log.w(TAG, message) }
+    }
+
+    fun formatStageOutcome(stage: String, outcome: String, elapsedMs: Long): String =
+        "$stage sync outcome=$outcome elapsedMs=$elapsedMs"
+
+    fun formatStageFailure(stage: String, failureType: String): String =
+        "$stage sync failed=$failureType"
+
+    fun formatV4Synced(
+        elapsedMs: Long,
+        seq: Long,
+        uploaded: Int,
+        applied: Int,
+        pending: Long,
+        noop: Boolean,
+        assetsSucceeded: Int,
+        assetsAttempted: Int,
+    ): String =
+        "v4 sync complete elapsedMs=$elapsedMs seq=$seq uploaded=$uploaded applied=$applied " +
+            "pending=$pending noop=$noop assets=$assetsSucceeded/$assetsAttempted"
+
+    fun classifyV4Failure(statusCode: Int?, retryable: Boolean): String = when {
+        statusCode != null -> "http_$statusCode"
+        retryable -> "transient_io"
+        else -> "non_retryable"
+    }
+
+    fun formatV4Failed(
+        elapsedMs: Long,
+        statusCode: Int?,
+        retryable: Boolean,
+        pending: Long,
+    ): String =
+        "v4 sync failed elapsedMs=$elapsedMs status=${statusCode ?: "none"} " +
+            "retryable=$retryable pending=$pending category=${classifyV4Failure(statusCode, retryable)}"
 }
 
 private fun reportCoreSyncFailure(stage: String, failure: Throwable) {
     val failureType = failure::class.simpleName ?: "UnknownFailure"
     coreSyncLogger.w { "$stage sync failed: $failureType" }
-    if (BuildConfig.DEBUG) {
-        // Debug-only and deliberately payload-free: enough to identify a failing stage without
-        // persisting credentials, endpoints, entity IDs, or server responses.
-        runCatching { Log.w("EpigraphCoreSync", "$stage sync failed: $failureType") }
-    }
+    CoreSyncReleaseLog.warn(CoreSyncReleaseLog.formatStageFailure(stage, failureType))
 }
 
 private fun CoreHttpResult.Failure.toReplicaOutcome(): CoreReplicaSyncOutcome =
@@ -1132,13 +1172,14 @@ class CoreOutboxSyncRunner(
                 val ended = System.nanoTime()
                 // Counts and timings only, in release builds too: the log a real phone and an
                 // installed desktop leave is the one that explains a slow or stuck sync.
-                coreSyncLogger.i {
+                val batchSummary =
                     "drain batch: core=${core.acknowledged}/${core.claimed} blocked=${core.blocked} " +
                         "retry=${core.retryScheduled} in ${(coreEnded - coreStarted) / 1_000_000}ms, " +
                         "suw=${suwayomi.succeeded}+${suwayomi.blocked}b+${suwayomi.retryScheduled}r " +
                         "in ${(ended - coreEnded) / 1_000_000}ms, assets ${(coreStarted - started) / 1_000_000}ms, " +
                         "total ${(ended - started) / 1_000_000}ms"
-                }
+                coreSyncLogger.i { batchSummary }
+                CoreSyncReleaseLog.info(batchSummary)
                 CoreDrainBatch(assets = assets, suwayomi = suwayomi, core = core)
             }
             val drainAll: suspend () -> CoreDrainLoopResult = {
