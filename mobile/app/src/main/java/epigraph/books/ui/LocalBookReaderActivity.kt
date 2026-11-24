@@ -597,6 +597,13 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         // The HUD accent follows the app theme, like the comic and novel reader.
         setTheme(getPrefTheme(commonReaderPreferences).styleRes)
         super.onCreate(savedInstanceState)
+        if (savedInstanceState != null) {
+            // Readium's dummy EpubNavigatorFragment throws RestorationNotSupportedException if it
+            // reaches onResume, so remove any restored instance synchronously before onResume.
+            supportFragmentManager.findFragmentByTag(EPUB_NAVIGATOR_TAG)?.let { restored ->
+                supportFragmentManager.beginTransaction().remove(restored).commitNow()
+            }
+        }
         bookMenuVisible = savedInstanceState?.getBoolean(KEY_BOOK_MENU_VISIBLE) ?: false
         // Use AndroidX's dispatcher so the reader also receives predictive-back gestures on
         // Android 16+. Settings must close first; a second back exits the activity as before.
@@ -632,12 +639,16 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             finishWithError(getString(MR.strings.book_reader_unavailable))
             return
         }
-        requestedLocator = intent.getStringExtra(EXTRA_INITIAL_LOCATOR_JSON)
-            ?.takeIf(String::isNotBlank)
-            ?.let { encoded ->
-                runCatching { READER_LOCATOR_JSON.decodeFromString(ReaderLocator.serializer(), encoded) }
-                    .getOrNull()
-            }
+        requestedLocator = if (savedInstanceState != null) {
+            null
+        } else {
+            intent.getStringExtra(EXTRA_INITIAL_LOCATOR_JSON)
+                ?.takeIf(String::isNotBlank)
+                ?.let { encoded ->
+                    runCatching { READER_LOCATOR_JSON.decodeFromString(ReaderLocator.serializer(), encoded) }
+                        .getOrNull()
+                }
+        }
         lifecycleScope.launch {
             val loaded = withContext(Dispatchers.IO) { repository.find(bookId) }
             if (loaded == null) {
