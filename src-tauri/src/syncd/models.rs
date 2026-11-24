@@ -334,6 +334,8 @@ pub struct CapabilitiesResponse {
     /// `/v1/changes?heldVersions=a-b,c` leaves out the versions the client says it already applied,
     /// so a device does not download its own first-sync upload back.
     pub supports_held_versions_v1: bool,
+    /// `/v4/*` unified snapshot + bulk + delta + SSE sync protocol is available on this Core.
+    pub supports_sync_v4: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,
@@ -3524,8 +3526,14 @@ mod tests {
 
         assert_eq!(clock.device_generation_id, "device-1");
         assert!(patch.in_library);
-        assert!(serde_json::to_value(&clock).unwrap().get("futureField").is_none());
-        assert!(serde_json::to_value(&patch).unwrap().get("futureField").is_none());
+        assert!(serde_json::to_value(&clock)
+            .unwrap()
+            .get("futureField")
+            .is_none());
+        assert!(serde_json::to_value(&patch)
+            .unwrap()
+            .get("futureField")
+            .is_none());
     }
 
     #[test]

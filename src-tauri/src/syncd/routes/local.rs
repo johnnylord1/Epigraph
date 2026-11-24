@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use axum::body::Bytes;
-use axum::extract::{ConnectInfo, Path, Query, State};
+use axum::extract::{ConnectInfo, Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use serde::Deserialize;
@@ -70,6 +70,7 @@ pub async fn post_local_authority_token(
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LocalProgressMirrorRequest {
+    pub profile_id: Option<String>,
     pub manga_ids: Vec<i64>,
     pub chapter_ids: Vec<i64>,
     /// The desktop changed the library, its categories or extensions, not only reading progress.
@@ -79,7 +80,9 @@ pub struct LocalProgressMirrorRequest {
 /// Lets the desktop shell ask for an immediate Suwayomi progress mirror tick after it changed
 /// chapter read, page or bookmark state, so paired devices do not wait for the periodic tick.
 pub async fn post_local_progress_mirror(
+    State(state): State<SharedAppState>,
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    v4_runtime: Option<Extension<std::sync::Arc<crate::syncd::v4::V4Runtime>>>,
     Json(request): Json<LocalProgressMirrorRequest>,
 ) -> Result<StatusCode, AppError> {
     if !remote_addr.ip().is_loopback() {
@@ -100,6 +103,24 @@ pub async fn post_local_progress_mirror(
         suwayomi_progress_mirror::request_catalog_refresh();
     }
     suwayomi_progress_mirror::request_immediate_mirror(&request.manga_ids, &request.chapter_ids);
+    if let Some(Extension(v4_runtime)) = v4_runtime {
+        if !request.chapter_ids.is_empty() || !request.manga_ids.is_empty() {
+            tokio::spawn(async move {
+                let profile = request.profile_id.as_deref().unwrap_or("main");
+                if let Err(error) = crate::syncd::v4::suwayomi::capture_local_edits(
+                    &state,
+                    &v4_runtime,
+                    profile,
+                    request.manga_ids,
+                    request.chapter_ids,
+                )
+                .await
+                {
+                    tracing::debug!(error = %error, "V4 desktop comic edit capture deferred");
+                }
+            });
+        }
+    }
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -182,8 +203,9 @@ pub async fn put_local_tracker_credential(
         .await
         .map_err(local_vault_error)?;
     if current.credentials.get(&tracker_key).is_some_and(|stored| {
-        !stored.deleted && tracker_credentials::anilist_access_token(stored).as_deref()
-            == Some(access_token.as_str())
+        !stored.deleted
+            && tracker_credentials::anilist_access_token(stored).as_deref()
+                == Some(access_token.as_str())
     }) {
         return Ok(StatusCode::NO_CONTENT);
     }
@@ -201,7 +223,13 @@ pub async fn put_local_tracker_credential(
     let values = tracker_credentials::mihon_anilist_credential(viewer_id, &access_token, now_ms);
     let outcome = tracker_credentials::update_vault(&state.config.data_dir, |vault| {
         let base_revision = vault.current_revision(&tracker_key);
-        let view = vault.put(&tracker_key, base_revision, values, DESKTOP_DEVICE_ID, now_ms)?;
+        let view = vault.put(
+            &tracker_key,
+            base_revision,
+            values,
+            DESKTOP_DEVICE_ID,
+            now_ms,
+        )?;
         // Suwayomi on this desktop already holds this login; nothing to apply back.
         vault.mark_desktop_applied(&tracker_key, view.revision);
         Ok((view, true))
@@ -314,7 +342,8 @@ pub async fn post_local_myanimelist_login_complete(
         .await
         .map_err(|error| match error {
             myanimelist_oauth::LoginError::UnknownLogin => AppError::BadRequest(
-                "This MyAnimeList login expired or was not started here; start it again.".to_string(),
+                "This MyAnimeList login expired or was not started here; start it again."
+                    .to_string(),
             ),
             myanimelist_oauth::LoginError::Rejected => {
                 tracing::warn!("MyAnimeList did not accept a desktop login");
@@ -324,7 +353,13 @@ pub async fn post_local_myanimelist_login_complete(
     let tracker_key = myanimelist_oauth::TRACKER_KEY;
     let outcome = tracker_credentials::update_vault(&state.config.data_dir, |vault| {
         let base_revision = vault.current_revision(tracker_key);
-        let view = vault.put(tracker_key, base_revision, values, DESKTOP_DEVICE_ID, now_ms)?;
+        let view = vault.put(
+            tracker_key,
+            base_revision,
+            values,
+            DESKTOP_DEVICE_ID,
+            now_ms,
+        )?;
         Ok((view, true))
     })
     .await
@@ -430,11 +465,11 @@ mod tests {
         SyncdDiscoveryDescriptorProvider, SyncdDiscoveryProviderManager,
     };
     use crate::syncd::models::AppState;
+    use crate::syncd::test_dir::tempdir;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use serde_json::Value;
     use std::sync::Arc;
-    use crate::syncd::test_dir::tempdir;
     use tokio::sync::{broadcast, Mutex, RwLock};
     use tower::ServiceExt;
 

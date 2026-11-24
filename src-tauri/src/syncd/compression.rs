@@ -9,9 +9,7 @@ use std::io::{Read, Write};
 
 use axum::body::{to_bytes, Body};
 use axum::extract::Request;
-use axum::http::header::{
-    ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, VARY,
-};
+use axum::http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, VARY};
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -20,11 +18,19 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 
 /// Routes whose request and response bodies are whole JSON documents.
-const GZIP_PATHS: &[&str] = &["/v1/mutations", "/v1/changes", "/v1/snapshot"];
+const GZIP_PATHS: &[&str] = &[
+    "/v1/mutations",
+    "/v1/changes",
+    "/v1/snapshot",
+    "/v4/sync/bulk",
+    "/v4/deltas",
+    "/v4/changes",
+    "/v4/snapshot",
+];
 /// Compressed request bodies above this are refused before they are inflated.
-const MAX_COMPRESSED_REQUEST_BYTES: usize = 4 * 1024 * 1024;
+const MAX_COMPRESSED_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 /// Inflated request bodies above this are refused; route extractors still apply their own limits.
-const MAX_INFLATED_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+const MAX_INFLATED_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 /// Smaller responses are not worth the gzip header and the CPU.
 const MIN_COMPRESSED_RESPONSE_BYTES: usize = 1024;
 /// Responses are buffered to compress them; anything larger passes through unchanged.
@@ -69,7 +75,10 @@ async fn inflate_request(request: Request) -> Result<Request, StatusCode> {
     let Some(encoding) = request.headers().get(CONTENT_ENCODING) else {
         return Ok(request);
     };
-    let encoding = encoding.to_str().map_err(|_| StatusCode::UNSUPPORTED_MEDIA_TYPE)?.trim();
+    let encoding = encoding
+        .to_str()
+        .map_err(|_| StatusCode::UNSUPPORTED_MEDIA_TYPE)?
+        .trim();
     if encoding.eq_ignore_ascii_case("identity") {
         return Ok(request);
     }
@@ -112,16 +121,15 @@ async fn compress_response(response: Response) -> Response {
         Ok(bytes) => bytes,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    parts.headers.append(VARY, HeaderValue::from_static("accept-encoding"));
+    parts
+        .headers
+        .append(VARY, HeaderValue::from_static("accept-encoding"));
     if bytes.len() < MIN_COMPRESSED_RESPONSE_BYTES {
         return Response::from_parts(parts, Body::from(bytes));
     }
     let compressed = tokio::task::spawn_blocking(move || {
         // Level 3 keeps most of the ratio of the default level at a fraction of its CPU.
-        let mut encoder = GzEncoder::new(
-            Vec::with_capacity(bytes.len() / 6),
-            Compression::new(3),
-        );
+        let mut encoder = GzEncoder::new(Vec::with_capacity(bytes.len() / 6), Compression::new(3));
         encoder.write_all(&bytes).and_then(|()| encoder.finish())
     })
     .await;

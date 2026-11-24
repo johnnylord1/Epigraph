@@ -212,7 +212,9 @@ pub async fn load_mutation_receipts(
             "SELECT client_mutation_id, mutation_hash, mutation_json, result_json \
              FROM mutation_receipts WHERE device_id = ",
         );
-        query.push_bind(device_id).push(" AND client_mutation_id IN (");
+        query
+            .push_bind(device_id)
+            .push(" AND client_mutation_id IN (");
         let mut ids = query.separated(", ");
         for id in chunk {
             ids.push_bind(*id);
@@ -222,7 +224,10 @@ pub async fn load_mutation_receipts(
             .build_query_as::<MutationReceiptRow>()
             .fetch_all(pool)
             .await?;
-        receipts.extend(rows.into_iter().map(|row| (row.client_mutation_id.clone(), row)));
+        receipts.extend(
+            rows.into_iter()
+                .map(|row| (row.client_mutation_id.clone(), row)),
+        );
     }
     Ok(receipts)
 }
@@ -445,14 +450,13 @@ pub(crate) async fn preserve_change_log_sequence(pool: &sqlx::SqlitePool) -> any
         .fetch_one(&mut *tx)
         .await?;
     let floor = published.max(max_row.unwrap_or(0));
-    let updated = sqlx::query(
-        "UPDATE sqlite_sequence SET seq = ? WHERE name = 'change_log' AND seq < ?",
-    )
-    .bind(floor)
-    .bind(floor)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+    let updated =
+        sqlx::query("UPDATE sqlite_sequence SET seq = ? WHERE name = 'change_log' AND seq < ?")
+            .bind(floor)
+            .bind(floor)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
     if updated == 0 {
         sqlx::query(
             r#"
@@ -1544,7 +1548,9 @@ pub async fn claim_pairing_session(
     platform: PairingPlatform,
     requested_scopes: Option<&[String]>,
 ) -> Result<PairingClaimOutcome, PairingClaimError> {
-    let mut tx = begin_write(pool).await.map_err(storage_pairing_claim_error)?;
+    let mut tx = begin_write(pool)
+        .await
+        .map_err(storage_pairing_claim_error)?;
     let now_ms = now_ms();
     let mut session = load_pairing_session_in_tx(&mut tx, session_id)
         .await
@@ -1977,7 +1983,10 @@ pub async fn list_paired_devices(
 
 /// Revokes every paired token of a device and its trust, so its next request is rejected and it
 /// must pair again. Local authority tokens are not paired devices and stay untouched.
-pub async fn revoke_paired_device(pool: &sqlx::SqlitePool, device_id: &str) -> anyhow::Result<bool> {
+pub async fn revoke_paired_device(
+    pool: &sqlx::SqlitePool,
+    device_id: &str,
+) -> anyhow::Result<bool> {
     let now_ms = now_ms();
     let mut tx = begin_write(pool).await?;
     let revoked = sqlx::query(
@@ -5191,14 +5200,20 @@ async fn enqueue_comic_history_projection_in_tx(
         }),
         (None, None) => {
             let local_server_id = local_server_id_in_tx(tx).await?;
-            let Some(manga_id) =
-                suwayomi_numeric_id_for_profile(&record.comic_id, local_server_id.as_deref(), profile_id, ":manga:")
-            else {
+            let Some(manga_id) = suwayomi_numeric_id_for_profile(
+                &record.comic_id,
+                local_server_id.as_deref(),
+                profile_id,
+                ":manga:",
+            ) else {
                 return Ok(());
             };
-            let Some(chapter_id) =
-                suwayomi_numeric_id_for_profile(&record.chapter_id, local_server_id.as_deref(), profile_id, ":chapter:")
-            else {
+            let Some(chapter_id) = suwayomi_numeric_id_for_profile(
+                &record.chapter_id,
+                local_server_id.as_deref(),
+                profile_id,
+                ":chapter:",
+            ) else {
                 return Ok(());
             };
             json!({ "mangaId": manga_id, "ids": [chapter_id] })
@@ -7229,8 +7244,8 @@ async fn delete_comic_sync_state_mutation_inner(
         entity_id,
         &session.device_id,
         applied_lamport,
-        server_version,
         applied_at_ms,
+        server_version,
         retention_window,
         "client_delete",
     )
@@ -7557,8 +7572,8 @@ pub async fn delete_tracking_record_mutation(
         entity_id,
         &session.device_id,
         applied_lamport,
-        server_version,
         applied_at_ms,
+        server_version,
         retention_window,
         "client_delete",
     )
@@ -7730,8 +7745,7 @@ async fn push_tracking_snapshot_entities_in_tx(
 pub(crate) const COMIC_CATEGORY_ASSIGNMENT_ID_PREFIX: &str = "comic-category-assignment:";
 /// Outbox operation for an assignment delete whose comic/category pair is only known by
 /// its hashed id; the projection worker resolves the pair against Suwayomi.
-pub(crate) const REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION: &str =
-    "RemoveComicCategoryAssignment";
+pub(crate) const REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION: &str = "RemoveComicCategoryAssignment";
 /// Projection variable carrying a portable comic's title hint; removed before Suwayomi sees it.
 pub(crate) const PORTABLE_TITLE_HINT_FIELD: &str = "portableTitleHint";
 
@@ -7765,7 +7779,9 @@ async fn portable_comic_entry_delete_record_in_tx(
     else {
         return Ok(None);
     };
-    Ok(Some(json!({ "comicId": entity_id, "portableWorkRef": work })))
+    Ok(Some(
+        json!({ "comicId": entity_id, "portableWorkRef": work }),
+    ))
 }
 
 fn comic_delete_projection_record_from_id(entity_type: &str, entity_id: &str) -> Option<Value> {
@@ -8114,7 +8130,11 @@ pub async fn reproject_unlisted_comic_chapter_states(
     work: &PortableWorkRefV3,
     listed: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<usize> {
-    let PortableWorkRefV3::Comic { manga_key, .. } = work else {
+    let PortableWorkRefV3::Comic {
+        source_id,
+        manga_key,
+    } = work
+    else {
         return Ok(0);
     };
     // A source that lists nothing has replaced nothing yet.
@@ -8125,14 +8145,20 @@ pub async fn reproject_unlisted_comic_chapter_states(
     let rows: Vec<(String, String, i64)> = sqlx::query_as(
         r#"
         SELECT entity_id, record_json, record_server_version FROM comic_sync_state
-        WHERE scope_id = ? AND entity_type = 'comic.chapter_state' AND instr(record_json, ?) > 0
+        WHERE scope_id = ? AND entity_type = 'comic.chapter_state'
+          AND json_extract(record_json, '$.portableChapterRef.work.sourceId') = ?
+          AND json_extract(record_json, '$.portableChapterRef.work.mangaKey') = ?
         "#,
     )
     .bind(&scope_id)
-    .bind(serde_json::to_string(manga_key)?)
+    .bind(source_id)
+    .bind(manga_key)
     .fetch_all(pool)
     .await
     .context("failed to load stored chapter progress to project again")?;
+    if rows.is_empty() {
+        return Ok(0);
+    }
     let now = now_ms();
     let mut tx = begin_write(pool).await?;
     let mut queued = 0;
@@ -10433,7 +10459,8 @@ pub async fn upsert_portable_work_binding(
     )
     .await?;
     if matches!(state, PortableResolutionStateV3::Bound) {
-        requeue_projections_for_bound_works(&mut tx, profile_id, std::iter::once(reference)).await?;
+        requeue_projections_for_bound_works(&mut tx, profile_id, std::iter::once(reference))
+            .await?;
     }
     tx.commit().await?;
     // Unresolved works carry the extensions a device is asked to install.
@@ -10480,8 +10507,12 @@ pub async fn upsert_bound_portable_works(
         )
         .await?;
     }
-    requeue_projections_for_bound_works(&mut tx, profile_id, works.iter().map(|work| work.reference))
-        .await?;
+    requeue_projections_for_bound_works(
+        &mut tx,
+        profile_id,
+        works.iter().map(|work| work.reference),
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -10604,8 +10635,12 @@ async fn requeue_projections_for_bound_works<'a>(
         })
         .collect::<Vec<_>>();
     if !comics.is_empty() {
-        requeue_unfound_comic_projections(&mut *conn, profile_id, &Value::Array(comics).to_string())
-            .await?;
+        requeue_unfound_comic_projections(
+            &mut *conn,
+            profile_id,
+            &Value::Array(comics).to_string(),
+        )
+        .await?;
     }
     requeue_blocked_portable_projections(conn, profile_id).await
 }
@@ -10818,8 +10853,11 @@ pub async fn upsert_bound_portable_chapters(
         };
         if chapter.reference.validate().is_err()
             || canonical_portable_work_id(work) != chapter.portable_work_id
-            || validate_portable_persistence_input(&chapter.local_reference, "local chapter reference")
-                .is_err()
+            || validate_portable_persistence_input(
+                &chapter.local_reference,
+                "local chapter reference",
+            )
+            .is_err()
         {
             continue;
         }
@@ -10843,7 +10881,9 @@ pub async fn upsert_bound_portable_chapters(
         .bind(chapter.portable_work_id)
         .bind(chapter_key)
         .bind(&chapter.local_reference)
-        .bind(portable_resolution_state_wire(PortableResolutionStateV3::Bound))
+        .bind(portable_resolution_state_wire(
+            PortableResolutionStateV3::Bound,
+        ))
         .bind(updated_at_ms)
         .execute(&mut *tx)
         .await?;
@@ -11755,7 +11795,11 @@ mod tests {
         let day = 24 * 60 * 60 * 1000;
         // (device, last request, token inactivity expiry)
         for (device_id, last_seen, expires) in [
-            ("abandoned", now - STALE_PAIRED_DEVICE_RETENTION_MS - day, now - 60 * day),
+            (
+                "abandoned",
+                now - STALE_PAIRED_DEVICE_RETENTION_MS - day,
+                now - 60 * day,
+            ),
             ("idle", now - 40 * day, now - 10 * day),
             ("active", now - day, now + 29 * day),
         ] {
@@ -12284,8 +12328,14 @@ mod tests {
         for (lamport, at, name) in [(1, 100, "Lendo"), (10, 300, "B_Desk")] {
             assert!(matches!(
                 apply_book_category_mutation(
-                    &pool, &desktop, "books:global", "folder-1", &book(name), lamport,
-                    Some(&clock(at)), config.retention_window,
+                    &pool,
+                    &desktop,
+                    "books:global",
+                    "folder-1",
+                    &book(name),
+                    lamport,
+                    Some(&clock(at)),
+                    config.retention_window,
                 )
                 .await
                 .unwrap(),
@@ -12293,21 +12343,37 @@ mod tests {
             ));
             assert!(matches!(
                 apply_novel_category_mutation(
-                    &pool, &desktop, "novels:profile:main", "folder-1", &novel(name), lamport,
-                    Some(&clock(at)), config.retention_window,
+                    &pool,
+                    &desktop,
+                    "novels:profile:main",
+                    "folder-1",
+                    &novel(name),
+                    lamport,
+                    Some(&clock(at)),
+                    config.retention_window,
                 )
                 .await
                 .unwrap(),
                 CausalMutationWriteOutcome::Applied(_)
             ));
         }
-        let CausalMutationWriteOutcome::Superseded { record, winning_clock, server_version, .. } =
-            apply_book_category_mutation(
-                &pool, &phone, "books:global", "folder-1", &book("B_Cel"), 11,
-                Some(&clock(200)), config.retention_window,
-            )
-            .await
-            .unwrap()
+        let CausalMutationWriteOutcome::Superseded {
+            record,
+            winning_clock,
+            server_version,
+            ..
+        } = apply_book_category_mutation(
+            &pool,
+            &phone,
+            "books:global",
+            "folder-1",
+            &book("B_Cel"),
+            11,
+            Some(&clock(200)),
+            config.retention_window,
+        )
+        .await
+        .unwrap()
         else {
             panic!("an older offline rename must not win");
         };
@@ -12324,8 +12390,14 @@ mod tests {
         assert_eq!(server_version, winning_version);
         assert!(matches!(
             apply_novel_category_mutation(
-                &pool, &phone, "novels:profile:main", "folder-1", &novel("B_Cel"), 11,
-                Some(&clock(200)), config.retention_window,
+                &pool,
+                &phone,
+                "novels:profile:main",
+                "folder-1",
+                &novel("B_Cel"),
+                11,
+                Some(&clock(200)),
+                config.retention_window,
             )
             .await
             .unwrap(),
@@ -12338,7 +12410,12 @@ mod tests {
         // time does not outrank an edit either.
         assert!(matches!(
             delete_book_category_mutation(
-                &pool, &phone, "books:global", "folder-1", 12, Some(&clock(250)),
+                &pool,
+                &phone,
+                "books:global",
+                "folder-1",
+                12,
+                Some(&clock(250)),
                 config.retention_window,
             )
             .await
@@ -12347,7 +12424,12 @@ mod tests {
         ));
         assert!(matches!(
             delete_novel_category_mutation(
-                &pool, &phone, "novels:profile:main", "folder-1", 12, Some(&clock(250)),
+                &pool,
+                &phone,
+                "novels:profile:main",
+                "folder-1",
+                12,
+                Some(&clock(250)),
                 config.retention_window,
             )
             .await
@@ -12356,7 +12438,13 @@ mod tests {
         ));
         assert!(matches!(
             apply_book_category_mutation(
-                &pool, &desktop, "books:global", "folder-1", &book("Lendo"), 13, None,
+                &pool,
+                &desktop,
+                "books:global",
+                "folder-1",
+                &book("Lendo"),
+                13,
+                None,
                 config.retention_window,
             )
             .await
@@ -12368,8 +12456,14 @@ mod tests {
         // A newer edit wins wherever it comes from, and a newer delete removes the folder.
         assert!(matches!(
             apply_book_category_mutation(
-                &pool, &phone, "books:global", "folder-1", &book("Depois"), 14,
-                Some(&clock(400)), config.retention_window,
+                &pool,
+                &phone,
+                "books:global",
+                "folder-1",
+                &book("Depois"),
+                14,
+                Some(&clock(400)),
+                config.retention_window,
             )
             .await
             .unwrap(),
@@ -12378,7 +12472,12 @@ mod tests {
         assert_eq!(book_name().await, "Depois");
         assert!(matches!(
             delete_novel_category_mutation(
-                &pool, &phone, "novels:profile:main", "folder-1", 15, Some(&clock(500)),
+                &pool,
+                &phone,
+                "novels:profile:main",
+                "folder-1",
+                15,
+                Some(&clock(500)),
                 config.retention_window,
             )
             .await
@@ -12800,7 +12899,10 @@ mod tests {
 
     #[tokio::test]
     async fn comic_delete_without_prior_record_projects_legacy_ids() {
-        for prefix in ["suwayomi:profile:main", "suwayomi:server:desktop-a:profile:main"] {
+        for prefix in [
+            "suwayomi:profile:main",
+            "suwayomi:server:desktop-a:profile:main",
+        ] {
             let temp = tempdir().unwrap();
             let config = SyncdConfig::for_test(temp.path().to_path_buf());
             let pool = connect(&config).await.unwrap();
@@ -12947,7 +13049,10 @@ mod tests {
         .unwrap();
         let variables: Value = serde_json::from_str(&variables_json).unwrap();
         assert_eq!(operation, "UpdateManga");
-        assert_eq!(variables["portableWorkRef"], serde_json::to_value(&work).unwrap());
+        assert_eq!(
+            variables["portableWorkRef"],
+            serde_json::to_value(&work).unwrap()
+        );
         assert_eq!(variables["inLibrary"], false);
     }
 
@@ -12969,7 +13074,10 @@ mod tests {
         };
         for (entity_type, entity_id) in [
             ("comic.entry", "suwayomi:profile:other:manga:42"),
-            ("comic.category", "suwayomi:server:desktop-a:profile:other:category:3"),
+            (
+                "comic.category",
+                "suwayomi:server:desktop-a:profile:other:category:3",
+            ),
             ("comic.category_assignment", "not-an-assignment-id"),
         ] {
             delete_comic_sync_state_mutation(

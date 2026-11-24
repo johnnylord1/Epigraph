@@ -110,6 +110,7 @@ pub async fn run() -> anyhow::Result<()> {
     spawn_gc_task(state.clone(), shutdown.subscribe());
     spawn_wal_checkpoint_task(state.clone(), shutdown.subscribe());
     super::suwayomi_projection::spawn_projection_task(state.clone(), shutdown.subscribe());
+    super::v4::suwayomi::spawn_projection(state.clone(), shutdown.subscribe());
     super::suwayomi_hydration::spawn_hydration_task(state.clone(), shutdown.subscribe());
     super::suwayomi_progress_mirror::spawn_progress_mirror_task(
         state.clone(),
@@ -158,7 +159,8 @@ pub async fn run() -> anyhow::Result<()> {
     };
 
     // Bind before starting anything capable of spawning a JVM.
-    let listener = super::listener::bind_core_listener(config.bind_addr).context("Core listener bind failed")?;
+    let listener = super::listener::bind_core_listener(config.bind_addr)
+        .context("Core listener bind failed")?;
     listener.set_nonblocking(true)?;
     if config.ownership_mode == SyncdOwnershipMode::PersistentAttached {
         super::suwayomi_process::start_headless_supervisor(shutdown.subscribe());
@@ -247,11 +249,15 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             put(tracker_credentials::put_tracker_credential)
                 .delete(tracker_credentials::delete_tracker_credential),
         )
-        .layer(Extension(shutdown))
+        .layer(Extension(shutdown.clone()))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_authenticated_session,
         ));
+
+    let v4_runtime = Arc::new(super::v4::V4Runtime::new());
+    let v4_router =
+        super::v4::build_v4_router(state.clone(), v4_runtime.clone()).layer(Extension(shutdown));
 
     let mut router = Router::new()
         .route("/healthz", get(health::get_health))
@@ -316,8 +322,7 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         )
         .route(
             "/v1/local/tracker-credentials/:tracker_key",
-            put(local::put_local_tracker_credential)
-                .delete(local::delete_local_tracker_credential),
+            put(local::put_local_tracker_credential).delete(local::delete_local_tracker_credential),
         )
         .route(
             "/v1/local/tracker-oauth/myanimelist/start",
@@ -329,8 +334,12 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         )
         .route("/v1/pairing/claim", post(pairing::post_pairing_claim))
         .merge(protected)
+        .merge(v4_router)
+        .layer(Extension(v4_runtime))
         .layer(middleware::from_fn(super::compression::gzip_sync_bodies))
-        .layer(middleware::map_response(super::middleware::stamp_server_time))
+        .layer(middleware::map_response(
+            super::middleware::stamp_server_time,
+        ))
         .with_state(state.clone());
 
     if std::env::var("EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES").as_deref() == Ok("1") {
@@ -339,6 +348,12 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
     }
 
     router
+}
+
+#[cfg(test)]
+pub fn build_router_for_tests(state: Arc<AppState>) -> Router {
+    let (shutdown, _rx) = ShutdownCoordinator::channel();
+    build_router(state, shutdown)
 }
 
 fn desired_extension_stores() -> Vec<String> {
@@ -367,8 +382,12 @@ fn spawn_gc_task(
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    if let Err(error) = db::prune_expired_rows(&state.pool, db::now_ms()).await {
+                    let now = db::now_ms();
+                    if let Err(error) = db::prune_expired_rows(&state.pool, now).await {
                         tracing::warn!(error = %error, "failed to prune expired syncd rows");
+                    }
+                    if let Err(error) = super::v4::db::prune_v4_expired(&state.pool, now).await {
+                        tracing::warn!(error = %error, "failed to prune expired syncd v4 rows");
                     }
                 }
                 changed = shutdown.changed() => {
@@ -560,12 +579,12 @@ mod tests {
         append_change_log_entry, connect, ensure_test_token, upsert_server_identity,
     };
     use crate::syncd::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER};
+    use crate::syncd::test_dir::tempdir;
     use axum::body::Body;
     use axum::http::{Method, Request, StatusCode};
     use http_body_util::BodyExt;
     use serde_json::Value;
     use sha2::{Digest, Sha256};
-    use crate::syncd::test_dir::tempdir;
     use tower::ServiceExt;
 
     fn token_hash(raw: &str) -> String {
@@ -638,7 +657,11 @@ mod tests {
             .method(method)
             .uri(uri)
             .header(CLIENT_VERSION_HEADER, "0.1.0")
-            .header(CLIENT_PROTOCOL_HEADER, "1");
+            .header(CLIENT_PROTOCOL_HEADER, "1")
+            .extension(axum::extract::ConnectInfo(SocketAddr::from((
+                [127, 0, 0, 1],
+                4777,
+            ))));
         if let Some(token) = token {
             builder = builder.header("authorization", format!("Bearer {token}"));
         }
@@ -721,7 +744,11 @@ mod tests {
             Some(serde_json::json!({ "pin": pin })),
         )
         .await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "an expired session no longer resolves");
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "an expired session no longer resolves"
+        );
     }
 
     async fn request_bytes(
@@ -1120,8 +1147,14 @@ mod tests {
         .unwrap();
         let app = build_test_router(state.clone());
 
-        let (status, _) =
-            request_json(&app, Method::DELETE, "/v1/session", Some("phone-token"), None).await;
+        let (status, _) = request_json(
+            &app,
+            Method::DELETE,
+            "/v1/session",
+            Some("phone-token"),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
 
         let (status, _) =
@@ -1130,9 +1163,14 @@ mod tests {
         let (status, _) =
             request_json(&app, Method::GET, "/v1/session", Some("other-token"), None).await;
         assert_eq!(status, StatusCode::OK);
-        let listed = crate::syncd::db::list_paired_devices(&state.pool).await.unwrap();
+        let listed = crate::syncd::db::list_paired_devices(&state.pool)
+            .await
+            .unwrap();
         assert_eq!(
-            listed.iter().map(|device| device.device_id.as_str()).collect::<Vec<_>>(),
+            listed
+                .iter()
+                .map(|device| device.device_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["device-b"]
         );
     }
@@ -1161,6 +1199,122 @@ mod tests {
         .await;
 
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn novel_manifest_revision_is_scoped_and_tracks_snapshot_changes() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "novel-manifest-phone",
+            "main",
+            &token_hash("novel-manifest-token"),
+            &["novels:profile:main"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state.clone());
+        let path = "/v1/portable/novel-manifest?scopeId=novels%3Aprofile%3Amain&pageSize=1";
+        let fetch = |path: String, tag: Option<String>| {
+            let app = app.clone();
+            async move {
+                let mut request = Request::get(path)
+                    .header(CLIENT_VERSION_HEADER, "0.1.0")
+                    .header(CLIENT_PROTOCOL_HEADER, "1")
+                    .header("authorization", "Bearer novel-manifest-token");
+                if let Some(tag) = tag {
+                    request = request.header("if-none-match", tag);
+                }
+                app.oneshot(request.body(Body::empty()).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let empty = fetch(path.into(), None).await;
+        assert_eq!(empty.status(), StatusCode::OK);
+        let empty_tag = empty.headers()["etag"].to_str().unwrap().to_owned();
+        let unchanged = fetch(path.into(), Some(empty_tag.clone())).await;
+        assert_eq!(unchanged.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(unchanged.headers()["etag"].to_str().unwrap(), empty_tag);
+        assert!(unchanged
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .is_empty());
+        let unauthorized = fetch(
+            "/v1/portable/novel-manifest?scopeId=novels%3Aprofile%3Atest".into(),
+            Some(empty_tag.clone()),
+        )
+        .await;
+        assert_eq!(unauthorized.status(), StatusCode::FORBIDDEN);
+
+        for (id, scope) in [("a", "main"), ("b", "main"), ("separate", "test")] {
+            sqlx::query(
+                r#"INSERT INTO novel_library_entries (
+                    scope_id, novel_id, identity_key, title, external_url, source_json,
+                    added_at_ms, entry_updated_at_ms, record_updated_at_ms,
+                    record_updated_by_device_id, record_lamport, record_server_version
+                ) VALUES (?, ?, ?, ?, ?, '{"pluginId":"test.plugin"}', 1, 1, 1, 'test', 1, 1)"#,
+            )
+            .bind(format!("novels:profile:{scope}"))
+            .bind(id)
+            .bind(id)
+            .bind(id)
+            .bind(format!("/novel/{id}"))
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        }
+
+        let first = fetch(path.into(), Some(empty_tag)).await;
+        assert_eq!(first.status(), StatusCode::OK);
+        let first_tag = first.headers()["etag"].to_str().unwrap().to_owned();
+        let first_body: Value =
+            serde_json::from_slice(&first.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        assert_eq!(first_body["page"]["totalCount"], 2);
+        sqlx::query(
+            "UPDATE novel_library_entries SET title = 'unrelated' WHERE novel_id = 'separate'",
+        )
+        .execute(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            fetch(path.into(), Some(first_tag.clone())).await.status(),
+            StatusCode::NOT_MODIFIED,
+        );
+
+        // The versions are deliberately unchanged to exercise the database invalidation.
+        sqlx::query("UPDATE novel_library_entries SET title = 'changed' WHERE novel_id = 'a'")
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM novel_library_entries WHERE novel_id = 'b'")
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        let continuation = format!(
+            "{path}&offset=1&snapshotId={}&snapshotFingerprint={}",
+            first_body["snapshotId"].as_str().unwrap(),
+            first_body["snapshotFingerprint"].as_str().unwrap(),
+        );
+        let second = fetch(continuation, Some(first_tag.clone())).await;
+        assert_eq!(second.status(), StatusCode::OK);
+        assert_eq!(second.headers()["etag"].to_str().unwrap(), first_tag);
+        let second_body: Value =
+            serde_json::from_slice(&second.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(second_body["page"]["totalCount"], 2);
+
+        let fresh = fetch(path.into(), Some(first_tag.clone())).await;
+        assert_eq!(fresh.status(), StatusCode::OK);
+        assert_ne!(fresh.headers()["etag"].to_str().unwrap(), first_tag);
+        let fresh_body: Value =
+            serde_json::from_slice(&fresh.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        assert_eq!(fresh_body["page"]["totalCount"], 1);
+        assert_eq!(fresh_body["works"][0]["titleHint"], "changed");
     }
 
     #[tokio::test]
@@ -2071,10 +2225,13 @@ mod tests {
         let mut pages = 0;
         loop {
             let uri = match &cursor {
-                Some(cursor) => format!("/v1/snapshot?scopeId=books%3Aglobal&pageSize=2&cursor={cursor}"),
+                Some(cursor) => {
+                    format!("/v1/snapshot?scopeId=books%3Aglobal&pageSize=2&cursor={cursor}")
+                }
                 None => "/v1/snapshot?scopeId=books%3Aglobal&pageSize=2".to_string(),
             };
-            let (status, page) = request_json(&app, Method::GET, &uri, Some("secret-token"), None).await;
+            let (status, page) =
+                request_json(&app, Method::GET, &uri, Some("secret-token"), None).await;
             assert_eq!(status, StatusCode::OK, "{page}");
             pages += 1;
             let entities = page["entities"].as_array().unwrap();
@@ -2197,7 +2354,10 @@ mod tests {
         .await;
         assert_eq!(held_status, StatusCode::OK);
         assert!(held["changes"].as_array().unwrap().is_empty());
-        assert_eq!(held["currentServerVersion"], changes["currentServerVersion"]);
+        assert_eq!(
+            held["currentServerVersion"],
+            changes["currentServerVersion"]
+        );
 
         let (bad_status, _) = request_json(
             &app,
@@ -2527,23 +2687,27 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         // A device that only listens sends no other requests; its window is about to lapse.
         let nearly_expired = crate::syncd::db::now_ms() + 60_000;
-        sqlx::query("UPDATE paired_device_tokens SET inactivity_expires_at_ms = ? WHERE token_hash = ?")
-            .bind(nearly_expired)
-            .bind(token_hash("secret-token"))
-            .execute(&state.pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "UPDATE paired_device_tokens SET inactivity_expires_at_ms = ? WHERE token_hash = ?",
+        )
+        .bind(nearly_expired)
+        .bind(token_hash("secret-token"))
+        .execute(&state.pool)
+        .await
+        .unwrap();
 
         let body = tokio::spawn(response.into_body().collect());
         let extended = nearly_expired + state.config.token_inactivity_window.as_millis() as i64 / 2;
         // Wait for a ping to extend the window rather than a fixed delay a busy machine can outlast.
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
         let token = loop {
-            let token = crate::syncd::db::load_token_state(&state.pool, &token_hash("secret-token"))
-                .await
-                .unwrap()
-                .expect("token");
-            if token.inactivity_expires_at_ms > extended || tokio::time::Instant::now() >= deadline {
+            let token =
+                crate::syncd::db::load_token_state(&state.pool, &token_hash("secret-token"))
+                    .await
+                    .unwrap()
+                    .expect("token");
+            if token.inactivity_expires_at_ms > extended || tokio::time::Instant::now() >= deadline
+            {
                 break token;
             }
             tokio::time::sleep(state.config.ping_interval).await;
@@ -2554,7 +2718,10 @@ mod tests {
         );
         // Later pings keep the stream open too.
         tokio::time::sleep(state.config.ping_interval * 4).await;
-        assert!(!body.is_finished(), "an active device must keep its live stream");
+        assert!(
+            !body.is_finished(),
+            "an active device must keep its live stream"
+        );
         body.abort();
     }
 
@@ -2691,7 +2858,10 @@ mod tests {
             let body = response.into_body().collect().await.unwrap().to_bytes();
             let payload: Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(payload["error"]["code"], "REPLAY_WINDOW_EXPIRED", "{uri}");
-            assert_eq!(payload["error"]["requiredAction"], "full_bootstrap", "{uri}");
+            assert_eq!(
+                payload["error"]["requiredAction"], "full_bootstrap",
+                "{uri}"
+            );
             assert_eq!(payload["error"]["currentServerVersion"], 10, "{uri}");
         }
     }
@@ -2771,7 +2941,8 @@ mod tests {
         let app = build_test_router(state);
         let token_json = r#"{"access_token":"tr4ck3r-secret","token_type":"Bearer"}"#;
 
-        let (status, _) = request_json(&app, Method::GET, "/v1/tracker-credentials", None, None).await;
+        let (status, _) =
+            request_json(&app, Method::GET, "/v1/tracker-credentials", None, None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
 
         let (status, payload) = request_json(

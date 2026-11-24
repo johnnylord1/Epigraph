@@ -258,14 +258,19 @@ pub fn spawn_projection_task(
             }
             match rearm_runtime_retries(&state.pool, super::db::now_ms(), None).await {
                 Ok(0) => {}
-                Ok(count) => tracing::info!(count, "rearmed Suwayomi projections waiting on the runtime"),
+                Ok(count) => {
+                    tracing::info!(count, "rearmed Suwayomi projections waiting on the runtime")
+                }
                 Err(error) => {
                     tracing::warn!(error = %error, "failed to rearm Suwayomi projections")
                 }
             }
             match rearm_missing_chapter_retries(&state.pool, super::db::now_ms()).await {
                 Ok(0) => {}
-                Ok(count) => tracing::info!(count, "rearmed Suwayomi progress waiting on missing chapters"),
+                Ok(count) => tracing::info!(
+                    count,
+                    "rearmed Suwayomi progress waiting on missing chapters"
+                ),
                 Err(error) => {
                     tracing::warn!(error = %error, "failed to rearm Suwayomi progress")
                 }
@@ -340,17 +345,24 @@ pub fn spawn_projection_task(
                         }
                     }
                     let started = Instant::now();
+                    let mut deferred_to_import = false;
                     let drained = loop {
-                        match drain_ready(&state, library_only).await {
-                            Ok(claimed) if claimed == MAX_BATCH && started.elapsed() < DRAIN_BUDGET => {}
-                            Ok(claimed) => break claimed < MAX_BATCH,
+                        match drain_ready_with_import(&state, library_only, Some(&import)).await {
+                            Ok(pass) if pass.deferred_to_import => {
+                                deferred_to_import = true;
+                                break false;
+                            }
+                            Ok(pass)
+                                if pass.claimed == MAX_BATCH
+                                    && started.elapsed() < DRAIN_BUDGET => {}
+                            Ok(pass) => break pass.claimed < MAX_BATCH,
                             Err(error) => {
                                 tracing::warn!(error = %error, "failed to drain canonical Suwayomi projections");
                                 break true;
                             }
                         }
                     };
-                    if library_only {
+                    if deferred_to_import || library_only {
                         catalog_notice.announce_if_due(false);
                         ticker.reset_immediately();
                         continue;
@@ -381,7 +393,11 @@ async fn rearm_returned_runtimes(state: &SharedAppState, watch: &mut RuntimeRetu
         let _writer_guard = state.mutation_gate.lock().await;
         match rearm_runtime_retries(&state.pool, super::db::now_ms(), Some(&profile_id)).await {
             Ok(0) => {}
-            Ok(count) => tracing::info!(count, profile = profile_id, "rearmed Suwayomi projections after the runtime came back"),
+            Ok(count) => tracing::info!(
+                count,
+                profile = profile_id,
+                "rearmed Suwayomi projections after the runtime came back"
+            ),
             Err(error) => tracing::warn!(error = %error, "failed to rearm Suwayomi projections"),
         }
     }
@@ -408,7 +424,10 @@ async fn runtime_answers(state: &SharedAppState, profile_id: &str) -> bool {
 }
 
 /// Profiles with projections backing off because their runtime was unreachable.
-async fn runtime_waiting_profiles(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Vec<String>> {
+async fn runtime_waiting_profiles(
+    pool: &sqlx::SqlitePool,
+    now: i64,
+) -> anyhow::Result<Vec<String>> {
     sqlx::query_scalar(
         r#"
         SELECT DISTINCT profile_id FROM suwayomi_projection_outbox
@@ -677,9 +696,40 @@ impl IngestYield {
     }
 }
 
+/// Whether the projection queue currently has work in flight or due now (as opposed to rows
+/// parked in backoff or blocked). Background hydration yields while this is true so it does not
+/// contend with a first sync's bulk writes or replace stand-in chapters mid-projection.
+pub(crate) async fn has_active_work(pool: &sqlx::SqlitePool) -> bool {
+    let now = super::db::now_ms();
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM suwayomi_projection_outbox
+            WHERE (status = 'in_flight' AND lease_until_ms > ?)
+               OR (status IN ('pending', 'retry') AND next_attempt_at_ms <= ?)
+        )
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+        != 0
+}
+
+struct DrainPass {
+    claimed: usize,
+    deferred_to_import: bool,
+}
+
 /// Applies up to `MAX_BATCH` ready projections (each with the rows grouped behind it) and returns
 /// how many it claimed, so a full batch tells the caller more are waiting.
-async fn drain_ready(state: &SharedAppState, library_only: bool) -> anyhow::Result<usize> {
+async fn drain_ready_with_import(
+    state: &SharedAppState,
+    library_only: bool,
+    import: Option<&ImportWatch>,
+) -> anyhow::Result<DrainPass> {
     let mut claimed = 0;
     for _ in 0..MAX_BATCH {
         let Some(row) = claim_next(state, library_only).await? else {
@@ -698,16 +748,34 @@ async fn drain_ready(state: &SharedAppState, library_only: bool) -> anyhow::Resu
                 let mut rows = Vec::with_capacity(companions.len() + 1);
                 rows.push(row);
                 rows.extend(companions);
-                apply_group(state, rows, &change).await
+                apply_group_with_import(state, rows, &change, import).await
             }
             _ => {
-                let outcome = apply_projection(state, &row).await;
+                let outcome = apply_projection_with_import(
+                    state,
+                    &row,
+                    &mut ChapterLookup::default(),
+                    import,
+                )
+                .await;
                 vec![(row, outcome)]
             }
         };
+        let deferred = outcomes
+            .iter()
+            .any(|(_, outcome)| matches!(outcome, ProjectionOutcome::DeferToImport));
         settle(state, &outcomes).await?;
+        if deferred {
+            return Ok(DrainPass {
+                claimed,
+                deferred_to_import: true,
+            });
+        }
     }
-    Ok(claimed)
+    Ok(DrainPass {
+        claimed,
+        deferred_to_import: false,
+    })
 }
 
 /// Stores the outcomes of one group in one write: applied rows leave the outbox, the rest are
@@ -764,6 +832,20 @@ async fn settle(
                 .execute(&mut *tx)
                 .await?;
             }
+            ProjectionOutcome::DeferToImport => {
+                sqlx::query(
+                    r#"
+                    UPDATE suwayomi_projection_outbox
+                    SET status = 'pending', attempt_count = MAX(0, attempt_count - 1),
+                        lease_until_ms = NULL, last_error = NULL, updated_at_ms = ?
+                    WHERE operation_id = ?
+                    "#,
+                )
+                .bind(now)
+                .bind(&row.operation_id)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
     }
     tx.commit().await?;
@@ -786,7 +868,11 @@ async fn claim_next(
     library_only: bool,
 ) -> anyhow::Result<Option<ProjectionRow>> {
     let _writer_guard = state.mutation_gate.lock().await;
-    let kinds: &[bool] = if library_only { &[false] } else { &[false, true] };
+    let kinds: &[bool] = if library_only {
+        &[false]
+    } else {
+        &[false, true]
+    };
     claim_next_of(&state.pool, super::db::now_ms(), kinds).await
 }
 
@@ -895,8 +981,12 @@ fn group_change(operation_name: &str, variables: &Value) -> Option<Value> {
             Some(json!({ "addTo": add_to, "removeFrom": remove_from }))
         }
         "UpdateChaptersProgress" => {
-            variables.get("portableChapterRef").filter(|value| !value.is_null())?;
-            let work = variables.get("portableWorkRef").filter(|value| !value.is_null())?;
+            variables
+                .get("portableChapterRef")
+                .filter(|value| !value.is_null())?;
+            let work = variables
+                .get("portableWorkRef")
+                .filter(|value| !value.is_null())?;
             Some(json!({ "portableWorkRef": work }))
         }
         _ => None,
@@ -1015,10 +1105,11 @@ async fn claim_group_at(
 /// Applies rows that make the same change with one bulk mutation. Each row resolves its work as
 /// it would alone; rows that cannot join (a failed resolution, the same work twice) and every row
 /// of a bulk mutation Suwayomi rejects are applied one by one instead.
-async fn apply_group(
+async fn apply_group_with_import(
     state: &SharedAppState,
     rows: Vec<ProjectionRow>,
     change: &Value,
+    import: Option<&ImportWatch>,
 ) -> Vec<(ProjectionRow, ProjectionOutcome)> {
     let mut outcomes = Vec::with_capacity(rows.len());
     let mut lookup = ChapterLookup::default();
@@ -1034,14 +1125,21 @@ async fn apply_group(
             outcomes.push((row, ProjectionOutcome::Blocked("invalid_variables")));
             continue;
         };
-        let variables =
-            match resolve_portable_projection_identity(state, &row, variables, &mut lookup).await {
-                Ok(variables) => variables,
-                Err(outcome) => {
-                    outcomes.push((row, outcome));
-                    continue;
-                }
-            };
+        let variables = match resolve_portable_projection_identity_with_import(
+            state,
+            &row,
+            variables,
+            &mut lookup,
+            import,
+        )
+        .await
+        {
+            Ok(variables) => variables,
+            Err(outcome) => {
+                outcomes.push((row, outcome));
+                continue;
+            }
+        };
         let target = match row.operation_name.as_str() {
             "UpdateManga" => variables.get("id"),
             "UpdateChaptersProgress" => variables.pointer("/ids/0"),
@@ -1064,7 +1162,10 @@ async fn apply_group(
         let ids: Vec<i64> = members.iter().map(|(_, manga_id, _)| *manga_id).collect();
         let updates_library = members[0].0.operation_name == "UpdateManga";
         let (document, variables) = if updates_library {
-            (UPDATE_MANGAS_MUTATION, json!({ "ids": ids, "inLibrary": change["inLibrary"] }))
+            (
+                UPDATE_MANGAS_MUTATION,
+                json!({ "ids": ids, "inLibrary": change["inLibrary"] }),
+            )
         } else {
             (
                 UPDATE_MANGAS_CATEGORIES_MUTATION,
@@ -1100,7 +1201,7 @@ async fn apply_group(
         }
     }
     for row in alone {
-        let outcome = apply_projection_with(state, &row, &mut lookup).await;
+        let outcome = apply_projection_with_import(state, &row, &mut lookup, import).await;
         outcomes.push((row, outcome));
     }
     outcomes
@@ -1132,11 +1233,18 @@ async fn apply_chapter_members(
     }
     for (mut variables, members) in by_patch {
         if !writes_progress(&variables) {
-            outcomes.extend(members.into_iter().map(|(row, ..)| (row, ProjectionOutcome::Applied)));
+            outcomes.extend(
+                members
+                    .into_iter()
+                    .map(|(row, ..)| (row, ProjectionOutcome::Applied)),
+            );
             continue;
         }
         let profile_id = members[0].0.profile_id.clone();
-        variables["ids"] = members.iter().map(|(_, chapter_id, _)| *chapter_id).collect();
+        variables["ids"] = members
+            .iter()
+            .map(|(_, chapter_id, _)| *chapter_id)
+            .collect();
         match suwayomi_commands::execute_internal_command(
             state,
             &profile_id,
@@ -1176,7 +1284,9 @@ fn chapter_progress_patch(variables: &Value) -> Value {
 }
 
 fn sets_page(variables: &Value) -> bool {
-    variables.get("lastPageRead").is_some_and(|page| !page.is_null())
+    variables
+        .get("lastPageRead")
+        .is_some_and(|page| !page.is_null())
 }
 
 /// Whether a progress patch still changes anything once its unknown page is left out.
@@ -1231,7 +1341,11 @@ fn leave_out_unknown_page(variables: &mut Value, unknown: &BTreeSet<i64>) {
     let names_unknown = variables
         .get("ids")
         .and_then(Value::as_array)
-        .is_some_and(|ids| ids.iter().filter_map(Value::as_i64).any(|id| unknown.contains(&id)));
+        .is_some_and(|ids| {
+            ids.iter()
+                .filter_map(Value::as_i64)
+                .any(|id| unknown.contains(&id))
+        });
     if names_unknown {
         if let Some(object) = variables.as_object_mut() {
             object.remove("lastPageRead");
@@ -1242,7 +1356,10 @@ fn leave_out_unknown_page(variables: &mut Value, unknown: &BTreeSet<i64>) {
 /// Works the bulk mutation answered for, in the state it asked for.
 fn group_confirmed_ids(updates_library: bool, change: &Value, data: &Value) -> BTreeSet<i64> {
     let (payload, expected_membership) = if updates_library {
-        ("updateMangas", change.get("inLibrary").and_then(Value::as_bool))
+        (
+            "updateMangas",
+            change.get("inLibrary").and_then(Value::as_bool),
+        )
     } else {
         ("updateMangasCategories", None)
     };
@@ -1260,14 +1377,11 @@ fn group_confirmed_ids(updates_library: bool, change: &Value, data: &Value) -> B
         .collect()
 }
 
-async fn apply_projection(state: &SharedAppState, row: &ProjectionRow) -> ProjectionOutcome {
-    apply_projection_with(state, row, &mut ChapterLookup::default()).await
-}
-
-async fn apply_projection_with(
+async fn apply_projection_with_import(
     state: &SharedAppState,
     row: &ProjectionRow,
     lookup: &mut ChapterLookup,
+    import: Option<&ImportWatch>,
 ) -> ProjectionOutcome {
     let variables: Value = match serde_json::from_str(&row.variables_json) {
         Ok(value) => value,
@@ -1287,7 +1401,11 @@ async fn apply_projection_with(
         } else {
             (row.operation_name.as_str(), variables)
         };
-    let variables = match resolve_portable_projection_identity(state, row, variables, lookup).await {
+    let variables = match resolve_portable_projection_identity_with_import(
+        state, row, variables, lookup, import,
+    )
+    .await
+    {
         Ok(variables) => variables,
         Err(outcome) => return outcome,
     };
@@ -1369,7 +1487,9 @@ async fn apply_source_preference(
     .await;
     let offered = match read {
         Ok(data) => match data.get("source").filter(|source| !source.is_null()) {
-            Some(source) => source_preferences::parse_offered_preferences(source.get("preferences")),
+            Some(source) => {
+                source_preferences::parse_offered_preferences(source.get("preferences"))
+            }
             None => return ProjectionOutcome::Blocked(SOURCE_PREFERENCE_NOT_OFFERED),
         },
         Err(AppError::BadRequest(_) | AppError::Forbidden(_)) => {
@@ -1423,7 +1543,12 @@ fn is_non_retryable(error: &AppError) -> bool {
 }
 
 /// Tells the window which work a confirmed projection changed, so it reads only that one.
-fn note_landed(row: &ProjectionRow, operation: &str, variables: &Value, outcome: &ProjectionOutcome) {
+fn note_landed(
+    row: &ProjectionRow,
+    operation: &str,
+    variables: &Value,
+    outcome: &ProjectionOutcome,
+) {
     if matches!(outcome, ProjectionOutcome::Applied) {
         landed_works::record_projection(&row.profile_id, operation, variables);
     }
@@ -1579,11 +1704,12 @@ async fn rearm_runtime_retries(
     Ok(result.rows_affected())
 }
 
-async fn resolve_portable_projection_identity(
+async fn resolve_portable_projection_identity_with_import(
     state: &SharedAppState,
     row: &ProjectionRow,
     mut variables: Value,
     lookup: &mut ChapterLookup,
+    import: Option<&ImportWatch>,
 ) -> Result<Value, ProjectionOutcome> {
     let Some(object) = variables.as_object_mut() else {
         return Err(ProjectionOutcome::Blocked("invalid_variables"));
@@ -1617,6 +1743,19 @@ async fn resolve_portable_projection_identity(
         {
             Some(binding) => binding,
             None => {
+                // Works that arrived after `import_unseen_comics` ran on this tick must be
+                // bulk-restored by `import_unseen_comics` instead of searching every source live
+                // over the internet one by one.
+                if let Some(import) = import {
+                    if row.operation_name == "UpdateManga"
+                        && object.get("inLibrary").and_then(Value::as_bool) == Some(true)
+                        && !import
+                            .attempted
+                            .contains(&ImportWatch::key(&row.profile_id, &portable_work_id))
+                    {
+                        return Err(ProjectionOutcome::DeferToImport);
+                    }
+                }
                 bind_unseen_comic(state, row, &work, &portable_work_id, title_hint.as_deref())
                     .await?
             }
@@ -1689,9 +1828,11 @@ async fn resolve_portable_projection_identity(
         Some(chapter_id) if trusts_cached_chapter_id(row.attempt_count) => chapter_id,
         // A failed lookup keeps the cached id, so the row still ends in the bounded
         // confirmation path instead of retrying the lookup forever.
-        Some(chapter_id) => resolve_chapter_id(state, &row.profile_id, manga_id, chapter_key, lookup)
-            .await
-            .unwrap_or(chapter_id),
+        Some(chapter_id) => {
+            resolve_chapter_id(state, &row.profile_id, manga_id, chapter_key, lookup)
+                .await
+                .unwrap_or(chapter_id)
+        }
         None => resolve_chapter_id(state, &row.profile_id, manga_id, chapter_key, lookup).await?,
     };
     let local_chapter_reference = chapter_id.to_string();
@@ -1850,7 +1991,9 @@ fn collect_portable_works(rows: &[(String, String, String, String)]) -> Vec<Unse
             .get("portableWorkRef")
             .cloned()
             .and_then(|value| serde_json::from_value::<PortableWorkRefV3>(value).ok())
-            .filter(|work| work.validate().is_ok() && matches!(work, PortableWorkRefV3::Comic { .. }))
+            .filter(|work| {
+                work.validate().is_ok() && matches!(work, PortableWorkRefV3::Comic { .. })
+            })
         else {
             continue;
         };
@@ -1894,7 +2037,10 @@ fn collect_portable_works(rows: &[(String, String, String, String)]) -> Vec<Unse
                 {
                     // Rows come oldest first and each carries only what changed, so a later
                     // row's fields override and the ones it leaves out keep the earlier value.
-                    let merged = entry.chapters.entry(key.to_string()).or_insert_with(|| json!({}));
+                    let merged = entry
+                        .chapters
+                        .entry(key.to_string())
+                        .or_insert_with(|| json!({}));
                     merge_progress_fields(merged, &variables);
                 }
             }
@@ -1931,10 +2077,7 @@ fn import_work_variables(work: &UnseenWork) -> Option<Value> {
     else {
         return None;
     };
-    let title = work
-        .title_hint
-        .clone()
-        .unwrap_or_else(|| manga_key.clone());
+    let title = work.title_hint.clone().unwrap_or_else(|| manga_key.clone());
     let chapters: Vec<Value> = work
         .chapters
         .iter()
@@ -1984,23 +2127,40 @@ async fn import_unseen_comics(
     watch: &mut ImportWatch,
 ) -> anyhow::Result<ImportPass> {
     // Only library entries decide what to import; a work's progress and categories are read
-    // below for the works of this batch. Reading and parsing every queued row instead cost about
-    // half a second a tick with a first sync's 25,000 progress rows.
-    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+    // below for the works of this batch. Walking idx_suwayomi_projection_claim for non-progress
+    // rows avoids scanning tens of thousands of queued chapter progress rows on every tick.
+    let entry_rows: Vec<(String, String, String, String, i64)> = sqlx::query_as(
         r#"
-        SELECT operation_id, profile_id, operation_name, variables_json
-        FROM suwayomi_projection_outbox
-        WHERE operation_name = 'UpdateManga' AND status IN ('pending', 'retry', 'blocked')
-          AND variables_json LIKE '%"portableWorkRef"%'
+        SELECT operation_id, profile_id, operation_name, variables_json, source_server_version
+        FROM (
+            SELECT operation_id, profile_id, operation_name, variables_json, source_server_version
+            FROM suwayomi_projection_outbox
+            WHERE (operation_name = 'UpdateChaptersProgress') = 0
+              AND operation_name = 'UpdateManga'
+              AND status IN ('pending', 'retry')
+              AND variables_json LIKE '%"portableWorkRef"%'
+            UNION ALL
+            SELECT operation_id, profile_id, operation_name, variables_json, source_server_version
+            FROM suwayomi_projection_outbox
+            WHERE status = 'blocked'
+              AND operation_name = 'UpdateManga'
+              AND variables_json LIKE '%"portableWorkRef"%'
+        )
         ORDER BY profile_id, source_server_version
         "#,
     )
     .fetch_all(&state.pool)
     .await
     .context("failed to list Suwayomi projections of portable works")?;
+    let rows_for_collect: Vec<(String, String, String, String)> = entry_rows
+        .iter()
+        .map(|(op, profile, name, vars, _)| {
+            (op.clone(), profile.clone(), name.clone(), vars.clone())
+        })
+        .collect();
     let mut bound_by_profile: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut batch = Vec::new();
-    for work in collect_portable_works(&rows) {
+    for work in collect_portable_works(&rows_for_collect) {
         if !work.in_library
             || watch
                 .attempted
@@ -2029,11 +2189,12 @@ async fn import_unseen_comics(
     let Some(profile_id) = batch.first().map(|work| work.profile_id.clone()) else {
         return Ok(ImportPass::Idle);
     };
-    let batch = with_work_rows(&state.pool, &profile_id, &rows, batch).await?;
+    let batch = with_work_rows(&state.pool, &profile_id, &entry_rows, batch).await?;
     let session = projection_session(&profile_id);
 
     // Works Suwayomi already lists are only bound.
-    let Ok(listed) = lookup_local_comics(state, &session, batch.iter().map(|work| &work.work)).await
+    let Ok(listed) =
+        lookup_local_comics(state, &session, batch.iter().map(|work| &work.work)).await
     else {
         // The runtime is not answering; its rows back off and are rearmed when it returns.
         return Ok(ImportPass::Idle);
@@ -2051,7 +2212,8 @@ async fn import_unseen_comics(
     let works: Vec<Value> = missing.iter().filter_map(import_work_variables).collect();
     if !works.is_empty() {
         let started = Instant::now();
-        match suwayomi_import::import_works_confirmed(state, &session, json!({ "works": works })).await
+        match suwayomi_import::import_works_confirmed(state, &session, json!({ "works": works }))
+            .await
         {
             Ok(_) => watch.failures = 0,
             // A restore that failed or timed out is tried again, the whole batch: Suwayomi
@@ -2082,7 +2244,12 @@ async fn import_unseen_comics(
             .filter(|work| comic_key(&work.work).is_some_and(|key| listed.contains_key(&key)))
             .collect();
         bind_imported_comics(state, &profile_id, &imported, &listed).await?;
-        tracing::info!(profile = profile_id, imported = imported.len(), tried = works.len(), "imported synced works into Suwayomi");
+        tracing::info!(
+            profile = profile_id,
+            imported = imported.len(),
+            tried = works.len(),
+            "imported synced works into Suwayomi"
+        );
     }
     Ok(ImportPass::Busy)
 }
@@ -2105,9 +2272,10 @@ const PORTABLE_COMICS_LOOKUP_QUERY: &str = r#"
 /// A comic's source and exact key, as Suwayomi lists them.
 fn comic_key(work: &PortableWorkRefV3) -> Option<(String, String)> {
     match work {
-        PortableWorkRefV3::Comic { source_id, manga_key } => {
-            Some((source_id.clone(), manga_key.clone()))
-        }
+        PortableWorkRefV3::Comic {
+            source_id,
+            manga_key,
+        } => Some((source_id.clone(), manga_key.clone())),
         PortableWorkRefV3::Novel { .. } => None,
     }
 }
@@ -2314,12 +2482,25 @@ async fn settle_progress_in_bulk(
         for row in &chapter_rows {
             merge_progress_fields(&mut patch, &chapter_progress_patch(&row.variables));
         }
-        let node = nodes_by_id.get(&chapter_id).copied().unwrap_or(&Value::Null);
-        if node.get("pageCount").and_then(Value::as_i64).map_or(true, |count| count <= 0) {
+        let node = nodes_by_id
+            .get(&chapter_id)
+            .copied()
+            .unwrap_or(&Value::Null);
+        if node
+            .get("pageCount")
+            .and_then(Value::as_i64)
+            .map_or(true, |count| count <= 0)
+        {
             // Suwayomi clamps the page below a page count it does not know yet.
             patch["lastPageRead"] = Value::Null;
         }
-        bound_chapters.push((chapter_rows[0], chapter_id));
+        let mut seen_chapter_keys: std::collections::HashSet<&str> =
+            std::collections::HashSet::with_capacity(chapter_rows.len());
+        for row in &chapter_rows {
+            if seen_chapter_keys.insert(row.chapter_key.as_str()) {
+                bound_chapters.push((*row, chapter_id));
+            }
+        }
         if chapter_matches_patch(node, &patch) {
             applied.extend(chapter_rows);
             continue;
@@ -2374,8 +2555,10 @@ async fn settle_progress_in_bulk(
         }
     }
 
-    let applied_ids: std::collections::HashSet<&str> =
-        applied.iter().map(|row| row.operation_id.as_str()).collect();
+    let applied_ids: std::collections::HashSet<&str> = applied
+        .iter()
+        .map(|row| row.operation_id.as_str())
+        .collect();
     let applied_chapters: Vec<db::BoundPortableChapter<'_>> = bound_chapters
         .iter()
         .filter(|(row, _)| applied_ids.contains(row.operation_id.as_str()))
@@ -2397,8 +2580,13 @@ async fn settle_progress_in_bulk(
     release_bulk_progress(state, &rows, &applied_list).await?;
     {
         let _writer_guard = state.mutation_gate.lock().await;
-        db::upsert_bound_portable_chapters(&state.pool, &profile_id, &applied_chapters, db::now_ms())
-            .await?;
+        db::upsert_bound_portable_chapters(
+            &state.pool,
+            &profile_id,
+            &applied_chapters,
+            db::now_ms(),
+        )
+        .await?;
     }
     // Rows it could not settle go to the per-row path; after an outage they get another bulk try.
     if !runtime_down {
@@ -2411,7 +2599,11 @@ async fn settle_progress_in_bulk(
     }
     APPLIED_PROJECTIONS.fetch_add(applied_list.len() as u64, Ordering::Relaxed);
     for manga_id in landed {
-        landed_works::record_projection(&profile_id, "UpdateChaptersProgress", &json!({ "mangaId": manga_id }));
+        landed_works::record_projection(
+            &profile_id,
+            "UpdateChaptersProgress",
+            &json!({ "mangaId": manga_id }),
+        );
     }
     if !applied_list.is_empty() || !unresolved.is_empty() {
         tracing::info!(
@@ -2475,13 +2667,24 @@ async fn top_up_missing_chapters(
         else {
             return Default::default();
         };
-        for node in data.pointer("/mangas/nodes").and_then(Value::as_array).into_iter().flatten() {
-            let Some(rows) = node.get("id").and_then(Value::as_i64).and_then(|id| by_work.get(&id))
+        for node in data
+            .pointer("/mangas/nodes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(rows) = node
+                .get("id")
+                .and_then(Value::as_i64)
+                .and_then(|id| by_work.get(&id))
             else {
                 continue;
             };
             if let Some(work) = top_up_work(node, rows) {
-                works.push((work, rows.iter().map(|row| row.operation_id.clone()).collect()));
+                works.push((
+                    work,
+                    rows.iter().map(|row| row.operation_id.clone()).collect(),
+                ));
             }
         }
     }
@@ -2489,7 +2692,8 @@ async fn top_up_missing_chapters(
     for batch in works.chunks(IMPORT_BATCH_WORKS) {
         let started = Instant::now();
         let payload: Vec<&Value> = batch.iter().map(|(work, _)| work).collect();
-        match suwayomi_import::import_works_confirmed(state, session, json!({ "works": payload })).await
+        match suwayomi_import::import_works_confirmed(state, session, json!({ "works": payload }))
+            .await
         {
             Ok(_) => {
                 let rows: Vec<&String> = batch.iter().flat_map(|(_, rows)| rows).collect();
@@ -2520,7 +2724,11 @@ fn top_up_work(node: &Value, rows: &[&BulkProgressRow]) -> Option<Value> {
         rows.first()?.variables.get("portableWorkRef")?.clone(),
     )
     .ok()?;
-    let PortableWorkRefV3::Comic { source_id, manga_key } = &work else {
+    let PortableWorkRefV3::Comic {
+        source_id,
+        manga_key,
+    } = &work
+    else {
         return None;
     };
     let node_source = match node.get("sourceId")? {
@@ -2541,7 +2749,9 @@ fn top_up_work(node: &Value, rows: &[&BulkProgressRow]) -> Option<Value> {
     .saturating_mul(1000);
     let mut chapters: std::collections::BTreeMap<&str, Value> = Default::default();
     for row in rows {
-        let merged = chapters.entry(row.chapter_key.as_str()).or_insert_with(|| json!({}));
+        let merged = chapters
+            .entry(row.chapter_key.as_str())
+            .or_insert_with(|| json!({}));
         merge_progress_fields(merged, &chapter_progress_patch(&row.variables));
     }
     let chapters: Vec<Value> = chapters
@@ -2583,18 +2793,22 @@ fn top_up_work(node: &Value, rows: &[&BulkProgressRow]) -> Option<Value> {
 
 /// Whether the chapter already has every field the patch sets.
 fn chapter_matches_patch(node: &Value, patch: &Value) -> bool {
-    ["isRead", "isBookmarked", "lastPageRead"].iter().all(|field| {
-        match patch.get(*field).filter(|value| !value.is_null()) {
-            None => true,
-            Some(expected) => match expected {
-                Value::Bool(expected) => node.get(*field).and_then(Value::as_bool) == Some(*expected),
-                Value::Number(expected) => {
-                    node.get(*field).and_then(Value::as_i64) == expected.as_i64()
-                }
-                _ => false,
+    ["isRead", "isBookmarked", "lastPageRead"]
+        .iter()
+        .all(
+            |field| match patch.get(*field).filter(|value| !value.is_null()) {
+                None => true,
+                Some(expected) => match expected {
+                    Value::Bool(expected) => {
+                        node.get(*field).and_then(Value::as_bool) == Some(*expected)
+                    }
+                    Value::Number(expected) => {
+                        node.get(*field).and_then(Value::as_i64) == expected.as_i64()
+                    }
+                    _ => false,
+                },
             },
-        }
-    })
+        )
 }
 
 /// Claims, in commit order and behind the same barrier as [claim_next_at], the due progress rows
@@ -2618,7 +2832,7 @@ async fn claim_bulk_progress_at(
         SELECT candidate.operation_id, candidate.profile_id, candidate.variables_json, candidate.status
         FROM suwayomi_projection_outbox AS candidate
         WHERE candidate.status IN ('pending', 'retry')
-          AND candidate.operation_name = 'UpdateChaptersProgress'
+          AND (candidate.operation_name = 'UpdateChaptersProgress') = 1
           AND +candidate.next_attempt_at_ms <= ?
           AND {CLAIM_BARRIER_CONDITION}
         ORDER BY candidate.source_server_version ASC
@@ -2693,14 +2907,22 @@ fn bulk_progress_row(
     bound: &HashMap<String, String>,
 ) -> Option<BulkProgressRow> {
     let variables = serde_json::from_str::<Value>(variables_json).ok()?;
-    let work = serde_json::from_value::<PortableWorkRefV3>(variables.get("portableWorkRef")?.clone())
-        .ok()
-        .filter(|work| work.validate().is_ok() && matches!(work, PortableWorkRefV3::Comic { .. }))?;
-    let chapter =
-        serde_json::from_value::<PortableChapterRefV3>(variables.get("portableChapterRef")?.clone())
+    let work =
+        serde_json::from_value::<PortableWorkRefV3>(variables.get("portableWorkRef")?.clone())
             .ok()
-            .filter(|chapter| chapter.validate().is_ok())?;
-    let PortableChapterRefV3::Comic { work: chapter_work, chapter_key } = &chapter else {
+            .filter(|work| {
+                work.validate().is_ok() && matches!(work, PortableWorkRefV3::Comic { .. })
+            })?;
+    let chapter = serde_json::from_value::<PortableChapterRefV3>(
+        variables.get("portableChapterRef")?.clone(),
+    )
+    .ok()
+    .filter(|chapter| chapter.validate().is_ok())?;
+    let PortableChapterRefV3::Comic {
+        work: chapter_work,
+        chapter_key,
+    } = &chapter
+    else {
         return None;
     };
     // A Core-listed address carries this Suwayomi's own id; the per-row path checks it.
@@ -2837,31 +3059,58 @@ async fn release_bulk_progress_at(
 async fn with_work_rows(
     pool: &sqlx::SqlitePool,
     profile_id: &str,
-    entries: &[(String, String, String, String)],
+    entries: &[(String, String, String, String, i64)],
     batch: Vec<UnseenWork>,
 ) -> anyhow::Result<Vec<UnseenWork>> {
-    let wanted: std::collections::HashSet<String> =
-        batch.iter().map(|work| work.portable_work_id.clone()).collect();
-    let mut rows: Vec<(String, String, String, String)> = entries
+    let wanted: std::collections::HashSet<String> = batch
+        .iter()
+        .map(|work| work.portable_work_id.clone())
+        .collect();
+    let mut rows: Vec<(String, String, String, String, i64)> = entries
         .iter()
         .filter(|row| row.1 == profile_id)
         .cloned()
         .collect();
-    for work in &batch {
-        let id = &work.portable_work_id;
+    // Separate queries per entity_type keep SQLite on idx_suwayomi_projection_entity instead of
+    // falling back to a full profile scan across tens of thousands of queued rows for an OR.
+    let history_ids: Vec<String> = batch
+        .iter()
+        .map(|work| format!("comic.history::{}", work.portable_work_id))
+        .collect();
+    if !history_ids.is_empty() {
         rows.extend(
-            sqlx::query_as::<_, (String, String, String, String)>(
+            sqlx::query_as::<_, (String, String, String, String, i64)>(
                 r#"
-                SELECT operation_id, profile_id, operation_name, variables_json
+                SELECT operation_id, profile_id, operation_name, variables_json, source_server_version
                 FROM suwayomi_projection_outbox
-                WHERE profile_id = ? AND status IN ('pending', 'retry', 'blocked')
-                  AND ((entity_type = 'comic.history' AND entity_id = ?)
-                    OR (entity_type = 'comic.chapter_state' AND entity_id >= ? AND entity_id < ?))
-                ORDER BY source_server_version
+                WHERE profile_id = ?
+                  AND entity_type = 'comic.history'
+                  AND entity_id IN (SELECT value FROM json_each(?))
+                  AND status IN ('pending', 'retry', 'blocked')
                 "#,
             )
             .bind(profile_id)
-            .bind(format!("comic.history::{id}"))
+            .bind(serde_json::to_string(&history_ids)?)
+            .fetch_all(pool)
+            .await
+            .context("failed to list Suwayomi history projections of a batch")?,
+        );
+    }
+    for work in &batch {
+        let id = &work.portable_work_id;
+        rows.extend(
+            sqlx::query_as::<_, (String, String, String, String, i64)>(
+                r#"
+                SELECT operation_id, profile_id, operation_name, variables_json, source_server_version
+                FROM suwayomi_projection_outbox
+                WHERE profile_id = ?
+                  AND entity_type = 'comic.chapter_state'
+                  AND entity_id >= ?
+                  AND entity_id < ?
+                  AND status IN ('pending', 'retry', 'blocked')
+                "#,
+            )
+            .bind(profile_id)
             .bind(format!("comic.chapter_state::{id}::"))
             .bind(format!("comic.chapter_state::{id}:;"))
             .fetch_all(pool)
@@ -2870,13 +3119,12 @@ async fn with_work_rows(
         );
     }
     rows.extend(
-        sqlx::query_as::<_, (String, String, String, String)>(
+        sqlx::query_as::<_, (String, String, String, String, i64)>(
             r#"
-            SELECT operation_id, profile_id, operation_name, variables_json
+            SELECT operation_id, profile_id, operation_name, variables_json, source_server_version
             FROM suwayomi_projection_outbox
             WHERE profile_id = ? AND entity_type = 'comic.category_assignment'
               AND status IN ('pending', 'retry', 'blocked')
-            ORDER BY source_server_version
             "#,
         )
         .bind(profile_id)
@@ -2884,7 +3132,12 @@ async fn with_work_rows(
         .await
         .context("failed to list Suwayomi category projections")?,
     );
-    Ok(collect_portable_works(&rows)
+    rows.sort_by_key(|row| row.4);
+    let ordered: Vec<(String, String, String, String)> = rows
+        .into_iter()
+        .map(|(op, profile, name, vars, _)| (op, profile, name, vars))
+        .collect();
+    Ok(collect_portable_works(&ordered)
         .into_iter()
         .filter(|work| wanted.contains(&work.portable_work_id))
         .collect())
@@ -2973,7 +3226,11 @@ struct ChapterPages {
 
 impl Default for ChapterPages {
     fn default() -> Self {
-        Self { nodes: Value::Array(Vec::new()), fetched: 0, complete: false }
+        Self {
+            nodes: Value::Array(Vec::new()),
+            fetched: 0,
+            complete: false,
+        }
     }
 }
 
@@ -3008,13 +3265,20 @@ async fn resolve_core_listed_chapter(
     let chapter_id = own_core_listed_chapter(chapter_key, &server_id, profile_id)
         .ok_or(ProjectionOutcome::Retry(WAITING_CHAPTER_CODE))?;
     find_chapter_id(state, profile_id, manga_id, lookup, |nodes| {
-        (listed_chapter_match(nodes, manga_id, chapter_id), Vec::new())
+        (
+            listed_chapter_match(nodes, manga_id, chapter_id),
+            Vec::new(),
+        )
     })
     .await
 }
 
 /// The Core-listed address of one of this Core's chapters, as a phone names it.
-pub(super) fn core_listed_chapter_key(server_id: &str, profile_id: &str, chapter_id: i64) -> String {
+pub(super) fn core_listed_chapter_key(
+    server_id: &str,
+    profile_id: &str,
+    chapter_id: i64,
+) -> String {
     format!("{CORE_LISTED_CHAPTER_PREFIX}{server_id}/{profile_id}/chapter/{chapter_id}")
 }
 
@@ -3209,9 +3473,9 @@ async fn resolve_category_assignment_removal(
         )
         .await
         .map_err(|_| ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE))?;
-        let categories = data
-            .get("categories")
-            .ok_or(ProjectionOutcome::Retry("category_assignment_lookup_invalid"))?;
+        let categories = data.get("categories").ok_or(ProjectionOutcome::Retry(
+            "category_assignment_lookup_invalid",
+        ))?;
         if let Some((manga_id, category_id)) =
             find_category_assignment_pair(assignment_id, profile_id, &server_id, categories)
         {
@@ -3434,6 +3698,7 @@ fn optional_field_matches<T: PartialEq>(
 
 enum ProjectionOutcome {
     Applied,
+    DeferToImport,
     Retry(&'static str),
     Blocked(&'static str),
 }
@@ -3446,9 +3711,15 @@ mod tests {
     fn catalog_writes_are_announced_when_the_queue_drains_or_after_a_bounded_wait() {
         let start = Instant::now();
         let mut notice = CatalogNotice::default();
-        assert!(notice.due(false, start), "the first one has waited long enough");
+        assert!(
+            notice.due(false, start),
+            "the first one has waited long enough"
+        );
         assert!(!notice.due(false, start + Duration::from_secs(5)));
-        assert!(notice.due(true, start + Duration::from_secs(6)), "the queue drained");
+        assert!(
+            notice.due(true, start + Duration::from_secs(6)),
+            "the queue drained"
+        );
         assert!(!notice.due(false, start + Duration::from_secs(35)));
         assert!(notice.due(false, start + Duration::from_secs(36)));
     }
@@ -3517,19 +3788,37 @@ mod tests {
     #[test]
     fn a_core_listed_address_names_a_chapter_only_on_its_own_core_and_profile() {
         let own = |key: &str| own_core_listed_chapter(key, "server-a", "main");
-        assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/16063"), Some(16063));
+        assert_eq!(
+            own("aethon-core://suwayomi/server-a/main/chapter/16063"),
+            Some(16063)
+        );
         // Another Core's chapter numbers mean nothing here.
-        assert_eq!(own("aethon-core://suwayomi/server-b/main/chapter/16063"), None);
-        assert_eq!(own("aethon-core://suwayomi/server-a/other/chapter/16063"), None);
+        assert_eq!(
+            own("aethon-core://suwayomi/server-b/main/chapter/16063"),
+            None
+        );
+        assert_eq!(
+            own("aethon-core://suwayomi/server-a/other/chapter/16063"),
+            None
+        );
         // The form without a server cannot be told from any other Core's.
         assert_eq!(own("aethon-core://suwayomi/main/chapter/16063"), None);
-        assert_eq!(own("aethon-core://suwayomi/server-a/main/manga/16063"), None);
+        assert_eq!(
+            own("aethon-core://suwayomi/server-a/main/manga/16063"),
+            None
+        );
         assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/0"), None);
         assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/x"), None);
-        assert_eq!(own("aethon-core://suwayomi/server-a/main/chapter/16063/extra"), None);
+        assert_eq!(
+            own("aethon-core://suwayomi/server-a/main/chapter/16063/extra"),
+            None
+        );
         assert_eq!(own("https://host.example/chapter/16063"), None);
         // The address the progress mirror builds is the one this Core reads back.
-        assert_eq!(own(&core_listed_chapter_key("server-a", "main", 16063)), Some(16063));
+        assert_eq!(
+            own(&core_listed_chapter_key("server-a", "main", 16063)),
+            Some(16063)
+        );
     }
 
     #[test]
@@ -3563,7 +3852,11 @@ mod tests {
             (None, vec![407268])
         );
         assert_eq!(
-            chapter_key_matches(Some(&nodes), 7, "https://www.mangakakalove.com/manga/slug/chapter-52"),
+            chapter_key_matches(
+                Some(&nodes),
+                7,
+                "https://www.mangakakalove.com/manga/slug/chapter-52"
+            ),
             (None, vec![])
         );
         // Relative keys still match only exactly or against the path of an absolute URL.
@@ -3589,7 +3882,10 @@ mod tests {
             chapter_url_path("https://www.mangakakalove.com/manga/slug/chapter-50"),
             "/manga/slug/chapter-50"
         );
-        assert_eq!(chapter_url_path("/manga/slug/chapter-50"), "/manga/slug/chapter-50");
+        assert_eq!(
+            chapter_url_path("/manga/slug/chapter-50"),
+            "/manga/slug/chapter-50"
+        );
         assert_eq!(chapter_url_path("https://host.example"), "");
     }
 
@@ -3667,10 +3963,17 @@ mod tests {
 
         assert_eq!(requeue_recoverable_blocked(&pool, 500).await.unwrap(), 3);
         assert_eq!(limit_not_found_requeue(&pool).await.unwrap(), 2);
-        assert_eq!(limit_not_found_requeue(&pool).await.unwrap(), 0, "idempotent");
+        assert_eq!(
+            limit_not_found_requeue(&pool).await.unwrap(),
+            0,
+            "idempotent"
+        );
 
         // The claim adds the attempt: the next miss reaches the limit and blocks the row again.
-        let claimed = claim_next_at(&pool, 500).await.unwrap().map(|row| row.operation_id);
+        let claimed = claim_next_at(&pool, 500)
+            .await
+            .unwrap()
+            .map(|row| row.operation_id);
         assert_eq!(claimed.as_deref(), Some("missing-1"));
         let attempts: i64 = sqlx::query_scalar(
             "SELECT attempt_count FROM suwayomi_projection_outbox WHERE operation_id = 'missing-1'",
@@ -3749,9 +4052,24 @@ mod tests {
         let pool = db::connect(&config).await.unwrap();
         let work = |key: &str| json!({ "type": "comic", "sourceId": "10002", "mangaKey": key });
         for (id, key, status, error) in [
-            ("bound-gave-up", "/series/a", "blocked", Some("portable_work_not_found")),
-            ("bound-rejected", "/series/a", "blocked", Some("command_rejected")),
-            ("other-gave-up", "/series/b", "blocked", Some("portable_work_not_found")),
+            (
+                "bound-gave-up",
+                "/series/a",
+                "blocked",
+                Some("portable_work_not_found"),
+            ),
+            (
+                "bound-rejected",
+                "/series/a",
+                "blocked",
+                Some("command_rejected"),
+            ),
+            (
+                "other-gave-up",
+                "/series/b",
+                "blocked",
+                Some("portable_work_not_found"),
+            ),
         ] {
             sqlx::query(
                 r#"
@@ -3868,10 +4186,15 @@ mod tests {
             },
         ];
 
-        db::upsert_bound_portable_works(&pool, "main", &works, 5).await.unwrap();
+        db::upsert_bound_portable_works(&pool, "main", &works, 5)
+            .await
+            .unwrap();
 
         for (id, local) in ids.iter().zip(["7", "8", "novel-1"]) {
-            let row = db::load_portable_work_binding(&pool, "main", id).await.unwrap().unwrap();
+            let row = db::load_portable_work_binding(&pool, "main", id)
+                .await
+                .unwrap()
+                .unwrap();
             assert_eq!(row.local_reference.as_deref(), Some(local));
             assert_eq!(row.updated_at_ms, 5);
         }
@@ -3938,8 +4261,20 @@ mod tests {
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         for (id, version, status, error, next) in [
-            ("unbound", 1, "retry", Some("portable_work_not_bound"), 9_000),
-            ("chapter", 2, "retry", Some("portable_chapter_not_resolved"), 9_000),
+            (
+                "unbound",
+                1,
+                "retry",
+                Some("portable_work_not_bound"),
+                9_000,
+            ),
+            (
+                "chapter",
+                2,
+                "retry",
+                Some("portable_chapter_not_resolved"),
+                9_000,
+            ),
             ("next", 3, "pending", None, 0),
         ] {
             sqlx::query(
@@ -4014,8 +4349,13 @@ mod tests {
         }
         let claimed = claim_next_at(&pool, 500).await.unwrap().unwrap();
         assert_eq!(claimed.operation_id, "next");
-        let group = claim_group_at(&pool, 500, &claimed, &json!({ "inLibrary": true })).await.unwrap();
-        assert!(group.iter().any(|row| row.operation_id == "after"), "{group:?}");
+        let group = claim_group_at(&pool, 500, &claimed, &json!({ "inLibrary": true }))
+            .await
+            .unwrap();
+        assert!(
+            group.iter().any(|row| row.operation_id == "after"),
+            "{group:?}"
+        );
 
         // An unreachable runtime still holds the rows after it.
         sqlx::query(
@@ -4033,10 +4373,12 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("DELETE FROM suwayomi_projection_outbox WHERE operation_id IN ('next', 'after')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "DELETE FROM suwayomi_projection_outbox WHERE operation_id IN ('next', 'after')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         assert!(claim_next_at(&pool, 600).await.unwrap().is_none());
     }
 
@@ -4080,24 +4422,57 @@ mod tests {
         // The folder rows go first and group across the progress row between them.
         let first = claim_next_at(&pool, 500).await.unwrap().unwrap();
         assert_eq!(first.operation_id, "folder-1");
-        let change = group_change(&first.operation_name, &serde_json::from_str(&first.variables_json).unwrap())
-            .unwrap();
+        let change = group_change(
+            &first.operation_name,
+            &serde_json::from_str(&first.variables_json).unwrap(),
+        )
+        .unwrap();
         let group = claim_group_at(&pool, 500, &first, &change).await.unwrap();
-        assert_eq!(group.iter().map(|row| row.operation_id.as_str()).collect::<Vec<_>>(), vec!["folder-2"]);
+        assert_eq!(
+            group
+                .iter()
+                .map(|row| row.operation_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["folder-2"]
+        );
 
         // Progress then keeps its own order and groups only with progress.
         let next = claim_next_at(&pool, 500).await.unwrap().unwrap();
         assert_eq!(next.operation_id, "progress-1");
-        let change = group_change(&next.operation_name, &serde_json::from_str(&next.variables_json).unwrap())
-            .unwrap();
+        let change = group_change(
+            &next.operation_name,
+            &serde_json::from_str(&next.variables_json).unwrap(),
+        )
+        .unwrap();
         let group = claim_group_at(&pool, 500, &next, &change).await.unwrap();
-        assert_eq!(group.iter().map(|row| row.operation_id.as_str()).collect::<Vec<_>>(), vec!["progress-2"]);
+        assert_eq!(
+            group
+                .iter()
+                .map(|row| row.operation_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["progress-2"]
+        );
 
         // A progress retry holds later progress but not the library; a library retry holds both.
-        sqlx::query("DELETE FROM suwayomi_projection_outbox").execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM suwayomi_projection_outbox")
+            .execute(&pool)
+            .await
+            .unwrap();
         for (id, operation, variables, version, status) in [
-            ("progress-outage", "UpdateChaptersProgress", progress.as_str(), 1, "retry"),
-            ("progress-held", "UpdateChaptersProgress", progress.as_str(), 2, "pending"),
+            (
+                "progress-outage",
+                "UpdateChaptersProgress",
+                progress.as_str(),
+                1,
+                "retry",
+            ),
+            (
+                "progress-held",
+                "UpdateChaptersProgress",
+                progress.as_str(),
+                2,
+                "pending",
+            ),
             ("folder", "UpdateMangaCategories", into_one, 3, "pending"),
         ] {
             sqlx::query(
@@ -4121,7 +4496,14 @@ mod tests {
             .await
             .unwrap();
         }
-        assert_eq!(claim_next_at(&pool, 600).await.unwrap().unwrap().operation_id, "folder");
+        assert_eq!(
+            claim_next_at(&pool, 600)
+                .await
+                .unwrap()
+                .unwrap()
+                .operation_id,
+            "folder"
+        );
         assert!(claim_next_at(&pool, 600).await.unwrap().is_none());
         sqlx::query(
             "UPDATE suwayomi_projection_outbox SET status = 'retry', next_attempt_at_ms = 9000, \
@@ -4151,11 +4533,41 @@ mod tests {
             .await
             .unwrap();
         for (id, entity_type, category_id, status, error) in [
-            ("foreign", "comic.category_assignment", Some("suwayomi:server:desktop-old:profile:main:category:3"), "retry", Some(COMMAND_FAILED)),
-            ("foreign-category", "comic.category", Some("suwayomi:server:desktop-old:profile:main:category:3"), "pending", None),
-            ("local", "comic.category_assignment", Some("suwayomi:server:desktop-a:profile:main:category:3"), "pending", None),
-            ("legacy", "comic.category_assignment", Some("suwayomi:profile:main:category:3"), "pending", None),
-            ("no-record", "comic.category_assignment", None, "pending", None),
+            (
+                "foreign",
+                "comic.category_assignment",
+                Some("suwayomi:server:desktop-old:profile:main:category:3"),
+                "retry",
+                Some(COMMAND_FAILED),
+            ),
+            (
+                "foreign-category",
+                "comic.category",
+                Some("suwayomi:server:desktop-old:profile:main:category:3"),
+                "pending",
+                None,
+            ),
+            (
+                "local",
+                "comic.category_assignment",
+                Some("suwayomi:server:desktop-a:profile:main:category:3"),
+                "pending",
+                None,
+            ),
+            (
+                "legacy",
+                "comic.category_assignment",
+                Some("suwayomi:profile:main:category:3"),
+                "pending",
+                None,
+            ),
+            (
+                "no-record",
+                "comic.category_assignment",
+                None,
+                "pending",
+                None,
+            ),
         ] {
             sqlx::query(
                 r#"
@@ -4193,9 +4605,15 @@ mod tests {
             }
         }
 
-        assert_eq!(block_foreign_server_projections(&pool, 50).await.unwrap(), 2);
+        assert_eq!(
+            block_foreign_server_projections(&pool, 50).await.unwrap(),
+            2
+        );
         // Idempotent, and not undone by the recoverable requeue that runs before it.
-        assert_eq!(block_foreign_server_projections(&pool, 60).await.unwrap(), 0);
+        assert_eq!(
+            block_foreign_server_projections(&pool, 60).await.unwrap(),
+            0
+        );
         assert_eq!(requeue_recoverable_blocked(&pool, 70).await.unwrap(), 0);
 
         let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
@@ -4204,10 +4622,17 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        let blocked = || ("blocked".to_string(), Some(FOREIGN_SERVER_IDENTITY.to_string()));
+        let blocked = || {
+            (
+                "blocked".to_string(),
+                Some(FOREIGN_SERVER_IDENTITY.to_string()),
+            )
+        };
         let pending = || ("pending".to_string(), None);
-        let rows: Vec<(String, (String, Option<String>))> =
-            rows.into_iter().map(|(id, status, error)| (id, (status, error))).collect();
+        let rows: Vec<(String, (String, Option<String>))> = rows
+            .into_iter()
+            .map(|(id, status, error)| (id, (status, error)))
+            .collect();
         assert_eq!(
             rows,
             vec![
@@ -4226,13 +4651,49 @@ mod tests {
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         for (id, operation, status, attempts, error) in [
-            ("waiting", "UpdateChaptersProgress", "retry", MAX_CONFIRMATION_ATTEMPTS, Some(WAITING_CHAPTER_CODE)),
-            ("young", "UpdateChaptersProgress", "retry", MAX_CONFIRMATION_ATTEMPTS - 1, Some(WAITING_CHAPTER_CODE)),
-            ("outage", "UpdateChaptersProgress", "retry", 9, Some("runtime_unavailable")),
+            (
+                "waiting",
+                "UpdateChaptersProgress",
+                "retry",
+                MAX_CONFIRMATION_ATTEMPTS,
+                Some(WAITING_CHAPTER_CODE),
+            ),
+            (
+                "young",
+                "UpdateChaptersProgress",
+                "retry",
+                MAX_CONFIRMATION_ATTEMPTS - 1,
+                Some(WAITING_CHAPTER_CODE),
+            ),
+            (
+                "outage",
+                "UpdateChaptersProgress",
+                "retry",
+                9,
+                Some("runtime_unavailable"),
+            ),
             ("fresh", "UpdateManga", "pending", 0, None),
-            ("library", "UpdateManga", "retry", 9, Some(WAITING_CHAPTER_CODE)),
-            ("gave_up", "UpdateManga", "blocked", 5, Some(PORTABLE_WORK_NOT_FOUND)),
-            ("rejected", "UpdateManga", "blocked", 1, Some("command_rejected")),
+            (
+                "library",
+                "UpdateManga",
+                "retry",
+                9,
+                Some(WAITING_CHAPTER_CODE),
+            ),
+            (
+                "gave_up",
+                "UpdateManga",
+                "blocked",
+                5,
+                Some(PORTABLE_WORK_NOT_FOUND),
+            ),
+            (
+                "rejected",
+                "UpdateManga",
+                "blocked",
+                1,
+                Some("command_rejected"),
+            ),
         ] {
             sqlx::query(
                 r#"
@@ -4265,11 +4726,20 @@ mod tests {
                 not_found: 1,
             }
         );
-        assert_eq!(projection_status_counts(&pool, "other").await.unwrap().pending, 0);
+        assert_eq!(
+            projection_status_counts(&pool, "other")
+                .await
+                .unwrap()
+                .pending,
+            0
+        );
         // Progress remains unfinished, while the first-run catalog gate counts only library work.
         assert_eq!(
             pending_projection_counts_in(&pool).await.unwrap(),
-            PendingProjectionCounts { total: 5, catalog: 2 }
+            PendingProjectionCounts {
+                total: 5,
+                catalog: 2
+            }
         );
     }
 
@@ -4282,7 +4752,12 @@ mod tests {
         // A phone chose preferences for an extension this desktop does not have installed.
         for (id, status, attempts, error) in [
             ("trying", "retry", 2, Some(COMMAND_FAILED)),
-            ("not_installed", "blocked", 4, Some(SOURCE_PREFERENCE_NOT_OFFERED)),
+            (
+                "not_installed",
+                "blocked",
+                4,
+                Some(SOURCE_PREFERENCE_NOT_OFFERED),
+            ),
             ("rejected", "blocked", 1, Some("command_rejected")),
         ] {
             sqlx::query(
@@ -4318,7 +4793,10 @@ mod tests {
         );
         assert_eq!(
             pending_projection_counts_in(&pool).await.unwrap(),
-            PendingProjectionCounts { total: 1, catalog: 0 }
+            PendingProjectionCounts {
+                total: 1,
+                catalog: 0
+            }
         );
     }
 
@@ -4344,7 +4822,10 @@ mod tests {
         let before: Vec<(String, ProjectionStatusCounts)> = {
             let mut counts = Vec::new();
             for profile in &profiles {
-                counts.push((profile.clone(), projection_status_counts(&pool, profile).await.unwrap()));
+                counts.push((
+                    profile.clone(),
+                    projection_status_counts(&pool, profile).await.unwrap(),
+                ));
             }
             counts
         };
@@ -4352,12 +4833,18 @@ mod tests {
         println!("before restart: {before:?}");
         println!("works not found: {works:#?}");
         for (_, counts) in &before {
-            assert_eq!(counts.blocked, counts.not_found, "only works not found are blocked");
+            assert_eq!(
+                counts.blocked, counts.not_found,
+                "only works not found are blocked"
+            );
         }
         let listed: i64 = works.iter().map(|work| work.changes).sum();
         let not_found: i64 = before.iter().map(|(_, counts)| counts.not_found).sum();
         if (works.len() as i64) < NOT_FOUND_WORKS_LIMIT {
-            assert_eq!(listed, not_found, "every blocked change belongs to a listed work");
+            assert_eq!(
+                listed, not_found,
+                "every blocked change belongs to a listed work"
+            );
         }
 
         // The start sequence of spawn_projection_task, without the runtime.
@@ -4372,7 +4859,12 @@ mod tests {
         // Each requeued change is claimed once in commit order; none holds the queue behind it.
         let mut claimed = 0_i64;
         while let Some(row) = claim_next_at(&pool, now).await.unwrap() {
-            assert_eq!(row.attempt_count, MAX_CONFIRMATION_ATTEMPTS - 1, "{}", row.operation_id);
+            assert_eq!(
+                row.attempt_count,
+                MAX_CONFIRMATION_ATTEMPTS - 1,
+                "{}",
+                row.operation_id
+            );
             claimed += 1;
             assert!(claimed <= requeued as i64, "a row was claimed twice");
         }
@@ -4386,17 +4878,43 @@ mod tests {
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         let work = |source: Value, key: &str| {
-            json!({ "portableWorkRef": { "type": "comic", "sourceId": source, "mangaKey": key } }).to_string()
+            json!({ "portableWorkRef": { "type": "comic", "sourceId": source, "mangaKey": key } })
+                .to_string()
         };
         for (id, status, error, variables) in [
-            ("a1", "blocked", Some(PORTABLE_WORK_NOT_FOUND), work(json!("6247824327199706550"), "/series/a")),
-            ("a2", "blocked", Some(PORTABLE_WORK_NOT_FOUND), work(json!("6247824327199706550"), "/series/a")),
+            (
+                "a1",
+                "blocked",
+                Some(PORTABLE_WORK_NOT_FOUND),
+                work(json!("6247824327199706550"), "/series/a"),
+            ),
+            (
+                "a2",
+                "blocked",
+                Some(PORTABLE_WORK_NOT_FOUND),
+                work(json!("6247824327199706550"), "/series/a"),
+            ),
             // A numeric source id reads the same as a string one.
-            ("b1", "blocked", Some(PORTABLE_WORK_NOT_FOUND), work(json!(7537715367149829912u64), "/b")),
+            (
+                "b1",
+                "blocked",
+                Some(PORTABLE_WORK_NOT_FOUND),
+                work(json!(7537715367149829912u64), "/b"),
+            ),
             // Rows that are not waiting on a missing work stay out.
-            ("rejected", "blocked", Some("command_rejected"), work(json!("1"), "/c")),
+            (
+                "rejected",
+                "blocked",
+                Some("command_rejected"),
+                work(json!("1"), "/c"),
+            ),
             ("pending", "pending", None, work(json!("1"), "/d")),
-            ("no-ref", "blocked", Some(PORTABLE_WORK_NOT_FOUND), "{}".to_string()),
+            (
+                "no-ref",
+                "blocked",
+                Some(PORTABLE_WORK_NOT_FOUND),
+                "{}".to_string(),
+            ),
         ] {
             sqlx::query(
                 r#"
@@ -4448,18 +4966,30 @@ mod tests {
             Some(json!({ "addTo": [2], "removeFrom": [] }))
         );
         assert_eq!(
-            group_change("UpdateMangaCategories", &json!({ "mangaId": 3, "addTo": [], "removeFrom": [] })),
+            group_change(
+                "UpdateMangaCategories",
+                &json!({ "mangaId": 3, "addTo": [], "removeFrom": [] })
+            ),
             None
         );
         assert_eq!(
-            group_change("UpdateMangaCategories", &json!({ "mangaId": 3, "addTo": [-1], "removeFrom": [] })),
+            group_change(
+                "UpdateMangaCategories",
+                &json!({ "mangaId": 3, "addTo": [-1], "removeFrom": [] })
+            ),
             None
         );
         assert_eq!(
-            group_change(db::REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION, &json!({ "assignmentId": "a" })),
+            group_change(
+                db::REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION,
+                &json!({ "assignmentId": "a" })
+            ),
             None
         );
-        assert_eq!(group_change("UpdateChaptersProgress", &json!({ "mangaId": 3 })), None);
+        assert_eq!(
+            group_change("UpdateChaptersProgress", &json!({ "mangaId": 3 })),
+            None
+        );
         let work = json!({ "type": "COMIC", "sourceId": "1", "mangaKey": "/m/1" });
         // Progress groups by work, whatever each chapter's state, so its chapters share a lookup.
         assert_eq!(
@@ -4470,7 +5000,10 @@ mod tests {
             Some(json!({ "portableWorkRef": work }))
         );
         assert_eq!(
-            group_change("UpdateChaptersProgress", &json!({ "portableWorkRef": work, "isRead": true })),
+            group_change(
+                "UpdateChaptersProgress",
+                &json!({ "portableWorkRef": work, "isRead": true })
+            ),
             None
         );
     }
@@ -4513,11 +5046,17 @@ mod tests {
             .unwrap();
         }
         let first = claim_next_at(&pool, 500).await.unwrap().unwrap();
-        let change = group_change(&first.operation_name, &serde_json::from_str(&first.variables_json).unwrap())
-            .unwrap();
+        let change = group_change(
+            &first.operation_name,
+            &serde_json::from_str(&first.variables_json).unwrap(),
+        )
+        .unwrap();
         let group = claim_group_at(&pool, 500, &first, &change).await.unwrap();
         assert_eq!(
-            group.iter().map(|row| row.operation_id.as_str()).collect::<Vec<_>>(),
+            group
+                .iter()
+                .map(|row| row.operation_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["unread", "read"]
         );
     }
@@ -4571,14 +5110,77 @@ mod tests {
         let pool = db::connect(&config).await.unwrap();
         let into_one = r#"{"mangaId":1,"addTo":[1],"removeFrom":[]}"#;
         for (id, profile, operation, variables, version, status, attempts, next) in [
-            ("first", "main", "UpdateMangaCategories", into_one, 1, "pending", 0, 0),
-            ("same", "main", "UpdateMangaCategories", into_one, 2, "pending", 0, 0),
-            ("other-profile", "other", "UpdateMangaCategories", into_one, 3, "pending", 0, 0),
+            (
+                "first",
+                "main",
+                "UpdateMangaCategories",
+                into_one,
+                1,
+                "pending",
+                0,
+                0,
+            ),
+            (
+                "same",
+                "main",
+                "UpdateMangaCategories",
+                into_one,
+                2,
+                "pending",
+                0,
+                0,
+            ),
+            (
+                "other-profile",
+                "other",
+                "UpdateMangaCategories",
+                into_one,
+                3,
+                "pending",
+                0,
+                0,
+            ),
             // Past its ordered retries, so it no longer holds the rows after it.
-            ("not-due", "main", "UpdateMangaCategories", into_one, 4, "retry", ORDERED_RETRY_ATTEMPTS, 9_000),
-            ("also-same", "main", "UpdateMangaCategories", into_one, 5, "pending", 0, 0),
-            ("into-two", "main", "UpdateMangaCategories", r#"{"mangaId":1,"addTo":[2],"removeFrom":[]}"#, 6, "pending", 0, 0),
-            ("after-break", "main", "UpdateMangaCategories", into_one, 7, "pending", 0, 0),
+            (
+                "not-due",
+                "main",
+                "UpdateMangaCategories",
+                into_one,
+                4,
+                "retry",
+                ORDERED_RETRY_ATTEMPTS,
+                9_000,
+            ),
+            (
+                "also-same",
+                "main",
+                "UpdateMangaCategories",
+                into_one,
+                5,
+                "pending",
+                0,
+                0,
+            ),
+            (
+                "into-two",
+                "main",
+                "UpdateMangaCategories",
+                r#"{"mangaId":1,"addTo":[2],"removeFrom":[]}"#,
+                6,
+                "pending",
+                0,
+                0,
+            ),
+            (
+                "after-break",
+                "main",
+                "UpdateMangaCategories",
+                into_one,
+                7,
+                "pending",
+                0,
+                0,
+            ),
         ] {
             sqlx::query(
                 r#"
@@ -4604,11 +5206,17 @@ mod tests {
         }
         let first = claim_next_at(&pool, 500).await.unwrap().unwrap();
         assert_eq!(first.operation_id, "first");
-        let change = group_change(&first.operation_name, &serde_json::from_str(&first.variables_json).unwrap())
-            .unwrap();
+        let change = group_change(
+            &first.operation_name,
+            &serde_json::from_str(&first.variables_json).unwrap(),
+        )
+        .unwrap();
         let group = claim_group_at(&pool, 500, &first, &change).await.unwrap();
         assert_eq!(
-            group.iter().map(|row| row.operation_id.as_str()).collect::<Vec<_>>(),
+            group
+                .iter()
+                .map(|row| row.operation_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["same", "also-same"]
         );
         let states: Vec<(String, String, i64)> = sqlx::query_as(
@@ -4623,7 +5231,11 @@ mod tests {
                 ("first".to_string(), "in_flight".to_string(), 1),
                 ("same".to_string(), "in_flight".to_string(), 1),
                 ("other-profile".to_string(), "pending".to_string(), 0),
-                ("not-due".to_string(), "retry".to_string(), ORDERED_RETRY_ATTEMPTS),
+                (
+                    "not-due".to_string(),
+                    "retry".to_string(),
+                    ORDERED_RETRY_ATTEMPTS
+                ),
                 ("also-same".to_string(), "in_flight".to_string(), 1),
                 ("into-two".to_string(), "pending".to_string(), 0),
                 ("after-break".to_string(), "pending".to_string(), 0),
@@ -4637,9 +5249,13 @@ mod tests {
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         let work = |key: &str| json!({ "type": "comic", "sourceId": "1", "mangaKey": key });
-        let entry = |key: &str| json!({ "mangaId": 1, "inLibrary": true, "portableWorkRef": work(key) }).to_string();
-        let folder =
-            |key: &str| json!({ "mangaId": 1, "addTo": [1], "removeFrom": [], "portableWorkRef": work(key) }).to_string();
+        let entry = |key: &str| {
+            json!({ "mangaId": 1, "inLibrary": true, "portableWorkRef": work(key) }).to_string()
+        };
+        let folder = |key: &str| {
+            json!({ "mangaId": 1, "addTo": [1], "removeFrom": [], "portableWorkRef": work(key) })
+                .to_string()
+        };
         // How a synced library arrives: each work's entry, then its categories.
         for (id, operation, variables, version) in [
             ("entry-a", "UpdateManga", entry("/a"), 1),
@@ -4671,8 +5287,11 @@ mod tests {
         }
         let mut claimed = Vec::new();
         while let Some(first) = claim_next_at(&pool, 500).await.unwrap() {
-            let change = group_change(&first.operation_name, &serde_json::from_str(&first.variables_json).unwrap())
-                .unwrap();
+            let change = group_change(
+                &first.operation_name,
+                &serde_json::from_str(&first.variables_json).unwrap(),
+            )
+            .unwrap();
             let group = claim_group_at(&pool, 500, &first, &change).await.unwrap();
             let mut ids = vec![first.operation_id.clone()];
             ids.extend(group.iter().map(|row| row.operation_id.clone()));
@@ -4702,38 +5321,73 @@ mod tests {
             group_confirmed_ids(true, &json!({ "inLibrary": true }), &library),
             BTreeSet::from([1])
         );
-        let categories = json!({ "updateMangasCategories": { "mangas": [{ "id": 4 }, { "id": 5 }] } });
+        let categories =
+            json!({ "updateMangasCategories": { "mangas": [{ "id": 4 }, { "id": 5 }] } });
         assert_eq!(
-            group_confirmed_ids(false, &json!({ "addTo": [1], "removeFrom": [] }), &categories),
+            group_confirmed_ids(
+                false,
+                &json!({ "addTo": [1], "removeFrom": [] }),
+                &categories
+            ),
             BTreeSet::from([4, 5])
         );
         assert!(group_confirmed_ids(false, &json!({}), &json!({})).is_empty());
     }
 
     fn outbox_row(id: &str, operation: &str, variables: Value) -> (String, String, String, String) {
-        (id.to_string(), "main".to_string(), operation.to_string(), variables.to_string())
+        (
+            id.to_string(),
+            "main".to_string(),
+            operation.to_string(),
+            variables.to_string(),
+        )
     }
 
     #[test]
     fn groups_outbox_rows_by_portable_work() {
-        let work = json!({ "type": "comic", "sourceId": "2499283573021220255", "mangaKey": "/manga/a" });
+        let work =
+            json!({ "type": "comic", "sourceId": "2499283573021220255", "mangaKey": "/manga/a" });
         let other = json!({ "type": "comic", "sourceId": "1", "mangaKey": "/manga/b" });
         let chapter = |key: &str| json!({ "type": "comic", "work": work, "chapterKey": key });
         let rows = vec![
-            outbox_row("entry", "UpdateManga", json!({
-                "inLibrary": true, "portableTitleHint": " A ", "portableWorkRef": work })),
-            outbox_row("old", "UpdateChaptersProgress", json!({
+            outbox_row(
+                "entry",
+                "UpdateManga",
+                json!({
+                "inLibrary": true, "portableTitleHint": " A ", "portableWorkRef": work }),
+            ),
+            outbox_row(
+                "old",
+                "UpdateChaptersProgress",
+                json!({
                 "isRead": false, "lastPageRead": 2, "isBookmarked": null,
-                "portableWorkRef": work, "portableChapterRef": chapter("/manga/a/chapter-1") })),
-            outbox_row("new", "UpdateChaptersProgress", json!({
+                "portableWorkRef": work, "portableChapterRef": chapter("/manga/a/chapter-1") }),
+            ),
+            outbox_row(
+                "new",
+                "UpdateChaptersProgress",
+                json!({
                 "isRead": true, "lastPageRead": null, "isBookmarked": null,
-                "portableWorkRef": work, "portableChapterRef": chapter("/manga/a/chapter-1") })),
-            outbox_row("category", "UpdateMangaCategories", json!({
-                "addTo": [3], "removeFrom": [], "portableWorkRef": work })),
-            outbox_row("other", "UpdateMangaCategories", json!({
-                "addTo": [3], "removeFrom": [], "portableWorkRef": other })),
+                "portableWorkRef": work, "portableChapterRef": chapter("/manga/a/chapter-1") }),
+            ),
+            outbox_row(
+                "category",
+                "UpdateMangaCategories",
+                json!({
+                "addTo": [3], "removeFrom": [], "portableWorkRef": work }),
+            ),
+            outbox_row(
+                "other",
+                "UpdateMangaCategories",
+                json!({
+                "addTo": [3], "removeFrom": [], "portableWorkRef": other }),
+            ),
             outbox_row("plain", "UpdateCategory", json!({ "id": 3, "name": "X" })),
-            outbox_row("broken", "UpdateManga", json!({ "portableWorkRef": { "type": "comic" } })),
+            outbox_row(
+                "broken",
+                "UpdateManga",
+                json!({ "portableWorkRef": { "type": "comic" } }),
+            ),
         ];
         let works = collect_portable_works(&rows);
         assert_eq!(works.len(), 2);
@@ -4745,7 +5399,10 @@ mod tests {
         assert_eq!(first.chapters["/manga/a/chapter-1"]["isRead"], json!(true));
         // The newer row leaves the page out, so the older row's page stands, as it would if the
         // rows were applied one after the other.
-        assert_eq!(first.chapters["/manga/a/chapter-1"]["lastPageRead"], json!(2));
+        assert_eq!(
+            first.chapters["/manga/a/chapter-1"]["lastPageRead"],
+            json!(2)
+        );
         // A work only categorised here is not in any device's library.
         assert!(!works[1].in_library);
 
@@ -4759,16 +5416,23 @@ mod tests {
                      "isBookmarked": false, "lastPageRead": 2, "chapterNumber": -1.0 }])
         );
         // Without a title hint the key stands in until the source fills the details.
-        assert_eq!(import_work_variables(&works[1]).unwrap()["title"], json!("/manga/b"));
+        assert_eq!(
+            import_work_variables(&works[1]).unwrap()["title"],
+            json!("/manga/b")
+        );
     }
 
     #[test]
     fn a_core_listed_address_never_becomes_a_chapter_of_an_imported_work() {
         let work = json!({ "type": "comic", "sourceId": "1", "mangaKey": "/manga/a" });
-        let rows = vec![outbox_row("listed", "UpdateChaptersProgress", json!({
+        let rows = vec![outbox_row(
+            "listed",
+            "UpdateChaptersProgress",
+            json!({
             "isRead": true, "lastPageRead": null, "isBookmarked": null, "portableWorkRef": work,
             "portableChapterRef": { "type": "comic", "work": work,
-                "chapterKey": "aethon-core://suwayomi/server-a/main/chapter/7" } }))];
+                "chapterKey": "aethon-core://suwayomi/server-a/main/chapter/7" } }),
+        )];
         let works = collect_portable_works(&rows);
         assert_eq!(works[0].operation_ids, ["listed"]);
         assert!(works[0].chapters.is_empty());
@@ -4786,7 +5450,10 @@ mod tests {
     fn runtime_outages_retry_within_minutes() {
         assert_eq!(retry_delay_ms(RUNTIME_UNAVAILABLE, 0), BASE_RETRY_MS);
         assert_eq!(retry_delay_ms(RUNTIME_UNAVAILABLE, 9), MAX_RUNTIME_RETRY_MS);
-        assert_eq!(retry_delay_ms("confirmation_mismatch", 9), BASE_RETRY_MS << 8);
+        assert_eq!(
+            retry_delay_ms("confirmation_mismatch", 9),
+            BASE_RETRY_MS << 8
+        );
     }
 
     #[tokio::test]
@@ -4871,7 +5538,12 @@ mod tests {
             runtime_waiting_profiles(&pool, 500).await.unwrap(),
             vec!["main".to_string(), "side".to_string()]
         );
-        assert_eq!(rearm_runtime_retries(&pool, 500, Some("side")).await.unwrap(), 1);
+        assert_eq!(
+            rearm_runtime_retries(&pool, 500, Some("side"))
+                .await
+                .unwrap(),
+            1
+        );
         let rows: Vec<(String, i64, i64)> = sqlx::query_as(
             "SELECT operation_id, attempt_count, next_attempt_at_ms FROM suwayomi_projection_outbox ORDER BY operation_id",
         )
@@ -4887,7 +5559,10 @@ mod tests {
                 ("side-outage".to_string(), 2, 500),
             ]
         );
-        assert_eq!(runtime_waiting_profiles(&pool, 500).await.unwrap(), vec!["main".to_string()]);
+        assert_eq!(
+            runtime_waiting_profiles(&pool, 500).await.unwrap(),
+            vec!["main".to_string()]
+        );
     }
 
     #[test]
@@ -4913,9 +5588,12 @@ mod tests {
     fn maintenance_watch_reports_only_the_release_of_the_lease() {
         let mut watch = MaintenanceWatch::default();
         // No maintenance yet, then an update holds the lease across ticks, then releases it.
-        let observed = [false, false, true, true, false, false, true, false]
-            .map(|held| watch.ended(held));
-        assert_eq!(observed, [false, false, false, false, true, false, false, true]);
+        let observed =
+            [false, false, true, true, false, false, true, false].map(|held| watch.ended(held));
+        assert_eq!(
+            observed,
+            [false, false, false, false, true, false, false, true]
+        );
     }
 
     #[test]
@@ -5043,7 +5721,10 @@ mod tests {
                 { "id": 5, "mangas": { "nodes": [{ "id": 42 }] } }
             ]
         });
-        for prefix in ["suwayomi:profile:main", "suwayomi:server:desktop-a:profile:main"] {
+        for prefix in [
+            "suwayomi:profile:main",
+            "suwayomi:server:desktop-a:profile:main",
+        ] {
             let assignment_id = comic_category_assignment_id(
                 &format!("{prefix}:manga:42"),
                 &format!("{prefix}:category:3"),
@@ -5095,10 +5776,19 @@ mod tests {
     #[test]
     fn later_progress_fields_override_and_missing_ones_keep_the_earlier_value() {
         let mut merged = json!({ "isRead": true, "lastPageRead": 4 });
-        merge_progress_fields(&mut merged, &json!({ "lastPageRead": 9, "isBookmarked": null }));
+        merge_progress_fields(
+            &mut merged,
+            &json!({ "lastPageRead": 9, "isBookmarked": null }),
+        );
         assert_eq!(merged, json!({ "isRead": true, "lastPageRead": 9 }));
-        merge_progress_fields(&mut merged, &json!({ "isRead": false, "isBookmarked": true }));
-        assert_eq!(merged, json!({ "isRead": false, "isBookmarked": true, "lastPageRead": 9 }));
+        merge_progress_fields(
+            &mut merged,
+            &json!({ "isRead": false, "isBookmarked": true }),
+        );
+        assert_eq!(
+            merged,
+            json!({ "isRead": false, "isBookmarked": true, "lastPageRead": 9 })
+        );
         // Not an object on either side: nothing to merge.
         merge_progress_fields(&mut merged, &json!(null));
         assert_eq!(merged["lastPageRead"], 9);
@@ -5107,13 +5797,31 @@ mod tests {
     #[test]
     fn a_chapter_matches_a_patch_only_on_the_fields_it_sets() {
         let node = json!({ "id": 1, "isRead": true, "isBookmarked": false, "lastPageRead": 12 });
-        assert!(chapter_matches_patch(&node, &json!({ "isRead": true, "isBookmarked": null, "lastPageRead": null })));
-        assert!(chapter_matches_patch(&node, &json!({ "isRead": true, "isBookmarked": false, "lastPageRead": 12 })));
-        assert!(!chapter_matches_patch(&node, &json!({ "isRead": true, "lastPageRead": 13 })));
-        assert!(!chapter_matches_patch(&node, &json!({ "isBookmarked": true })));
+        assert!(chapter_matches_patch(
+            &node,
+            &json!({ "isRead": true, "isBookmarked": null, "lastPageRead": null })
+        ));
+        assert!(chapter_matches_patch(
+            &node,
+            &json!({ "isRead": true, "isBookmarked": false, "lastPageRead": 12 })
+        ));
+        assert!(!chapter_matches_patch(
+            &node,
+            &json!({ "isRead": true, "lastPageRead": 13 })
+        ));
+        assert!(!chapter_matches_patch(
+            &node,
+            &json!({ "isBookmarked": true })
+        ));
         // A chapter Suwayomi did not list matches only an empty patch.
-        assert!(!chapter_matches_patch(&Value::Null, &json!({ "isRead": true })));
-        assert!(chapter_matches_patch(&Value::Null, &json!({ "isRead": null })));
+        assert!(!chapter_matches_patch(
+            &Value::Null,
+            &json!({ "isRead": true })
+        ));
+        assert!(chapter_matches_patch(
+            &Value::Null,
+            &json!({ "isRead": null })
+        ));
     }
 
     #[test]
@@ -5173,9 +5881,21 @@ mod tests {
             .unwrap()
         };
         let rows = [
-            row("1", "/series/a/2", json!({ "isRead": true, "lastPageRead": 3 })),
-            row("2", "/series/a/2", json!({ "isBookmarked": true, "lastPageRead": null })),
-            row("3", "/series/a/1", json!({ "isRead": false, "lastPageRead": 9 })),
+            row(
+                "1",
+                "/series/a/2",
+                json!({ "isRead": true, "lastPageRead": 3 }),
+            ),
+            row(
+                "2",
+                "/series/a/2",
+                json!({ "isBookmarked": true, "lastPageRead": null }),
+            ),
+            row(
+                "3",
+                "/series/a/1",
+                json!({ "isRead": false, "lastPageRead": 9 }),
+            ),
         ];
         let rows: Vec<&BulkProgressRow> = rows.iter().collect();
         let node = json!({
@@ -5202,7 +5922,10 @@ mod tests {
         assert_eq!(top_up_work(&library, &rows).unwrap()["inLibrary"], true);
         let mut moved = node.clone();
         moved["url"] = json!("/series/b");
-        assert!(top_up_work(&moved, &rows).is_none(), "another work under the same id");
+        assert!(
+            top_up_work(&moved, &rows).is_none(),
+            "another work under the same id"
+        );
     }
 
     #[test]
@@ -5214,24 +5937,45 @@ mod tests {
         .into_iter()
         .collect();
         let row = |variables: Value| {
-            bulk_progress_row("op".to_string(), "pending".to_string(), &variables.to_string(), &bound)
+            bulk_progress_row(
+                "op".to_string(),
+                "pending".to_string(),
+                &variables.to_string(),
+                &bound,
+            )
         };
-        let accepted = row(progress_variables("/series/a", "/series/a/1", json!({ "isRead": true })))
-            .expect("a chapter of a bound work");
+        let accepted = row(progress_variables(
+            "/series/a",
+            "/series/a/1",
+            json!({ "isRead": true }),
+        ))
+        .expect("a chapter of a bound work");
         assert_eq!(accepted.manga_id, 7);
         assert_eq!(accepted.chapter_key, "/series/a/1");
-        assert!(row(progress_variables("/series/b", "/series/b/1", json!({}))).is_none(), "not bound");
         assert!(
-            row(progress_variables("/series/a", "aethon-core://suwayomi/s/main/chapter/5", json!({})))
-                .is_none(),
+            row(progress_variables("/series/b", "/series/b/1", json!({}))).is_none(),
+            "not bound"
+        );
+        assert!(
+            row(progress_variables(
+                "/series/a",
+                "aethon-core://suwayomi/s/main/chapter/5",
+                json!({})
+            ))
+            .is_none(),
             "a Core-listed address is checked by the per-row path"
         );
         let mut other_work = progress_variables("/series/a", "/series/b/1", json!({}));
         other_work["portableChapterRef"]["work"]["mangaKey"] = json!("/series/b");
-        assert!(row(other_work).is_none(), "the chapter belongs to another work");
+        assert!(
+            row(other_work).is_none(),
+            "the chapter belongs to another work"
+        );
         assert!(row(json!({ "portableWorkRef": { "type": "comic", "sourceId": "10002", "mangaKey": "/series/a" } })).is_none());
-        let huge: HashMap<String, String> =
-            bound.keys().map(|key| (key.clone(), "4294967296".to_string())).collect();
+        let huge: HashMap<String, String> = bound
+            .keys()
+            .map(|key| (key.clone(), "4294967296".to_string()))
+            .collect();
         assert!(bulk_progress_row(
             "op".to_string(),
             "pending".to_string(),
@@ -5302,17 +6046,48 @@ mod tests {
         )
         .await
         .unwrap();
-        let read = |chapter: &str| progress_variables("/series/a", chapter, json!({ "isRead": true }));
+        let read =
+            |chapter: &str| progress_variables("/series/a", chapter, json!({ "isRead": true }));
         insert_progress(&pool, "a1", 1, "pending", 0, None, &read("/series/a/1")).await;
-        insert_progress(&pool, "a2", 2, "retry", 1, Some("command_failed"), &read("/series/a/2")).await;
+        insert_progress(
+            &pool,
+            "a2",
+            2,
+            "retry",
+            1,
+            Some("command_failed"),
+            &read("/series/a/2"),
+        )
+        .await;
         insert_progress(&pool, "a3", 3, "pending", 0, None, &read("/series/a/3")).await;
         // A later row of a chapter whose earlier row is left to the per-row path stays there too.
-        insert_progress(&pool, "a3-later", 4, "pending", 0, None, &read("/series/a/3")).await;
-        insert_progress(&pool, "unbound", 5, "pending", 0, None, &progress_variables("/series/b", "/series/b/1", json!({ "isRead": true }))).await;
+        insert_progress(
+            &pool,
+            "a3-later",
+            4,
+            "pending",
+            0,
+            None,
+            &read("/series/a/3"),
+        )
+        .await;
+        insert_progress(
+            &pool,
+            "unbound",
+            5,
+            "pending",
+            0,
+            None,
+            &progress_variables("/series/b", "/series/b/1", json!({ "isRead": true })),
+        )
+        .await;
 
         let mut watch = BulkProgressWatch::default();
         watch.tried.insert("a3".to_string());
-        let (profile, rows) = claim_bulk_progress_at(&pool, 10, &watch).await.unwrap().unwrap();
+        let (profile, rows) = claim_bulk_progress_at(&pool, 10, &watch)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(profile, "main");
         let claimed: Vec<&str> = rows.iter().map(|row| row.operation_id.as_str()).collect();
         assert_eq!(claimed, vec!["a1", "a2"]);
@@ -5331,7 +6106,9 @@ mod tests {
         assert_eq!(next.operation_id, "a3");
 
         // a1 landed; a2 goes back as it was, without an attempt spent.
-        release_bulk_progress_at(&pool, 20, &[], &["a2"], &["a1"]).await.unwrap();
+        release_bulk_progress_at(&pool, 20, &[], &["a2"], &["a1"])
+            .await
+            .unwrap();
         let rows = outbox_rows(&pool).await;
         assert_eq!(
             rows,
@@ -5373,7 +6150,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let read = |chapter: &str| progress_variables("/series/a", chapter, json!({ "isRead": true }));
+        let read =
+            |chapter: &str| progress_variables("/series/a", chapter, json!({ "isRead": true }));
         // An earlier progress retry that holds the profile's later progress, not yet due.
         sqlx::query(
             r#"
@@ -5390,8 +6168,14 @@ mod tests {
         .unwrap();
         insert_progress(&pool, "later", 2, "pending", 0, None, &read("/series/a/1")).await;
         let watch = BulkProgressWatch::default();
-        assert!(claim_bulk_progress_at(&pool, 10, &watch).await.unwrap().is_none());
-        assert!(claim_next_of(&pool, 10, &[false]).await.unwrap().is_none(), "no library rows");
+        assert!(claim_bulk_progress_at(&pool, 10, &watch)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(
+            claim_next_of(&pool, 10, &[false]).await.unwrap().is_none(),
+            "no library rows"
+        );
     }
 
     #[tokio::test]
@@ -5400,13 +6184,41 @@ mod tests {
         let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
         let pool = db::connect(&config).await.unwrap();
         let variables = progress_variables("/series/a", "/series/a/1", json!({ "isRead": true }));
-        insert_progress(&pool, "retry", 1, "retry", 4, Some("portable_work_not_bound"), &variables).await;
-        insert_progress(&pool, "blocked", 2, "blocked", 6, Some("portable_work_not_found"), &variables).await;
+        insert_progress(
+            &pool,
+            "retry",
+            1,
+            "retry",
+            4,
+            Some("portable_work_not_bound"),
+            &variables,
+        )
+        .await;
+        insert_progress(
+            &pool,
+            "blocked",
+            2,
+            "blocked",
+            6,
+            Some("portable_work_not_found"),
+            &variables,
+        )
+        .await;
         insert_progress(&pool, "flight", 3, "in_flight", 2, None, &variables).await;
-        insert_progress(&pool, "untouched", 4, "retry", 4, Some("portable_work_not_bound"), &variables).await;
-        let rearmed = db::rearm_projection_operations(&pool, &["retry", "blocked", "flight", "missing"])
-            .await
-            .unwrap();
+        insert_progress(
+            &pool,
+            "untouched",
+            4,
+            "retry",
+            4,
+            Some("portable_work_not_bound"),
+            &variables,
+        )
+        .await;
+        let rearmed =
+            db::rearm_projection_operations(&pool, &["retry", "blocked", "flight", "missing"])
+                .await
+                .unwrap();
         assert_eq!(rearmed, 2);
         assert_eq!(
             outbox_rows(&pool).await,
@@ -5417,5 +6229,171 @@ mod tests {
                 ("untouched".to_string(), "retry".to_string(), 4),
             ]
         );
+    }
+
+    async fn state_with_upstream(
+        router: axum::Router,
+    ) -> (
+        tempfile::TempDir,
+        SharedAppState,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use crate::syncd::config::{SyncdAdvertisedEndpointResolver, SyncdConfig};
+        use crate::syncd::discovery::*;
+        use crate::syncd::models::AppState;
+        use std::sync::Arc;
+        use tokio::sync::{broadcast, Mutex, RwLock};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let temp = crate::syncd::test_dir::tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        config.set_suwayomi_proxy_test_upstream("main", &endpoint);
+        let pool = db::connect(&config).await.unwrap();
+        let advertised_endpoint_resolver =
+            SyncdAdvertisedEndpointResolver::from_config(&config).unwrap();
+        let discovery_provider_manager =
+            SyncdDiscoveryProviderManager::from_config(&config).unwrap();
+        let initial_status =
+            discovery_provider_manager.initial_status(&config, &advertised_endpoint_resolver);
+        let state = Arc::new(AppState {
+            config,
+            advertised_endpoint_resolver,
+            discovery_provider_manager,
+            discovery_descriptor_provider: SyncdDiscoveryDescriptorProvider::default(),
+            client_discovery_contract_provider: SyncdClientDiscoveryContractProvider::default(),
+            client_discovery_guidance_provider: SyncdClientDiscoveryGuidanceProvider::default(),
+            discovery_provider_state: Arc::new(RwLock::new(initial_status)),
+            discovery_provider_runtime: Arc::new(Mutex::new(None)),
+            pool,
+            change_sender: broadcast::channel(128).0,
+            pairing_status_sender: broadcast::channel(128).0,
+            mutation_gate: Arc::new(Mutex::new(())),
+            tls_cert_sha256: "test".to_string(),
+            device_presence: Default::default(),
+            own_echoes: Default::default(),
+        });
+        (temp, state, server)
+    }
+
+    #[tokio::test]
+    async fn unseen_library_work_defers_to_batch_import_instead_of_searching_source() {
+        let (_temp, state, server) = state_with_upstream(axum::Router::new()).await;
+        let work = PortableWorkRefV3::comic("10002", "/series/unseen");
+        let vars = json!({
+            "portableWorkRef": work,
+            "inLibrary": true,
+            "titleHint": "Unseen Series",
+        });
+        sqlx::query(
+            r#"
+            INSERT INTO suwayomi_projection_outbox (
+              operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+              source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+              created_at_ms, updated_at_ms
+            ) VALUES ('op-unseen', 'main', 'UpdateManga', ?, 'comic.entry', 'entry-unseen', 1, 'pending', 0, 0, NULL, 1, 1)
+            "#,
+        )
+        .bind(vars.to_string())
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+        let import = ImportWatch::default();
+        let pass = drain_ready_with_import(&state, true, Some(&import))
+            .await
+            .unwrap();
+        server.abort();
+        assert_eq!(pass.claimed, 1);
+        assert!(pass.deferred_to_import);
+        assert_eq!(
+            outbox_rows(&state.pool).await,
+            vec![("op-unseen".to_string(), "pending".to_string(), 0)]
+        );
+    }
+
+    #[tokio::test]
+    async fn bulk_progress_binds_every_distinct_chapter_key_alias_for_same_suwayomi_chapter() {
+        let router = axum::Router::new().route(
+            "/api/graphql",
+            axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+                let query = body["query"].as_str().unwrap_or_default();
+                let data = if query.contains("EpigraphBulkProgressChapters") {
+                    json!({
+                        "chapters": {
+                            "pageInfo": { "hasNextPage": false },
+                            "nodes": [{
+                                "id": 501,
+                                "mangaId": 7,
+                                "url": "https://www.example.com/manga/a/chapter-1",
+                                "isRead": true,
+                                "isBookmarked": false,
+                                "lastPageRead": 0,
+                                "pageCount": 20
+                            }]
+                        }
+                    })
+                } else {
+                    panic!("unexpected query: {query}");
+                };
+                axum::Json(json!({ "data": data }))
+            }),
+        );
+        let (_temp, state, server) = state_with_upstream(router).await;
+        let work = PortableWorkRefV3::comic("10002", "/manga/a");
+        db::upsert_portable_work_binding(
+            &state.pool,
+            "main",
+            &canonical_portable_work_id(&work),
+            &work,
+            None,
+            Some("7"),
+            PortableResolutionStateV3::Bound,
+            None,
+            None,
+            None,
+            0,
+            1,
+        )
+        .await
+        .unwrap();
+        let full_url = "https://www.example.com/manga/a/chapter-1";
+        let rel_url = "/manga/a/chapter-1";
+        insert_progress(
+            &state.pool,
+            "ch-full",
+            1,
+            "pending",
+            0,
+            None,
+            &progress_variables("/manga/a", full_url, json!({ "isRead": true })),
+        )
+        .await;
+        insert_progress(
+            &state.pool,
+            "ch-rel",
+            2,
+            "pending",
+            0,
+            None,
+            &progress_variables("/manga/a", rel_url, json!({ "isRead": true })),
+        )
+        .await;
+
+        let mut watch = BulkProgressWatch::default();
+        let settled = settle_progress_in_bulk(&state, &mut watch).await.unwrap();
+        server.abort();
+        assert_eq!(settled, 2);
+        let mut bound_keys: Vec<String> = sqlx::query_scalar(
+            "SELECT provider_key FROM portable_chapter_bindings WHERE profile_id = 'main' AND local_reference = '501'",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .unwrap();
+        bound_keys.sort();
+        assert_eq!(bound_keys, vec![rel_url.to_string(), full_url.to_string()]);
     }
 }

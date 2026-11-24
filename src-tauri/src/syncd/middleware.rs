@@ -19,8 +19,7 @@ pub const LEGACY_CLIENT_VERSION_HEADER: HeaderName =
 pub const LEGACY_CLIENT_PROTOCOL_HEADER: HeaderName =
     HeaderName::from_static("x-aethon-client-protocol-version");
 pub const ASSET_SHA256_HEADER: HeaderName = HeaderName::from_static("x-epigraph-asset-sha256");
-pub const LEGACY_ASSET_SHA256_HEADER: HeaderName =
-    HeaderName::from_static("x-aethon-asset-sha256");
+pub const LEGACY_ASSET_SHA256_HEADER: HeaderName = HeaderName::from_static("x-aethon-asset-sha256");
 /// This Core's wall clock when it answered. A phone whose clock runs off stamps its edits with
 /// this offset applied, so a later edit on either device still wins.
 pub const SERVER_TIME_HEADER: HeaderName = HeaderName::from_static("x-epigraph-server-time-ms");
@@ -52,8 +51,8 @@ pub fn validate_client_headers(
         LEGACY_CLIENT_VERSION_HEADER,
         "X-Epigraph-Client-Version",
     )?
-        .to_str()
-        .map_err(|_| AppError::BadRequest("Invalid X-Epigraph-Client-Version header.".to_string()))?;
+    .to_str()
+    .map_err(|_| AppError::BadRequest("Invalid X-Epigraph-Client-Version header.".to_string()))?;
 
     let client_protocol_version = compatible_header(
         headers,
@@ -61,12 +60,12 @@ pub fn validate_client_headers(
         LEGACY_CLIENT_PROTOCOL_HEADER,
         "X-Epigraph-Client-Protocol-Version",
     )?
-        .to_str()
-        .map_err(|_| {
-            AppError::BadRequest("Invalid X-Epigraph-Client-Protocol-Version header.".to_string())
-        })?
-        .parse::<u32>()
-        .map_err(|_| AppError::BadRequest("Invalid client protocol version.".to_string()))?;
+    .to_str()
+    .map_err(|_| {
+        AppError::BadRequest("Invalid X-Epigraph-Client-Protocol-Version header.".to_string())
+    })?
+    .parse::<u32>()
+    .map_err(|_| AppError::BadRequest("Invalid client protocol version.".to_string()))?;
 
     validate_client_version_fields(client_version, client_protocol_version, state)
 }
@@ -78,11 +77,9 @@ fn compatible_header<'a>(
     display_name: &str,
 ) -> Result<&'a HeaderValue, AppError> {
     match (headers.get(canonical), headers.get(legacy)) {
-        (Some(canonical_value), Some(legacy_value)) if canonical_value != legacy_value => {
-            Err(AppError::BadRequest(format!(
-                "Conflicting {display_name} headers."
-            )))
-        }
+        (Some(canonical_value), Some(legacy_value)) if canonical_value != legacy_value => Err(
+            AppError::BadRequest(format!("Conflicting {display_name} headers.")),
+        ),
         (Some(value), _) | (None, Some(value)) => Ok(value),
         (None, None) => Err(AppError::BadRequest(format!(
             "Missing {display_name} header."
@@ -164,6 +161,17 @@ pub fn filter_allowed_scopes<'a>(
     Ok(allowed)
 }
 
+pub fn bearer_token_public(headers: &HeaderMap) -> Result<String, AppError> {
+    bearer_token(headers)
+}
+
+pub async fn authenticate_token_public(
+    state: &SharedAppState,
+    raw_token: &str,
+) -> Result<AuthenticatedSession, AppError> {
+    authenticate_token(state, raw_token).await
+}
+
 fn bearer_token(headers: &HeaderMap) -> Result<String, AppError> {
     let value = headers
         .get(AUTHORIZATION)
@@ -221,7 +229,9 @@ async fn authenticate_token(
     if new_expiry - inactivity_expires_at_ms >= TOKEN_ACTIVITY_REFRESH_MS {
         refresh_token_activity(&state.pool, &token_id, now_ms, new_expiry)
             .await
-            .map_err(|_| AppError::Internal("Failed to refresh token activity window.".to_string()))?;
+            .map_err(|_| {
+                AppError::Internal("Failed to refresh token activity window.".to_string())
+            })?;
     }
 
     let scope_rows = sqlx::query("SELECT scope_id FROM paired_device_scopes WHERE token_id = ?")
@@ -311,8 +321,8 @@ mod tests {
         SyncdDiscoveryDescriptorProvider, SyncdDiscoveryProviderManager,
     };
     use crate::syncd::models::AppState;
-    use std::sync::Arc;
     use crate::syncd::test_dir::tempdir;
+    use std::sync::Arc;
     use tokio::sync::{broadcast, Mutex, RwLock};
 
     async fn build_state() -> SharedAppState {
@@ -414,14 +424,14 @@ mod tests {
             LEGACY_CLIENT_VERSION_HEADER,
             HeaderValue::from_static("0.1.0"),
         );
-        legacy_headers.insert(
-            LEGACY_CLIENT_PROTOCOL_HEADER,
-            HeaderValue::from_static("1"),
-        );
+        legacy_headers.insert(LEGACY_CLIENT_PROTOCOL_HEADER, HeaderValue::from_static("1"));
         assert!(validate_client_headers(&legacy_headers, &state).is_ok());
 
         legacy_headers.insert(CLIENT_VERSION_HEADER, HeaderValue::from_static("0.1.0"));
-        legacy_headers.insert(LEGACY_CLIENT_VERSION_HEADER, HeaderValue::from_static("0.0.9"));
+        legacy_headers.insert(
+            LEGACY_CLIENT_VERSION_HEADER,
+            HeaderValue::from_static("0.0.9"),
+        );
         assert!(validate_client_headers(&legacy_headers, &state).is_err());
     }
 
@@ -486,7 +496,12 @@ mod tests {
 
         let token_hash = hash_token("secret-token");
         let window = state.config.token_inactivity_window.as_millis() as i64;
-        let load = || async { db::load_token_state(&state.pool, &token_hash).await.unwrap().unwrap() };
+        let load = || async {
+            db::load_token_state(&state.pool, &token_hash)
+                .await
+                .unwrap()
+                .unwrap()
+        };
         let refreshed = load().await;
         assert!(refreshed.inactivity_expires_at_ms > db::now_ms() + window - 10_000);
 
@@ -494,16 +509,21 @@ mod tests {
         authenticate_token(&state, "secret-token").await.unwrap();
         let unchanged = load().await;
         assert_eq!(unchanged.last_seen_at_ms, refreshed.last_seen_at_ms);
-        assert_eq!(unchanged.inactivity_expires_at_ms, refreshed.inactivity_expires_at_ms);
+        assert_eq!(
+            unchanged.inactivity_expires_at_ms,
+            refreshed.inactivity_expires_at_ms
+        );
 
         // Once the window has aged, the next request extends it again.
         let aged = refreshed.inactivity_expires_at_ms - TOKEN_ACTIVITY_REFRESH_MS;
-        sqlx::query("UPDATE paired_device_tokens SET inactivity_expires_at_ms = ? WHERE token_hash = ?")
-            .bind(aged)
-            .bind(&token_hash)
-            .execute(&state.pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "UPDATE paired_device_tokens SET inactivity_expires_at_ms = ? WHERE token_hash = ?",
+        )
+        .bind(aged)
+        .bind(&token_hash)
+        .execute(&state.pool)
+        .await
+        .unwrap();
         authenticate_token(&state, "secret-token").await.unwrap();
         assert!(load().await.inactivity_expires_at_ms > aged);
     }

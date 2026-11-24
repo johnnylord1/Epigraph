@@ -26,7 +26,7 @@
   } from "../../lib/novels/libraryRefresh";
   import { collectTrackedChapterTotalsByMangaId, collectTrackedCompletedMangaIds } from "../../lib/library/completion";
   import {
-    COMPLETED_CATEGORY_NAME,
+    completedCategoryCleanupPlan,
     getCategoryDisplayName,
     isCompletedCategory,
     loadCategoriesWithMembers,
@@ -142,7 +142,6 @@
     );
   }
 
-  let ensureCompletedInFlight: Promise<Category[]> | null = null;
   let hydrateCategoriesInFlight: Promise<Category[]> | null = null;
   let libraryChapterCountsInFlight: Promise<void> | null = null;
   let liveLibrarySnapshotRefreshInFlight: Promise<Manga[]> | null = null;
@@ -339,14 +338,8 @@
   }
 
   async function cleanupCompletedDuplicates(cats: Category[]): Promise<Category[]> {
-    const completed = cats.filter(isCompletedCategory);
-    if (completed.length <= 1) return normalizeCategories(cats);
-
-    const [keep, ...duplicates] = [...completed].sort((a, b) => {
-      if (a.default !== b.default) return a.default ? -1 : 1;
-      if (a.order !== b.order) return a.order - b.order;
-      return a.id - b.id;
-    });
+    const { keep, duplicates } = completedCategoryCleanupPlan(cats);
+    if (!keep || duplicates.length === 0) return normalizeCategories(cats);
 
     await Promise.all(
       duplicates.map((cat) => gql(DELETE_CATEGORY, { id: cat.id }).catch(console.error)),
@@ -360,35 +353,7 @@
   }
 
   async function ensureCompletedCategory(cats: Category[]): Promise<Category[]> {
-    const normalized = normalizeCategories(cats);
-    const cleaned = await cleanupCompletedDuplicates(normalized);
-    if (cleaned.some(isCompletedCategory)) return cleaned;
-    if (ensureCompletedInFlight) return ensureCompletedInFlight;
-
-    ensureCompletedInFlight = (async () => {
-      try {
-        const fresh = await cleanupCompletedDuplicates(
-          normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY)).categories.nodes),
-        );
-        if (fresh.some(isCompletedCategory)) return fresh;
-
-        try {
-          await gql(CREATE_CATEGORY, { name: COMPLETED_CATEGORY_NAME });
-        } catch {}
-
-        return await cleanupCompletedDuplicates(
-          normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY)).categories.nodes),
-        );
-      } finally {
-        ensureCompletedInFlight = null;
-      }
-    })();
-
-    try {
-      return await ensureCompletedInFlight;
-    } catch {
-      return cleaned;
-    }
+    return cleanupCompletedDuplicates(cats);
   }
 
   function loadCategoriesSnapshot() {

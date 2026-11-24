@@ -23,6 +23,8 @@ export interface BookSectionSummaryItem {
 export interface BookEntry {
   id: string;
   assetFingerprint?: string;
+  mimeType?: string;
+  byteSize?: number | null;
   title: string;
   author: string | null;
   description: string | null;
@@ -71,11 +73,15 @@ export interface BookProgress {
 
 export interface BookBookmarkEntry {
   bookId: string;
+  bookmarkId?: string;
   location: string | null;
   href: string | null;
   pageIndex: number | null;
   progressPercent: number;
   label?: string;
+  note?: string;
+  createdAtMs?: number;
+  updatedAtMs?: number;
   savedAt: number;
 }
 

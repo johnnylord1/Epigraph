@@ -72,40 +72,66 @@ describe("book bookmarks", () => {
   it("normalizes persisted bookmark data", () => {
     expect(normalizeBookBookmark({
       bookId: "book-1",
+      bookmarkId: "bookmark-1",
       location: "epubcfi(/6/4)",
       href: "OPS/ch2.xhtml",
       progressPercent: 0.8,
       label: "Chapter 2",
+      note: "Keep this passage",
+      createdAtMs: 700,
+      updatedAtMs: 750,
       savedAt: 789,
     })).toEqual({
       bookId: "book-1",
+      bookmarkId: "bookmark-1",
       location: "epubcfi(/6/4)",
       href: "OPS/ch2.xhtml",
       pageIndex: null,
       progressPercent: 0.8,
       label: "Chapter 2",
+      note: "Keep this passage",
+      createdAtMs: 700,
+      updatedAtMs: 750,
       savedAt: 789,
     });
+  });
+
+  it("assigns a stable compatibility ID to older bookmark rows without one", () => {
+    const legacy = {
+      bookId: "book-1",
+      location: "epubcfi(/6/4)",
+      href: "OPS/ch2.xhtml",
+      progressPercent: 0.8,
+      savedAt: 789,
+    };
+
+    expect(normalizeBookBookmark(legacy).bookmarkId).toBe("legacy-789--1-800000");
+    expect(normalizeBookBookmark(legacy).bookmarkId).toBe(normalizeBookBookmark(legacy).bookmarkId);
   });
 
   it("preserves entry labels when creating a bookmark", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_700_000_000_000);
 
-    expect(createBookBookmark({
+    const bookmark = createBookBookmark({
       bookId: "pdf-1",
       location: null,
       href: null,
       pageIndex: 5,
       progressPercent: 0.25,
       label: "Page 5",
-    })).toEqual({
+    });
+
+    expect(bookmark).toMatchObject({
       bookId: "pdf-1",
       location: null,
       href: null,
       pageIndex: 5,
       progressPercent: 0.25,
+      bookmarkId: expect.any(String),
       label: "Page 5",
+      createdAtMs: 1_700_000_000_000,
+      updatedAtMs: 1_700_000_000_000,
       savedAt: 1_700_000_000_000,
     });
   });

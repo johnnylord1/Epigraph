@@ -1,15 +1,18 @@
 mod cloudflare_solver;
+mod compat;
 mod desktop_background;
 mod discord_cover;
 mod discord_rpc;
 mod library_share;
-mod compat;
+mod library_sqlite;
 mod migration_journal;
 mod offline_chapter;
 mod renderer_recovery;
+mod restore_commands;
+mod session_control;
+mod session_control_protocol;
 mod suwayomi_lan;
 mod suwayomi_maintenance;
-mod restore_commands;
 mod suwayomi_recovery;
 mod suwayomi_runtime;
 mod suwayomi_runtime_store;
@@ -18,12 +21,9 @@ pub mod syncd;
 mod syncd_desktop;
 mod syncd_replication;
 mod syncd_sidecar;
-mod session_control_protocol;
-mod session_control;
+mod v4_desktop_sync;
 
-pub use compat::{
-    migrate_legacy_core_storage, migrate_legacy_storage, promote_legacy_environment,
-};
+pub use compat::{migrate_legacy_core_storage, migrate_legacy_storage, promote_legacy_environment};
 
 use base64::Engine;
 use fs2::FileExt;
@@ -61,14 +61,14 @@ use windows_sys::Win32::{
     Foundation::{CloseHandle, HANDLE},
     System::{
         JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-            SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            QueryInformationJobObject, JobObjectBasicAccountingInformation, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+            JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+            TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         },
         Threading::{
-            CreateProcessW, ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_NO_WINDOW, CREATE_SUSPENDED,
-            PROCESS_INFORMATION, STARTUPINFOW,
+            CreateProcessW, ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_NO_WINDOW,
+            CREATE_SUSPENDED, PROCESS_INFORMATION, STARTUPINFOW,
         },
     },
 };
@@ -83,7 +83,8 @@ struct TrackerOAuthCallbackPayload {
 
 fn tracker_oauth_window_label(session_id: Option<&str>) -> Result<String, String> {
     let id = match session_id {
-        Some(value) => uuid::Uuid::parse_str(value).map_err(|_| "Invalid tracker login session.".to_string())?,
+        Some(value) => uuid::Uuid::parse_str(value)
+            .map_err(|_| "Invalid tracker login session.".to_string())?,
         None => uuid::Uuid::new_v4(),
     };
     Ok(format!("tracker-oauth-{}", id.simple()))
@@ -435,7 +436,9 @@ enum ManagedStartupOwner {
 }
 
 fn managed_startup_owner(profile_key: &str, port: u16) -> ManagedStartupOwner {
-    if profile_key.eq_ignore_ascii_case("main") && port == default_local_server_port(LocalServerProfile::Main) {
+    if profile_key.eq_ignore_ascii_case("main")
+        && port == default_local_server_port(LocalServerProfile::Main)
+    {
         ManagedStartupOwner::PersistentCore
     } else {
         ManagedStartupOwner::Desktop
@@ -922,7 +925,11 @@ fn spawn_local_flaresolverr_contained(path: &Path) -> Result<u32, String> {
             CloseHandle(process_info.hProcess);
             confirmed
         };
-        if !confirmed { return Err(format!("{error}; suspended spawn {pid} termination unconfirmed")); }
+        if !confirmed {
+            return Err(format!(
+                "{error}; suspended spawn {pid} termination unconfirmed"
+            ));
+        }
         return Err(error);
     }
 
@@ -967,7 +974,9 @@ fn terminate_local_flaresolverr_job(pid: u32) -> Result<(), String> {
     let mut guard = FLARESOLVERR_LOCAL_JOB
         .lock()
         .map_err(|_| "FlareSolverr Job Object state is unavailable.".to_string())?;
-    let job = guard.as_ref().ok_or("The FlareSolverr process tree has no active Job Object.")?;
+    let job = guard
+        .as_ref()
+        .ok_or("The FlareSolverr process tree has no active Job Object.")?;
     if job.pid != pid {
         return Err("The FlareSolverr Job Object does not match the ownership lease.".to_string());
     }
@@ -978,12 +987,22 @@ fn terminate_local_flaresolverr_job(pid: u32) -> Result<(), String> {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
-        let queried = unsafe { QueryInformationJobObject(handle, JobObjectBasicAccountingInformation,
-            &mut accounting as *mut _ as *mut std::ffi::c_void,
-            std::mem::size_of_val(&accounting) as u32, std::ptr::null_mut()) };
-        if queried == 0 { return Err("Cannot confirm FlareSolverr termination; evidence retained".into()); }
+        let queried = unsafe {
+            QueryInformationJobObject(
+                handle,
+                JobObjectBasicAccountingInformation,
+                &mut accounting as *mut _ as *mut std::ffi::c_void,
+                std::mem::size_of_val(&accounting) as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if queried == 0 {
+            return Err("Cannot confirm FlareSolverr termination; evidence retained".into());
+        }
         if accounting.ActiveProcesses == 0 {
-            unsafe { CloseHandle(handle); }
+            unsafe {
+                CloseHandle(handle);
+            }
             guard.take();
             return Ok(());
         }
@@ -1270,7 +1289,8 @@ fn start_flaresolverr_docker() -> Result<DockerFlareSolverrStatus, String> {
     let mut existing_container = inspect_flaresolverr_container_exists();
     if existing_container && !inspect_flaresolverr_owned() {
         return Err(
-            "Refusing to reuse a Docker container without the Epigraph ownership label.".to_string(),
+            "Refusing to reuse a Docker container without the Epigraph ownership label."
+                .to_string(),
         );
     }
 
@@ -1284,7 +1304,8 @@ fn start_flaresolverr_docker() -> Result<DockerFlareSolverrStatus, String> {
         let output = run_docker(&["rm", FLARESOLVERR_CONTAINER_NAME])?;
         if !output.status.success() {
             return Err(
-                "Docker could not replace the outdated Epigraph FlareSolverr container.".to_string(),
+                "Docker could not replace the outdated Epigraph FlareSolverr container."
+                    .to_string(),
             );
         }
         existing_container = false;
@@ -1495,7 +1516,11 @@ async fn close_reader_webview(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn open_tracker_oauth_window(app: tauri::AppHandle, url: String, session_id: Option<String>) -> Result<(), String> {
+async fn open_tracker_oauth_window(
+    app: tauri::AppHandle,
+    url: String,
+    session_id: Option<String>,
+) -> Result<(), String> {
     let parsed = url::Url::parse(url.trim()).map_err(|e| e.to_string())?;
     let label = tracker_oauth_window_label(session_id.as_deref())?;
     let handle = app.clone();
@@ -1504,7 +1529,8 @@ async fn open_tracker_oauth_window(app: tauri::AppHandle, url: String, session_i
     app.run_on_main_thread(move || {
         let result = (|| -> Result<(), String> {
             for (existing_label, window) in handle.webview_windows() {
-                if existing_label == "tracker-oauth" || existing_label.starts_with("tracker-oauth-") {
+                if existing_label == "tracker-oauth" || existing_label.starts_with("tracker-oauth-")
+                {
                     let _ = window.destroy();
                 }
             }
@@ -1522,7 +1548,10 @@ async fn open_tracker_oauth_window(app: tauri::AppHandle, url: String, session_i
                     let callback_url = next_url.to_string();
                     let _ = nav_handle.emit(
                         "tracker-oauth-callback",
-                        TrackerOAuthCallbackPayload { url: callback_url, session_id: session_id.clone() },
+                        TrackerOAuthCallbackPayload {
+                            url: callback_url,
+                            session_id: session_id.clone(),
+                        },
                     );
 
                     let close_handle = nav_handle.clone();
@@ -1567,7 +1596,10 @@ async fn open_tracker_oauth_window(app: tauri::AppHandle, url: String, session_i
 }
 
 #[tauri::command]
-async fn close_tracker_oauth_window(app: tauri::AppHandle, session_id: String) -> Result<(), String> {
+async fn close_tracker_oauth_window(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<(), String> {
     let label = tracker_oauth_window_label(Some(&session_id))?;
     if let Some(window) = app.get_webview_window(&label) {
         window.destroy().map_err(|error| error.to_string())?;
@@ -1841,7 +1873,12 @@ async fn get_cached_library_covers(
         items
             .iter()
             .map(|item| {
-                let key = library_cover_cache_key(&profile_id, &server_url, item.manga_id, &item.thumbnail_url);
+                let key = library_cover_cache_key(
+                    &profile_id,
+                    &server_url,
+                    item.manga_id,
+                    &item.thumbnail_url,
+                );
                 find_cached_library_cover_path(&key).map(|path| path.to_string_lossy().into_owned())
             })
             .collect()
@@ -2213,7 +2250,10 @@ mod tests {
     fn server_health_probes_do_not_hold_the_calling_thread() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let server_url = format!("http://{}", listener.local_addr().unwrap());
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
         let started = std::time::Instant::now();
         let (healthy, ticked_at) = runtime.block_on(async move {
             let probe = tokio::spawn(probe_server_health(server_url));
@@ -2226,15 +2266,30 @@ mod tests {
         });
         drop(listener);
         assert!(!healthy, "a server that never answers is not healthy");
-        assert!(ticked_at < Duration::from_millis(1000), "other work waited {ticked_at:?} behind a hanging probe");
+        assert!(
+            ticked_at < Duration::from_millis(1000),
+            "other work waited {ticked_at:?} behind a hanging probe"
+        );
     }
 
     #[test]
     fn tracker_oauth_callbacks_identify_the_request_without_breaking_legacy_payloads() {
-        let legacy = TrackerOAuthCallbackPayload { url: "https://suwayomi.org/tracker-oauth?code=test".into(), session_id: None };
-        assert_eq!(serde_json::to_value(legacy).unwrap(), serde_json::json!({ "url": "https://suwayomi.org/tracker-oauth?code=test" }));
-        let scoped = TrackerOAuthCallbackPayload { url: "callback".into(), session_id: Some("request-id".into()) };
-        assert_eq!(serde_json::to_value(scoped).unwrap()["sessionId"], "request-id");
+        let legacy = TrackerOAuthCallbackPayload {
+            url: "https://suwayomi.org/tracker-oauth?code=test".into(),
+            session_id: None,
+        };
+        assert_eq!(
+            serde_json::to_value(legacy).unwrap(),
+            serde_json::json!({ "url": "https://suwayomi.org/tracker-oauth?code=test" })
+        );
+        let scoped = TrackerOAuthCallbackPayload {
+            url: "callback".into(),
+            session_id: Some("request-id".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(scoped).unwrap()["sessionId"],
+            "request-id"
+        );
     }
 
     #[test]
@@ -2243,19 +2298,40 @@ mod tests {
         let second = tracker_oauth_window_label(None).unwrap();
         assert_ne!(first, second);
         let session = uuid::Uuid::new_v4().to_string();
-        assert_eq!(tracker_oauth_window_label(Some(&session)).unwrap(), tracker_oauth_window_label(Some(&session)).unwrap());
+        assert_eq!(
+            tracker_oauth_window_label(Some(&session)).unwrap(),
+            tracker_oauth_window_label(Some(&session)).unwrap()
+        );
         assert!(tracker_oauth_window_label(Some("../main")).is_err());
     }
 
     #[test]
     fn book_storage_names_reject_paths_devices_and_alternate_streams() {
-        for id in ["../../escape", "..\\escape", "C:\\escape", "CON", "book:stream", "", ".", "book."] {
-            assert!(validated_book_filename(id, "epub").is_err(), "accepted {id}");
+        for id in [
+            "../../escape",
+            "..\\escape",
+            "C:\\escape",
+            "CON",
+            "book:stream",
+            "",
+            ".",
+            "book.",
+        ] {
+            assert!(
+                validated_book_filename(id, "epub").is_err(),
+                "accepted {id}"
+            );
         }
         for ext in ["../../exe", "pdf:stream", "", "pdf\\escape"] {
-            assert!(validated_book_filename("book-123", ext).is_err(), "accepted {ext}");
+            assert!(
+                validated_book_filename("book-123", ext).is_err(),
+                "accepted {ext}"
+            );
         }
-        assert_eq!(validated_book_filename("book-123", ".EPUB").unwrap(), "book-123.epub");
+        assert_eq!(
+            validated_book_filename("book-123", ".EPUB").unwrap(),
+            "book-123.epub"
+        );
     }
 
     #[test]
@@ -2273,16 +2349,24 @@ mod tests {
     fn library_cover_trim_runs_first_then_once_per_interval() {
         assert!(library_cover_trim_due(0, 1_000));
         assert!(!library_cover_trim_due(1_000, 1_000));
-        assert!(!library_cover_trim_due(1_000, 1_000 + LIBRARY_COVER_TRIM_INTERVAL_SECS - 1));
-        assert!(library_cover_trim_due(1_000, 1_000 + LIBRARY_COVER_TRIM_INTERVAL_SECS));
+        assert!(!library_cover_trim_due(
+            1_000,
+            1_000 + LIBRARY_COVER_TRIM_INTERVAL_SECS - 1
+        ));
+        assert!(library_cover_trim_due(
+            1_000,
+            1_000 + LIBRARY_COVER_TRIM_INTERVAL_SECS
+        ));
         assert!(library_cover_trim_due(1_000, 900));
     }
 
     #[test]
     fn removing_book_assets_cannot_escape_the_managed_root() {
-        let root = std::env::temp_dir().join(format!("epigraph-book-remove-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("epigraph-book-remove-{}", uuid::Uuid::new_v4()));
         let managed = root.join("covers").join("book.png");
-        let outside = std::env::temp_dir().join(format!("epigraph-outside-{}", uuid::Uuid::new_v4()));
+        let outside =
+            std::env::temp_dir().join(format!("epigraph-outside-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(managed.parent().unwrap()).unwrap();
         fs::write(&managed, b"managed").unwrap();
         fs::write(&outside, b"outside").unwrap();
@@ -2552,7 +2636,8 @@ mod tests {
 
     #[test]
     fn writes_server_owner_atomically_without_leaving_tmp_file() {
-        let temp = std::env::temp_dir().join(format!("epigraph-owner-atomic-{}", std::process::id()));
+        let temp =
+            std::env::temp_dir().join(format!("epigraph-owner-atomic-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
 
@@ -2909,10 +2994,19 @@ server.maxSourcesInParallel = 6
         assert_eq!(isolated.local_app_data_dir, Some(root.join("LocalAppData")));
         assert_eq!(isolated.syncd_port, Some(4988));
         assert_eq!(isolated.local_server_ports, Some(DEV_LOCAL_SERVER_PORTS));
-        assert_ne!(DEV_LOCAL_SERVER_PORTS.0, 4567, "the release's MAIN server port");
-        assert_ne!(DEV_LOCAL_SERVER_PORTS.1, 4667, "the release's TEST server port");
+        assert_ne!(
+            DEV_LOCAL_SERVER_PORTS.0, 4567,
+            "the release's MAIN server port"
+        );
+        assert_ne!(
+            DEV_LOCAL_SERVER_PORTS.1, 4667,
+            "the release's TEST server port"
+        );
         assert_eq!(
-            automation_local_server_root(isolated.local_app_data_dir.as_ref().unwrap(), LocalServerProfile::Main),
+            automation_local_server_root(
+                isolated.local_app_data_dir.as_ref().unwrap(),
+                LocalServerProfile::Main
+            ),
             root.join("LocalServerMain")
         );
         assert_eq!(
@@ -2925,9 +3019,15 @@ server.maxSourcesInParallel = 6
             "--syncd-port=4988",
         ]);
         apply_dev_data_isolation(&mut explicit, &root);
-        assert_eq!(explicit.local_app_data_dir, Some(PathBuf::from(r"C:\Temp\EpigraphHost")));
+        assert_eq!(
+            explicit.local_app_data_dir,
+            Some(PathBuf::from(r"C:\Temp\EpigraphHost"))
+        );
         assert_eq!(explicit.syncd_port, Some(4988));
-        assert_eq!(explicit.local_server_ports, None, "a gate's own --server-url picks its ports");
+        assert_eq!(
+            explicit.local_server_ports, None,
+            "a gate's own --server-url picks its ports"
+        );
     }
 
     #[test]
@@ -2952,7 +3052,10 @@ server.maxSourcesInParallel = 6
         let local = PathBuf::from(r"C:\Temp\EpigraphHost\LocalAppData");
         let roaming = automation_roaming_app_data_path(&local);
 
-        assert_eq!(roaming, PathBuf::from(r"C:\Temp\EpigraphHost\RoamingAppData"));
+        assert_eq!(
+            roaming,
+            PathBuf::from(r"C:\Temp\EpigraphHost\RoamingAppData")
+        );
     }
 
     #[test]
@@ -2999,12 +3102,27 @@ server.maxSourcesInParallel = 6
             .to_string()
         };
         std::fs::write(root.join("server.owner.json"), owner(&root, 4567)).unwrap();
-        assert!(managed_owner_accepts(&root, 4567, |pid, served| pid == 4242 && served == root.as_path()));
-        assert!(!managed_owner_accepts(&root, 4567, |_, _| false), "the recorded Java must serve this root");
-        assert!(!managed_owner_accepts(&root, 4667, |_, _| true), "the record must be for this port");
+        assert!(managed_owner_accepts(&root, 4567, |pid, served| pid
+            == 4242
+            && served == root.as_path()));
+        assert!(
+            !managed_owner_accepts(&root, 4567, |_, _| false),
+            "the recorded Java must serve this root"
+        );
+        assert!(
+            !managed_owner_accepts(&root, 4667, |_, _| true),
+            "the record must be for this port"
+        );
 
-        std::fs::write(root.join("server.owner.json"), owner(&temp.path().join("epigraph-main"), 4567)).unwrap();
-        assert!(!managed_owner_accepts(&root, 4567, |_, _| true), "a record for another root is foreign");
+        std::fs::write(
+            root.join("server.owner.json"),
+            owner(&temp.path().join("epigraph-main"), 4567),
+        )
+        .unwrap();
+        assert!(
+            !managed_owner_accepts(&root, 4567, |_, _| true),
+            "a record for another root is foreign"
+        );
     }
 
     #[test]
@@ -3012,8 +3130,14 @@ server.maxSourcesInParallel = 6
         let mut system = System::new();
         let pid = Pid::from_u32(std::process::id());
         refresh_process_command_line(&mut system, pid);
-        let cmd = system.process(pid).map(|process| process.cmd().to_vec()).unwrap_or_default();
-        assert!(!cmd.is_empty(), "the rootDir proof lives in the command line, so it must be refreshed");
+        let cmd = system
+            .process(pid)
+            .map(|process| process.cmd().to_vec())
+            .unwrap_or_default();
+        assert!(
+            !cmd.is_empty(),
+            "the rootDir proof lives in the command line, so it must be refreshed"
+        );
     }
 
     #[test]
@@ -3334,7 +3458,9 @@ fn validated_book_filename(book_id: &str, ext: &str) -> Result<String, String> {
     let id = book_id.trim();
     if id.is_empty()
         || id.len() > 160
-        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
         return Err("Invalid book identifier.".to_string());
     }
@@ -3352,7 +3478,9 @@ fn validated_book_filename(book_id: &str, ext: &str) -> Result<String, String> {
     let normalized_ext = ext.trim().trim_matches('.').to_ascii_lowercase();
     if normalized_ext.is_empty()
         || normalized_ext.len() > 10
-        || !normalized_ext.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        || !normalized_ext
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric())
     {
         return Err("Invalid book file extension.".to_string());
     }
@@ -3363,21 +3491,6 @@ fn validated_book_filename(book_id: &str, ext: &str) -> Result<String, String> {
 #[cfg(test)]
 mod restore_library_persistence_tests {
     use super::*;
-    #[test]
-    fn invalid_snapshot_preserves_existing_library() {
-        let dir = tempfile::tempdir().unwrap(); let path = dir.path().join("library.json");
-        fs::write(&path, b"{\"version\":1}").unwrap();
-        assert!(write_restore_library_snapshot(&path, "{broken").is_err());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"version\":1}");
-    }
-    #[test]
-    fn acknowledged_snapshot_is_complete_and_leaves_no_temporary_file() {
-        let dir = tempfile::tempdir().unwrap(); let path = dir.path().join("library.json");
-        fs::write(&path, b"{\"version\":1}").unwrap();
-        write_restore_library_snapshot(&path, "{\"version\":1,\"entries\":[]}").unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"version\":1,\"entries\":[]}");
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
-    }
     #[test]
     fn application_commands_are_reserved_for_the_main_window() {
         assert!(is_trusted_command_webview("main"));
@@ -3416,12 +3529,6 @@ mod restore_library_persistence_tests {
     }
 }
 
-fn write_restore_library_snapshot(path: &Path, contents: &str) -> Result<(), String> {
-    let value: serde_json::Value = serde_json::from_str(contents).map_err(|_| "RESTORE_LIBRARY_INVALID_JSON")?;
-    if !value.is_object() { return Err("RESTORE_LIBRARY_INVALID_JSON".into()); }
-    write_book_bytes_atomic(path, contents.as_bytes())
-}
-
 fn write_book_bytes_atomic(dest_path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temp_path = dest_path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| -> Result<(), String> {
@@ -3455,7 +3562,8 @@ fn write_book_cover(book_id: String, bytes_base64: String, ext: String) -> Resul
 }
 
 fn validate_book_cover_bytes(bytes: &[u8], ext: &str) -> Result<(), String> {
-    let detected = image::guess_format(bytes).map_err(|_| "Book cover is not a valid image.".to_string())?;
+    let detected =
+        image::guess_format(bytes).map_err(|_| "Book cover is not a valid image.".to_string())?;
     let matches_extension = match ext {
         "jpg" | "jpeg" => detected == image::ImageFormat::Jpeg,
         "png" => detected == image::ImageFormat::Png,
@@ -3510,8 +3618,8 @@ fn remove_book_assets(
 fn remove_managed_book_asset(root: &Path, candidate: &Path) -> Result<(), String> {
     let canonical_root = fs::canonicalize(root)
         .map_err(|_| "Managed books directory is unavailable.".to_string())?;
-    let canonical_candidate = fs::canonicalize(candidate)
-        .map_err(|_| "Book asset no longer exists.".to_string())?;
+    let canonical_candidate =
+        fs::canonicalize(candidate).map_err(|_| "Book asset no longer exists.".to_string())?;
     if !canonical_candidate.starts_with(&canonical_root) || !canonical_candidate.is_file() {
         return Err("Refusing to remove a file outside the managed books directory.".to_string());
     }
@@ -3573,7 +3681,10 @@ fn resolve_downloads_path_for_profile(downloads_path: &str, profile_id: Option<&
 }
 
 #[tauri::command]
-fn get_storage_info(downloads_path: String, profile_id: Option<String>) -> Result<StorageInfo, String> {
+fn get_storage_info(
+    downloads_path: String,
+    profile_id: Option<String>,
+) -> Result<StorageInfo, String> {
     let path = resolve_downloads_path_for_profile(&downloads_path, profile_id.as_deref());
 
     let manga_bytes = if path.exists() {
@@ -3627,7 +3738,11 @@ fn suwayomi_safe_filename(value: &str) -> String {
     }
     let mut name = String::with_capacity(trimmed.len());
     for ch in trimmed.chars() {
-        let ch = if (ch as u32) <= 31 || matches!(ch, '"' | '*' | '/' | ':' | '<' | '>' | '?' | '\\' | '|' | '\u{7f}') {
+        let ch = if (ch as u32) <= 31
+            || matches!(
+                ch,
+                '"' | '*' | '/' | ':' | '<' | '>' | '?' | '\\' | '|' | '\u{7f}'
+            ) {
             '_'
         } else {
             ch
@@ -3825,7 +3940,14 @@ pub(crate) fn reused_server_runtime_status(
 
 fn mark_reused_server_ready(app: &tauri::AppHandle, target: &LocalServerTarget, java_pid: u32) {
     let status = reused_server_runtime_status(&target.profile_key, &target.server_url, java_pid);
-    set_runtime_status(app, status.state, status.profile_id, status.server_url, status.pid, None);
+    set_runtime_status(
+        app,
+        status.state,
+        status.profile_id,
+        status.server_url,
+        status.pid,
+        None,
+    );
 }
 
 #[tauri::command]
@@ -3951,7 +4073,9 @@ fn local_server_profile_root(profile: LocalServerProfile) -> PathBuf {
 /// custom profiles instead of the installed release's roaming folder.
 fn local_server_custom_profile_root(profile_key: &str) -> PathBuf {
     #[cfg(target_os = "windows")]
-    let base = std::env::var_os("APPDATA").map(PathBuf::from).or_else(dirs::data_dir);
+    let base = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(dirs::data_dir);
     #[cfg(not(target_os = "windows"))]
     let base = dirs::data_dir();
     base.unwrap_or_else(suwayomi_data_dir)
@@ -4023,13 +4147,15 @@ fn resolve_local_server_target(
             _ => None,
         })
         .or_else(|| {
-            Some(if port == default_local_server_port(LocalServerProfile::Main) {
-                "main".to_string()
-            } else if port == default_local_server_port(LocalServerProfile::Test) {
-                "test".to_string()
-            } else {
-                format!("profile-{port}")
-            })
+            Some(
+                if port == default_local_server_port(LocalServerProfile::Main) {
+                    "main".to_string()
+                } else if port == default_local_server_port(LocalServerProfile::Test) {
+                    "test".to_string()
+                } else {
+                    format!("profile-{port}")
+                },
+            )
         })
         .unwrap_or_else(|| "test".to_string());
     let profile = local_server_builtin_profile_from_key(&profile_key);
@@ -4138,7 +4264,11 @@ fn relocated_managed_server_is_owned(server_url: &str) -> bool {
     true
 }
 
-fn managed_owner_accepts(root: &Path, port: u16, java_serves_root: impl Fn(u32, &Path) -> bool) -> bool {
+fn managed_owner_accepts(
+    root: &Path,
+    port: u16,
+    java_serves_root: impl Fn(u32, &Path) -> bool,
+) -> bool {
     let Some(owner) = read_server_owner(&root.join("server.owner.json")) else {
         return false;
     };
@@ -4307,7 +4437,6 @@ fn confirm_exited_server_owner(owner_path: &Path) -> bool {
     )
 }
 
-
 fn validate_server_owner(target: &LocalServerTarget, owner: &ServerOwner) -> OwnerReuseDecision {
     if owner.profile_key.to_ascii_lowercase() != target.profile_key
         || owner.root_dir != target.root_dir.to_string_lossy()
@@ -4333,12 +4462,22 @@ fn validate_server_owner(target: &LocalServerTarget, owner: &ServerOwner) -> Own
         return OwnerReuseDecision::Stale;
     }
 
-    if !owner.run_id.as_ref().is_some_and(|run| uuid::Uuid::parse_str(run).is_ok_and(|id| !id.is_nil())) {
+    if !owner
+        .run_id
+        .as_ref()
+        .is_some_and(|run| uuid::Uuid::parse_str(run).is_ok_and(|id| !id.is_nil()))
+    {
         return OwnerReuseDecision::Stale;
     }
-    let Some(expected) = &owner.process_identity else { return OwnerReuseDecision::Stale; };
-    let Some(actual) = runtime_process_identity(owner.java_pid) else { return OwnerReuseDecision::Stale; };
-    if expected != &actual { return OwnerReuseDecision::Stale; }
+    let Some(expected) = &owner.process_identity else {
+        return OwnerReuseDecision::Stale;
+    };
+    let Some(actual) = runtime_process_identity(owner.java_pid) else {
+        return OwnerReuseDecision::Stale;
+    };
+    if expected != &actual {
+        return OwnerReuseDecision::Stale;
+    }
 
     if !probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT) {
         return OwnerReuseDecision::ConflictingLiveProcess;
@@ -4365,7 +4504,10 @@ fn resolve_existing_prefix(path: &Path) -> Result<PathBuf, String> {
     let mut current = path.to_path_buf();
     loop {
         if let Ok(resolved) = current.canonicalize() {
-            return Ok(missing.into_iter().rev().fold(resolved, |acc: PathBuf, part| acc.join(part)));
+            return Ok(missing
+                .into_iter()
+                .rev()
+                .fold(resolved, |acc: PathBuf, part| acc.join(part)));
         }
         let Some(name) = current.file_name().map(|name| name.to_os_string()) else {
             return Err(format!("Could not resolve {}", path.display()));
@@ -4381,7 +4523,10 @@ fn resolve_existing_prefix(path: &Path) -> Result<PathBuf, String> {
 /// `None` when there is nothing to move (no source, or the same folder spelled differently). A destination
 /// inside a folder being moved is refused: the copy would walk into itself and the removal would then
 /// delete the copy.
-fn plan_download_move(src: &Path, dst: &Path) -> Result<Option<(PathBuf, PathBuf, Vec<&'static str>)>, String> {
+fn plan_download_move(
+    src: &Path,
+    dst: &Path,
+) -> Result<Option<(PathBuf, PathBuf, Vec<&'static str>)>, String> {
     if !src.is_dir() {
         return Ok(None);
     }
@@ -4417,7 +4562,11 @@ fn move_download_folders(
 
     let total: u64 = folders
         .iter()
-        .flat_map(|folder| WalkDir::new(src.join(folder)).into_iter().filter_map(|e| e.ok()))
+        .flat_map(|folder| {
+            WalkDir::new(src.join(folder))
+                .into_iter()
+                .filter_map(|e| e.ok())
+        })
         .filter(|e| e.file_type().is_file())
         .count() as u64;
     on_progress(0, total, "");
@@ -4427,7 +4576,10 @@ fn move_download_folders(
         let from = src.join(folder);
         let to = dst.join(folder);
         for entry in WalkDir::new(&from).into_iter().filter_map(|e| e.ok()) {
-            let rel = entry.path().strip_prefix(&from).map_err(|e| e.to_string())?;
+            let rel = entry
+                .path()
+                .strip_prefix(&from)
+                .map_err(|e| e.to_string())?;
             let target = to.join(rel);
             if entry.file_type().is_dir() {
                 fs::create_dir_all(&target).map_err(|e| e.to_string())?;
@@ -4478,7 +4630,10 @@ mod download_folder_tests {
     #[test]
     fn download_folder_names_match_suwayomi() {
         assert_eq!(suwayomi_safe_filename("Series: Part 1?"), "Series_ Part 1_");
-        assert_eq!(suwayomi_safe_filename(" ..A/B\\C|D*E\"F<G>H\u{1}\u{7f}.. "), "A_B_C_D_E_F_G_H__");
+        assert_eq!(
+            suwayomi_safe_filename(" ..A/B\\C|D*E\"F<G>H\u{1}\u{7f}.. "),
+            "A_B_C_D_E_F_G_H__"
+        );
         assert_eq!(suwayomi_safe_filename(" . . "), "(invalid)");
         let long = suwayomi_safe_filename(&"\u{00e9}".repeat(200));
         assert_eq!(long.len(), 240);
@@ -4488,18 +4643,32 @@ mod download_folder_tests {
     #[test]
     fn offline_reader_opens_chapters_in_the_folders_suwayomi_writes() {
         let temp = tempfile::tempdir().unwrap();
-        let series = temp.path().join("mangas").join("Source_ One").join("Title_ Two_");
+        let series = temp
+            .path()
+            .join("mangas")
+            .join("Source_ One")
+            .join("Title_ Two_");
         write(&series.join("Group_Chapter 3.cbz"), b"chapter three");
         write(&series.join("Chapter 30.cbz"), b"chapter thirty");
         let root = temp.path().to_string_lossy().to_string();
 
         let found = find_downloaded_chapter_archive(
-            &root, "Source: One", "Title: Two?", "Chapter 3", Some("Group"), None,
+            &root,
+            "Source: One",
+            "Title: Two?",
+            "Chapter 3",
+            Some("Group"),
+            None,
         )
         .unwrap();
         assert_eq!(fs::read(found.unwrap()).unwrap(), b"chapter three");
         let missing = find_downloaded_chapter_archive(
-            &root, "Source: One", "Another", "Chapter 3", None, None,
+            &root,
+            "Source: One",
+            "Another",
+            "Chapter 3",
+            None,
+            None,
         )
         .unwrap();
         assert_eq!(missing, None);
@@ -4510,7 +4679,13 @@ mod download_folder_tests {
         let temp = tempfile::tempdir().unwrap();
         let src = temp.path().join("old");
         let dst = temp.path().join("new").join("nested");
-        write(&src.join("mangas").join("Source").join("Series").join("Chapter 1.cbz"), b"one");
+        write(
+            &src.join("mangas")
+                .join("Source")
+                .join("Series")
+                .join("Chapter 1.cbz"),
+            b"one",
+        );
         write(&src.join("thumbnails").join("1.jpg"), b"cover");
         write(&src.join("notes.txt"), b"mine");
 
@@ -4518,8 +4693,20 @@ mod download_folder_tests {
         move_download_folders(&src, &dst, |done, total, _| events.push((done, total))).unwrap();
 
         assert_eq!(events, vec![(0, 2), (1, 2), (2, 2)]);
-        assert_eq!(fs::read(dst.join("mangas").join("Source").join("Series").join("Chapter 1.cbz")).unwrap(), b"one");
-        assert_eq!(fs::read(dst.join("thumbnails").join("1.jpg")).unwrap(), b"cover");
+        assert_eq!(
+            fs::read(
+                dst.join("mangas")
+                    .join("Source")
+                    .join("Series")
+                    .join("Chapter 1.cbz")
+            )
+            .unwrap(),
+            b"one"
+        );
+        assert_eq!(
+            fs::read(dst.join("thumbnails").join("1.jpg")).unwrap(),
+            b"cover"
+        );
         assert!(!src.join("mangas").exists());
         assert!(!src.join("thumbnails").exists());
         assert_eq!(fs::read(src.join("notes.txt")).unwrap(), b"mine");
@@ -4530,10 +4717,15 @@ mod download_folder_tests {
     fn migration_to_the_same_folder_keeps_every_download() {
         let temp = tempfile::tempdir().unwrap();
         let src = temp.path().join("downloads");
-        let chapter = src.join("mangas").join("Source").join("Series").join("Chapter 1.cbz");
+        let chapter = src
+            .join("mangas")
+            .join("Source")
+            .join("Series")
+            .join("Chapter 1.cbz");
         write(&chapter, b"one");
 
-        move_download_folders(&src, &src.join(".").join("mangas").join(".."), |_, _, _| {}).unwrap();
+        move_download_folders(&src, &src.join(".").join("mangas").join(".."), |_, _, _| {})
+            .unwrap();
 
         assert_eq!(fs::read(&chapter).unwrap(), b"one");
     }
@@ -4542,15 +4734,33 @@ mod download_folder_tests {
     fn migration_into_a_download_folder_is_refused_before_copying() {
         let temp = tempfile::tempdir().unwrap();
         let src = temp.path().join("downloads");
-        let chapter = src.join("mangas").join("Source").join("Series").join("Chapter 1.cbz");
+        let chapter = src
+            .join("mangas")
+            .join("Source")
+            .join("Series")
+            .join("Chapter 1.cbz");
         write(&chapter, b"one");
 
         let mut calls = 0;
-        let error = move_download_folders(&src, &src.join("mangas").join("moved"), |_, _, _| calls += 1).unwrap_err();
+        let error = move_download_folders(&src, &src.join("mangas").join("moved"), |_, _, _| {
+            calls += 1
+        })
+        .unwrap_err();
 
         assert_eq!(error, "DOWNLOADS_PATH_NESTED");
-        assert_eq!(check_downloads_move(src.to_string_lossy().into(), src.join("mangas").join("moved").to_string_lossy().into()).unwrap_err(), "DOWNLOADS_PATH_NESTED");
-        assert!(check_downloads_move(src.to_string_lossy().into(), temp.path().join("elsewhere").to_string_lossy().into()).is_ok());
+        assert_eq!(
+            check_downloads_move(
+                src.to_string_lossy().into(),
+                src.join("mangas").join("moved").to_string_lossy().into()
+            )
+            .unwrap_err(),
+            "DOWNLOADS_PATH_NESTED"
+        );
+        assert!(check_downloads_move(
+            src.to_string_lossy().into(),
+            temp.path().join("elsewhere").to_string_lossy().into()
+        )
+        .is_ok());
         assert_eq!(calls, 0);
         assert_eq!(fs::read(&chapter).unwrap(), b"one");
         assert!(!src.join("mangas").join("moved").exists());
@@ -4560,11 +4770,27 @@ mod download_folder_tests {
     fn migration_into_a_sibling_subfolder_of_the_old_root_is_allowed() {
         let temp = tempfile::tempdir().unwrap();
         let src = temp.path().join("downloads");
-        write(&src.join("mangas").join("Source").join("Series").join("Chapter 1.cbz"), b"one");
+        write(
+            &src.join("mangas")
+                .join("Source")
+                .join("Series")
+                .join("Chapter 1.cbz"),
+            b"one",
+        );
 
         move_download_folders(&src, &src.join("library"), |_, _, _| {}).unwrap();
 
-        assert_eq!(fs::read(src.join("library").join("mangas").join("Source").join("Series").join("Chapter 1.cbz")).unwrap(), b"one");
+        assert_eq!(
+            fs::read(
+                src.join("library")
+                    .join("mangas")
+                    .join("Source")
+                    .join("Series")
+                    .join("Chapter 1.cbz")
+            )
+            .unwrap(),
+            b"one"
+        );
         assert!(!src.join("mangas").exists());
     }
 }
@@ -4660,8 +4886,10 @@ pub(crate) fn novel_plugin_settings_path_for_target(
     profile_id: Option<&str>,
     server_url: Option<&str>,
 ) -> Result<PathBuf, String> {
-    Ok(novels_storage_root_path_for_target(launch_target, profile_id, server_url)?
-        .join("plugin-settings.json"))
+    Ok(
+        novels_storage_root_path_for_target(launch_target, profile_id, server_url)?
+            .join("plugin-settings.json"),
+    )
 }
 
 /// Largest settings file accepted, so a runaway plugin value cannot grow it without bound.
@@ -5046,27 +5274,34 @@ fn read_novel_library_state(
         server_url.as_deref(),
     )?;
 
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
-    Ok(Some(text))
+    crate::v4_desktop_sync::with_library_state_lock(profile_id.as_deref(), "novels", || {
+        let contents = library_sqlite::load(&path)?;
+        crate::v4_desktop_sync::note_library_loaded(profile_id.as_deref(), "novels");
+        crate::v4_desktop_sync::note_novels_loaded_by_frontend(
+            profile_id.as_deref(),
+            contents.as_deref().unwrap_or(r#"{"entries":[]}"#),
+        );
+        Ok(contents)
+    })
 }
 
 #[tauri::command]
 fn read_book_library_state(profile_id: Option<String>) -> Result<Option<String>, String> {
     let path = book_library_state_path_for_profile(profile_id.as_deref())?;
-
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
-    if book_library_write_notifies_replication(profile_id.as_deref()) {
-        syncd_replication::note_book_state_loaded_by_frontend(&text);
-    }
-    Ok(Some(text))
+    crate::v4_desktop_sync::with_library_state_lock(profile_id.as_deref(), "books", || {
+        let text = library_sqlite::load(&path)?;
+        crate::v4_desktop_sync::note_library_loaded(profile_id.as_deref(), "books");
+        crate::v4_desktop_sync::note_books_loaded_by_frontend(
+            profile_id.as_deref(),
+            text.as_deref().unwrap_or(r#"{"books":[]}"#),
+        );
+        if book_library_write_notifies_replication(profile_id.as_deref()) {
+            if let Some(text) = &text {
+                syncd_replication::note_book_state_loaded_by_frontend(text);
+            }
+        }
+        Ok(text)
+    })
 }
 
 #[tauri::command]
@@ -5076,22 +5311,46 @@ fn write_book_library_state(
     profile_id: Option<String>,
 ) -> Result<String, String> {
     let path = book_library_state_path_for_profile(profile_id.as_deref())?;
-    let previous_contents = fs::read_to_string(&path).ok();
-    write_restore_library_snapshot(&path, &contents)?;
-    if !book_library_write_notifies_replication(profile_id.as_deref()) {
-        // Replication would otherwise persist this profile's library over the main one.
-        return Ok(path.to_string_lossy().into_owned());
+    let location = library_sqlite::database_path(&path)
+        .to_string_lossy()
+        .into_owned();
+    let (location, write) =
+        crate::v4_desktop_sync::with_library_state_lock(profile_id.as_deref(), "books", || {
+            let previous_contents = library_sqlite::load(&path)?;
+            if crate::v4_desktop_sync::frontend_write_is_stale(profile_id.as_deref(), "books") {
+                return Ok((location.clone(), None));
+            }
+            let contents = crate::v4_desktop_sync::reconcile_frontend_book_write(
+                profile_id.as_deref(),
+                previous_contents.as_deref(),
+                &contents,
+            )?;
+            library_sqlite::save(&path, &contents)?;
+            crate::v4_desktop_sync::note_library_saved(profile_id.as_deref(), "books", true);
+            crate::v4_desktop_sync::enqueue_books_diff(
+                profile_id.as_deref(),
+                previous_contents.as_deref(),
+                &contents,
+            )?;
+            Ok((location.clone(), Some((previous_contents, contents))))
+        })?;
+    let notify_legacy = book_library_write_notifies_replication(profile_id.as_deref());
+    let notify_profile_id = profile_id.clone();
+    if let Some((previous_contents, contents)) = write {
+        tauri::async_runtime::spawn(async move {
+            if notify_legacy
+                && !crate::v4_desktop_sync::is_profile_active(notify_profile_id.as_deref()).await
+            {
+                if let Err(error) =
+                    syncd_replication::notify_book_state_written(&app, previous_contents, &contents)
+                        .await
+                {
+                    eprintln!("syncd replication book notify failed: {error}");
+                }
+            }
+        });
     }
-    let next_contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) =
-            syncd_replication::notify_book_state_written(&app, previous_contents, &next_contents)
-                .await
-        {
-            eprintln!("syncd replication book notify failed: {error}");
-        }
-    });
-    Ok(path.to_string_lossy().into_owned())
+    Ok(location)
 }
 
 #[tauri::command]
@@ -5130,25 +5389,49 @@ fn write_novel_library_state(
         profile_id.as_deref(),
         server_url.as_deref(),
     )?;
-    let previous_contents = fs::read_to_string(&path).ok();
     let contents = syncd_replication::heal_novel_state_contents(&contents).unwrap_or(contents);
-    write_restore_library_snapshot(&path, &contents)?;
-    let next_contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let location = library_sqlite::database_path(&path)
+        .to_string_lossy()
+        .into_owned();
+    let (location, write) =
+        crate::v4_desktop_sync::with_library_state_lock(profile_id.as_deref(), "novels", || {
+            let previous_contents = library_sqlite::load(&path)?;
+            if crate::v4_desktop_sync::frontend_write_is_stale(profile_id.as_deref(), "novels") {
+                return Ok((location.clone(), None));
+            }
+            let contents = crate::v4_desktop_sync::reconcile_frontend_novel_write(
+                profile_id.as_deref(),
+                previous_contents.as_deref(),
+                &contents,
+            )?;
+            library_sqlite::save(&path, &contents)?;
+            crate::v4_desktop_sync::note_library_saved(profile_id.as_deref(), "novels", true);
+            crate::v4_desktop_sync::enqueue_novels_diff(
+                profile_id.as_deref(),
+                previous_contents.as_deref(),
+                &contents,
+            )?;
+            Ok((location.clone(), Some((previous_contents, contents))))
+        })?;
     let notify_profile_id = profile_id.clone();
     let notify_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = syncd_replication::notify_novel_state_written(
-            &notify_app,
-            notify_profile_id.as_deref(),
-            previous_contents,
-            &next_contents,
-        )
-        .await
-        {
-            eprintln!("syncd replication novel notify failed: {error}");
-        }
-    });
-    Ok(path.to_string_lossy().into_owned())
+    if let Some((previous_contents, contents)) = write {
+        tauri::async_runtime::spawn(async move {
+            if !crate::v4_desktop_sync::is_profile_active(notify_profile_id.as_deref()).await {
+                if let Err(error) = syncd_replication::notify_novel_state_written(
+                    &notify_app,
+                    notify_profile_id.as_deref(),
+                    previous_contents,
+                    &contents,
+                )
+                .await
+                {
+                    eprintln!("syncd replication novel notify failed: {error}");
+                }
+            }
+        });
+    }
+    Ok(location)
 }
 
 #[tauri::command]
@@ -5189,7 +5472,11 @@ fn remove_novel_plugin_installation(
 // Chapters saved for offline reading live at `<novel root>/chapters/<source hash>/<chapter hash>.json`;
 // the hashes come from the frontend's stable hash of the source id and chapter path.
 fn novel_cache_hash_is_valid(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 16 && value.bytes().all(|byte| byte.is_ascii_digit() || byte.is_ascii_lowercase())
+    !value.is_empty()
+        && value.len() <= 16
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte.is_ascii_lowercase())
 }
 
 fn novel_chapter_cache_dir(root: &Path, source_hash: &str) -> Result<PathBuf, String> {
@@ -5244,7 +5531,11 @@ fn list_novel_cached_chapters(
     app: tauri::AppHandle,
 ) -> Result<Vec<String>, String> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
-    let root = novels_storage_root_path_for_target(&launch_target, profile_id.as_deref(), server_url.as_deref())?;
+    let root = novels_storage_root_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
     list_novel_chapter_cache_hashes(&novel_chapter_cache_dir(&root, &source_hash)?)
 }
 
@@ -5257,8 +5548,15 @@ fn delete_novel_cached_chapters(
     app: tauri::AppHandle,
 ) -> Result<u32, String> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
-    let root = novels_storage_root_path_for_target(&launch_target, profile_id.as_deref(), server_url.as_deref())?;
-    delete_novel_chapter_cache_files(&novel_chapter_cache_dir(&root, &source_hash)?, &chapter_hashes)
+    let root = novels_storage_root_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    delete_novel_chapter_cache_files(
+        &novel_chapter_cache_dir(&root, &source_hash)?,
+        &chapter_hashes,
+    )
 }
 
 #[cfg(test)]
@@ -5267,17 +5565,31 @@ mod novel_chapter_cache_tests {
 
     #[test]
     fn lists_and_deletes_only_hash_named_chapter_files() {
-        let root = std::env::temp_dir().join(format!("epigraph-novel-cache-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("epigraph-novel-cache-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let dir = novel_chapter_cache_dir(&root, "abc123").unwrap();
-        assert_eq!(list_novel_chapter_cache_hashes(&dir).unwrap(), Vec::<String>::new());
+        assert_eq!(
+            list_novel_chapter_cache_hashes(&dir).unwrap(),
+            Vec::<String>::new()
+        );
         fs::create_dir_all(&dir).unwrap();
         for name in ["k1.json", "z9x.json", "notes.txt", "Bad.json"] {
             fs::write(dir.join(name), "{}").unwrap();
         }
-        assert_eq!(list_novel_chapter_cache_hashes(&dir).unwrap(), vec!["k1".to_string(), "z9x".to_string()]);
-        assert_eq!(delete_novel_chapter_cache_files(&dir, &["k1".to_string(), "missing".to_string()]).unwrap(), 1);
-        assert_eq!(list_novel_chapter_cache_hashes(&dir).unwrap(), vec!["z9x".to_string()]);
+        assert_eq!(
+            list_novel_chapter_cache_hashes(&dir).unwrap(),
+            vec!["k1".to_string(), "z9x".to_string()]
+        );
+        assert_eq!(
+            delete_novel_chapter_cache_files(&dir, &["k1".to_string(), "missing".to_string()])
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            list_novel_chapter_cache_hashes(&dir).unwrap(),
+            vec!["z9x".to_string()]
+        );
         assert!(dir.join("notes.txt").exists());
         fs::remove_dir_all(&root).unwrap();
     }
@@ -5301,43 +5613,78 @@ fn kill_tachidesk(app: &tauri::AppHandle, server_url: Option<&str>) -> Result<()
 }
 
 fn runtime_belongs_to_core(target: &LocalServerTarget) -> bool {
-    target.attach_only || managed_startup_owner(&target.profile_key, target.port) == ManagedStartupOwner::PersistentCore
+    target.attach_only
+        || managed_startup_owner(&target.profile_key, target.port)
+            == ManagedStartupOwner::PersistentCore
 }
 
-pub(crate) fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServerTarget) -> Result<(), String> {
+pub(crate) fn kill_tachidesk_target(
+    app: &tauri::AppHandle,
+    target: &LocalServerTarget,
+) -> Result<(), String> {
     use suwayomi_runtime::ownership::Ownership;
     if runtime_belongs_to_core(target) {
         return Err("Refusing desktop cleanup of an attached/persistent Core runtime".into());
     }
     let owner_path = server_owner_path(&target.root_dir);
-    let raw = std::fs::read(&owner_path).map_err(|_| "Missing ownership record; runtime preserved")?;
-    let owner: ServerOwner = serde_json::from_slice(&raw).map_err(|_| "Malformed ownership record; runtime preserved")?;
-    if owner.app_pid != std::process::id() || owner.java_pid != owner.process_identity.as_ref().map_or(0, |identity| identity.pid)
-        || owner.server_url.trim_end_matches('/') != target.server_url || owner.port != target.port {
+    let raw =
+        std::fs::read(&owner_path).map_err(|_| "Missing ownership record; runtime preserved")?;
+    let owner: ServerOwner = serde_json::from_slice(&raw)
+        .map_err(|_| "Malformed ownership record; runtime preserved")?;
+    if owner.app_pid != std::process::id()
+        || owner.java_pid
+            != owner
+                .process_identity
+                .as_ref()
+                .map_or(0, |identity| identity.pid)
+        || owner.server_url.trim_end_matches('/') != target.server_url
+        || owner.port != target.port
+    {
         return Err("Inconsistent ownership record; runtime preserved".into());
     }
     // Authority comes from this application's retained spawn, never from discovery.
     let state = app.state::<ServerState>();
     let guard = state.0.lock().unwrap();
-    let running = guard.as_ref().ok_or("No live spawn lease; runtime preserved")?;
-    if running.owner_path != owner_path || running.child.pid() != owner.java_pid
-        || owner.run_id.as_deref() != Some(running.run_id.as_str()) {
+    let running = guard
+        .as_ref()
+        .ok_or("No live spawn lease; runtime preserved")?;
+    if running.owner_path != owner_path
+        || running.child.pid() != owner.java_pid
+        || owner.run_id.as_deref() != Some(running.run_id.as_str())
+    {
         return Err("Owner belongs to a different application run; runtime preserved".into());
     }
     let root = target.root_dir.to_string_lossy();
     let ownership = Ownership {
-        run_id: owner.run_id.as_deref(), requested_run_id: &running.run_id, profile: &owner.profile_key, root: &owner.root_dir,
-        requested_profile: &target.profile_key, requested_root: &root,
-        spawned: owner.spawned_by_app, attach_only: target.attach_only,
-        identity: owner.process_identity.as_ref().and_then(|identity| identity.for_termination()),
+        run_id: owner.run_id.as_deref(),
+        requested_run_id: &running.run_id,
+        profile: &owner.profile_key,
+        root: &owner.root_dir,
+        requested_profile: &target.profile_key,
+        requested_root: &root,
+        spawned: owner.spawned_by_app,
+        attach_only: target.attach_only,
+        identity: owner
+            .process_identity
+            .as_ref()
+            .and_then(|identity| identity.for_termination()),
     };
     #[cfg(windows)]
     {
         suwayomi_runtime::ownership::validate_record(&ownership)?;
-        let birth = running.birth_identity.as_ref().ok_or("Missing retained birth identity")?;
-        let recorded = owner.process_identity.as_ref().ok_or("Missing owner identity")?;
+        let birth = running
+            .birth_identity
+            .as_ref()
+            .ok_or("Missing retained birth identity")?;
+        let recorded = owner
+            .process_identity
+            .as_ref()
+            .ok_or("Missing owner identity")?;
         if !suwayomi_runtime::retained_child_has_exited(&running.child, recorded, birth)? {
-            let mut process = suwayomi_runtime::ownership::windows::Process::open(owner.java_pid, suwayomi_runtime::command_line_hash)?;
+            let mut process = suwayomi_runtime::ownership::windows::Process::open(
+                owner.java_pid,
+                suwayomi_runtime::command_line_hash,
+            )?;
             suwayomi_runtime::ownership::stop_verified(&ownership, &mut process, || {
                 std::fs::read(&owner_path).ok().as_deref() == Some(raw.as_slice())
             })?;
@@ -5349,48 +5696,90 @@ pub(crate) fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServer
         // cleanup must never race a replacement writer by deleting its ownership record.
         drop(guard);
         let mut guard = state.0.lock().unwrap();
-        if guard.as_ref().is_some_and(|running| Some(running.run_id.as_str()) == owner.run_id.as_deref()) { guard.take(); }
-        set_runtime_status(app, suwayomi_runtime::RuntimeLifecycleState::Unavailable,
-            Some(target.profile_key.clone()), Some(target.server_url.clone()), None, None);
+        if guard
+            .as_ref()
+            .is_some_and(|running| Some(running.run_id.as_str()) == owner.run_id.as_deref())
+        {
+            guard.take();
+        }
+        set_runtime_status(
+            app,
+            suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+            Some(target.profile_key.clone()),
+            Some(target.server_url.clone()),
+            None,
+            None,
+        );
         Ok(())
     }
     #[cfg(not(windows))]
-    { let _ = (app, ownership); Err("Handle-bound cleanup is unavailable on this platform; runtime preserved".into()) }
+    {
+        let _ = (app, ownership);
+        Err("Handle-bound cleanup is unavailable on this platform; runtime preserved".into())
+    }
 }
 
 fn kill_tachidesk_target_for_retained_restart(running: &RunningServer) -> Result<(), String> {
     let raw = std::fs::read(&running.owner_path).map_err(|_| "Missing retained ownership")?;
-    let owner: ServerOwner = serde_json::from_slice(&raw).map_err(|_| "Malformed retained ownership")?;
-    if owner.app_pid != std::process::id() || owner.java_pid != running.child.pid()
-        || owner.port != running.port || owner.server_url != running.server_url
-        || owner.process_identity.as_ref().map(|identity| identity.pid) != Some(owner.java_pid) {
+    let owner: ServerOwner =
+        serde_json::from_slice(&raw).map_err(|_| "Malformed retained ownership")?;
+    if owner.app_pid != std::process::id()
+        || owner.java_pid != running.child.pid()
+        || owner.port != running.port
+        || owner.server_url != running.server_url
+        || owner.process_identity.as_ref().map(|identity| identity.pid) != Some(owner.java_pid)
+    {
         return Err("Inconsistent retained ownership; process preserved".into());
     }
-    let root = running.owner_path.parent().ok_or("Missing retained root")?.to_string_lossy();
+    let root = running
+        .owner_path
+        .parent()
+        .ok_or("Missing retained root")?
+        .to_string_lossy();
     let ownership = suwayomi_runtime::ownership::Ownership {
-        run_id: owner.run_id.as_deref(), requested_run_id: &running.run_id,
-        profile: &owner.profile_key, root: &owner.root_dir,
-        requested_profile: &running.profile_key, requested_root: &root,
+        run_id: owner.run_id.as_deref(),
+        requested_run_id: &running.run_id,
+        profile: &owner.profile_key,
+        root: &owner.root_dir,
+        requested_profile: &running.profile_key,
+        requested_root: &root,
         spawned: owner.spawned_by_app,
-        attach_only: managed_startup_owner(&running.profile_key, running.port) == ManagedStartupOwner::PersistentCore,
-        identity: owner.process_identity.as_ref().and_then(|identity| identity.for_termination()),
+        attach_only: managed_startup_owner(&running.profile_key, running.port)
+            == ManagedStartupOwner::PersistentCore,
+        identity: owner
+            .process_identity
+            .as_ref()
+            .and_then(|identity| identity.for_termination()),
     };
     #[cfg(windows)]
     {
         suwayomi_runtime::ownership::validate_record(&ownership)?;
-        let birth = running.birth_identity.as_ref().ok_or("Missing retained birth identity")?;
-        let recorded = owner.process_identity.as_ref().ok_or("Missing owner identity")?;
+        let birth = running
+            .birth_identity
+            .as_ref()
+            .ok_or("Missing retained birth identity")?;
+        let recorded = owner
+            .process_identity
+            .as_ref()
+            .ok_or("Missing owner identity")?;
         if !suwayomi_runtime::retained_child_has_exited(&running.child, recorded, birth)? {
-            let mut process = suwayomi_runtime::ownership::windows::Process::open(owner.java_pid, suwayomi_runtime::command_line_hash)?;
-            suwayomi_runtime::ownership::stop_verified(&ownership, &mut process,
-                || std::fs::read(&running.owner_path).ok().as_deref() == Some(raw.as_slice()))?;
+            let mut process = suwayomi_runtime::ownership::windows::Process::open(
+                owner.java_pid,
+                suwayomi_runtime::command_line_hash,
+            )?;
+            suwayomi_runtime::ownership::stop_verified(&ownership, &mut process, || {
+                std::fs::read(&running.owner_path).ok().as_deref() == Some(raw.as_slice())
+            })?;
         } else if std::fs::read(&running.owner_path).ok().as_deref() != Some(raw.as_slice()) {
             return Err("Owner changed during completion validation; evidence retained".into());
         }
         suwayomi_runtime::record_confirmed_stop(&running.owner_path, &raw)
     }
     #[cfg(not(windows))]
-    { let _ = ownership; Err("Handle-bound restart cleanup unavailable; process preserved".into()) }
+    {
+        let _ = ownership;
+        Err("Handle-bound restart cleanup unavailable; process preserved".into())
+    }
 }
 
 const DEFAULT_SERVER_CONF: &str = r#"server.ip = "127.0.0.1"
@@ -5618,7 +6007,9 @@ fn schedule_suwayomi_lan_session_watchers(app: &tauri::AppHandle) {
                 default_local_server_port(profile),
                 LocalServerUpdateIntensity::Balanced,
             );
-            if let Err(error) = kill_tachidesk(&app, Some(&server_url)) { eprintln!("[runtime cleanup] {error}"); }
+            if let Err(error) = kill_tachidesk(&app, Some(&server_url)) {
+                eprintln!("[runtime cleanup] {error}");
+            }
         });
     }
 }
@@ -6301,9 +6692,14 @@ fn spawn_server_unlocked(
     // start now holds, so nothing is still writing it.
     if owner_tmp_path.exists() {
         if let Err(err) = std::fs::remove_file(&owner_tmp_path) {
-            return Err(SpawnError::SpawnFailed(format!("Could not clear partial ownership metadata: {err}")));
+            return Err(SpawnError::SpawnFailed(format!(
+                "Could not clear partial ownership metadata: {err}"
+            )));
         }
-        do_log(&mut log, "[spawn_server] cleared partial ownership metadata from an interrupted write");
+        do_log(
+            &mut log,
+            "[spawn_server] cleared partial ownership metadata from an interrupted write",
+        );
     }
 
     if owner_path.exists() && !suwayomi_runtime::has_confirmed_stop(&owner_path) {
@@ -6324,7 +6720,9 @@ fn spawn_server_unlocked(
                     );
                 }
                 OwnerReuseDecision::Stale => {
-                    return Err(SpawnError::SpawnFailed("Unconfirmed stale ownership retained; refusing takeover".into()));
+                    return Err(SpawnError::SpawnFailed(
+                        "Unconfirmed stale ownership retained; refusing takeover".into(),
+                    ));
                 }
                 OwnerReuseDecision::ConflictingLiveProcess
                     if suwayomi_runtime::stop_unresponsive_server(
@@ -6361,7 +6759,9 @@ fn spawn_server_unlocked(
                     &mut log,
                     "[spawn_server] malformed ownership preserved; refusing takeover",
                 );
-                return Err(SpawnError::SpawnFailed("Malformed ownership retained".into()));
+                return Err(SpawnError::SpawnFailed(
+                    "Malformed ownership retained".into(),
+                ));
             }
         }
     }
@@ -6377,7 +6777,10 @@ fn spawn_server_unlocked(
             suwayomi_runtime::UNRESPONSIVE_SERVER_GRACE,
         ) == Ok(true)
         {
-            do_log(&mut log, &format!("[spawn_server] ended Java pid {java_pid} that stopped responding"));
+            do_log(
+                &mut log,
+                &format!("[spawn_server] ended Java pid {java_pid} that stopped responding"),
+            );
             discovered = None;
         }
     }
@@ -6540,7 +6943,9 @@ fn spawn_server_unlocked(
                         &format!("owner publish failed: {}", err),
                     );
                 }
-                if let Err(error) = suwayomi_runtime::stop_spawned_child(&child) { return Err(SpawnError::SpawnFailed(error)); }
+                if let Err(error) = suwayomi_runtime::stop_spawned_child(&child) {
+                    return Err(SpawnError::SpawnFailed(error));
+                }
                 set_runtime_status(
                     &app,
                     suwayomi_runtime::RuntimeLifecycleState::Unavailable,
@@ -6585,7 +6990,9 @@ fn spawn_server_unlocked(
                 // Stop waiting for health when the app is closing. The existing
                 // failure path below validates this retained run and confirms
                 // exit; a shutdown request itself never grants ownership.
-                if session_control::shutdown_pending() { break; }
+                if session_control::shutdown_pending() {
+                    break;
+                }
                 let probe_started_at = std::time::Instant::now();
                 let probe_ok =
                     probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT);
@@ -6945,7 +7352,9 @@ fn reset_resolved_local_profile_data(
 ) -> Result<bool, String> {
     let root_dir = target.root_dir.clone();
     let _exclusive = suwayomi_maintenance::begin_exclusive_maintenance(
-        &suwayomi_maintenance::default_runtime_root(), "profile-reset", suwayomi_maintenance::MaintenancePhase::Updating,
+        &suwayomi_maintenance::default_runtime_root(),
+        "profile-reset",
+        suwayomi_maintenance::MaintenancePhase::Updating,
     )?;
     stop_runtime_for_maintenance(app, target)?;
     if !root_dir.exists() {
@@ -6959,9 +7368,16 @@ fn reset_resolved_local_profile_data(
     Ok(true)
 }
 
-pub(crate) fn stop_runtime_for_maintenance(app: &tauri::AppHandle, target: &LocalServerTarget) -> Result<(), String> {
-    if target.attach_only { return Err("Attached runtime maintenance refused".into()); }
-    if managed_startup_owner(&target.profile_key, target.port) != ManagedStartupOwner::PersistentCore {
+pub(crate) fn stop_runtime_for_maintenance(
+    app: &tauri::AppHandle,
+    target: &LocalServerTarget,
+) -> Result<(), String> {
+    if target.attach_only {
+        return Err("Attached runtime maintenance refused".into());
+    }
+    if managed_startup_owner(&target.profile_key, target.port)
+        != ManagedStartupOwner::PersistentCore
+    {
         std::thread::sleep(suwayomi_runtime::MAINTENANCE_WRITEBACK_GRACE);
         return kill_tachidesk_target(app, target);
     }
@@ -7111,7 +7527,9 @@ async fn download_and_install_update(
 ) -> Result<(), String> {
     // The Windows updater exits through std::process::exit after starting its
     // installer. It cannot bypass the owned shutdown/attested relaunch contract.
-    session_control::require_native_install_handoff(std::env::var_os("EPIGRAPH_SESSION_RECORD").is_some())?;
+    session_control::require_native_install_handoff(
+        std::env::var_os("EPIGRAPH_SESSION_RECORD").is_some(),
+    )?;
     #[cfg(not(target_os = "windows"))]
     return Err("Native install is Windows-only; open the GitHub release page instead.".into());
 
@@ -7175,7 +7593,9 @@ async fn download_and_install_update(
 #[tauri::command]
 fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
     if std::env::var_os("EPIGRAPH_SESSION_RECORD").is_some() {
-        return Err("Managed run restart requires graceful close and a fresh attested launcher run".into());
+        return Err(
+            "Managed run restart requires graceful close and a fresh attested launcher run".into(),
+        );
     }
     prepare_owned_desktop_shutdown(&app)?;
     tauri::process::restart(&app.env());
@@ -7622,7 +8042,8 @@ fn begin_suwayomi_runtime_operation(scope: String) -> Result<String, String> {
     let token = suwayomi_maintenance::begin_operation(&runtime_root, &scope)?;
     // The main profile's server outlives this app, so an update abandoned on it can leave it running
     // something unverified until the Core undoes it; writes made before that would be lost.
-    if suwayomi_recovery::abandoned_work_for_profile(&runtime_root, LocalServerProfile::Main.key()) {
+    if suwayomi_recovery::abandoned_work_for_profile(&runtime_root, LocalServerProfile::Main.key())
+    {
         suwayomi_maintenance::end_operation(&token);
         return Err(
             "Suwayomi is temporarily unavailable while its runtime is maintained.".to_string(),
@@ -7658,23 +8079,34 @@ fn record_media_audit_event(event: String) -> Result<(), String> {
 
 // ── App entry point ───────────────────────────────────────────────────────────
 
-static DESKTOP_EXIT_CONFIRMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static DESKTOP_EXIT_CONFIRMED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 static DESKTOP_SHUTDOWN: Mutex<()> = Mutex::new(());
 
 pub(crate) fn prepare_owned_desktop_shutdown(app: &tauri::AppHandle) -> Result<(), String> {
-    let _shutdown = DESKTOP_SHUTDOWN.lock().map_err(|_| "Shutdown state unavailable")?;
-    if DESKTOP_EXIT_CONFIRMED.load(std::sync::atomic::Ordering::Acquire) { return Ok(()); }
+    let _shutdown = DESKTOP_SHUTDOWN
+        .lock()
+        .map_err(|_| "Shutdown state unavailable")?;
+    if DESKTOP_EXIT_CONFIRMED.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
+    }
     session_control::quiesce(Duration::from_secs(15))?;
     // Use the retained scope even when the selected UI profile changed. An empty
     // retained state means this app has no spawn authority, not that other PIDs died.
     let state = app.state::<ServerState>();
     let mut running = state.0.lock().map_err(|_| "Runtime state unavailable")?;
-    if let Some(owned) = running.as_ref() { kill_tachidesk_target_for_retained_restart(owned)?; }
+    if let Some(owned) = running.as_ref() {
+        kill_tachidesk_target_for_retained_restart(owned)?;
+    }
     running.take();
     drop(running);
     syncd_sidecar::shutdown_confirmed(app)?;
     #[cfg(windows)]
-    if FLARESOLVERR_LOCAL_JOB.lock().map_err(|_| "FlareSolverr state unavailable")?.is_some() {
+    if FLARESOLVERR_LOCAL_JOB
+        .lock()
+        .map_err(|_| "FlareSolverr state unavailable")?
+        .is_some()
+    {
         stop_flaresolverr_local()?;
     }
     clear_suwayomi_lan_state();
@@ -7700,7 +8132,10 @@ fn request_owned_desktop_shutdown(app: &tauri::AppHandle) {
         let started = std::time::Instant::now();
         match prepare_owned_desktop_shutdown(&app) {
             Ok(()) => {
-                eprintln!("[desktop shutdown] confirmed in {} ms", started.elapsed().as_millis());
+                eprintln!(
+                    "[desktop shutdown] confirmed in {} ms",
+                    started.elapsed().as_millis()
+                );
                 app.exit(0)
             }
             Err(error) => {
@@ -7962,7 +8397,11 @@ pub fn run() {
                         library_share::handle_incoming_import_link(app.handle(), url.as_str());
                     }
                 } else if let Some(link) = library_share::extract_import_link_from_args(
-                    std::env::args().skip(1).collect::<Vec<_>>().iter().map(String::as_str),
+                    std::env::args()
+                        .skip(1)
+                        .collect::<Vec<_>>()
+                        .iter()
+                        .map(String::as_str),
                 ) {
                     library_share::handle_incoming_import_link(app.handle(), &link);
                 }
@@ -7995,7 +8434,11 @@ pub fn run() {
             session_control::ready();
             Ok(())
         })
-        .on_page_load(|window, _payload| { if window.label() == "main" { session_control::page_loaded(); } })
+        .on_page_load(|window, _payload| {
+            if window.label() == "main" {
+                session_control::page_loaded();
+            }
+        })
         .on_window_event(|window, event| {
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
@@ -8017,10 +8460,14 @@ pub fn run() {
                 return;
             }
         }
-        if DESKTOP_EXIT_CONFIRMED.load(std::sync::atomic::Ordering::Acquire) { return; }
+        if DESKTOP_EXIT_CONFIRMED.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
         syncd_sidecar::handle_run_event(app_handle, &event);
         if matches!(event, tauri::RunEvent::Exit) {
-            if let Err(error) = kill_tachidesk(app_handle, None) { eprintln!("[runtime cleanup] {error}"); }
+            if let Err(error) = kill_tachidesk(app_handle, None) {
+                eprintln!("[runtime cleanup] {error}");
+            }
             clear_suwayomi_lan_state();
         }
     });

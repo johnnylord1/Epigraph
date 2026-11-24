@@ -70,3 +70,23 @@ it("lets a picked chapter replace a precise position that a reader fallback coul
   store.replaceBookProgress(picked);
   expect(store.getBookProgress("epub-jump")).toMatchObject({ location: null, href: "ch1.xhtml", progressPercent: 0.1 });
 });
+
+it("cancels a queued persist when replaceBooksStateFromDisk adopts a remote update", async () => {
+  const queuePersist = () => (store as unknown as { queuePersistBooksLibraryState(): void }).queuePersistBooksLibraryState();
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const before = saved.length;
+
+  store.updateSettings({ booksCategoryAssignments: { "book:stale": ["shelf"] } });
+  queuePersist();
+
+  store.replaceBooksStateFromDisk({
+    books: [],
+    bookProgress: [],
+    bookBookmarks: [],
+    booksCategories: [{ id: "remote", name: "Remote", order: 0 }],
+    booksCategoryAssignments: { "book:remote": ["remote"] },
+  });
+
+  await settle();
+  expect(saved.length).toBe(before);
+});

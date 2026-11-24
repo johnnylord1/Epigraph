@@ -14,12 +14,12 @@ pub mod middleware;
 pub mod models;
 pub mod myanimelist_oauth;
 pub mod network;
+pub mod novel_plugin_settings;
 pub mod own_echoes;
 pub mod pairing_pin;
 pub mod replay;
 pub mod routes;
 pub mod runtime_manifest;
-pub mod novel_plugin_settings;
 pub mod source_preferences;
 pub mod suwayomi_category_mirror;
 pub mod suwayomi_hydration;
@@ -34,6 +34,7 @@ mod test_dir;
 pub mod tls;
 pub mod tracker_credentials;
 pub mod tracking;
+pub mod v4;
 
 pub async fn run_command_line() -> anyhow::Result<()> {
     lifecycle::run_command_line().await

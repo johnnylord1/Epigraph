@@ -23,6 +23,8 @@ function createState(): PersistedBookLibraryState {
     version: 1,
     books: [{
       id: "epub-demo",
+      mimeType: "application/epub+zip",
+      byteSize: 1234,
       title: "Reader Contract",
       author: "Epigraph",
       description: null,
@@ -49,11 +51,15 @@ function createState(): PersistedBookLibraryState {
     }],
     bookBookmarks: [{
       bookId: "epub-demo",
+      bookmarkId: "bookmark-1",
       location: "epubcfi(/6/2)",
       href: "chapter-1.xhtml",
       pageIndex: null,
       progressPercent: 0.4,
       label: "Chapter 1",
+      note: "Remember this",
+      createdAtMs: 8,
+      updatedAtMs: 9,
       savedAt: 10,
     }],
     booksCategories: [{
@@ -166,10 +172,18 @@ describe("book library state storage", () => {
     const state = await loadBookLibraryState();
 
     expect(state.books[0]).toMatchObject({
+      mimeType: "application/epub+zip",
+      byteSize: 1234,
       hasCover: true,
       coverAssetSha256,
       coverAssetByteSize: 4096,
       coverAssetMimeType: "image/jpeg",
+    });
+    expect(state.bookBookmarks[0]).toMatchObject({
+      bookmarkId: "bookmark-1",
+      note: "Remember this",
+      createdAtMs: 8,
+      updatedAtMs: 9,
     });
   });
 
@@ -204,6 +218,10 @@ describe("book library state storage", () => {
     }));
     expect(invokeMock).toHaveBeenCalledWith("write_book_library_state", expect.objectContaining({
       contents: expect.stringContaining("\"hardcoverBookId\": 456"),
+      profileId: "main",
+    }));
+    expect(invokeMock).toHaveBeenCalledWith("write_book_library_state", expect.objectContaining({
+      contents: expect.stringContaining("\"bookmarkId\": \"bookmark-1\""),
       profileId: "main",
     }));
   });

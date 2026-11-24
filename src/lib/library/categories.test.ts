@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Category } from "../types";
-import { loadCategoriesWithMembers } from "./categories";
+import { completedCategoryCleanupPlan, loadCategoriesWithMembers } from "./categories";
 
 function category(id: number, name: string, memberIds?: number[]): Category {
   return {
@@ -11,6 +11,27 @@ function category(id: number, name: string, memberIds?: number[]): Category {
     ...(memberIds ? { mangas: { nodes: memberIds.map((mangaId) => ({ id: mangaId, inLibrary: true })) } } : {}),
   } as Category;
 }
+
+describe("completedCategoryCleanupPlan", () => {
+  it("finds duplicate Completed folders before display normalization hides them", () => {
+    const plan = completedCategoryCleanupPlan([
+      category(8, "Completed"),
+      category(4, "completed"),
+      category(2, "Reading"),
+      category(0, "COMPLETED"),
+    ]);
+
+    expect(plan.keep?.id).toBe(0);
+    expect(plan.duplicates.map(({ id }) => id)).toEqual([4, 8]);
+  });
+
+  it("returns no keeper when Completed does not exist", () => {
+    expect(completedCategoryCleanupPlan([category(1, "Reading")])).toEqual({
+      keep: null,
+      duplicates: [],
+    });
+  });
+});
 
 describe("loadCategoriesWithMembers", () => {
   it("keeps the membership when the Completed category already exists", async () => {
@@ -23,7 +44,7 @@ describe("loadCategoriesWithMembers", () => {
     expect(fetchWithMembers).toHaveBeenCalledTimes(1);
   });
 
-  it("fetches membership again when creating Completed answered with a summary", async () => {
+  it("fetches membership again when the ensure callback returns a summary", async () => {
     // A restored backup has user categories but no Completed category yet.
     const beforeCreate = [category(1, "Brabos", [10, 11])];
     const afterCreate = [category(1, "Brabos", [10, 11]), category(2, "Completed", [])];

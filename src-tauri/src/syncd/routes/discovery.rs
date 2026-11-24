@@ -89,11 +89,11 @@ pub async fn get_client_discovery_guidance(
 mod tests {
     use std::sync::Arc;
 
+    use crate::syncd::test_dir::tempdir;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
     use serde_json::{json, Value};
-    use crate::syncd::test_dir::tempdir;
     use tokio::sync::broadcast;
     use tower::ServiceExt;
 
@@ -326,6 +326,10 @@ mod tests {
                     .method("POST")
                     .uri("/v1/bootstrap/session")
                     .header("content-type", "application/json")
+                    .extension(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                        [127, 0, 0, 1],
+                        4777,
+                    ))))
                     .body(Body::from(
                         json!({
                             "profileId": "main"
@@ -725,6 +729,10 @@ mod tests {
                     .method("POST")
                     .uri("/v1/bootstrap/session")
                     .header("content-type", "application/json")
+                    .extension(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                        [127, 0, 0, 1],
+                        4777,
+                    ))))
                     .body(Body::from(json!({ "profileId": "main" }).to_string()))
                     .unwrap(),
             )

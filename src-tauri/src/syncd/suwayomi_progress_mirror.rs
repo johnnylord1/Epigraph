@@ -304,8 +304,12 @@ pub fn spawn_catalog_refresh_task(
             for instance in suwayomi_process::attach_owned_instances() {
                 let session = mirror_session(&instance.profile_key);
                 match db::load_server_identity(&state.pool).await {
-                    Ok(identity) => catalog_revision::refresh(&state, &session, &identity.server_id).await,
-                    Err(error) => tracing::debug!(error = %error, "catalog revision skipped: no server identity"),
+                    Ok(identity) => {
+                        catalog_revision::refresh(&state, &session, &identity.server_id).await
+                    }
+                    Err(error) => {
+                        tracing::debug!(error = %error, "catalog revision skipped: no server identity")
+                    }
                 }
             }
             last_refresh = Some(tokio::time::Instant::now());
@@ -346,7 +350,8 @@ pub fn spawn_progress_mirror_task(
         // repair loop; it does not need an immediate tick because successful Suwayomi commands
         // publish confirmed progress synchronously. Desktop edits request a tick explicitly.
         let started = tokio::time::Instant::now();
-        let mut check = tokio::time::interval_at(started + MIRROR_CHECK_INTERVAL, MIRROR_CHECK_INTERVAL);
+        let mut check =
+            tokio::time::interval_at(started + MIRROR_CHECK_INTERVAL, MIRROR_CHECK_INTERVAL);
         check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let requests = mirror_requests();
         let mut memory = MirrorMemory::default();
@@ -381,8 +386,13 @@ pub fn spawn_progress_mirror_task(
             let hints = take_mirror_hints();
             match mirror_all_profiles(&state, &mut memory, &hints).await {
                 Ok(mirrored) => {
-                    let useful = mirrored > 0 || requested || !hints.is_empty() || memory.scans_deferred();
-                    idle_ticks = if useful { 0 } else { idle_ticks.saturating_add(1) };
+                    let useful =
+                        mirrored > 0 || requested || !hints.is_empty() || memory.scans_deferred();
+                    idle_ticks = if useful {
+                        0
+                    } else {
+                        idle_ticks.saturating_add(1)
+                    };
                     tracing::debug!(
                         mirrored,
                         requested = !hints.is_empty(),
@@ -502,7 +512,8 @@ async fn mirror_desktop_edits(
     )
     .await?;
     // Only a finished chapter enters the history, so a page turn stops here.
-    let works = fetch_works_read_progress(state, &session, &finished_edited_works(&chapters)).await?;
+    let works =
+        fetch_works_read_progress(state, &session, &finished_edited_works(&chapters)).await?;
     let history = mirror_comic_history(
         state,
         &session,
@@ -575,6 +586,11 @@ async fn mirror_profile(
     memory: &mut ProfileMirrorMemory,
     hints: &MirrorHints,
 ) -> anyhow::Result<usize> {
+    let watermark = crate::syncd::v4::db::load_watermark(&state.pool, profile_id).await?;
+    if !should_run_legacy_profile_mirror(watermark.current_seq) {
+        tracing::debug!(profile = %profile_id, "Skipping legacy Suwayomi mirror for V4 profile");
+        return Ok(0);
+    }
     let session = mirror_session(profile_id);
     let scope_id = format!("comics:profile:{profile_id}");
     let retention_window = state.config.retention_window;
@@ -609,7 +625,8 @@ async fn mirror_profile(
         state, &session, &scope_id, server_id, profile_id, &library, memory, hints,
     )
     .await?;
-    mirrored += mirror_comic_history(state, &session, &scope_id, server_id, profile_id, &library).await?;
+    mirrored +=
+        mirror_comic_history(state, &session, &scope_id, server_id, profile_id, &library).await?;
     let bookmarks = fetch_bookmarked_chapters(state, &session).await?;
     tracing::debug!(
         bookmarks = bookmarks.len(),
@@ -643,8 +660,14 @@ async fn mirror_profile(
             // The progress pass keeps a device's server-local record of a bound chapter following
             // Suwayomi; clearing its bookmark here would undo that write on every tick.
             observed_bookmark_entities.insert(
-                chapter_state_identity(server_id, profile_id, bookmark.manga_id, bookmark.chapter_id, None)
-                    .entity_id,
+                chapter_state_identity(
+                    server_id,
+                    profile_id,
+                    bookmark.manga_id,
+                    bookmark.chapter_id,
+                    None,
+                )
+                .entity_id,
             );
         }
         // Suwayomi does not expose a bookmark-updated timestamp. The observation time lets a
@@ -727,6 +750,10 @@ async fn mirror_profile(
         Err(error) => tracing::warn!(error = %error, "Suwayomi category mirror failed"),
     }
     Ok(mirrored)
+}
+
+fn should_run_legacy_profile_mirror(current_seq: i64) -> bool {
+    current_seq <= 0
 }
 
 /// Publishes an applied mirror write to live `/v1/events` subscribers.
@@ -1258,7 +1285,10 @@ async fn write_chapter_states(
                     chapter_edits
                         .get(&chapter.chapter_id)
                         .copied()
-                        .max(agreeing_record_at_ms(chapter, stored.get(&identity.entity_id))),
+                        .max(agreeing_record_at_ms(
+                            chapter,
+                            stored.get(&identity.entity_id),
+                        )),
                     Some(row),
                     observed_at_ms,
                 )
@@ -2313,7 +2343,9 @@ async fn profile_stored_chapter_pages(
             portable.get(&chapter.chapter_id).cloned(),
         );
         let mut ids = Vec::with_capacity(3);
-        if let Some(listed) = core_listed_chapter_identity(server_id, profile_id, chapter, &identity) {
+        if let Some(listed) =
+            core_listed_chapter_identity(server_id, profile_id, chapter, &identity)
+        {
             ids.push(listed.entity_id);
         }
         if identity.portable_chapter_ref.is_some() {
@@ -2361,6 +2393,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn v4_active_profile_skips_legacy_suwayomi_mirror() {
+        assert!(should_run_legacy_profile_mirror(0));
+        assert!(!should_run_legacy_profile_mirror(1));
+        assert!(!should_run_legacy_profile_mirror(42));
+    }
+
+    #[test]
     fn only_a_finished_chapter_asks_for_the_history_of_its_work() {
         let chapter = |manga_id, chapter_id, is_read| ChapterNode {
             manga_id,
@@ -2401,7 +2440,11 @@ mod tests {
 
         let mut unfinished = node.clone();
         unfinished["latestReadChapter"]["isRead"] = json!(false);
-        assert!(parse_library_node(&unfinished).unwrap().1.latest_read_chapter.is_none());
+        assert!(parse_library_node(&unfinished)
+            .unwrap()
+            .1
+            .latest_read_chapter
+            .is_none());
         assert!(parse_library_node(&json!({ "id": 7, "url": "/manga/7" })).is_none());
     }
 
@@ -2771,7 +2814,8 @@ mod tests {
         // keeps the page the phone read. Writing that would change nothing, since the record
         // carries no page and the merge keeps the stored one, but used to be redone on every scan.
         let observed = chapter(51_656, true, 0);
-        let stored = json!({ "read": true, "bookmarked": false, "lastPageRead": 11, "updatedAtMs": 2_000 });
+        let stored =
+            json!({ "read": true, "bookmarked": false, "lastPageRead": 11, "updatedAtMs": 2_000 });
         for device in [MIRROR_DEVICE_ID, "phone-1"] {
             let row = stored_row(device, 2_000, stored.clone());
             assert_eq!(
@@ -2820,7 +2864,13 @@ mod tests {
             json!({ "read": false, "bookmarked": false, "updatedAtMs": 1_000 }),
         );
         assert_eq!(
-            planned_chapter_state_updated_at(&observed, None, Some(3_000), Some(&mirror_row), 5_000),
+            planned_chapter_state_updated_at(
+                &observed,
+                None,
+                Some(3_000),
+                Some(&mirror_row),
+                5_000
+            ),
             None
         );
         let phone_listed = stored_row(
@@ -3084,7 +3134,11 @@ mod tests {
     #[test]
     fn reader_gets_the_page_of_the_newest_stored_address() {
         let phone = stored_row("phone", 2_000, json!({ "read": false, "lastPageRead": 14 }));
-        let older = stored_row(MIRROR_DEVICE_ID, 1_000, json!({ "read": false, "lastPageRead": 3 }));
+        let older = stored_row(
+            MIRROR_DEVICE_ID,
+            1_000,
+            json!({ "read": false, "lastPageRead": 3 }),
+        );
         assert_eq!(newest_stored_page([&older, &phone].into_iter()), Some(14));
         let pages_index = stored_row("phone", 2_000, json!({ "read": false, "pageIndex": 9 }));
         assert_eq!(newest_stored_page([&pages_index].into_iter()), Some(9));

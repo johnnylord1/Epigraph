@@ -29,8 +29,7 @@ use tokio::sync::Notify;
 
 use super::lifecycle::{wait_for_shutdown_request, ShutdownRequest};
 use super::models::{
-    canonical_portable_work_id, AuthenticatedSession, EventClock, PortableWorkRefV3,
-    SharedAppState,
+    canonical_portable_work_id, AuthenticatedSession, EventClock, PortableWorkRefV3, SharedAppState,
 };
 use super::routes::suwayomi_catalog;
 use super::suwayomi_tracker_prefs;
@@ -216,7 +215,8 @@ async fn mirror_all_profiles(state: &SharedAppState) -> anyhow::Result<usize> {
     let mut changed = 0usize;
     for instance in &instances {
         let session = mirror_session(&instance.profile_key);
-        if !pending_credentials.is_empty() {
+        // The local OAuth and tracker file integrations read the main profile's vault.
+        if session.profile_id == "main" && !pending_credentials.is_empty() {
             for key in apply_credentials_to_profile(state, &session, &pending_credentials).await {
                 credential_failures.insert(key);
             }
@@ -231,7 +231,18 @@ async fn mirror_all_profiles(state: &SharedAppState) -> anyhow::Result<usize> {
         }
     }
     if !pending_credentials.is_empty() {
-        credential_failures.extend(apply_file_logins(state, &pending_credentials).await);
+        if instances
+            .iter()
+            .any(|instance| instance.profile_key == "main")
+        {
+            credential_failures.extend(apply_file_logins(state, &pending_credentials).await);
+        } else {
+            credential_failures.extend(
+                pending_credentials
+                    .iter()
+                    .map(|credential| credential.tracker_key.clone()),
+            );
+        }
     }
     for credential in &pending_credentials {
         if credential_failures.contains(&credential.tracker_key) {
@@ -260,7 +271,10 @@ async fn mirror_all_profiles(state: &SharedAppState) -> anyhow::Result<usize> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CredentialAction {
     /// Log Suwayomi in with this synthesized OAuth callback URL (kept out of `Debug` output).
-    LoginOAuth { tracker_id: i64, callback_url: RedactedUrl },
+    LoginOAuth {
+        tracker_id: i64,
+        callback_url: RedactedUrl,
+    },
     /// Log Suwayomi out of this tracker.
     Logout { tracker_id: i64 },
     /// Nothing to do on the desktop (non-injectable tracker, or a logout of a login the desktop
@@ -375,7 +389,8 @@ async fn apply_credentials_to_profile(
                     .iter()
                     .find(|tracker| tracker.id == *tracker_id)
                     .is_some_and(|tracker| tracker.is_logged_in);
-                if !logged_in || !verified_tracker(&trackers, &credential.tracker_key, *tracker_id) {
+                if !logged_in || !verified_tracker(&trackers, &credential.tracker_key, *tracker_id)
+                {
                     Ok(())
                 } else {
                     suwayomi_catalog::execute_graphql_document(
@@ -673,7 +688,9 @@ pub fn verified_tracker(trackers: &[SuwayomiTracker], tracker_key: &str, tracker
 }
 
 /// trackerKey -> verified Suwayomi tracker.
-pub fn verified_tracker_map(trackers: &[SuwayomiTracker]) -> HashMap<&'static str, SuwayomiTracker> {
+pub fn verified_tracker_map(
+    trackers: &[SuwayomiTracker],
+) -> HashMap<&'static str, SuwayomiTracker> {
     SUWAYOMI_TRACKERS
         .iter()
         .filter_map(|(key, id, _)| {
@@ -708,7 +725,10 @@ async fn fetch_trackers(
             Some(SuwayomiTracker {
                 id: node.get("id").and_then(Value::as_i64)?,
                 name: node.get("name").and_then(Value::as_str)?.to_string(),
-                is_logged_in: node.get("isLoggedIn").and_then(Value::as_bool).unwrap_or(false),
+                is_logged_in: node
+                    .get("isLoggedIn")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 scores: node
                     .get("scores")
                     .and_then(Value::as_array)
@@ -821,7 +841,11 @@ pub fn parse_track_record(node: &Value) -> Option<SuwayomiTrackRecord> {
         tracker_id: long_value(node.get("trackerId"))?,
         remote_id: long_value(node.get("remoteId"))?,
         library_id: long_value(node.get("libraryId")),
-        title: node.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+        title: node
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         remote_url: node
             .get("remoteUrl")
             .and_then(Value::as_str)
@@ -918,10 +942,16 @@ pub fn update_track_variables(
         variables.insert("scoreString".to_string(), json!(score));
     }
     if core.started_at_ms != current.start_date {
-        variables.insert("startDate".to_string(), json!(core.started_at_ms.to_string()));
+        variables.insert(
+            "startDate".to_string(),
+            json!(core.started_at_ms.to_string()),
+        );
     }
     if core.finished_at_ms != current.finish_date {
-        variables.insert("finishDate".to_string(), json!(core.finished_at_ms.to_string()));
+        variables.insert(
+            "finishDate".to_string(),
+            json!(core.finished_at_ms.to_string()),
+        );
     }
     if variables.is_empty() {
         return None;
@@ -1031,7 +1061,10 @@ struct CoreEntity {
     comic_id: String,
 }
 
-async fn mirror_profile(state: &SharedAppState, session: &AuthenticatedSession) -> anyhow::Result<usize> {
+async fn mirror_profile(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+) -> anyhow::Result<usize> {
     let profile_id = session.profile_id.as_str();
     let scope_id = format!("comics:profile:{profile_id}");
 
@@ -1092,7 +1125,12 @@ async fn mirror_profile(state: &SharedAppState, session: &AuthenticatedSession) 
         db::list_suwayomi_tracking_mirror_state(&state.pool, profile_id)
             .await?
             .into_iter()
-            .map(|row| (row.entity_id, (row.suwayomi_fingerprint, row.core_server_version)))
+            .map(|row| {
+                (
+                    row.entity_id,
+                    (row.suwayomi_fingerprint, row.core_server_version),
+                )
+            })
             .collect();
 
     let mut entity_ids: Vec<String> = core
@@ -1113,7 +1151,9 @@ async fn mirror_profile(state: &SharedAppState, session: &AuthenticatedSession) 
             continue;
         };
         let core_entity = core.get(&entity_id);
-        let side = core_entity.map(|entity| entity.side).unwrap_or(CoreSide::Absent);
+        let side = core_entity
+            .map(|entity| entity.side)
+            .unwrap_or(CoreSide::Absent);
         let core_version = core_entity.map(|entity| entity.version).unwrap_or(0);
         let suwayomi_record = suwayomi.get(&entity_id);
         let fingerprint = suwayomi_record.map(suwayomi_fingerprint);
@@ -1251,7 +1291,8 @@ async fn push_live(
                 .context("bindTrack returned no record")?
         }
     };
-    if let Some(variables) = update_track_variables(tracker_key, &tracker.scores, fields, &current) {
+    if let Some(variables) = update_track_variables(tracker_key, &tracker.scores, fields, &current)
+    {
         let data = suwayomi_catalog::execute_graphql_document(
             state,
             session,
@@ -1509,7 +1550,9 @@ async fn fetch_track_records(
         )
         .await
         .map_err(|error| anyhow::anyhow!("trackRecords query failed: {error:?}"))?;
-        let connection = data.get("trackRecords").context("invalid trackRecords response")?;
+        let connection = data
+            .get("trackRecords")
+            .context("invalid trackRecords response")?;
         let nodes = connection
             .get("nodes")
             .and_then(Value::as_array)
@@ -1530,7 +1573,9 @@ async fn fetch_track_records(
             let Some(comic_id) = comic_id_for(&source_id, url) else {
                 continue;
             };
-            manga_by_comic.entry(comic_id.clone()).or_insert(record.manga_id);
+            manga_by_comic
+                .entry(comic_id.clone())
+                .or_insert(record.manga_id);
             records.push((comic_id, record));
         }
         let has_next = connection
@@ -1654,24 +1699,42 @@ mod tests {
     #[test]
     fn score_strings_follow_suwayomi_index_to_score() {
         let point_100: Vec<String> = (0..=100).map(|i| i.to_string()).collect();
-        assert_eq!(score_string_for("anilist", &point_100, 85.0, 0.0).as_deref(), Some("85"));
+        assert_eq!(
+            score_string_for("anilist", &point_100, 85.0, 0.0).as_deref(),
+            Some("85")
+        );
         assert_eq!(score_string_for("anilist", &point_100, 85.0, 85.0), None);
 
         let point_10: Vec<String> = (0..=10).map(|i| i.to_string()).collect();
-        assert_eq!(score_string_for("anilist", &point_10, 72.0, 0.0).as_deref(), Some("7"));
+        assert_eq!(
+            score_string_for("anilist", &point_10, 72.0, 0.0).as_deref(),
+            Some("7")
+        );
 
         let stars = scores(&["", "1 ★", "2 ★", "3 ★", "4 ★", "5 ★"]);
         // 5 stars stores 90 (5*20-10).
-        assert_eq!(score_string_for("anilist", &stars, 90.0, 0.0).as_deref(), Some("5 ★"));
+        assert_eq!(
+            score_string_for("anilist", &stars, 90.0, 0.0).as_deref(),
+            Some("5 ★")
+        );
         let smileys = scores(&["", ":(", ":|", ":)"]);
         // Smileys store 35/60/85.
-        assert_eq!(score_string_for("anilist", &smileys, 60.0, 0.0).as_deref(), Some(":|"));
-        assert_eq!(score_string_for("anilist", &smileys, 80.0, 0.0).as_deref(), Some(":)"));
+        assert_eq!(
+            score_string_for("anilist", &smileys, 60.0, 0.0).as_deref(),
+            Some(":|")
+        );
+        assert_eq!(
+            score_string_for("anilist", &smileys, 80.0, 0.0).as_deref(),
+            Some(":)")
+        );
 
         let kitsu: Vec<String> = std::iter::once("0".to_string())
             .chain((2..=20).map(|i| format!("{:.1}", i as f64 / 2.0)))
             .collect();
-        assert_eq!(score_string_for("kitsu", &kitsu, 7.5, 0.0).as_deref(), Some("7.5"));
+        assert_eq!(
+            score_string_for("kitsu", &kitsu, 7.5, 0.0).as_deref(),
+            Some("7.5")
+        );
 
         let mangaupdates = scores(&["0.0", "1.0", "5.5", "10.0"]);
         assert_eq!(
@@ -1679,7 +1742,10 @@ mod tests {
             Some("5.5")
         );
         let mal: Vec<String> = (0..=10).map(|i| i.to_string()).collect();
-        assert_eq!(score_string_for("myanimelist", &mal, 8.0, 3.0).as_deref(), Some("8"));
+        assert_eq!(
+            score_string_for("myanimelist", &mal, 8.0, 3.0).as_deref(),
+            Some("8")
+        );
         assert_eq!(score_string_for("myanimelist", &mal, f64::NAN, 3.0), None);
     }
 
@@ -1699,7 +1765,8 @@ mod tests {
         assert!(comic_id.starts_with("comic:"));
         let entity_id = tracking::tracking_entity_id(COMIC_TRACKING, &comic_id, "anilist");
         let patch = core_record_from_suwayomi(&comic_id, "anilist", &record, 5);
-        let identity = tracking::validate_tracking_patch(COMIC_TRACKING, &entity_id, &patch).unwrap();
+        let identity =
+            tracking::validate_tracking_patch(COMIC_TRACKING, &entity_id, &patch).unwrap();
         assert_eq!(identity.work_id, comic_id);
         assert_eq!(patch["remoteId"], 4242);
         assert_eq!(patch["progress"], 12.5);
@@ -1723,7 +1790,10 @@ mod tests {
             started_at_ms: 1_700_000_000_000,
             finished_at_ms: 0,
         };
-        assert_eq!(update_track_variables("anilist", &point_100, &same, &current), None);
+        assert_eq!(
+            update_track_variables("anilist", &point_100, &same, &current),
+            None
+        );
         let changed = CoreTrackingFields {
             status: 2,
             progress: 20.0,
@@ -1749,16 +1819,31 @@ mod tests {
         assert_eq!(suwayomi_fingerprint(&record), suwayomi_fingerprint(&moved));
         let mut progressed = record.clone();
         progressed.last_chapter_read = 13.0;
-        assert_ne!(suwayomi_fingerprint(&record), suwayomi_fingerprint(&progressed));
+        assert_ne!(
+            suwayomi_fingerprint(&record),
+            suwayomi_fingerprint(&progressed)
+        );
     }
 
     #[test]
     fn backfill_prefers_core_and_copies_lone_bindings() {
-        assert_eq!(decide(CoreSide::Live, 5, Some("fp"), None), Decision::PushLive);
+        assert_eq!(
+            decide(CoreSide::Live, 5, Some("fp"), None),
+            Decision::PushLive
+        );
         assert_eq!(decide(CoreSide::Live, 5, None, None), Decision::PushLive);
-        assert_eq!(decide(CoreSide::Absent, 0, Some("fp"), None), Decision::EmitRecord);
-        assert_eq!(decide(CoreSide::Tombstone, 4, Some("fp"), None), Decision::EmitRecord);
-        assert_eq!(decide(CoreSide::Tombstone, 4, None, None), Decision::Nothing);
+        assert_eq!(
+            decide(CoreSide::Absent, 0, Some("fp"), None),
+            Decision::EmitRecord
+        );
+        assert_eq!(
+            decide(CoreSide::Tombstone, 4, Some("fp"), None),
+            Decision::EmitRecord
+        );
+        assert_eq!(
+            decide(CoreSide::Tombstone, 4, None, None),
+            Decision::Nothing
+        );
         assert_eq!(decide(CoreSide::Absent, 0, None, None), Decision::Nothing);
     }
 
@@ -1766,24 +1851,48 @@ mod tests {
     fn agreement_detects_the_changed_side_and_core_wins_conflicts() {
         let agreed = Some((Some("fp"), 5));
         // Nothing changed: no echo.
-        assert_eq!(decide(CoreSide::Live, 5, Some("fp"), agreed), Decision::Nothing);
+        assert_eq!(
+            decide(CoreSide::Live, 5, Some("fp"), agreed),
+            Decision::Nothing
+        );
         // A device changed the record.
-        assert_eq!(decide(CoreSide::Live, 6, Some("fp"), agreed), Decision::PushLive);
+        assert_eq!(
+            decide(CoreSide::Live, 6, Some("fp"), agreed),
+            Decision::PushLive
+        );
         // A device unbound it.
-        assert_eq!(decide(CoreSide::Tombstone, 6, Some("fp"), agreed), Decision::PushUnbind);
+        assert_eq!(
+            decide(CoreSide::Tombstone, 6, Some("fp"), agreed),
+            Decision::PushUnbind
+        );
         // The desktop changed it.
-        assert_eq!(decide(CoreSide::Live, 5, Some("fp2"), agreed), Decision::EmitRecord);
+        assert_eq!(
+            decide(CoreSide::Live, 5, Some("fp2"), agreed),
+            Decision::EmitRecord
+        );
         // The desktop unbound it.
-        assert_eq!(decide(CoreSide::Live, 5, None, agreed), Decision::EmitTombstone);
+        assert_eq!(
+            decide(CoreSide::Live, 5, None, agreed),
+            Decision::EmitTombstone
+        );
         // Both changed: Core wins.
-        assert_eq!(decide(CoreSide::Live, 6, Some("fp2"), agreed), Decision::PushLive);
-        assert_eq!(decide(CoreSide::Tombstone, 6, None, agreed), Decision::ForgetState);
+        assert_eq!(
+            decide(CoreSide::Live, 6, Some("fp2"), agreed),
+            Decision::PushLive
+        );
+        assert_eq!(
+            decide(CoreSide::Tombstone, 6, None, agreed),
+            Decision::ForgetState
+        );
         // After a push/emit the new agreement is quiet.
         assert_eq!(
             decide(CoreSide::Tombstone, 6, None, Some((None, 6))),
             Decision::ForgetState
         );
-        assert_eq!(decide(CoreSide::Live, 7, Some("fp3"), Some((Some("fp3"), 7))), Decision::Nothing);
+        assert_eq!(
+            decide(CoreSide::Live, 7, Some("fp3"), Some((Some("fp3"), 7))),
+            Decision::Nothing
+        );
     }
 
     #[test]
@@ -1808,7 +1917,10 @@ mod tests {
             ..Default::default()
         };
         match credential_action(&login) {
-            CredentialAction::LoginOAuth { tracker_id, callback_url } => {
+            CredentialAction::LoginOAuth {
+                tracker_id,
+                callback_url,
+            } => {
                 assert_eq!(tracker_id, 2);
                 assert!(callback_url.0.contains("#access_token=tok.en&"));
                 assert!(!format!("{callback_url:?}").contains("tok.en"));
@@ -1821,7 +1933,10 @@ mod tests {
             token: String::new(),
             ..login.clone()
         };
-        assert_eq!(credential_action(&tombstone_never_applied), CredentialAction::Skip);
+        assert_eq!(
+            credential_action(&tombstone_never_applied),
+            CredentialAction::Skip
+        );
         let tombstone = StoredTrackerCredential {
             desktop_revision: 1,
             ..tombstone_never_applied

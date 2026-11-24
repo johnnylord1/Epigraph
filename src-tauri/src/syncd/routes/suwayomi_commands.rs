@@ -124,6 +124,14 @@ const ADD_EXTENSION_STORE_QUERY: &str = r#"
   }
 "#;
 
+const LIST_EXTENSIONS_QUERY: &str = r#"
+  query EpigraphListExtensions {
+    extensions {
+      nodes { pkgName isInstalled }
+    }
+  }
+"#;
+
 const FETCH_EXTENSIONS_QUERY: &str = r#"
   mutation EpigraphFetchExtensions {
     fetchExtensions(input: {}) {
@@ -566,6 +574,13 @@ fn string_array(value: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
+fn listed_extension<'a>(nodes: Option<&'a Value>, pkg_name: &str) -> Option<&'a Value> {
+    nodes?
+        .as_array()?
+        .iter()
+        .find(|extension| extension.get("pkgName").and_then(Value::as_str) == Some(pkg_name))
+}
+
 /// Installs an extension from the desktop runtime's own repositories. A package the runtime
 /// does not offer is answered with `available: false` so the caller can stop retrying it.
 async fn install_extension_confirmed(
@@ -579,25 +594,41 @@ async fn install_extension_confirmed(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let data = suwayomi_catalog::execute_graphql_document(
+    // Check Suwayomi's cached extension list first so installing or confirming several packages in
+    // one sync does not re-download every remote extension repository index for each package.
+    let cached = suwayomi_catalog::execute_graphql_document(
         state,
         session,
-        FETCH_EXTENSIONS_QUERY,
+        LIST_EXTENSIONS_QUERY,
         json!({}),
-        true,
+        false,
     )
-    .await?;
-    let listed = data
-        .get("fetchExtensions")
-        .and_then(|value| value.get("extensions"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find(|extension| {
-            extension.get("pkgName").and_then(Value::as_str) == Some(pkg_name.as_str())
-        });
-    let Some(listed) = listed else {
-        return Ok(json!({ "pkgName": pkg_name, "available": false, "isInstalled": false }));
+    .await
+    .ok();
+    let cached_listed = cached
+        .as_ref()
+        .and_then(|data| listed_extension(data.pointer("/extensions/nodes"), &pkg_name));
+    let fetched;
+    let listed = if let Some(listed) = cached_listed {
+        listed
+    } else {
+        fetched = suwayomi_catalog::execute_graphql_document(
+            state,
+            session,
+            FETCH_EXTENSIONS_QUERY,
+            json!({}),
+            true,
+        )
+        .await?;
+        let Some(listed) = listed_extension(
+            fetched
+                .get("fetchExtensions")
+                .and_then(|value| value.get("extensions")),
+            &pkg_name,
+        ) else {
+            return Ok(json!({ "pkgName": pkg_name, "available": false, "isInstalled": false }));
+        };
+        listed
     };
     if listed.get("isInstalled").and_then(Value::as_bool) == Some(true) {
         return Ok(json!({ "pkgName": pkg_name, "available": true, "isInstalled": true }));
@@ -809,8 +840,8 @@ fn normalized_command(
             Ok((DELETE_CATEGORY_QUERY, json!({ "id": variables.id })))
         }
         CommandOperation::AddExtensionRepos => {
-            let variables: AddExtensionReposVariables = serde_json::from_value(variables)
-                .map_err(|_| {
+            let variables: AddExtensionReposVariables =
+                serde_json::from_value(variables).map_err(|_| {
                     AppError::BadRequest("AddExtensionRepos requires repos.".to_string())
                 })?;
             if variables.repos.is_empty() || variables.repos.len() > MAX_EXTENSION_REPOS {
@@ -824,8 +855,8 @@ fn normalized_command(
             Ok((EXTENSION_REPOS_QUERY, json!({ "repos": variables.repos })))
         }
         CommandOperation::InstallExtension => {
-            let variables: InstallExtensionVariables = serde_json::from_value(variables)
-                .map_err(|_| {
+            let variables: InstallExtensionVariables =
+                serde_json::from_value(variables).map_err(|_| {
                     AppError::BadRequest("InstallExtension requires pkgName.".to_string())
                 })?;
             ensure_package_name(&variables.pkg_name)?;
@@ -857,7 +888,10 @@ fn normalized_command(
                     AppError::BadRequest("FetchChapters requires a mangaId variable.".to_string())
                 })?;
             ensure_int(variables.manga_id, "mangaId")?;
-            Ok((FETCH_CHAPTERS_QUERY, json!({ "mangaId": variables.manga_id })))
+            Ok((
+                FETCH_CHAPTERS_QUERY,
+                json!({ "mangaId": variables.manga_id }),
+            ))
         }
         CommandOperation::ImportWorks => Ok((
             suwayomi_import::RESTORE_MUTATION,
@@ -922,8 +956,13 @@ fn ensure_package_name(value: &str) -> Result<(), AppError> {
     let valid = value.len() <= 200
         && segments.len() >= 2
         && segments.iter().all(|segment| {
-            segment.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-                && segment.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            segment
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
         });
     if valid {
         Ok(())
@@ -1084,8 +1123,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(document, INSTALL_EXTENSION_QUERY);
-        assert_eq!(variables, json!({ "id": "eu.kanade.tachiyomi.extension.en.mangadex" }));
-        for bad in ["", "mangadex", "eu.kanade..x", "eu.kanade.1x", "eu.kanade.x;drop"] {
+        assert_eq!(
+            variables,
+            json!({ "id": "eu.kanade.tachiyomi.extension.en.mangadex" })
+        );
+        for bad in [
+            "",
+            "mangadex",
+            "eu.kanade..x",
+            "eu.kanade.1x",
+            "eu.kanade.x;drop",
+        ] {
             assert!(normalized_command(
                 &CommandOperation::InstallExtension,
                 json!({ "pkgName": bad }),
@@ -1114,7 +1162,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(variables, json!({ "repos": [repo] }));
-        for bad in [json!({ "repos": [] }), json!({ "repos": ["http://x/index.json"] }), json!({ "repos": ["https://x/a b.json"] })] {
+        for bad in [
+            json!({ "repos": [] }),
+            json!({ "repos": ["http://x/index.json"] }),
+            json!({ "repos": ["https://x/a b.json"] }),
+        ] {
             assert!(normalized_command(&CommandOperation::AddExtensionRepos, bad).is_err());
         }
 
@@ -1128,12 +1180,27 @@ mod tests {
             store_index_candidates(store),
             vec![
                 store.to_string(),
-                "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json".to_string(),
+                "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"
+                    .to_string(),
             ]
         );
         assert_eq!(store_index_candidates(repo)[1], store);
         assert_eq!(legacy_repo_url(store), repo);
         assert_eq!(legacy_repo_url(repo), repo);
+
+        let cached = json!([
+            { "pkgName": "eu.kanade.tachiyomi.extension.en.mangadex", "isInstalled": true },
+            { "pkgName": "eu.kanade.tachiyomi.extension.pt.brmangas", "isInstalled": false },
+        ]);
+        assert_eq!(
+            listed_extension(Some(&cached), "eu.kanade.tachiyomi.extension.en.mangadex")
+                .and_then(|value| value.get("isInstalled"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(
+            listed_extension(Some(&cached), "eu.kanade.tachiyomi.extension.en.missing").is_none()
+        );
     }
 
     #[test]
@@ -1162,13 +1229,18 @@ mod tests {
             normalized_command(&CommandOperation::FetchChapters, json!({ "mangaId": 9 })).unwrap();
         assert_eq!(document, FETCH_CHAPTERS_QUERY);
         assert_eq!(variables, json!({ "mangaId": 9 }));
-        assert!(normalized_command(&CommandOperation::FetchChapters, json!({ "mangaId": 0 })).is_err());
+        assert!(
+            normalized_command(&CommandOperation::FetchChapters, json!({ "mangaId": 0 })).is_err()
+        );
 
         let nodes = json!([
             { "id": 4, "url": "/title/abcd", "inLibrary": true },
             { "id": 5, "url": "/title/abc", "inLibrary": false },
         ]);
-        assert_eq!(exact_manga_match(Some(&nodes), "/title/abc"), Some((5, false)));
+        assert_eq!(
+            exact_manga_match(Some(&nodes), "/title/abc"),
+            Some((5, false))
+        );
         assert_eq!(exact_manga_match(Some(&nodes), "/title/ab"), None);
     }
 

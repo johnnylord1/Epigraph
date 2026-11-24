@@ -22,15 +22,15 @@ const RESTORE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const RESTORE_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub(crate) const RESTORE_MUTATION: &str = r#"
-  mutation EpigraphCoreImportWorks($backup: Upload!) {
+  mutation EpigraphCoreImportWorks($backup: Upload!, $portableRelations: Boolean!) {
     restoreBackup(input: {
       backup: $backup
       flags: {
         includeManga: true
         includeChapters: true
-        includeCategories: false
-        includeHistory: false
-        includeTracking: false
+        includeCategories: $portableRelations
+        includeHistory: $portableRelations
+        includeTracking: $portableRelations
         includeServerSettings: false
         includeClientData: false
       }
@@ -69,56 +69,83 @@ struct ImportWorksVariables {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ImportWork {
-    source_id: String,
-    url: String,
-    title: String,
+pub(crate) struct ImportWork {
+    pub source_id: String,
+    pub url: String,
+    pub title: String,
     #[serde(default)]
-    author: Option<String>,
+    pub author: Option<String>,
     #[serde(default)]
-    artist: Option<String>,
+    pub artist: Option<String>,
     #[serde(default)]
-    genre: Vec<String>,
+    pub genre: Vec<String>,
     #[serde(default)]
-    status: Option<String>,
+    pub status: Option<String>,
     /// Milliseconds since the epoch.
     #[serde(default)]
-    date_added: i64,
+    pub date_added: i64,
     /// Whether the work goes into the library; absent means it does. Suwayomi keeps a work that is
     /// already in its library there whatever this says, so `false` leaves the work as it is.
     #[serde(default)]
-    in_library: Option<bool>,
+    pub in_library: Option<bool>,
     /// Suwayomi's `UpdateStrategy` name. A restore overwrites the strategy of a work it already
     /// has, so a work that is only given missing chapters passes its own.
     #[serde(default)]
-    update_strategy: Option<String>,
+    pub update_strategy: Option<String>,
     #[serde(default)]
-    chapters: Vec<ImportChapter>,
+    pub chapters: Vec<ImportChapter>,
+    #[serde(skip)]
+    pub category_orders: Vec<u64>,
+    #[serde(skip)]
+    pub history: Option<(String, i64)>,
+    #[serde(skip)]
+    pub tracking: Vec<ImportTracking>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ImportChapter {
-    url: String,
-    name: String,
+pub(crate) struct ImportChapter {
+    pub url: String,
+    pub name: String,
     #[serde(default)]
-    scanlator: Option<String>,
+    pub scanlator: Option<String>,
     #[serde(default)]
-    is_read: bool,
+    pub is_read: bool,
     #[serde(default)]
-    is_bookmarked: bool,
+    pub is_bookmarked: bool,
     #[serde(default)]
-    last_page_read: i64,
+    pub last_page_read: i64,
     /// Milliseconds since the epoch.
     #[serde(default)]
-    fetched_at: i64,
+    pub fetched_at: i64,
     /// Milliseconds since the epoch.
     #[serde(default)]
-    upload_date: i64,
+    pub upload_date: i64,
     #[serde(default)]
-    chapter_number: f32,
+    pub chapter_number: f32,
     #[serde(default)]
-    source_order: i64,
+    pub source_order: i64,
+}
+
+#[derive(Debug)]
+pub(crate) struct ImportCategory {
+    pub name: String,
+    pub order: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct ImportTracking {
+    pub tracker_id: u64,
+    pub library_id: u64,
+    pub remote_id: u64,
+    pub url: String,
+    pub title: String,
+    pub last_chapter_read: f32,
+    pub total_chapters: u64,
+    pub score: f32,
+    pub status: u64,
+    pub start_date: u64,
+    pub finish_date: u64,
 }
 
 /// Checks the works and answers with the variables `import_works_confirmed` expects.
@@ -192,8 +219,18 @@ pub(crate) async fn import_works_confirmed(
 ) -> Result<Value, AppError> {
     let parsed: ImportWorksVariables = serde_json::from_value(variables)
         .map_err(|_| AppError::BadRequest("ImportWorks variables are invalid.".to_string()))?;
-    let backup = gzip_stored(&encode_backup(&parsed.works));
+    restore_backup_confirmed(state, session, &parsed.works, &[], false).await?;
+    Ok(json!({ "imported": parsed.works.len() }))
+}
 
+pub(crate) async fn restore_backup_confirmed(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    works: &[ImportWork],
+    categories: &[ImportCategory],
+    portable_relations: bool,
+) -> Result<(), AppError> {
+    let backup = gzip_stored(&encode_backup(works, categories));
     let maintained = || {
         AppError::service_unavailable(
             "SUWAYOMI_MAINTENANCE",
@@ -209,7 +246,7 @@ pub(crate) async fn import_works_confirmed(
         return Err(maintained());
     }
 
-    let id = start_restore(state, session, backup).await?;
+    let id = start_restore(state, session, backup, portable_relations).await?;
     let started = tokio::time::Instant::now();
     loop {
         let data = suwayomi_catalog::execute_graphql_document(
@@ -222,7 +259,8 @@ pub(crate) async fn import_works_confirmed(
         .await?;
         // Suwayomi forgets a restore some time after it ends.
         match data.pointer("/restoreStatus/state").and_then(Value::as_str) {
-            None | Some("SUCCESS") => break,
+            Some("SUCCESS") => break,
+            None if !portable_relations => break,
             Some("FAILURE") => {
                 return Err(AppError::service_unavailable(
                     "SUWAYOMI_IMPORT_FAILED",
@@ -230,7 +268,7 @@ pub(crate) async fn import_works_confirmed(
                     false,
                 ))
             }
-            Some(_) => {}
+            None | Some(_) => {}
         }
         if started.elapsed() > RESTORE_TIMEOUT {
             return Err(AppError::service_unavailable(
@@ -241,13 +279,14 @@ pub(crate) async fn import_works_confirmed(
         }
         tokio::time::sleep(RESTORE_POLL_INTERVAL).await;
     }
-    Ok(json!({ "imported": parsed.works.len() }))
+    Ok(())
 }
 
 async fn start_restore(
     state: &SharedAppState,
     session: &AuthenticatedSession,
     backup: Vec<u8>,
+    portable_relations: bool,
 ) -> Result<String, AppError> {
     let unavailable = || {
         AppError::service_unavailable(
@@ -263,7 +302,11 @@ async fn start_restore(
     let form = reqwest::multipart::Form::new()
         .text(
             "operations",
-            json!({ "query": RESTORE_MUTATION, "variables": { "backup": null } }).to_string(),
+            json!({
+                "query": RESTORE_MUTATION,
+                "variables": { "backup": null, "portableRelations": portable_relations }
+            })
+            .to_string(),
         )
         .text("map", json!({ "0": ["variables.backup"] }).to_string())
         .part(
@@ -330,9 +373,8 @@ async fn start_restore(
         .ok_or_else(unavailable)
 }
 
-/// A Mihon backup holding only the works and their chapters, in no category: in the library unless
-/// a work says otherwise.
-fn encode_backup(works: &[ImportWork]) -> Vec<u8> {
+/// A Mihon backup holding works, chapters and any supplied portable relations.
+fn encode_backup(works: &[ImportWork], categories: &[ImportCategory]) -> Vec<u8> {
     let mut backup = Vec::new();
     for work in works {
         let mut manga = Vec::new();
@@ -370,16 +412,42 @@ fn encode_backup(works: &[ImportWork]) -> Vec<u8> {
             put_varint_field(&mut encoded, 6, chapter.last_page_read.max(0) as u64);
             put_varint_field(&mut encoded, 7, chapter.fetched_at.max(0) as u64);
             put_varint_field(&mut encoded, 8, chapter.upload_date.max(0) as u64);
-            if chapter.chapter_number != 0.0 {
-                put_varint(&mut encoded, 9 << 3 | 5);
-                encoded.extend_from_slice(&chapter.chapter_number.to_le_bytes());
-            }
+            put_float_field(&mut encoded, 9, chapter.chapter_number);
             put_varint_field(&mut encoded, 10, chapter.source_order.max(0) as u64);
             put_bytes_field(&mut manga, 16, &encoded);
+        }
+        for order in &work.category_orders {
+            // Category index 0 is a valid member of this repeated scalar field.
+            put_varint(&mut manga, 17 << 3);
+            put_varint(&mut manga, *order);
+        }
+        for track in &work.tracking {
+            let mut encoded = Vec::new();
+            put_varint_field(&mut encoded, 1, track.tracker_id);
+            put_varint_field(&mut encoded, 2, track.library_id);
+            if track.remote_id <= i32::MAX as u64 {
+                put_varint_field(&mut encoded, 3, track.remote_id);
+            }
+            put_text_field(&mut encoded, 4, &track.url);
+            put_text_field(&mut encoded, 5, &track.title);
+            put_float_field(&mut encoded, 6, track.last_chapter_read);
+            put_varint_field(&mut encoded, 7, track.total_chapters);
+            put_float_field(&mut encoded, 8, track.score);
+            put_varint_field(&mut encoded, 9, track.status);
+            put_varint_field(&mut encoded, 10, track.start_date);
+            put_varint_field(&mut encoded, 11, track.finish_date);
+            put_varint_field(&mut encoded, 100, track.remote_id);
+            put_bytes_field(&mut manga, 18, &encoded);
         }
         // `favorite` defaults to true when left out, so false is written out.
         put_varint(&mut manga, 100 << 3);
         put_varint(&mut manga, u64::from(work.in_library != Some(false)));
+        if let Some((chapter_url, when)) = &work.history {
+            let mut encoded = Vec::new();
+            put_text_field(&mut encoded, 1, chapter_url);
+            put_varint_field(&mut encoded, 2, (*when).max(0) as u64);
+            put_bytes_field(&mut manga, 104, &encoded);
+        }
         let strategy = work.update_strategy.as_deref().unwrap_or_default();
         let strategy = UPDATE_STRATEGIES
             .iter()
@@ -387,6 +455,12 @@ fn encode_backup(works: &[ImportWork]) -> Vec<u8> {
             .unwrap_or(0);
         put_varint_field(&mut manga, 105, strategy as u64);
         put_bytes_field(&mut backup, 1, &manga);
+    }
+    for category in categories {
+        let mut encoded = Vec::new();
+        put_text_field(&mut encoded, 1, &category.name);
+        put_varint_field(&mut encoded, 2, category.order);
+        put_bytes_field(&mut backup, 2, &encoded);
     }
     backup
 }
@@ -407,6 +481,12 @@ fn put_varint_field(out: &mut Vec<u8>, field: u64, value: u64) {
     }
 }
 
+fn put_float_field(out: &mut Vec<u8>, field: u64, value: f32) {
+    if value != 0.0 {
+        put_varint(out, field << 3 | 5);
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+}
 fn put_bytes_field(out: &mut Vec<u8>, field: u64, bytes: &[u8]) {
     put_varint(out, field << 3 | 2);
     put_varint(out, bytes.len() as u64);
@@ -505,7 +585,7 @@ mod tests {
             "lastPageRead": 3, "chapterNumber": 1.5, "sourceOrder": 2 }]));
         let parsed: ImportWorksVariables =
             serde_json::from_value(normalized_import(variables).unwrap()).unwrap();
-        let backup = encode_backup(&parsed.works);
+        let backup = encode_backup(&parsed.works, &[]);
         // backupManga = 1, length-delimited, then source = 1 as a varint.
         assert_eq!(backup[0], 1 << 3 | 2);
         let mut source = Vec::new();
@@ -530,7 +610,7 @@ mod tests {
         variables["works"][0]["updateStrategy"] = json!("ONLY_FETCH_ONCE");
         let parsed: ImportWorksVariables =
             serde_json::from_value(normalized_import(variables).unwrap()).unwrap();
-        let backup = encode_backup(&parsed.works);
+        let backup = encode_backup(&parsed.works, &[]);
         // favorite = 100 written as false, then updateStrategy = 105 as ONLY_FETCH_ONCE.
         assert!(backup.ends_with(&[0xA0, 0x06, 0, 0xC8, 0x06, 1]));
 

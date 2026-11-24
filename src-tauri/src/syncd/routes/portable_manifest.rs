@@ -3,6 +3,8 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::extract::{Extension, Query, State};
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -16,8 +18,7 @@ use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{
     canonical_portable_work_id, canonicalize_public_novel_repository_url, AppError,
     AuthenticatedSession, ComicDependencyV3, ErrorDetail, ExtensionStoreReferenceV3,
-    NovelDependencyV3, PortableWorkRefV3, RepositoryReferenceV3,
-    SharedAppState,
+    NovelDependencyV3, PortableWorkRefV3, RepositoryReferenceV3, SharedAppState,
 };
 use crate::syncd::routes::{suwayomi_catalog, suwayomi_extensions};
 
@@ -193,6 +194,7 @@ struct ComicManifestSnapshot {
 
 #[derive(Clone)]
 struct NovelManifestSnapshot {
+    revision: String,
     omitted_count: i64,
     dependencies: Vec<NovelDependencyV3>,
     works: Vec<PortableNovelWorkDescriptor>,
@@ -334,8 +336,9 @@ pub async fn get_portable_manifest(
 pub async fn get_portable_novel_manifest(
     State(state): State<SharedAppState>,
     Extension(session): Extension<AuthenticatedSession>,
+    headers: HeaderMap,
     Query(query): Query<PortableManifestQuery>,
-) -> Result<Json<PortableNovelManifestResponse>, AppError> {
+) -> Result<Response, AppError> {
     validate_scope(&session, &query.scope_id)?;
     if query.scope_id != format!("novels:profile:{}", session.profile_id) {
         return Err(AppError::Forbidden(
@@ -365,7 +368,14 @@ pub async fn get_portable_novel_manifest(
         )?,
         None => {
             require_new_snapshot_request(offset, query.snapshot_fingerprint.as_deref())?;
-            let payload = build_novel_manifest_snapshot(&state, &session, &query.scope_id).await?;
+            let revision = novel_manifest_revision(&state, &query.scope_id).await?;
+            if novel_manifest_matches(&headers, &revision) {
+                return Ok(
+                    (StatusCode::NOT_MODIFIED, novel_manifest_headers(&revision)).into_response(),
+                );
+            }
+            let payload =
+                build_novel_manifest_snapshot(&state, &session, &query.scope_id, revision).await?;
             store_manifest_snapshot(
                 &session,
                 &query.scope_id,
@@ -377,7 +387,7 @@ pub async fn get_portable_novel_manifest(
         return Err(invalid_manifest_snapshot());
     };
     let (page, works, dependencies) = novel_snapshot_page(payload, offset, page_size)?;
-    Ok(Json(PortableNovelManifestResponse {
+    let body = Json(PortableNovelManifestResponse {
         schema_version: PORTABLE_MANIFEST_SCHEMA_VERSION,
         scope_id: query.scope_id,
         manifest_fingerprint: snapshot.fingerprint.clone(),
@@ -388,7 +398,25 @@ pub async fn get_portable_novel_manifest(
         page,
         novel_dependencies: dependencies,
         works,
-    }))
+    });
+    Ok((novel_manifest_headers(&payload.revision), body).into_response())
+}
+
+fn novel_manifest_headers(revision: &str) -> [(header::HeaderName, &str); 2] {
+    [
+        (header::ETAG, revision),
+        (header::CACHE_CONTROL, "private, no-store"),
+    ]
+}
+
+fn novel_manifest_matches(headers: &HeaderMap, revision: &str) -> bool {
+    let opaque_tag = revision.trim_start_matches("W/");
+    headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|header| header.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|tag| tag.trim().trim_start_matches("W/") == opaque_tag)
 }
 
 fn require_new_snapshot_request(
@@ -756,8 +784,8 @@ async fn build_novel_manifest_snapshot(
     state: &SharedAppState,
     session: &AuthenticatedSession,
     scope_id: &str,
+    revision: String,
 ) -> Result<NovelManifestSnapshot, AppError> {
-    let fingerprint_before = novel_manifest_fingerprint(state, scope_id).await?;
     let rows = sqlx::query(
         r#"SELECT novel_id, title, external_url, source_json
            FROM novel_library_entries
@@ -847,7 +875,7 @@ async fn build_novel_manifest_snapshot(
             .validate()
             .map_err(|_| invalid_novel_manifest())?;
     }
-    if novel_manifest_fingerprint(state, scope_id).await? != fingerprint_before {
+    if novel_manifest_revision(state, scope_id).await? != revision {
         return Err(changed_manifest_snapshot_source());
     }
 
@@ -870,6 +898,7 @@ async fn build_novel_manifest_snapshot(
         .await
         .map_err(|error| AppError::Internal(error.to_string()))?;
     Ok(NovelManifestSnapshot {
+        revision,
         omitted_count,
         dependencies,
         works,
@@ -976,47 +1005,22 @@ fn novel_dependency(
     }
 }
 
-async fn novel_manifest_fingerprint(
+async fn novel_manifest_revision(
     state: &SharedAppState,
     scope_id: &str,
 ) -> Result<String, AppError> {
-    let work_revision: (i64, i64) = sqlx::query_as(
-        r#"SELECT COUNT(*), COALESCE(MAX(record_server_version), 0)
-           FROM novel_library_entries
-           WHERE scope_id = ?
-             AND external_url IS NOT NULL
-             AND external_url <> ''
-             AND json_valid(source_json)
-             AND json_type(source_json) = 'object'
-             AND json_type(source_json, '$.pluginId') = 'text'
-             AND length(json_extract(source_json, '$.pluginId')) > 0"#,
-    )
-    .bind(scope_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|error| AppError::Internal(error.to_string()))?;
-    let plugin_revision: (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(MAX(record_server_version), 0) FROM novel_plugins WHERE scope_id = ?",
-    )
-    .bind(scope_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|error| AppError::Internal(error.to_string()))?;
-    let repository_revision: (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(MAX(record_server_version), 0) FROM novel_repositories WHERE scope_id = ?",
-    )
-    .bind(scope_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|error| AppError::Internal(error.to_string()))?;
-    let canonical = serde_json::to_vec(&(
-        scope_id,
-        work_revision,
-        plugin_revision,
-        repository_revision,
-    ))
-    .map_err(|error| AppError::Internal(error.to_string()))?;
-    Ok(format!("sha256:{:x}", Sha256::digest(canonical)))
+    // Revalidate after a Core restart, including when a restore replaces its SQLite file.
+    static PROCESS_GENERATION: OnceLock<Uuid> = OnceLock::new();
+    let generation = PROCESS_GENERATION.get_or_init(Uuid::new_v4);
+    let revision: Option<String> =
+        sqlx::query_scalar("SELECT revision FROM novel_manifest_revisions WHERE scope_id = ?")
+            .bind(scope_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+    let canonical = serde_json::to_vec(&(generation, scope_id, revision))
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    Ok(format!("W/\"novels-v1-{:x}\"", Sha256::digest(canonical)))
 }
 
 struct NormalizedManifest {
@@ -1497,6 +1501,7 @@ mod tests {
 
     fn test_novel_snapshot() -> NovelManifestSnapshot {
         NovelManifestSnapshot {
+            revision: "W/\"test-revision\"".to_string(),
             omitted_count: 0,
             dependencies: vec![NovelDependencyV3 {
                 plugin_id: "plugin.snapshot".to_string(),

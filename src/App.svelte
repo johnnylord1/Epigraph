@@ -587,6 +587,51 @@
     return (await loadLibraryUpdateRuntime()).clearStaleLibraryUpdateInFlight();
   }
 
+  onMount(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    void listen<{ profileId: string; domain: "books" | "novels" }>("epigraph:v4-library-updated", (event) => {
+      if (!active) return;
+      const payload = event.payload;
+      const currentProfileId = normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId)
+        ?? normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId);
+      const appliedProfileId = normalizeLocalProfileIdFromSession(payload.profileId);
+      if (!currentProfileId || currentProfileId !== appliedProfileId) return;
+      if (payload.domain === "books") {
+        void import("./lib/books/libraryState")
+          .then(async ({ reloadBookLibraryState }) => {
+            const next = await reloadBookLibraryState({ profileId: store.runtimeResolvedLocalProfileId });
+            if (!active) return;
+            replaceBooksStateFromDisk({
+              books: next.books,
+              bookProgress: next.bookProgress,
+              bookBookmarks: next.bookBookmarks,
+              booksCategories: next.booksCategories,
+              booksCategoryAssignments: next.booksCategoryAssignments,
+              booksLibraryUi: next.booksLibraryUi,
+            });
+          })
+          .catch((error) => console.warn("Failed to refresh books after Sync V4 apply:", error));
+        return;
+      }
+
+      void import("./lib/novels/libraryState")
+        .then(async ({ reloadNovelLibraryState }) => {
+          await reloadNovelLibraryState({ profileId: currentProfileId });
+          if (active) store.bumpContentSetupVersion();
+        })
+        .catch((error) => console.warn("Failed to refresh novels after Sync V4 apply:", error));
+    }).then((dispose) => {
+      if (!active) dispose();
+      else unlisten = dispose;
+    }).catch((error) => console.warn("Failed to listen for Sync V4 library updates:", error));
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  });
+
   async function handleReplicationState(payload: SyncdReplicationSnapshot) {
     if (!payload.lastAppliedAtMs || payload.lastAppliedScopes.length === 0) return;
     if (syncdAppliedMarks.get(payload.localProfileId) === payload.lastAppliedAtMs) return;

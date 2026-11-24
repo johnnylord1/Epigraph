@@ -2526,6 +2526,7 @@ class Store {
 
   /** Adopts the books state Syncd replication just wrote, without echoing it back to disk. */
   replaceBooksStateFromDisk(snapshot: BooksRestoreHydrationInput) {
+    this.booksStatePersistQueued = false;
     this.replaceBooksState(snapshot);
     this.booksStateDiskSignature = this.booksPersistSignature();
   }

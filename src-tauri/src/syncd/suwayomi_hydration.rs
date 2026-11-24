@@ -168,10 +168,19 @@ async fn hydrate_profiles(
     if crate::suwayomi_maintenance::exclusive_file_lease_held(&runtime_root).unwrap_or(false) {
         return Ok(());
     }
+    if suwayomi_projection::bulk_ingest_ongoing()
+        || suwayomi_projection::has_active_work(&state.pool).await
+    {
+        return Ok(());
+    }
     let profiles: Vec<String> = sqlx::query_scalar(
         r#"
         SELECT DISTINCT profile_id FROM portable_work_bindings
-        WHERE ecosystem = 'SUWAYOMI' AND resolution_state = 'BOUND'
+        WHERE ecosystem = 'SUWAYOMI'
+          AND resolution_state = 'BOUND'
+          AND profile_id NOT IN (
+              SELECT profile_id FROM v4_profile_watermarks WHERE current_seq > 0
+          )
         ORDER BY profile_id
         "#,
     )
@@ -248,7 +257,11 @@ async fn hydrate_profiles(
         }
         save_retries(state, retries).await;
         if hydrated > 0 {
-            tracing::info!(profile = session.profile_id, hydrated, "completed synced comics from their sources");
+            tracing::info!(
+                profile = session.profile_id,
+                hydrated,
+                "completed synced comics from their sources"
+            );
         }
     }
     Ok(())
@@ -271,11 +284,19 @@ async fn hydrate_queue(
     session: &AuthenticatedSession,
     queue: Vec<UnhydratedWork>,
 ) -> (String, Vec<(i64, Outcome)>) {
-    let source_id = queue.first().map(|work| work.source_id.clone()).unwrap_or_default();
+    let source_id = queue
+        .first()
+        .map(|work| work.source_id.clone())
+        .unwrap_or_default();
     let started = Instant::now();
     let mut outcomes = Vec::with_capacity(queue.len());
     for work in queue {
         if started.elapsed() >= QUEUE_BUDGET {
+            break;
+        }
+        if suwayomi_projection::bulk_ingest_ongoing()
+            || suwayomi_projection::has_active_work(&state.pool).await
+        {
             break;
         }
         let manga_id = work.manga_id;
@@ -287,7 +308,10 @@ async fn hydrate_queue(
             Err(error) => failure_outcome(state, session, &error).await,
         };
         outcomes.push((manga_id, outcome));
-        if matches!(outcome, Outcome::RuntimeUnavailable | Outcome::SourceUnavailable) {
+        if matches!(
+            outcome,
+            Outcome::RuntimeUnavailable | Outcome::SourceUnavailable
+        ) {
             break;
         }
     }
@@ -344,7 +368,9 @@ async fn hydrate_work(
 }
 
 fn unsettled_fetches() -> std::sync::MutexGuard<'static, BTreeMap<(String, i64), Instant>> {
-    UNSETTLED_FETCHES.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    UNSETTLED_FETCHES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Follows the chapters of every work whose chapter fetch failed here lately, in case Suwayomi
@@ -362,7 +388,11 @@ async fn follow_unsettled_fetches(state: &SharedAppState) {
 }
 
 /// Follows the chapters Suwayomi holds for the work now, read without asking the source.
-async fn follow_local_chapters(state: &SharedAppState, session: &AuthenticatedSession, manga_id: i64) {
+async fn follow_local_chapters(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    manga_id: i64,
+) {
     let Ok(local) = suwayomi_catalog::execute_graphql_document(
         state,
         session,
@@ -827,10 +857,19 @@ impl RetryBook {
             .into_iter()
             .map(|(profile_id, manga_id, failures, due_at_ms)| {
                 // A clock that was set back does not make a work wait longer than the longest wait.
-                ((profile_id, manga_id), (failures.clamp(0, i64::from(u32::MAX)) as u32, due_at_ms.min(latest)))
+                (
+                    (profile_id, manga_id),
+                    (
+                        failures.clamp(0, i64::from(u32::MAX)) as u32,
+                        due_at_ms.min(latest),
+                    ),
+                )
             })
             .collect();
-        Ok(Self { entries, dirty: false })
+        Ok(Self {
+            entries,
+            dirty: false,
+        })
     }
 
     /// Replaces what is stored. The caller holds the write gate.
@@ -867,12 +906,17 @@ impl RetryBook {
             .entry((profile_id.to_string(), manga_id))
             .or_insert((0, now_ms));
         entry.0 = entry.0.saturating_add(1);
-        entry.1 = now_ms.saturating_add(spread_retry(retry_delay(entry.0), manga_id).as_millis() as i64);
+        entry.1 =
+            now_ms.saturating_add(spread_retry(retry_delay(entry.0), manga_id).as_millis() as i64);
         self.dirty = true;
     }
 
     fn clear(&mut self, profile_id: &str, manga_id: i64) {
-        if self.entries.remove(&(profile_id.to_string(), manga_id)).is_some() {
+        if self
+            .entries
+            .remove(&(profile_id.to_string(), manga_id))
+            .is_some()
+        {
             self.dirty = true;
         }
     }
@@ -907,7 +951,11 @@ mod tests {
     /// Syncd state whose `main` profile reaches `router` as its Suwayomi.
     async fn state_with_upstream(
         router: axum::Router,
-    ) -> (tempfile::TempDir, SharedAppState, tokio::task::JoinHandle<()>) {
+    ) -> (
+        tempfile::TempDir,
+        SharedAppState,
+        tokio::task::JoinHandle<()>,
+    ) {
         use crate::syncd::config::{SyncdAdvertisedEndpointResolver, SyncdConfig};
         use crate::syncd::discovery::*;
         use crate::syncd::models::AppState;
@@ -1041,7 +1089,9 @@ mod tests {
         .await
         .unwrap();
         let mut retries = RetryBook::default();
-        hydrate_profiles(&state, &mut retries, &mut SourceBreakers::default()).await.unwrap();
+        hydrate_profiles(&state, &mut retries, &mut SourceBreakers::default())
+            .await
+            .unwrap();
         server.abort();
         assert_eq!(
             fetches.load(Ordering::Relaxed),
@@ -1059,11 +1109,15 @@ mod tests {
     async fn initialized_work_with_empty_chapter_fetch_keeps_durable_backoff() {
         let (_temp, state, fetches, server) = pending_chapter_fixture(true, true).await;
         let mut retries = RetryBook::default();
-        hydrate_profiles(&state, &mut retries, &mut SourceBreakers::default()).await.unwrap();
+        hydrate_profiles(&state, &mut retries, &mut SourceBreakers::default())
+            .await
+            .unwrap();
         assert_eq!(fetches.load(Ordering::Relaxed), 1);
         let mut restarted = RetryBook::load(&state.pool, db::now_ms()).await.unwrap();
         assert!(!restarted.is_due("main", 7, db::now_ms()));
-        hydrate_profiles(&state, &mut restarted, &mut SourceBreakers::default()).await.unwrap();
+        hydrate_profiles(&state, &mut restarted, &mut SourceBreakers::default())
+            .await
+            .unwrap();
         server.abort();
         assert_eq!(
             fetches.load(Ordering::Relaxed),
@@ -1097,11 +1151,9 @@ mod tests {
     }
 
     fn query_failure(upstream: &str) -> ErrorDetail {
-        let AppError::ServiceUnavailable(mut detail) = AppError::service_unavailable(
-            "SUWAYOMI_CATALOG_QUERY_FAILED",
-            "failed",
-            false,
-        ) else {
+        let AppError::ServiceUnavailable(mut detail) =
+            AppError::service_unavailable("SUWAYOMI_CATALOG_QUERY_FAILED", "failed", false)
+        else {
             unreachable!()
         };
         detail.details = Some(json!({ "upstreamError": upstream }));
@@ -1124,14 +1176,17 @@ mod tests {
         ] {
             assert!(is_source_fault(&query_failure(upstream)), "{upstream}");
         }
-        for upstream in ["HTTP error 404", "Index 0 out of bounds", "", "Chapter list is empty"] {
+        for upstream in [
+            "HTTP error 404",
+            "Index 0 out of bounds",
+            "",
+            "Chapter list is empty",
+        ] {
             assert!(!is_source_fault(&query_failure(upstream)), "{upstream}");
         }
-        let AppError::ServiceUnavailable(empty) = AppError::service_unavailable(
-            "SUWAYOMI_HYDRATION_CHAPTERS_EMPTY",
-            "empty",
-            true,
-        ) else {
+        let AppError::ServiceUnavailable(empty) =
+            AppError::service_unavailable("SUWAYOMI_HYDRATION_CHAPTERS_EMPTY", "empty", true)
+        else {
             unreachable!()
         };
         assert!(!is_source_fault(&empty));
@@ -1142,7 +1197,10 @@ mod tests {
         let mut sources = SourceBreakers::default();
         let queues = || vec![vec![work(1, "a")], vec![work(2, "b")], vec![work(3, "c")]];
         let first = |queues: &[Vec<UnhydratedWork>]| -> Vec<String> {
-            queues.iter().map(|queue| queue[0].source_id.clone()).collect()
+            queues
+                .iter()
+                .map(|queue| queue[0].source_id.clone())
+                .collect()
         };
 
         // A first failure only moves the source to the back of the next pass.
@@ -1154,7 +1212,10 @@ mod tests {
         // Failing again, it sits out a cooldown that grows, then comes back last.
         let (failures, cooldown) = sources.fail("p", "a", 0);
         assert_eq!(failures, 2);
-        assert!((22_500..=37_500).contains(&cooldown.as_millis()), "{cooldown:?}");
+        assert!(
+            (22_500..=37_500).contains(&cooldown.as_millis()),
+            "{cooldown:?}"
+        );
         assert_eq!(first(&sources.order("p", queues(), 1_000)), ["b", "c"]);
         let due = cooldown.as_millis() as i64;
         assert_eq!(first(&sources.order("p", queues(), due)), ["b", "c", "a"]);
@@ -1184,7 +1245,10 @@ mod tests {
     #[test]
     fn listed_chapters_are_read_by_url() {
         let listed = listed_chapter_urls(Some(&json!([{ "url": "/c/1" }, { "url": "/c/9" }, {}])));
-        assert_eq!(listed, BTreeSet::from(["/c/1".to_string(), "/c/9".to_string()]));
+        assert_eq!(
+            listed,
+            BTreeSet::from(["/c/1".to_string(), "/c/9".to_string()])
+        );
         assert!(listed_chapter_urls(None).is_empty());
     }
 
@@ -1230,13 +1294,22 @@ mod tests {
             .map(|(_, due_at_ms)| *due_at_ms - now)
             .collect::<Vec<_>>();
         due_at.sort_unstable();
-        assert!(due_at.first().is_some_and(|wait| *wait >= base_retry * 3 / 4));
-        assert!(due_at.last().is_some_and(|wait| *wait <= base_retry * 5 / 4));
+        assert!(due_at
+            .first()
+            .is_some_and(|wait| *wait >= base_retry * 3 / 4));
+        assert!(due_at
+            .last()
+            .is_some_and(|wait| *wait <= base_retry * 5 / 4));
         // Spread over the range, with no 5 s window holding more than a tenth of them.
         assert!(due_at.last().unwrap() - due_at.first().unwrap() > base_retry * 2 / 5);
         let crowded = due_at
             .iter()
-            .map(|start| due_at.iter().filter(|wait| (*start..*start + 5_000).contains(wait)).count())
+            .map(|start| {
+                due_at
+                    .iter()
+                    .filter(|wait| (*start..*start + 5_000).contains(wait))
+                    .count()
+            })
             .max()
             .unwrap();
         assert!(crowded <= 40, "{crowded} of 200 in one 5 s window");
@@ -1268,7 +1341,10 @@ mod tests {
         let mut restarted = RetryBook::load(&pool, now + 1).await.unwrap();
         assert!(!restarted.is_due("p", 1, now + 1));
         assert!(restarted.is_due("p", 1, now + base_retry));
-        assert!(!restarted.is_due("p", 2, now + base_retry), "its failures were kept");
+        assert!(
+            !restarted.is_due("p", 2, now + base_retry),
+            "its failures were kept"
+        );
         assert!(restarted.is_due("p", 3, now + 1));
 
         // Works that stopped waiting are gone from what is stored, too.
@@ -1420,10 +1496,12 @@ mod tests {
 
         // Each chapter is bound to the stand-in Suwayomi held before the source replaced it.
         let chapter_id = |chapter_work: &PortableWorkRefV3, key: &str| {
-            crate::syncd::models::canonical_portable_chapter_id(&crate::syncd::models::PortableChapterRefV3::Comic {
-                work: chapter_work.clone(),
-                chapter_key: key.to_string(),
-            })
+            crate::syncd::models::canonical_portable_chapter_id(
+                &crate::syncd::models::PortableChapterRefV3::Comic {
+                    work: chapter_work.clone(),
+                    chapter_key: key.to_string(),
+                },
+            )
         };
         let bound = [
             chapter_id(&work, "https://old.example/manga/a/1"),
@@ -1464,7 +1542,9 @@ mod tests {
             "https://old.example/manga/a/2".to_string(),
         ]);
         assert_eq!(
-            db::reproject_unlisted_comic_chapter_states(&pool, "p", &work, &keys).await.unwrap(),
+            db::reproject_unlisted_comic_chapter_states(&pool, "p", &work, &keys)
+                .await
+                .unwrap(),
             1
         );
         // Only the replaced chapter forgets its stand-in, so its row looks the new chapter up.
@@ -1475,9 +1555,14 @@ mod tests {
                 .unwrap();
         let mut expected = vec![bound[1].clone(), bound[2].clone()];
         expected.sort();
-        assert_eq!(remaining.into_iter().map(|row| row.0).collect::<Vec<_>>(), expected);
+        assert_eq!(
+            remaining.into_iter().map(|row| row.0).collect::<Vec<_>>(),
+            expected
+        );
         // Idempotent: the same record is queued once.
-        db::reproject_unlisted_comic_chapter_states(&pool, "p", &work, &keys).await.unwrap();
+        db::reproject_unlisted_comic_chapter_states(&pool, "p", &work, &keys)
+            .await
+            .unwrap();
         let rows: Vec<(String, String, String, i64)> = sqlx::query_as(
             "SELECT entity_id, operation_name, variables_json, source_server_version FROM suwayomi_projection_outbox",
         )
@@ -1490,12 +1575,17 @@ mod tests {
         assert_eq!(operation_name, "UpdateChaptersProgress");
         assert_eq!(*version, 11);
         let variables: Value = serde_json::from_str(variables_json).unwrap();
-        assert_eq!(variables["portableChapterRef"]["chapterKey"], json!("https://old.example/manga/a/1"));
+        assert_eq!(
+            variables["portableChapterRef"]["chapterKey"],
+            json!("https://old.example/manga/a/1")
+        );
         assert_eq!(variables["isRead"], json!(true));
         assert_eq!(variables["lastPageRead"], json!(3));
 
         assert_eq!(
-            db::reproject_unlisted_comic_chapter_states(&pool, "p", &work, &BTreeSet::new()).await.unwrap(),
+            db::reproject_unlisted_comic_chapter_states(&pool, "p", &work, &BTreeSet::new())
+                .await
+                .unwrap(),
             0
         );
     }

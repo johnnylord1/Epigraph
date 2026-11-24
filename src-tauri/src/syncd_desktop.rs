@@ -26,11 +26,12 @@ use crate::syncd::middleware::{
     LEGACY_CLIENT_PROTOCOL_HEADER, LEGACY_CLIENT_VERSION_HEADER,
 };
 use crate::syncd::models::{
-    BootstrapPayloadResponse, ErrorBody, PairedDeviceRevokeRequest, PairedDeviceScopesUpdateRequest, PairingClaimRequest,
-    PairingClaimResponse, PairingClaimStatus, PairingHostDecision, PairingHostDecisionRequest,
-    PairingHostDecisionResponse, PairingPlatform, PairingSessionStatus, PairingStatusEvent,
-    PairingStatusEventType, SyncdClientDiscoveryContract, SyncdClientDiscoveryGuidanceContract,
-    SyncdClientDiscoveryUsageHint, SyncdEffectiveDiscoverySource, SyncdPairedDeviceView,
+    BootstrapPayloadResponse, ErrorBody, PairedDeviceRevokeRequest,
+    PairedDeviceScopesUpdateRequest, PairingClaimRequest, PairingClaimResponse, PairingClaimStatus,
+    PairingHostDecision, PairingHostDecisionRequest, PairingHostDecisionResponse, PairingPlatform,
+    PairingSessionStatus, PairingStatusEvent, PairingStatusEventType, SyncdClientDiscoveryContract,
+    SyncdClientDiscoveryGuidanceContract, SyncdClientDiscoveryUsageHint,
+    SyncdEffectiveDiscoverySource, SyncdPairedDeviceView,
 };
 use crate::syncd_sidecar;
 
@@ -284,20 +285,36 @@ impl ServerCertVerifier for FingerprintVerifier {
 
     fn verify_tls12_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, RustlsError> {
-        Ok(HandshakeSignatureValid::assertion())
+        crate::syncd::tls::ensure_crypto_provider();
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .ok_or_else(|| RustlsError::General("Crypto provider unavailable".into()))?;
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &provider.signature_verification_algorithms,
+        )
     }
 
     fn verify_tls13_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, RustlsError> {
-        Ok(HandshakeSignatureValid::assertion())
+        crate::syncd::tls::ensure_crypto_provider();
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .ok_or_else(|| RustlsError::General("Crypto provider unavailable".into()))?;
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &provider.signature_verification_algorithms,
+        )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -560,7 +577,11 @@ pub async fn syncd_resolve_pairing_pin(
     let expected_fingerprint = input.tls_cert_sha256.trim().to_string();
     let client = build_pinned_http_client(&expected_fingerprint)?;
     let mut origins = vec![normalize_syncd_origin(&input.origin)?];
-    for origin in input.fallback_origins.iter().filter_map(|raw| normalize_syncd_origin(raw).ok()) {
+    for origin in input
+        .fallback_origins
+        .iter()
+        .filter_map(|raw| normalize_syncd_origin(raw).ok())
+    {
         if !origins.contains(&origin) {
             origins.push(origin);
         }
@@ -611,7 +632,9 @@ pub async fn syncd_resolve_pairing_pin(
         };
         return serde_json::to_string_pretty(&bundle).map_err(|error| error.to_string());
     }
-    automation_log(format!("resolve pairing pin unreachable error={last_error:?}"));
+    automation_log(format!(
+        "resolve pairing pin unreachable error={last_error:?}"
+    ));
     Err("SYNC_PIN_UNREACHABLE".to_string())
 }
 
@@ -902,7 +925,10 @@ pub async fn syncd_get_sync_progress_if_running(
     let client = insecure_local_client()?;
     let cursor = landed_since.map_or(String::new(), |since| format!("?landedSince={since}"));
     let response = client
-        .get(format!("{}/v1/local/sync-progress{cursor}", runtime.local_base_url))
+        .get(format!(
+            "{}/v1/local/sync-progress{cursor}",
+            runtime.local_base_url
+        ))
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -910,7 +936,9 @@ pub async fn syncd_get_sync_progress_if_running(
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
-    let response = response.error_for_status().map_err(|error| error.to_string())?;
+    let response = response
+        .error_for_status()
+        .map_err(|error| error.to_string())?;
     parse_json_response(response).await.map(Some)
 }
 
@@ -1843,7 +1871,10 @@ async fn validate_token(origin: &str, session: &PersistedSyncSession) -> Result<
         .query(&[("scopeId", "books:global"), ("sinceVersion", "0")])
         .header("Authorization", format!("Bearer {}", session.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
-        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(
+            LEGACY_CLIENT_VERSION_HEADER.as_str(),
+            CURRENT_CLIENT_VERSION,
+        )
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -2347,19 +2378,20 @@ mod tests {
 
     #[test]
     fn discovery_lists_each_core_once() {
-        let candidate = |instance: &str, server: &str, origin: &str| SyncdDesktopDiscoveryCandidate {
-            instance_name: instance.to_string(),
-            device_name: instance.to_string(),
-            server_id: server.to_string(),
-            effective_origin: origin.to_string(),
-            effective_source: SyncdEffectiveDiscoverySource::AdvertisedEndpoint,
-            discovery_origin: origin.to_string(),
-            tls_cert_sha256: "sha".to_string(),
-            supports_bootstrap_session_create: true,
-            supports_bootstrap_session_fetch: true,
-            supports_live_pairing_status: true,
-            fallback_origins: Vec::new(),
-        };
+        let candidate =
+            |instance: &str, server: &str, origin: &str| SyncdDesktopDiscoveryCandidate {
+                instance_name: instance.to_string(),
+                device_name: instance.to_string(),
+                server_id: server.to_string(),
+                effective_origin: origin.to_string(),
+                effective_source: SyncdEffectiveDiscoverySource::AdvertisedEndpoint,
+                discovery_origin: origin.to_string(),
+                tls_cert_sha256: "sha".to_string(),
+                supports_bootstrap_session_create: true,
+                supports_bootstrap_session_fetch: true,
+                supports_live_pairing_status: true,
+                fallback_origins: Vec::new(),
+            };
         // Current names first, then the same Cores under the legacy name; sorting by name
         // separates the duplicates.
         let listed = unique_discovery_candidates(vec![
@@ -2368,7 +2400,10 @@ mod tests {
             candidate("legacy-a", "server-a", "https://10.0.0.2:4777"),
             candidate("legacy-b", "server-b", "https://10.0.0.3:4777"),
         ]);
-        let names = listed.iter().map(|entry| entry.instance_name.as_str()).collect::<Vec<_>>();
+        let names = listed
+            .iter()
+            .map(|entry| entry.instance_name.as_str())
+            .collect::<Vec<_>>();
         assert_eq!(names, ["epigraph-a", "epigraph-b"]);
     }
 

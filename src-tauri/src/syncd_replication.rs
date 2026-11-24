@@ -19,32 +19,29 @@ use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::syncd::middleware::{
-    ASSET_SHA256_HEADER, CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER,
-    CURRENT_CLIENT_VERSION, LEGACY_ASSET_SHA256_HEADER, LEGACY_CLIENT_PROTOCOL_HEADER,
-    LEGACY_CLIENT_VERSION_HEADER,
+    ASSET_SHA256_HEADER, CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION,
+    LEGACY_ASSET_SHA256_HEADER, LEGACY_CLIENT_PROTOCOL_HEADER, LEGACY_CLIENT_VERSION_HEADER,
+};
+use crate::syncd::models::{
+    canonical_novel_category_assignment_id, canonical_novel_identity_key,
+    canonical_novel_plugin_id, canonical_novel_repository_id, canonical_portable_chapter_id,
+    canonical_portable_work_id, canonicalize_novel_repository_url,
+    canonicalize_public_novel_repository_url, BookBookmarkPatch, BookBookmarkRecord,
+    BookCategoryAssignmentPatch, BookCategoryAssignmentRecord, BookCategoryPatch,
+    BookCategoryRecord, BookEntryPatch, BookEntryRecord, BookHighlightRecord, BookHistoryPatch,
+    BookHistoryRecord, BookLibraryUiPatch, BookLibraryUiRecord, BookProgressPatch,
+    BookProgressRecord, ChangeEnvelope, ComicHistoryPatch, ComicPageBookmarkPatch, ErrorBody,
+    ErrorDetail, EventClock, MutationOperation, MutationResultStatus, MutationsResponse,
+    NovelBookmarkPatch, NovelBookmarkRecord, NovelCategoryAssignmentPatch,
+    NovelCategoryAssignmentRecord, NovelCategoryPatch, NovelCategoryRecord, NovelChapterPatch,
+    NovelChapterRecord, NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch,
+    NovelEntryRecord, NovelHistoryPatch, NovelHistoryRecord, NovelPluginPatch, NovelPluginRecord,
+    NovelProgressPatch, NovelProgressRecord, NovelRepositoryPatch, NovelRepositoryRecord,
+    PortableChapterRefV3, PortableWorkRefV3, SnapshotResponse, SyncdEffectiveDiscoverySource,
+    MIN_SUPPORTED_SNAPSHOT_SCHEMA_VERSION, SNAPSHOT_SCHEMA_VERSION,
 };
 use crate::syncd::novel_plugin_settings;
 use crate::syncd::source_preferences::PreferenceValue;
-use crate::syncd::models::{
-    canonical_novel_category_assignment_id, canonical_novel_identity_key,
-    canonical_novel_plugin_id, canonical_novel_repository_id,
-    canonical_portable_chapter_id, canonical_portable_work_id, canonicalize_novel_repository_url,
-    canonicalize_public_novel_repository_url,
-    BookBookmarkPatch, BookBookmarkRecord, BookCategoryAssignmentPatch,
-    BookCategoryAssignmentRecord, BookCategoryPatch, BookCategoryRecord, BookEntryPatch,
-    BookEntryRecord, BookHighlightRecord, BookHistoryPatch, BookHistoryRecord, BookLibraryUiPatch,
-    BookLibraryUiRecord, BookProgressPatch, BookProgressRecord, ChangeEnvelope, ComicHistoryPatch,
-    ComicPageBookmarkPatch, ErrorBody, ErrorDetail, EventClock, MutationOperation, MutationResultStatus, MutationsResponse,
-    NovelBookmarkPatch, NovelBookmarkRecord, NovelCategoryAssignmentPatch,
-    NovelCategoryAssignmentRecord, NovelCategoryPatch, NovelCategoryRecord, NovelChapterPatch,
-    NovelChapterRecord,
-    NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch, NovelEntryRecord,
-    NovelHistoryPatch, NovelHistoryRecord, NovelPluginPatch, NovelProgressPatch,
-    NovelPluginRecord, NovelProgressRecord, NovelRepositoryPatch, NovelRepositoryRecord,
-    PortableChapterRefV3, PortableWorkRefV3,
-    SnapshotResponse, SyncdEffectiveDiscoverySource, MIN_SUPPORTED_SNAPSHOT_SCHEMA_VERSION,
-    SNAPSHOT_SCHEMA_VERSION,
-};
 use crate::syncd_desktop::{
     build_pinned_http_client, desktop_state_dir, is_connection_error, is_needs_reauth_error,
     load_persisted_state, now_ms, revalidate_session, save_persisted_state,
@@ -777,7 +774,10 @@ fn authenticated_asset_request(
         .query(&[("scopeId", endpoint.scope_id.as_str())])
         .header("Authorization", format!("Bearer {}", endpoint.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
-        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(
+            LEGACY_CLIENT_VERSION_HEADER.as_str(),
+            CURRENT_CLIENT_VERSION,
+        )
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -1169,11 +1169,8 @@ async fn emit_replication_state_for_profile(
     let state = load_replication_state()?;
     let mut snapshot = profile_snapshot(&state, profile_id);
     attach_remote_bootstrap(&mut snapshot, &app.state::<SyncdReplicationState>()).await;
-    app.emit(
-        EVENT_REPLICATION_STATE,
-        snapshot,
-    )
-    .map_err(|error| error.to_string())
+    app.emit(EVENT_REPLICATION_STATE, snapshot)
+        .map_err(|error| error.to_string())
 }
 
 fn emit_replication_error(app: &AppHandle, profile_id: &str, error: impl Into<String>) {
@@ -1276,7 +1273,10 @@ pub async fn syncd_get_replication_state(
 }
 
 #[tauri::command]
-pub async fn syncd_get_session_catalog(profile_id: String, runtime: State<'_, SyncdReplicationState>) -> Result<SyncdSessionCatalog, String> {
+pub async fn syncd_get_session_catalog(
+    profile_id: String,
+    runtime: State<'_, SyncdReplicationState>,
+) -> Result<SyncdSessionCatalog, String> {
     let persisted = load_persisted_state()?;
     let replication = load_replication_state()?;
     let mut catalog = build_session_catalog(&persisted, &replication, &profile_id);
@@ -1284,19 +1284,33 @@ pub async fn syncd_get_session_catalog(profile_id: String, runtime: State<'_, Sy
     Ok(catalog)
 }
 
-fn confirmed_remote_bootstrap(snapshot: &SyncdReplicationSnapshot, completion: Option<(u64, &str)>) -> Option<u64> {
+fn confirmed_remote_bootstrap(
+    snapshot: &SyncdReplicationSnapshot,
+    completion: Option<(u64, &str)>,
+) -> Option<u64> {
     let (generation, session) = completion?;
-    (generation > 0 && !snapshot.paused
+    (generation > 0
+        && !snapshot.paused
         && snapshot.replication_status == SyncdReplicationStatus::Live
         && snapshot.last_error.is_none()
         && snapshot.active_session_key.as_deref() == Some(session))
-        .then_some(generation)
+    .then_some(generation)
 }
 
-async fn attach_remote_bootstrap(snapshot: &mut SyncdReplicationSnapshot, state: &SyncdReplicationState) {
+async fn attach_remote_bootstrap(
+    snapshot: &mut SyncdReplicationSnapshot,
+    state: &SyncdReplicationState,
+) {
     let runtime = state.runtime.lock().await;
-    let completion = runtime.workers.get(&snapshot.local_profile_id)
-        .and_then(|worker| worker.remote_bootstrap_session.as_deref().map(|session| (worker.generation, session)));
+    let completion = runtime
+        .workers
+        .get(&snapshot.local_profile_id)
+        .and_then(|worker| {
+            worker
+                .remote_bootstrap_session
+                .as_deref()
+                .map(|session| (worker.generation, session))
+        });
     snapshot.remote_bootstrap_generation = confirmed_remote_bootstrap(snapshot, completion);
 }
 
@@ -1456,7 +1470,11 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: Option<BookCategoryPatch>,
-        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "eventClock",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         event_clock: Option<EventClock>,
     },
     #[serde(rename = "book.category_assignment")]
@@ -1476,7 +1494,11 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: BookProgressPatch,
-        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "eventClock",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         event_clock: Option<EventClock>,
     },
     #[serde(rename = "book.history")]
@@ -1490,7 +1512,11 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: NovelProgressPatch,
-        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "eventClock",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         event_clock: Option<EventClock>,
     },
     #[serde(rename = "book.bookmark")]
@@ -1528,7 +1554,11 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: Option<NovelCategoryPatch>,
-        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "eventClock",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         event_clock: Option<EventClock>,
     },
     #[serde(rename = "novel.category_assignment")]
@@ -1560,7 +1590,11 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: Option<ComicHistoryPatch>,
-        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "eventClock",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         event_clock: Option<EventClock>,
     },
     #[serde(rename = "comic.page_bookmark")]
@@ -1574,7 +1608,11 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: Option<Value>,
-        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "eventClock",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         event_clock: Option<EventClock>,
     },
 }
@@ -2014,7 +2052,9 @@ fn record_novel_dependency_change(
         None => {
             declarations.remove(entity_id);
             if envelope.op == "delete" {
-                let lamport = tombstones.entry(entity_id.to_string()).or_insert(envelope.lamport);
+                let lamport = tombstones
+                    .entry(entity_id.to_string())
+                    .or_insert(envelope.lamport);
                 *lamport = (*lamport).max(envelope.lamport);
             }
         }
@@ -2078,17 +2118,16 @@ fn profile_state_needs_worker(profile: &PersistedReplicationProfileState) -> boo
 
 fn read_books_state() -> Result<PersistedBookLibraryState, String> {
     let path = book_library_state_path()?;
-    if !path.exists() {
+    let Some(raw) = crate::library_sqlite::load(&path)? else {
         return Ok(PersistedBookLibraryState::default());
-    }
-    let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    };
     serde_json::from_str(&raw).map_err(|error| error.to_string())
 }
 
 fn write_books_state(state: &PersistedBookLibraryState) -> Result<(), String> {
     let path = book_library_state_path()?;
-    let payload = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-    write_file_atomic(&path, &payload)
+    let payload = serde_json::to_string(state).map_err(|error| error.to_string())?;
+    crate::library_sqlite::save(&path, &payload).map(|_| ())
 }
 
 fn read_novels_state(
@@ -2096,10 +2135,9 @@ fn read_novels_state(
     profile_id: &str,
 ) -> Result<PersistedNovelLibraryState, String> {
     let path = novel_library_state_path_for_target(launch_target, Some(profile_id), None)?;
-    if !path.exists() {
+    let Some(raw) = crate::library_sqlite::load(&path)? else {
         return Ok(PersistedNovelLibraryState::default());
-    }
-    let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    };
     serde_json::from_str(&raw).map_err(|error| error.to_string())
 }
 
@@ -2109,8 +2147,8 @@ fn write_novels_state(
     state: &PersistedNovelLibraryState,
 ) -> Result<(), String> {
     let path = novel_library_state_path_for_target(launch_target, Some(profile_id), None)?;
-    let payload = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-    write_file_atomic(&path, &payload)
+    let payload = serde_json::to_string(state).map_err(|error| error.to_string())?;
+    crate::library_sqlite::save(&path, &payload).map(|_| ())
 }
 
 fn read_novel_repository_state(
@@ -2265,7 +2303,7 @@ pub async fn ensure_local_authority_for_profile(
         .post(format!("{local_base_url}/v1/local/authority-token"))
         .json(&LocalAuthorityTokenRequest {
             profile_id: profile_id.to_string(),
-            device_id: desktop.device_id,
+            device_id: desktop.device_id.clone(),
         })
         .send()
         .await
@@ -2281,6 +2319,8 @@ pub async fn ensure_local_authority_for_profile(
     let payload: LocalAuthorityTokenResponse =
         response.json().await.map_err(|error| error.to_string())?;
 
+    let v4_token = payload.access_token.clone();
+    let v4_device_id = desktop.device_id.clone();
     runtime.local_authority.insert(
         profile_id.to_string(),
         LocalAuthoritySession {
@@ -2291,6 +2331,15 @@ pub async fn ensure_local_authority_for_profile(
     );
     drop(runtime);
 
+    crate::v4_desktop_sync::start_local_worker(
+        app.clone(),
+        profile_id.to_string(),
+        local_base_url.to_string(),
+        v4_token,
+        v4_device_id,
+    )
+    .await;
+
     adopt_cursor_owner_for_profile(profile_id, LOCAL_AUTHORITY_CURSOR_OWNER)?;
     clear_hosted_comic_reader_inbox(profile_id)?;
     if let Err(error) = publish_current_novel_repository_state(app, profile_id).await {
@@ -2298,20 +2347,22 @@ pub async fn ensure_local_authority_for_profile(
             "publish_current_novel_repository_state profile_id={profile_id} status=deferred error={error}"
         ));
     }
-    if let Err(error) = publish_current_novel_library_state(app, profile_id).await {
-        replication_log(format!(
-            "publish_current_novel_library_state profile_id={profile_id} status=deferred error={error}"
-        ));
-    }
-    if let Err(error) = publish_current_book_library_state(app, profile_id).await {
-        replication_log(format!(
-            "publish_current_book_library_state profile_id={profile_id} status=deferred error={error}"
-        ));
-    }
-    if let Err(error) = publish_current_novel_category_state(app, profile_id).await {
-        replication_log(format!(
-            "publish_current_novel_category_state profile_id={profile_id} status=deferred error={error}"
-        ));
+    if !crate::v4_desktop_sync::is_profile_active(Some(profile_id)).await {
+        if let Err(error) = publish_current_novel_library_state(app, profile_id).await {
+            replication_log(format!(
+                "publish_current_novel_library_state profile_id={profile_id} status=deferred error={error}"
+            ));
+        }
+        if let Err(error) = publish_current_book_library_state(app, profile_id).await {
+            replication_log(format!(
+                "publish_current_book_library_state profile_id={profile_id} status=deferred error={error}"
+            ));
+        }
+        if let Err(error) = publish_current_novel_category_state(app, profile_id).await {
+            replication_log(format!(
+                "publish_current_novel_category_state profile_id={profile_id} status=deferred error={error}"
+            ));
+        }
     }
     ensure_worker_for_profile(app, state, profile_id).await?;
     Ok(())
@@ -2384,18 +2435,14 @@ fn profile_joined_remote_core(
     else {
         return false;
     };
-    sessions.iter().any(|session| {
-        session.local_profile_id == profile_id && session.session_key == active_key
-    })
+    sessions
+        .iter()
+        .any(|session| session.local_profile_id == profile_id && session.session_key == active_key)
 }
 
 /// Takes a profile that has no session left back to this desktop's own Core. It runs apart from the
 /// disconnect because publishing a large library takes a while, and a later join aborts it.
-async fn restore_local_authority(
-    app: &AppHandle,
-    state: &SyncdReplicationState,
-    profile_id: &str,
-) {
+async fn restore_local_authority(app: &AppHandle, state: &SyncdReplicationState, profile_id: &str) {
     let Some(core) = crate::syncd_sidecar::current_runtime_info(app) else {
         return;
     };
@@ -2417,7 +2464,12 @@ async fn restore_local_authority(
             ));
             return;
         }
-        let has_worker = task_state.runtime.lock().await.workers.contains_key(&task_profile);
+        let has_worker = task_state
+            .runtime
+            .lock()
+            .await
+            .workers
+            .contains_key(&task_profile);
         if !has_worker {
             if let Err(error) =
                 ensure_worker_for_profile(&task_app, &task_state, &task_profile).await
@@ -2428,7 +2480,10 @@ async fn restore_local_authority(
             }
         }
     });
-    if let Some(previous) = runtime.authority_restores.insert(profile_id.to_string(), task) {
+    if let Some(previous) = runtime
+        .authority_restores
+        .insert(profile_id.to_string(), task)
+    {
         previous.abort();
     }
 }
@@ -2479,7 +2534,9 @@ async fn ensure_worker_for_profile(
     {
         let mut runtime = state.runtime.lock().await;
         // Generations identify worker replacements; wall-clock time can repeat.
-        runtime.next_generation = runtime.next_generation.checked_add(1)
+        runtime.next_generation = runtime
+            .next_generation
+            .checked_add(1)
             .ok_or_else(|| "Sync worker generation exhausted.".to_string())?;
         let generation = runtime.next_generation;
         if let Some(existing) = runtime.workers.remove(profile_id) {
@@ -2491,9 +2548,14 @@ async fn ensure_worker_for_profile(
         let task = tauri::async_runtime::spawn(async move {
             run_profile_worker(app_handle, state_handle, profile.clone(), generation).await;
         });
-        runtime
-            .workers
-            .insert(profile_id.to_string(), WorkerHandle { generation, remote_bootstrap_session: None, task });
+        runtime.workers.insert(
+            profile_id.to_string(),
+            WorkerHandle {
+                generation,
+                remote_bootstrap_session: None,
+                task,
+            },
+        );
     }
     Ok(())
 }
@@ -2785,8 +2847,13 @@ fn finish_feed_replay(
         {
             return Err("Sync session changed while fetching the change feed.".to_string());
         }
-        advance_feed_checkpoints(profile, remote_profile_id, through, min_replayable_seen,
-            SyncdReplicationReplayMode::ChangesBootstrap);
+        advance_feed_checkpoints(
+            profile,
+            remote_profile_id,
+            through,
+            min_replayable_seen,
+            SyncdReplicationReplayMode::ChangesBootstrap,
+        );
         profile.replication_status = SyncdReplicationStatus::Live;
         profile.last_connected_at_ms = Some(now_ms());
         profile.last_error = None;
@@ -2878,8 +2945,14 @@ async fn replay_and_stream_remote(
             )
             .await?;
         }
-        finish_feed_replay(profile_id, novels_profile_id, &session.session_key, snapshot.active_session_key.as_deref(),
-            changes.current_server_version, changes.min_replayable_server_version)?;
+        finish_feed_replay(
+            profile_id,
+            novels_profile_id,
+            &session.session_key,
+            snapshot.active_session_key.as_deref(),
+            changes.current_server_version,
+            changes.min_replayable_server_version,
+        )?;
         spawn_outbound_mutation_flush(app, profile_id);
         {
             let mut runtime = state.runtime.lock().await;
@@ -2983,8 +3056,14 @@ async fn replay_and_stream_local_authority(
             )
             .await?;
         }
-        finish_feed_replay(profile_id, &authority.profile_id, LOCAL_AUTHORITY_CURSOR_OWNER, snapshot.active_session_key.as_deref(),
-            changes.current_server_version, changes.min_replayable_server_version)?;
+        finish_feed_replay(
+            profile_id,
+            &authority.profile_id,
+            LOCAL_AUTHORITY_CURSOR_OWNER,
+            snapshot.active_session_key.as_deref(),
+            changes.current_server_version,
+            changes.min_replayable_server_version,
+        )?;
         spawn_outbound_mutation_flush(app, profile_id);
         let _ = emit_replication_state_for_profile(app, profile_id).await;
         match stream_live_events_local_authority(
@@ -3015,7 +3094,10 @@ async fn fetch_changes_remote(
         .query(&[("sinceVersion", since_version)])
         .header("Authorization", format!("Bearer {}", session.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
-        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(
+            LEGACY_CLIENT_VERSION_HEADER.as_str(),
+            CURRENT_CLIENT_VERSION,
+        )
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -3064,7 +3146,10 @@ async fn fetch_changes_local_authority(
             format!("Bearer {}", authority.access_token),
         )
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
-        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(
+            LEGACY_CLIENT_VERSION_HEADER.as_str(),
+            CURRENT_CLIENT_VERSION,
+        )
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -3111,7 +3196,10 @@ async fn fetch_authoritative_snapshot(
         .query(&[("scopeId", scope_id)])
         .header("Authorization", format!("Bearer {access_token}"))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
-        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(
+            LEGACY_CLIENT_VERSION_HEADER.as_str(),
+            CURRENT_CLIENT_VERSION,
+        )
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -3279,12 +3367,22 @@ fn materialize_novel_snapshot(
 > {
     let mut next = PersistedNovelLibraryState {
         version: Some(current.version.unwrap_or(1)),
-        scope_key: Some(current.scope_key.clone().unwrap_or_else(|| local_scope_key.to_string())),
+        scope_key: Some(
+            current
+                .scope_key
+                .clone()
+                .unwrap_or_else(|| local_scope_key.to_string()),
+        ),
         ..PersistedNovelLibraryState::default()
     };
     let mut next_classification = PersistedNovelSourceClassificationState {
         version: Some(current_classification.version.unwrap_or(1)),
-        scope_key: Some(current_classification.scope_key.clone().unwrap_or_else(|| local_scope_key.to_string())),
+        scope_key: Some(
+            current_classification
+                .scope_key
+                .clone()
+                .unwrap_or_else(|| local_scope_key.to_string()),
+        ),
         ..PersistedNovelSourceClassificationState::default()
     };
     for entity in &snapshot.entities {
@@ -3336,10 +3434,7 @@ fn materialize_novel_snapshot(
     Ok((next, next_classification))
 }
 
-fn ensure_novel_scope_metadata(
-    state: &mut PersistedNovelLibraryState,
-    local_scope_key: &str,
-) {
+fn ensure_novel_scope_metadata(state: &mut PersistedNovelLibraryState, local_scope_key: &str) {
     if state.version.is_none() {
         state.version = Some(1);
     }
@@ -3517,7 +3612,12 @@ fn stage_snapshot_recovery(
     profile.novel_dependency_tombstones = novels_snapshot
         .tombstones
         .iter()
-        .filter(|tombstone| matches!(tombstone.entity_type.as_str(), "novel.repository" | "novel.plugin"))
+        .filter(|tombstone| {
+            matches!(
+                tombstone.entity_type.as_str(),
+                "novel.repository" | "novel.plugin"
+            )
+        })
         .map(|tombstone| (tombstone.entity_id.clone(), tombstone.lamport))
         .collect();
     profile.books_scope_checkpoint = Some(snapshot_checkpoint(books_snapshot));
@@ -3563,10 +3663,13 @@ fn keep_unreconciled_novels(
         };
         let canonical_id = canonical_novel_id_for_entry(entry);
         let is_settled = settled.contains(local_id.as_str())
-            || canonical_id.as_deref().is_some_and(|id| settled.contains(id));
-        let in_next = next.entries.iter().any(|existing| {
-            novel_entry_entity_id(existing).as_deref() == Some(local_id.as_str())
-        });
+            || canonical_id
+                .as_deref()
+                .is_some_and(|id| settled.contains(id));
+        let in_next = next
+            .entries
+            .iter()
+            .any(|existing| novel_entry_entity_id(existing).as_deref() == Some(local_id.as_str()));
         if is_settled || in_next {
             continue;
         }
@@ -3643,11 +3746,12 @@ fn keep_unreconciled_books(
         };
         let canonical_id = canonical_book_id_for_entry(entry);
         let is_settled = settled.contains(local_id.as_str())
-            || canonical_id.as_deref().is_some_and(|id| settled.contains(id));
+            || canonical_id
+                .as_deref()
+                .is_some_and(|id| settled.contains(id));
         let in_next = next.books.iter().any(|existing| {
             book_entry_entity_id(existing).as_deref() == Some(local_id.as_str())
-                || (canonical_id.is_some()
-                    && canonical_book_id_for_entry(existing) == canonical_id)
+                || (canonical_id.is_some() && canonical_book_id_for_entry(existing) == canonical_id)
         });
         if is_settled || in_next {
             continue;
@@ -3717,7 +3821,10 @@ fn keep_unreconciled_categories(
         .iter()
         .flat_map(|snapshot| snapshot.tombstones.iter())
         .filter(|tombstone| {
-            matches!(tombstone.entity_type.as_str(), "book.category" | "novel.category")
+            matches!(
+                tombstone.entity_type.as_str(),
+                "book.category" | "novel.category"
+            )
         })
         .map(|tombstone| tombstone.entity_id.as_str())
         .collect::<HashSet<_>>();
@@ -4700,12 +4807,24 @@ fn rebase_books_apply(
                 our_value.clone()
             } else {
                 match field.as_str() {
-                    "books" | "booksCategories" => merge_keyed_items(base_value, our_value, their_value, "id"),
-                    "bookProgress" => merge_keyed_items(base_value, our_value, their_value, "bookId"),
-                    "bookBookmarks" => merge_keyed_items(base_value, our_value, their_value, "bookmarkId"),
-                    "bookHighlights" => merge_keyed_items(base_value, our_value, their_value, "highlightId"),
-                    "bookHistory" => merge_keyed_items(base_value, our_value, their_value, "historyId"),
-                    "booksCategoryAssignments" => merge_object_keys(base_value, our_value, their_value),
+                    "books" | "booksCategories" => {
+                        merge_keyed_items(base_value, our_value, their_value, "id")
+                    }
+                    "bookProgress" => {
+                        merge_keyed_items(base_value, our_value, their_value, "bookId")
+                    }
+                    "bookBookmarks" => {
+                        merge_keyed_items(base_value, our_value, their_value, "bookmarkId")
+                    }
+                    "bookHighlights" => {
+                        merge_keyed_items(base_value, our_value, their_value, "highlightId")
+                    }
+                    "bookHistory" => {
+                        merge_keyed_items(base_value, our_value, their_value, "historyId")
+                    }
+                    "booksCategoryAssignments" => {
+                        merge_object_keys(base_value, our_value, their_value)
+                    }
                     _ => our_value.clone(),
                 }
             };
@@ -4788,12 +4907,18 @@ const CATEGORY_ECHO_TTL_MS: i64 = 60_000;
 
 fn category_write(mutation: &SerializableMutationInput) -> Option<PendingCategoryEcho> {
     let (base, value) = match mutation {
-        SerializableMutationInput::BookCategory { base, patch, .. } => {
-            (base, patch.as_ref().map(|patch| (patch.name.clone(), patch.order)))
-        }
-        SerializableMutationInput::NovelCategory { base, patch, .. } => {
-            (base, patch.as_ref().map(|patch| (patch.name.clone(), patch.order)))
-        }
+        SerializableMutationInput::BookCategory { base, patch, .. } => (
+            base,
+            patch
+                .as_ref()
+                .map(|patch| (patch.name.clone(), patch.order)),
+        ),
+        SerializableMutationInput::NovelCategory { base, patch, .. } => (
+            base,
+            patch
+                .as_ref()
+                .map(|patch| (patch.name.clone(), patch.order)),
+        ),
         _ => return None,
     };
     Some(PendingCategoryEcho {
@@ -4933,7 +5058,7 @@ pub async fn notify_book_state_written(
         serde_json::from_str::<Value>(next_contents).map_err(|error| error.to_string())?;
     let frontend_included_history = next_value.get("bookHistory").is_some();
     let frontend_included_highlights = next_value.get("bookHighlights").is_some();
-    let mut next = serde_json::from_value::<PersistedBookLibraryState>(next_value)
+    let mut next = serde_json::from_value::<PersistedBookLibraryState>(next_value.clone())
         .map_err(|error| error.to_string())?;
     if !frontend_included_history {
         next.book_history = previous.book_history.clone();
@@ -4956,6 +5081,7 @@ pub async fn notify_book_state_written(
     let cover_assets_changed = enrich_book_cover_assets(&previous, &mut next).await?;
     let projected_history_changed = project_latest_book_history(&previous, &mut next);
     if !frontend_included_history
+        || !frontend_included_highlights
         || projected_history_changed
         || asset_metadata_changed
         || cover_assets_changed
@@ -4966,10 +5092,13 @@ pub async fn notify_book_state_written(
         // while the current frontend is unaware of that field. This write does
         // not call the Tauri command again, so it cannot recurse. A newer write
         // already on disk is left alone; its own notification fills it in.
-        let on_disk = fs::read_to_string(book_library_state_path()?).ok();
-        if on_disk.as_deref() == Some(next_contents) {
-            write_books_state(&next)?;
-        }
+        let expected = next_value.as_object().ok_or("Invalid book library state")?;
+        let replacement = serde_json::to_string(&next).map_err(|error| error.to_string())?;
+        crate::library_sqlite::save_if_current(
+            &book_library_state_path()?,
+            expected,
+            &replacement,
+        )?;
     }
     let mut diff = diff_book_mutations(&previous, &next);
     drop_book_entries_the_core_has(&mut diff);
@@ -5117,8 +5246,7 @@ fn mutation_matches_record(mutation: &SerializableMutationInput, record: &Value)
     let Ok(serialized) = serde_json::to_value(mutation) else {
         return false;
     };
-    let (Some(Value::Object(patch)), Some(record)) =
-        (serialized.get("patch"), record.as_object())
+    let (Some(Value::Object(patch)), Some(record)) = (serialized.get("patch"), record.as_object())
     else {
         return false;
     };
@@ -5136,17 +5264,17 @@ fn json_equivalent(left: &Value, right: &Value) -> bool {
         }
         (Value::Array(left), Value::Array(right)) => {
             left.len() == right.len()
-                && left.iter().zip(right).all(|(left, right)| json_equivalent(left, right))
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| json_equivalent(left, right))
         }
-        (Value::Object(left), Value::Object(right)) => left
-            .keys()
-            .chain(right.keys())
-            .all(|key| {
-                json_equivalent(
-                    left.get(key).unwrap_or(&Value::Null),
-                    right.get(key).unwrap_or(&Value::Null),
-                )
-            }),
+        (Value::Object(left), Value::Object(right)) => left.keys().chain(right.keys()).all(|key| {
+            json_equivalent(
+                left.get(key).unwrap_or(&Value::Null),
+                right.get(key).unwrap_or(&Value::Null),
+            )
+        }),
         _ => left == right,
     }
 }
@@ -5167,29 +5295,29 @@ fn local_mutation_is_newer(mutation: &SerializableMutationInput, record: &Value)
             parsed_record::<NovelProgressRecord>(record)
                 .is_some_and(|core| patch.updated_at_ms > core.updated_at_ms)
         }
-        SerializableMutationInput::BookHistory { patch: Some(patch), .. } => {
-            parsed_record::<BookHistoryRecord>(record)
-                .is_some_and(|core| patch.read_at_ms > core.read_at_ms)
-        }
-        SerializableMutationInput::NovelHistory { patch: Some(patch), .. } => {
-            parsed_record::<NovelHistoryRecord>(record)
-                .is_some_and(|core| patch.read_at_ms > core.read_at_ms)
-        }
-        SerializableMutationInput::NovelChapter { patch: Some(patch), .. } => {
-            parsed_record::<NovelChapterRecord>(record)
-                .is_some_and(|core| !patch.unread && core.unread)
-        }
-        SerializableMutationInput::BookEntry { patch: Some(patch), .. } => {
-            parsed_record::<BookEntryRecord>(record).is_some_and(|core| {
-                patch.book_updated_at_ms > core.book_updated_at_ms
-                    || (patch.asset_fingerprint.is_some() && core.asset_fingerprint.is_none())
-                    || (patch.cover_asset_sha256.is_some() && core.cover_asset_sha256.is_none())
-            })
-        }
-        SerializableMutationInput::NovelEntry { patch: Some(patch), .. } => {
-            parsed_record::<NovelEntryRecord>(record)
-                .is_some_and(|core| patch.updated_at_ms > core.updated_at_ms)
-        }
+        SerializableMutationInput::BookHistory {
+            patch: Some(patch), ..
+        } => parsed_record::<BookHistoryRecord>(record)
+            .is_some_and(|core| patch.read_at_ms > core.read_at_ms),
+        SerializableMutationInput::NovelHistory {
+            patch: Some(patch), ..
+        } => parsed_record::<NovelHistoryRecord>(record)
+            .is_some_and(|core| patch.read_at_ms > core.read_at_ms),
+        SerializableMutationInput::NovelChapter {
+            patch: Some(patch), ..
+        } => parsed_record::<NovelChapterRecord>(record)
+            .is_some_and(|core| !patch.unread && core.unread),
+        SerializableMutationInput::BookEntry {
+            patch: Some(patch), ..
+        } => parsed_record::<BookEntryRecord>(record).is_some_and(|core| {
+            patch.book_updated_at_ms > core.book_updated_at_ms
+                || (patch.asset_fingerprint.is_some() && core.asset_fingerprint.is_none())
+                || (patch.cover_asset_sha256.is_some() && core.cover_asset_sha256.is_none())
+        }),
+        SerializableMutationInput::NovelEntry {
+            patch: Some(patch), ..
+        } => parsed_record::<NovelEntryRecord>(record)
+            .is_some_and(|core| patch.updated_at_ms > core.updated_at_ms),
         _ => false,
     }
 }
@@ -5317,7 +5445,11 @@ async fn retain_republish_mutations_for_core(
             }
         }
     }
-    Ok(retain_republish_mutations(mutations, &snapshots, keep_existing))
+    Ok(retain_republish_mutations(
+        mutations,
+        &snapshots,
+        keep_existing,
+    ))
 }
 
 /// A digest says "this Core has this state", so it is only recorded once nothing is left to
@@ -5353,17 +5485,16 @@ fn record_publication(
 /// Sends a Core what this desktop holds and that Core lacks: once per joined Core before the first
 /// pull, and again to any Core that lost its history, so a snapshot recovery there cannot remove
 /// local items it never saw.
-async fn publish_local_state_to_core(
-    app: &AppHandle,
-    profile_id: &str,
-) -> Result<(), String> {
+async fn publish_local_state_to_core(app: &AppHandle, profile_id: &str) -> Result<(), String> {
     let profile = load_replication_state()?
         .profiles
         .remove(profile_id)
         .unwrap_or_default();
     let novels = profile.last_local_snapshot_digest_novels.is_none();
     let books = profile.last_local_snapshot_digest_books.is_none();
-    let categories = profile.last_local_snapshot_digest_novel_categories.is_none();
+    let categories = profile
+        .last_local_snapshot_digest_novel_categories
+        .is_none();
     if !(novels || books || categories) {
         return Ok(());
     }
@@ -5444,13 +5575,19 @@ async fn publish_current_novel_category_state(
     let never_published = load_replication_state()?
         .profiles
         .get(profile_id)
-        .is_none_or(|profile| profile.last_local_snapshot_digest_novel_categories.is_none());
+        .is_none_or(|profile| {
+            profile
+                .last_local_snapshot_digest_novel_categories
+                .is_none()
+        });
     if never_published {
         catch_up_novel_categories(app, profile_id, &mut books, &novels).await?;
     }
     let empty = PersistedBookLibraryState::default();
     let mut mutations = diff_book_category_mutations(&empty, &books);
-    mutations.extend(diff_novel_category_mutations(profile_id, &novels, &empty, &books));
+    mutations.extend(diff_novel_category_mutations(
+        profile_id, &novels, &empty, &books,
+    ));
     // Republishing the current folders is not an edit, so it carries no edit time and never
     // outranks a newer folder edit another device already made.
     for mutation in &mut mutations {
@@ -5476,7 +5613,11 @@ async fn publish_current_novel_category_state(
         .profiles
         .remove(profile_id)
         .unwrap_or_default();
-    if profile.last_local_snapshot_digest_novel_categories.as_deref() == Some(digest.as_str()) {
+    if profile
+        .last_local_snapshot_digest_novel_categories
+        .as_deref()
+        == Some(digest.as_str())
+    {
         return Ok(());
     }
     // Folders and memberships carry no asset metadata to refresh, so the ones the Core already
@@ -5658,7 +5799,9 @@ fn merge_novel_plugin_settings(
     };
     let mut changed = false;
     for (plugin_id, key, value) in values {
-        let entry = plugins.entry(plugin_id.clone()).or_insert_with(|| json!({}));
+        let entry = plugins
+            .entry(plugin_id.clone())
+            .or_insert_with(|| json!({}));
         if !entry.is_object() {
             *entry = json!({});
         }
@@ -5678,7 +5821,9 @@ fn merge_novel_plugin_settings(
 }
 
 /// Values carried by `novel.plugin_setting` entities of a novels snapshot.
-fn snapshot_novel_plugin_settings(snapshot: &SnapshotResponse) -> Vec<(String, String, PreferenceValue)> {
+fn snapshot_novel_plugin_settings(
+    snapshot: &SnapshotResponse,
+) -> Vec<(String, String, PreferenceValue)> {
     snapshot
         .entities
         .iter()
@@ -5765,7 +5910,9 @@ pub async fn notify_novel_repository_state_written(
                     .novel_dependency_pending_deletes
                     .insert(mutation.entity_id().to_string(), sent_at_ms);
             } else {
-                profile.novel_dependency_pending_deletes.remove(mutation.entity_id());
+                profile
+                    .novel_dependency_pending_deletes
+                    .remove(mutation.entity_id());
             }
         }
     })?;
@@ -5804,19 +5951,23 @@ fn republished_novel_dependency_mutations(
     current: &PersistedNovelRepositoryState,
 ) -> Vec<SerializableMutationInput> {
     let local = local_novel_dependencies(current);
-    diff_novel_dependency_mutations(profile_id, &PersistedNovelRepositoryState::default(), current)
-        .into_iter()
-        .filter(|mutation| {
-            let entity_id = mutation.entity_id();
-            match profile.novel_dependency_baseline.get(entity_id) {
-                None => true,
-                Some(agreed) => {
-                    !profile.novel_dependency_tombstones.contains_key(entity_id)
-                        && local.get(entity_id).map(|entry| &entry.fingerprint) != Some(agreed)
-                }
+    diff_novel_dependency_mutations(
+        profile_id,
+        &PersistedNovelRepositoryState::default(),
+        current,
+    )
+    .into_iter()
+    .filter(|mutation| {
+        let entity_id = mutation.entity_id();
+        match profile.novel_dependency_baseline.get(entity_id) {
+            None => true,
+            Some(agreed) => {
+                !profile.novel_dependency_tombstones.contains_key(entity_id)
+                    && local.get(entity_id).map(|entry| &entry.fingerprint) != Some(agreed)
             }
-        })
-        .collect()
+        }
+    })
+    .collect()
 }
 
 /// How long a delete sent from here keeps the old declaration from being installed again. A
@@ -5867,25 +6018,29 @@ fn local_novel_dependencies(
         let Some(record) = repositories.get(&entity_id) else {
             continue;
         };
-        local.entry(entity_id).or_insert_with(|| LocalNovelDependency {
-            removal: SyncdNovelDependencyRemoval::Repository {
-                local_repository_id: repository.id.clone(),
-            },
-            fingerprint: format!("repository|{}|{}", record.canonical_url, record.enabled),
-            changed_at_ms: 0,
-        });
+        local
+            .entry(entity_id)
+            .or_insert_with(|| LocalNovelDependency {
+                removal: SyncdNovelDependencyRemoval::Repository {
+                    local_repository_id: repository.id.clone(),
+                },
+                fingerprint: format!("repository|{}|{}", record.canonical_url, record.enabled),
+                changed_at_ms: 0,
+            });
     }
     for (entity_id, (plugin, _)) in novel_plugin_identities(state, &repositories) {
-        local.entry(entity_id).or_insert_with(|| LocalNovelDependency {
-            removal: SyncdNovelDependencyRemoval::Plugin {
-                plugin_id: plugin.plugin_id.trim().to_string(),
-            },
-            fingerprint: format!(
-                "plugin|{}|{}|{}",
-                plugin.version, plugin.enabled, plugin.updated_at_ms
-            ),
-            changed_at_ms: plugin.updated_at_ms.max(plugin.installed_at_ms).max(0),
-        });
+        local
+            .entry(entity_id)
+            .or_insert_with(|| LocalNovelDependency {
+                removal: SyncdNovelDependencyRemoval::Plugin {
+                    plugin_id: plugin.plugin_id.trim().to_string(),
+                },
+                fingerprint: format!(
+                    "plugin|{}|{}|{}",
+                    plugin.version, plugin.enabled, plugin.updated_at_ms
+                ),
+                changed_at_ms: plugin.updated_at_ms.max(plugin.installed_at_ms).max(0),
+            });
     }
     local
 }
@@ -5902,10 +6057,12 @@ fn plan_novel_dependency_sync(
     now_ms: i64,
 ) -> SyncdNovelDependencySyncPlan {
     let declared = &profile.novel_dependency_declarations;
-    profile.novel_dependency_pending_deletes.retain(|entity_id, sent_at_ms| {
-        declared.contains_key(entity_id)
-            && now_ms.saturating_sub(*sent_at_ms) < NOVEL_DEPENDENCY_PENDING_DELETE_MS
-    });
+    profile
+        .novel_dependency_pending_deletes
+        .retain(|entity_id, sent_at_ms| {
+            declared.contains_key(entity_id)
+                && now_ms.saturating_sub(*sent_at_ms) < NOVEL_DEPENDENCY_PENDING_DELETE_MS
+        });
     let local = local_novel_dependencies(state);
 
     let mut plugin_removals = Vec::new();
@@ -6210,9 +6367,12 @@ async fn joined_comic_session(
     else {
         return Ok(None);
     };
-    Ok(load_persisted_state()?.sessions.into_iter().find(|session| {
-        session.local_profile_id == profile_id && session.session_key == active_session_key
-    }))
+    Ok(load_persisted_state()?
+        .sessions
+        .into_iter()
+        .find(|session| {
+            session.local_profile_id == profile_id && session.session_key == active_session_key
+        }))
 }
 
 async fn required_joined_comic_session(
@@ -6245,7 +6405,10 @@ async fn post_remote_comic_bridge(
             .query(&[("scopeId", scope_id.as_str())])
             .header("Authorization", format!("Bearer {}", session.access_token))
             .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
-            .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+            .header(
+                LEGACY_CLIENT_VERSION_HEADER.as_str(),
+                CURRENT_CLIENT_VERSION,
+            )
             .header(
                 CLIENT_PROTOCOL_HEADER.as_str(),
                 CLIENT_PROTOCOL_VERSION.to_string(),
@@ -6432,7 +6595,13 @@ pub fn syncd_get_novel_dependency_declarations(
     Ok(load_replication_state()?
         .profiles
         .get(profile_id)
-        .map(|profile| profile.novel_dependency_declarations.values().cloned().collect())
+        .map(|profile| {
+            profile
+                .novel_dependency_declarations
+                .values()
+                .cloned()
+                .collect()
+        })
         .unwrap_or_default())
 }
 
@@ -6610,7 +6779,9 @@ fn upsert_book_entry(
         .filter(|entry| entry.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let superseded = existing.and_then(book_entry_patch_value).map(|(_, patch)| patch);
+    let superseded = existing
+        .and_then(book_entry_patch_value)
+        .map(|(_, patch)| patch);
     if let (Some(target), Value::Object(fields)) = (next.as_object_mut(), synced) {
         target.extend(fields);
     }
@@ -6684,7 +6855,11 @@ fn keep_books_the_frontend_has_not_loaded(
             .find(|entry| book_entry_entity_id(entry).as_deref() == Some(book_id.as_str()))
             .unwrap_or(applied);
         next.books.push(entry.clone());
-        if !next.book_progress.iter().any(|progress| &progress.book_id == book_id) {
+        if !next
+            .book_progress
+            .iter()
+            .any(|progress| &progress.book_id == book_id)
+        {
             next.book_progress.extend(
                 previous
                     .book_progress
@@ -6883,7 +7058,10 @@ fn note_book_entries_sent(mutations: &[SerializableMutationInput]) {
         let SerializableMutationInput::BookEntry { base, patch } = mutation else {
             continue;
         };
-        match patch.as_ref().and_then(|patch| serde_json::to_value(patch).ok()) {
+        match patch
+            .as_ref()
+            .and_then(|patch| serde_json::to_value(patch).ok())
+        {
             Some(patch) if base.op == MutationOperation::Merge => {
                 known.insert(base.entity_id.clone(), patch);
             }
@@ -7045,12 +7223,17 @@ fn canonical_novel_id_for_entry(entry: &Value) -> Option<String> {
 }
 
 /// Local novel id -> canonical Syncd novel id, for every novel in the desktop library.
-fn canonical_novel_ids_by_local_id(novels: &PersistedNovelLibraryState) -> BTreeMap<String, String> {
+fn canonical_novel_ids_by_local_id(
+    novels: &PersistedNovelLibraryState,
+) -> BTreeMap<String, String> {
     novels
         .entries
         .iter()
         .filter_map(|entry| {
-            Some((novel_entry_entity_id(entry)?, canonical_novel_id_for_entry(entry)?))
+            Some((
+                novel_entry_entity_id(entry)?,
+                canonical_novel_id_for_entry(entry)?,
+            ))
         })
         .collect()
 }
@@ -7283,7 +7466,9 @@ fn upsert_novel_entry(state: &mut PersistedNovelLibraryState, record: NovelEntry
             state
                 .entries
                 .iter()
-                .find(|entry| novel_entry_entity_id(entry).as_deref() == Some(local_novel_id.as_str()))
+                .find(|entry| {
+                    novel_entry_entity_id(entry).as_deref() == Some(local_novel_id.as_str())
+                })
                 .and_then(|entry| entry.get("coverUrl").cloned())
                 .filter(|value| value.as_str().is_some_and(|text| !text.trim().is_empty()))
         })
@@ -7475,7 +7660,10 @@ impl<'a> NovelReferenceIndex<'a> {
             ) else {
                 continue;
             };
-            chapters_by_novel.entry(novel_id).or_default().push((id, path));
+            chapters_by_novel
+                .entry(novel_id)
+                .or_default()
+                .push((id, path));
         }
         Self {
             entries,
@@ -7494,7 +7682,10 @@ impl<'a> NovelReferenceIndex<'a> {
                 self.entries
                     .iter()
                     .filter_map(|entry| {
-                        Some((canonical_novel_id_for_entry(entry)?, novel_entry_entity_id(entry)?))
+                        Some((
+                            canonical_novel_id_for_entry(entry)?,
+                            novel_entry_entity_id(entry)?,
+                        ))
                     })
                     .collect()
             })
@@ -7529,7 +7720,10 @@ impl<'a> NovelReferenceIndex<'a> {
 
     fn heal(&self, novel_id: &mut String, chapter_id: &mut Option<String>) -> bool {
         let mut changed = false;
-        if let Some(local) = self.local_novel_id(novel_id).filter(|local| local != novel_id) {
+        if let Some(local) = self
+            .local_novel_id(novel_id)
+            .filter(|local| local != novel_id)
+        {
             *novel_id = local;
             changed = true;
         }
@@ -8082,7 +8276,9 @@ fn build_novel_chapter_patch(value: &Value) -> Option<NovelChapterPatch> {
         novel_id: value_string_field(value, "novelId")?,
         path: value_string_field(value, "path")?,
         title: value_string_field(value, "title")?,
-        chapter_order_key: core_novel_chapter_order_key(value_f64_field(value, "order").unwrap_or_default()),
+        chapter_order_key: core_novel_chapter_order_key(
+            value_f64_field(value, "order").unwrap_or_default(),
+        ),
         release_time_ms: value_i64_field(value, "releaseTime"),
         unread: value_bool_field(value, "unread", true),
     })
@@ -8361,7 +8557,9 @@ fn diff_book_mutations(
 /// Books and novels share one folder list on every device, so each desktop Books category is
 /// published to both the books scope (`book.category`) and the novels scope (`novel.category`);
 /// mobile joins both into the same Books & novels folder.
-fn novel_category_patches(state: &PersistedBookLibraryState) -> BTreeMap<String, NovelCategoryPatch> {
+fn novel_category_patches(
+    state: &PersistedBookLibraryState,
+) -> BTreeMap<String, NovelCategoryPatch> {
     state
         .books_categories
         .iter()
@@ -8372,7 +8570,9 @@ fn novel_category_patches(state: &PersistedBookLibraryState) -> BTreeMap<String,
             if name.is_empty() || name.len() > 256 || name.contains('\0') {
                 return None;
             }
-            let order = value_i64_field(value, "order").unwrap_or(index as i64).max(0);
+            let order = value_i64_field(value, "order")
+                .unwrap_or(index as i64)
+                .max(0);
             Some((
                 category_id.clone(),
                 NovelCategoryPatch {
@@ -8508,7 +8708,10 @@ fn book_category_assignment_lists(
                 .collect::<Vec<_>>();
             category_ids.sort();
             category_ids.dedup();
-            (canonical_book_id_for_local_id(state, local_id), category_ids)
+            (
+                canonical_book_id_for_local_id(state, local_id),
+                category_ids,
+            )
         })
         .filter(|(_, category_ids)| !category_ids.is_empty())
         .collect()
@@ -9299,7 +9502,9 @@ fn enqueue_outbound_mutations(
         }
         queue.push(mutation.clone());
     }
-    let overflow = queue.len().saturating_sub(MAX_OUTBOUND_MUTATIONS_PER_PROFILE);
+    let overflow = queue
+        .len()
+        .saturating_sub(MAX_OUTBOUND_MUTATIONS_PER_PROFILE);
     queue.drain(..overflow);
     overflow
 }
@@ -9418,7 +9623,11 @@ fn outbound_batch(
     let mut batch = Vec::with_capacity(queued.len() + mutations.len());
     for mutation in queued {
         if mutation.is_novel_plugin_merge() {
-            match collect_novel_plugin_asset_paths(app, Some(profile_id), std::slice::from_ref(&mutation)) {
+            match collect_novel_plugin_asset_paths(
+                app,
+                Some(profile_id),
+                std::slice::from_ref(&mutation),
+            ) {
                 Ok(paths) => assets.extend(paths),
                 Err(error) => {
                     // The plugin changed while offline; its current state is published on its own.
@@ -9514,8 +9723,13 @@ async fn submit_mutations_for_active_profiles(
             MutationTarget::Remote(session)
         };
         let target_key = target.key();
-        let (batch, assets) =
-            outbound_batch(app, profile_id, &target_key, &mutations, &novel_plugin_assets)?;
+        let (batch, assets) = outbound_batch(
+            app,
+            profile_id,
+            &target_key,
+            &mutations,
+            &novel_plugin_assets,
+        )?;
         if batch.is_empty() {
             continue;
         }
@@ -10001,7 +10215,10 @@ async fn post_mutations_for_local_authority(
             format!("Bearer {}", authority.access_token),
         )
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
-        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(
+            LEGACY_CLIENT_VERSION_HEADER.as_str(),
+            CURRENT_CLIENT_VERSION,
+        )
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -10099,7 +10316,10 @@ async fn post_mutations_for_session(
             .post(format!("{origin}/v1/mutations"))
             .header("Authorization", format!("Bearer {}", session.access_token))
             .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
-            .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+            .header(
+                LEGACY_CLIENT_VERSION_HEADER.as_str(),
+                CURRENT_CLIENT_VERSION,
+            )
             .header(
                 CLIENT_PROTOCOL_HEADER.as_str(),
                 CLIENT_PROTOCOL_VERSION.to_string(),
@@ -10160,14 +10380,26 @@ mod tests {
         update_profile_state("main", |profile| {
             profile.cursor_owner = Some("new-core".into());
             profile.active_session_key = Some("new-session".into());
-        }).unwrap();
-        assert!(finish_feed_replay("main", "remote", "old-core", Some("old-session"), 900, 0).is_err());
+        })
+        .unwrap();
+        assert!(
+            finish_feed_replay("main", "remote", "old-core", Some("old-session"), 900, 0).is_err()
+        );
         let state = load_replication_state().unwrap();
         let profile = &state.profiles["main"];
         assert!(profile.books_scope_checkpoint.is_none());
         assert_eq!(profile.cursor_owner.as_deref(), Some("new-core"));
-        assert!(finish_feed_replay("main", "remote", "new-core", Some("new-session"), 3, 0).is_ok());
-        assert_eq!(load_replication_state().unwrap().profiles["main"].books_scope_checkpoint.as_ref().unwrap().last_applied_server_version, 3);
+        assert!(
+            finish_feed_replay("main", "remote", "new-core", Some("new-session"), 3, 0).is_ok()
+        );
+        assert_eq!(
+            load_replication_state().unwrap().profiles["main"]
+                .books_scope_checkpoint
+                .as_ref()
+                .unwrap()
+                .last_applied_server_version,
+            3
+        );
     }
 
     #[test]
@@ -10407,7 +10639,10 @@ mod tests {
             ),
             "someone plugins"
         );
-        assert_eq!(novel_repository_display_name("https://example.com"), "LNReader plugins");
+        assert_eq!(
+            novel_repository_display_name("https://example.com"),
+            "LNReader plugins"
+        );
     }
 
     #[test]
@@ -10423,21 +10658,31 @@ mod tests {
         };
         assert_eq!(
             novel_dependency_declaration("novel.repository", &repository_id, &repository(url)),
-            Some(SyncdNovelDependencyDeclaration::Repository(SyncdNovelRepositoryDeclaration {
-                repository_id: repository_id.clone(),
-                canonical_url: url.to_string(),
-                enabled: true,
-            }))
+            Some(SyncdNovelDependencyDeclaration::Repository(
+                SyncdNovelRepositoryDeclaration {
+                    repository_id: repository_id.clone(),
+                    canonical_url: url.to_string(),
+                    enabled: true,
+                }
+            ))
         );
         // A record whose URL does not hash to its id, or is private, never reaches the installer.
         let other = "https://example.org/plugins.min.json";
-        assert_eq!(novel_dependency_declaration("novel.repository", &repository_id, &repository(other)), None);
         assert_eq!(
-            novel_dependency_declaration("novel.repository", &repository_id, &repository("http://example.com/someone/plugins.min.json")),
+            novel_dependency_declaration("novel.repository", &repository_id, &repository(other)),
+            None
+        );
+        assert_eq!(
+            novel_dependency_declaration(
+                "novel.repository",
+                &repository_id,
+                &repository("http://example.com/someone/plugins.min.json")
+            ),
             None
         );
 
-        let plugin_entity_id = canonical_novel_plugin_id(&repository_id, "someone.source", "someone.source");
+        let plugin_entity_id =
+            canonical_novel_plugin_id(&repository_id, "someone.source", "someone.source");
         let plugin = json!({
             "pluginEntityId": plugin_entity_id, "repositoryId": repository_id, "pluginId": " someone.source ",
             "sourceId": "someone.source", "name": "Someone", "version": " 1.2.0 ", "lang": "en", "enabled": true,
@@ -10446,21 +10691,29 @@ mod tests {
         });
         assert_eq!(
             novel_dependency_declaration("novel.plugin", &plugin_entity_id, &plugin),
-            Some(SyncdNovelDependencyDeclaration::Plugin(SyncdNovelPluginDeclaration {
-                repository_id: repository_id.clone(),
-                plugin_id: "someone.source".to_string(),
-                version: "1.2.0".to_string(),
-                enabled: true,
-            }))
+            Some(SyncdNovelDependencyDeclaration::Plugin(
+                SyncdNovelPluginDeclaration {
+                    repository_id: repository_id.clone(),
+                    plugin_id: "someone.source".to_string(),
+                    version: "1.2.0".to_string(),
+                    enabled: true,
+                }
+            ))
         );
-        assert_eq!(novel_dependency_declaration("novel.plugin", "novel-plugin:other", &plugin), None);
+        assert_eq!(
+            novel_dependency_declaration("novel.plugin", "novel-plugin:other", &plugin),
+            None
+        );
     }
 
-    fn novel_dependency_fixture(plugin_updated_at_ms: i64) -> (super::PersistedNovelRepositoryState, String, String) {
+    fn novel_dependency_fixture(
+        plugin_updated_at_ms: i64,
+    ) -> (super::PersistedNovelRepositoryState, String, String) {
         use super::*;
         let url = "https://example.com/someone/plugins.min.json";
         let repository_id = canonical_novel_repository_id(url);
-        let plugin_entity_id = canonical_novel_plugin_id(&repository_id, "someone.source", "someone.source");
+        let plugin_entity_id =
+            canonical_novel_plugin_id(&repository_id, "someone.source", "someone.source");
         let state = PersistedNovelRepositoryState {
             repositories: vec![LocalNovelRepository {
                 id: "local-repo".to_string(),
@@ -10515,7 +10768,9 @@ mod tests {
             scope_id: "novels:profile:p".to_string(),
             profile_id: None,
             entity_type: "novel.repository".to_string(),
-            entity_id: canonical_novel_repository_id("https://example.com/someone/plugins.min.json"),
+            entity_id: canonical_novel_repository_id(
+                "https://example.com/someone/plugins.min.json",
+            ),
             op: op.to_string(),
             lamport,
             patch,
@@ -10527,10 +10782,14 @@ mod tests {
         record_novel_dependency_change(&mut declarations, &mut tombstones, &deleted);
         assert_eq!(tombstones.get(&deleted.entity_id), Some(&40));
 
-        let merged = envelope("merge", 50, Some(json!({
-            "repositoryId": deleted.entity_id, "canonicalUrl": "https://example.com/someone/plugins.min.json",
-            "name": "someone", "enabled": true, "createdAtMs": 1, "updatedAtMs": 1, "recordLamport": 50,
-        })));
+        let merged = envelope(
+            "merge",
+            50,
+            Some(json!({
+                "repositoryId": deleted.entity_id, "canonicalUrl": "https://example.com/someone/plugins.min.json",
+                "name": "someone", "enabled": true, "createdAtMs": 1, "updatedAtMs": 1, "recordLamport": 50,
+            })),
+        );
         record_novel_dependency_change(&mut declarations, &mut tombstones, &merged);
         assert!(tombstones.is_empty());
         assert!(declarations.contains_key(&deleted.entity_id));
@@ -10548,25 +10807,41 @@ mod tests {
         assert!(plan.removals.is_empty());
         assert_eq!(plan.declarations.len(), 2);
         assert_eq!(
-            profile.novel_dependency_baseline.keys().cloned().collect::<BTreeSet<_>>(),
+            profile
+                .novel_dependency_baseline
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
             BTreeSet::from([repository_id.clone(), plugin_entity_id.clone()])
         );
 
         // The phone removes the plugin, then the repository.
         profile.novel_dependency_declarations.clear();
-        profile.novel_dependency_tombstones.insert(plugin_entity_id.clone(), 50);
-        profile.novel_dependency_tombstones.insert(repository_id.clone(), 51);
+        profile
+            .novel_dependency_tombstones
+            .insert(plugin_entity_id.clone(), 50);
+        profile
+            .novel_dependency_tombstones
+            .insert(repository_id.clone(), 51);
         let plan = plan_novel_dependency_sync(&mut profile, &state, 1_000);
         assert_eq!(
             plan.removals,
             vec![
-                SyncdNovelDependencyRemoval::Plugin { plugin_id: "someone.source".to_string() },
-                SyncdNovelDependencyRemoval::Repository { local_repository_id: "local-repo".to_string() },
+                SyncdNovelDependencyRemoval::Plugin {
+                    plugin_id: "someone.source".to_string()
+                },
+                SyncdNovelDependencyRemoval::Repository {
+                    local_repository_id: "local-repo".to_string()
+                },
             ]
         );
         // Still agreed until the removal is written here; then the baseline empties.
         assert_eq!(profile.novel_dependency_baseline.len(), 2);
-        let plan = plan_novel_dependency_sync(&mut profile, &PersistedNovelRepositoryState::default(), 1_000);
+        let plan = plan_novel_dependency_sync(
+            &mut profile,
+            &PersistedNovelRepositoryState::default(),
+            1_000,
+        );
         assert!(plan.removals.is_empty());
         assert!(profile.novel_dependency_baseline.is_empty());
     }
@@ -10578,8 +10853,12 @@ mod tests {
         let mut profile = PersistedReplicationProfileState::default();
         declare_novel_dependencies(&mut profile, &repository_id, &plugin_entity_id);
         plan_novel_dependency_sync(&mut profile, &state, 1_000);
-        profile.novel_dependency_declarations.remove(&plugin_entity_id);
-        profile.novel_dependency_tombstones.insert(plugin_entity_id.clone(), 50);
+        profile
+            .novel_dependency_declarations
+            .remove(&plugin_entity_id);
+        profile
+            .novel_dependency_tombstones
+            .insert(plugin_entity_id.clone(), 50);
 
         // Installed here at 90, after the delete at 50: the newer install stays.
         let plan = plan_novel_dependency_sync(&mut profile, &state, 1_000);
@@ -10587,9 +10866,15 @@ mod tests {
 
         // A tombstone for something this desktop never agreed on removes nothing.
         let mut fresh = PersistedReplicationProfileState::default();
-        fresh.novel_dependency_tombstones.insert(plugin_entity_id.clone(), 500);
-        fresh.novel_dependency_tombstones.insert(repository_id.clone(), 500);
-        assert!(plan_novel_dependency_sync(&mut fresh, &state, 1_000).removals.is_empty());
+        fresh
+            .novel_dependency_tombstones
+            .insert(plugin_entity_id.clone(), 500);
+        fresh
+            .novel_dependency_tombstones
+            .insert(repository_id.clone(), 500);
+        assert!(plan_novel_dependency_sync(&mut fresh, &state, 1_000)
+            .removals
+            .is_empty());
     }
 
     #[test]
@@ -10598,14 +10883,20 @@ mod tests {
         let (_, repository_id, plugin_entity_id) = novel_dependency_fixture(10);
         let mut profile = PersistedReplicationProfileState::default();
         declare_novel_dependencies(&mut profile, &repository_id, &plugin_entity_id);
-        profile.novel_dependency_pending_deletes.insert(plugin_entity_id.clone(), 1_000);
+        profile
+            .novel_dependency_pending_deletes
+            .insert(plugin_entity_id.clone(), 1_000);
         let empty = PersistedNovelRepositoryState::default();
 
         let plan = plan_novel_dependency_sync(&mut profile, &empty, 2_000);
         assert_eq!(plan.declarations.len(), 1);
 
         // A delete the Core never confirmed stops blocking the declaration.
-        let plan = plan_novel_dependency_sync(&mut profile, &empty, 1_000 + NOVEL_DEPENDENCY_PENDING_DELETE_MS);
+        let plan = plan_novel_dependency_sync(
+            &mut profile,
+            &empty,
+            1_000 + NOVEL_DEPENDENCY_PENDING_DELETE_MS,
+        );
         assert_eq!(plan.declarations.len(), 2);
         assert!(profile.novel_dependency_pending_deletes.is_empty());
     }
@@ -10616,10 +10907,18 @@ mod tests {
         let (state, repository_id, plugin_entity_id) = novel_dependency_fixture(10);
         let mut profile = PersistedReplicationProfileState::default();
         let ids = |mutations: Vec<SerializableMutationInput>| {
-            mutations.iter().map(|mutation| mutation.entity_id().to_string()).collect::<BTreeSet<_>>()
+            mutations
+                .iter()
+                .map(|mutation| mutation.entity_id().to_string())
+                .collect::<BTreeSet<_>>()
         };
         // Plugins without a catalog entry are not published, so only the repository is checked.
-        assert_eq!(ids(republished_novel_dependency_mutations("p", &profile, &state)), BTreeSet::from([repository_id.clone()]));
+        assert_eq!(
+            ids(republished_novel_dependency_mutations(
+                "p", &profile, &state
+            )),
+            BTreeSet::from([repository_id.clone()])
+        );
 
         declare_novel_dependencies(&mut profile, &repository_id, &plugin_entity_id);
         plan_novel_dependency_sync(&mut profile, &state, 1_000);
@@ -10627,9 +10926,16 @@ mod tests {
 
         let mut disabled = state.clone();
         disabled.repositories[0].enabled = false;
-        assert_eq!(ids(republished_novel_dependency_mutations("p", &profile, &disabled)), BTreeSet::from([repository_id.clone()]));
+        assert_eq!(
+            ids(republished_novel_dependency_mutations(
+                "p", &profile, &disabled
+            )),
+            BTreeSet::from([repository_id.clone()])
+        );
 
-        profile.novel_dependency_tombstones.insert(repository_id.clone(), 50);
+        profile
+            .novel_dependency_tombstones
+            .insert(repository_id.clone(), 50);
         assert!(republished_novel_dependency_mutations("p", &profile, &disabled).is_empty());
     }
 
@@ -10692,22 +10998,45 @@ mod tests {
         assert_eq!(snapshot.remote_bootstrap_generation, None);
         // Restart and host/local-authority Live have no remote completion.
         assert_eq!(confirmed_remote_bootstrap(&snapshot, None), None);
-        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))), Some(4));
-        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "old-session"))), None);
-        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((0, "session-a"))), None);
-        for status in [SyncdReplicationStatus::Idle, SyncdReplicationStatus::Connecting,
-            SyncdReplicationStatus::Replaying, SyncdReplicationStatus::Paused,
-            SyncdReplicationStatus::Offline, SyncdReplicationStatus::Degraded,
-            SyncdReplicationStatus::NeedsReauth] {
+        assert_eq!(
+            confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))),
+            Some(4)
+        );
+        assert_eq!(
+            confirmed_remote_bootstrap(&snapshot, Some((4, "old-session"))),
+            None
+        );
+        assert_eq!(
+            confirmed_remote_bootstrap(&snapshot, Some((0, "session-a"))),
+            None
+        );
+        for status in [
+            SyncdReplicationStatus::Idle,
+            SyncdReplicationStatus::Connecting,
+            SyncdReplicationStatus::Replaying,
+            SyncdReplicationStatus::Paused,
+            SyncdReplicationStatus::Offline,
+            SyncdReplicationStatus::Degraded,
+            SyncdReplicationStatus::NeedsReauth,
+        ] {
             snapshot.replication_status = status;
-            assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))), None);
+            assert_eq!(
+                confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))),
+                None
+            );
         }
         snapshot.replication_status = SyncdReplicationStatus::Live;
         snapshot.paused = true;
-        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))), None);
+        assert_eq!(
+            confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))),
+            None
+        );
         snapshot.paused = false;
         snapshot.last_error = Some("apply failed".into());
-        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))), None);
+        assert_eq!(
+            confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))),
+            None
+        );
     }
 
     use super::*;
@@ -11438,7 +11767,10 @@ mod tests {
         );
         assert_eq!(patch.chapter_id.as_deref(), Some(chapter_id.as_str()));
         // Stamped with the read's own time so it competes with other devices by edit time.
-        assert_eq!(event_clock.as_ref().map(|clock| clock.physical_ms), Some(20));
+        assert_eq!(
+            event_clock.as_ref().map(|clock| clock.physical_ms),
+            Some(20)
+        );
         assert!(matches!(
             work,
             PortableWorkRefV3::Novel { plugin_id, novel_key }
@@ -11948,9 +12280,18 @@ mod tests {
             assert!(heal_novel_references(&mut state));
 
             assert_eq!(state.bookmarks[0].novel_id, LOCAL_NOVEL);
-            assert_eq!(state.bookmarks[0].chapter_id.as_deref(), Some("local-chapter-9"));
-            assert_eq!(state.bookmarks[0].sync_id.as_deref(), Some("novel-bookmark:phone"));
-            assert!(!heal_novel_references(&mut state), "a second pass changes nothing");
+            assert_eq!(
+                state.bookmarks[0].chapter_id.as_deref(),
+                Some("local-chapter-9")
+            );
+            assert_eq!(
+                state.bookmarks[0].sync_id.as_deref(),
+                Some("novel-bookmark:phone")
+            );
+            assert!(
+                !heal_novel_references(&mut state),
+                "a second pass changes nothing"
+            );
 
             // A removal from any device names the id the bookmark has on the Core.
             delete_novel_bookmark(&mut state, "novel-bookmark:phone");
@@ -11978,7 +12319,10 @@ mod tests {
         );
         assert!(heal_novel_references(&mut state));
 
-        assert_eq!(value_string_field(&state.history[0], "novelId").as_deref(), Some(LOCAL_NOVEL));
+        assert_eq!(
+            value_string_field(&state.history[0], "novelId").as_deref(),
+            Some(LOCAL_NOVEL)
+        );
         assert_eq!(
             value_string_field(&state.history[0], "chapterId").as_deref(),
             Some("local-chapter-9")
@@ -12080,7 +12424,10 @@ mod tests {
             })
             .expect("bookmark merge");
         assert_eq!(patch.novel_id, canonical_novel);
-        assert_eq!(patch.chapter_id.as_deref(), Some(canonical_chapter.as_str()));
+        assert_eq!(
+            patch.chapter_id.as_deref(),
+            Some(canonical_chapter.as_str())
+        );
     }
 
     #[test]
@@ -12103,7 +12450,10 @@ mod tests {
         let contents = serde_json::to_string(&state).unwrap();
         let healed = heal_novel_state_contents(&contents).expect("chapter resolved");
         let healed = serde_json::from_str::<PersistedNovelLibraryState>(&healed).unwrap();
-        assert_eq!(healed.bookmarks[0].chapter_id.as_deref(), Some("local-chapter-9"));
+        assert_eq!(
+            healed.bookmarks[0].chapter_id.as_deref(),
+            Some("local-chapter-9")
+        );
         assert_eq!(healed.bookmarks[0].sync_id.as_deref(), Some("remote-row"));
         assert!(heal_novel_state_contents(&serde_json::to_string(&healed).unwrap()).is_none());
     }
@@ -12579,22 +12929,28 @@ mod tests {
             }],
             tombstones: Vec::new(),
         };
-        for kind in ["novel.tracking", "novel.chapter_asset", "novel.future_field"] {
+        for kind in [
+            "novel.tracking",
+            "novel.chapter_asset",
+            "novel.future_field",
+        ] {
             snapshot.entities.push(SnapshotEntity {
-                entity_type: kind.to_string(), entity_id: kind.to_string(), server_version: 49,
-                lamport: 11, record: json!({ "future": true }),
+                entity_type: kind.to_string(),
+                entity_id: kind.to_string(),
+                server_version: 49,
+                lamport: 11,
+                record: json!({ "future": true }),
             });
         }
         snapshot.entity_count = Some(snapshot.entities.len());
 
-        let (next, classification) =
-            materialize_novel_snapshot(
-                &current,
-                &current_classification,
-                &snapshot,
-                "profile:local-main",
-            )
-            .unwrap();
+        let (next, classification) = materialize_novel_snapshot(
+            &current,
+            &current_classification,
+            &snapshot,
+            "profile:local-main",
+        )
+        .unwrap();
         assert_eq!(next.version, Some(3));
         assert_eq!(next.scope_key.as_deref(), Some("local-main"));
         assert_eq!(next.progress.len(), 1);
@@ -12690,17 +13046,33 @@ mod tests {
                 reason_code: "deleted".to_string(),
             }],
         };
-        let mutations = || vec![assignment("kept"), assignment("deleted-elsewhere"), assignment("missing")];
+        let mutations = || {
+            vec![
+                assignment("kept"),
+                assignment("deleted-elsewhere"),
+                assignment("missing"),
+            ]
+        };
         let ids = |kept: Vec<SerializableMutationInput>| {
-            kept.iter().map(|mutation| mutation.entity_id().to_string()).collect::<Vec<_>>()
+            kept.iter()
+                .map(|mutation| mutation.entity_id().to_string())
+                .collect::<Vec<_>>()
         };
 
         assert_eq!(
-            ids(retain_republish_mutations(mutations(), std::slice::from_ref(&snapshot), true)),
+            ids(retain_republish_mutations(
+                mutations(),
+                std::slice::from_ref(&snapshot),
+                true
+            )),
             vec!["missing"]
         );
         assert_eq!(
-            ids(retain_republish_mutations(mutations(), std::slice::from_ref(&snapshot), false)),
+            ids(retain_republish_mutations(
+                mutations(),
+                std::slice::from_ref(&snapshot),
+                false
+            )),
             vec!["kept", "missing"]
         );
         // A snapshot of another scope says nothing about these entities.
@@ -12708,7 +13080,10 @@ mod tests {
             scope_id: "books".to_string(),
             ..snapshot
         };
-        assert_eq!(retain_republish_mutations(mutations(), &[other_scope], true).len(), 3);
+        assert_eq!(
+            retain_republish_mutations(mutations(), &[other_scope], true).len(),
+            3
+        );
     }
 
     #[test]
@@ -12731,9 +13106,13 @@ mod tests {
                 json!({"id": "books-category:b", "name": " Depois ", "order": 0}),
                 json!({"id": "book-category-local-3", "name": "Books", "order": 2}),
             ],
-            books_category_assignments: BTreeMap::from([
-                (local.clone(), vec!["books-category:b".to_string(), "book-category-local-3".to_string()]),
-            ]),
+            books_category_assignments: BTreeMap::from([(
+                local.clone(),
+                vec![
+                    "books-category:b".to_string(),
+                    "book-category-local-3".to_string(),
+                ],
+            )]),
             ..PersistedBookLibraryState::default()
         };
 
@@ -12777,12 +13156,19 @@ mod tests {
         ];
         expected.sort();
         assert_eq!(merged, expected);
-        assert!(diff.iter().all(|mutation| mutation.base().scope_id == "novels:profile:main"));
-        let SerializableMutationInput::NovelCategory { patch: Some(patch), .. } = &diff[3] else {
+        assert!(diff
+            .iter()
+            .all(|mutation| mutation.base().scope_id == "novels:profile:main"));
+        let SerializableMutationInput::NovelCategory {
+            patch: Some(patch), ..
+        } = &diff[3]
+        else {
             panic!("expected a category merge");
         };
         assert_eq!(patch.name, "Depois");
-        let SerializableMutationInput::NovelCategoryAssignment { patch: Some(patch), .. } = &diff[4]
+        let SerializableMutationInput::NovelCategoryAssignment {
+            patch: Some(patch), ..
+        } = &diff[4]
         else {
             panic!("expected an assignment merge");
         };
@@ -12818,11 +13204,26 @@ mod tests {
         use super::*;
         let id = "books-category:echo-in-flight";
         let echo = |order: i64| json!({"categoryId": id, "name": "Pasta", "order": order});
-        note_category_writes(&[category_write_for_test(id, 3), category_write_for_test(id, 0)]);
-        assert!(category_envelope_superseded(BOOKS_SCOPE_ID, id, Some(&echo(3))));
-        assert!(!category_envelope_superseded(BOOKS_SCOPE_ID, id, Some(&echo(0))));
+        note_category_writes(&[
+            category_write_for_test(id, 3),
+            category_write_for_test(id, 0),
+        ]);
+        assert!(category_envelope_superseded(
+            BOOKS_SCOPE_ID,
+            id,
+            Some(&echo(3))
+        ));
+        assert!(!category_envelope_superseded(
+            BOOKS_SCOPE_ID,
+            id,
+            Some(&echo(0))
+        ));
         // Nothing of ours is in flight any more, so a remote change applies again.
-        assert!(!category_envelope_superseded(BOOKS_SCOPE_ID, id, Some(&echo(3))));
+        assert!(!category_envelope_superseded(
+            BOOKS_SCOPE_ID,
+            id,
+            Some(&echo(3))
+        ));
     }
 
     #[test]
@@ -12833,7 +13234,11 @@ mod tests {
         note_category_writes(&write);
         forget_category_writes(&write);
         let remote = json!({"categoryId": id, "name": "Pasta", "order": 7});
-        assert!(!category_envelope_superseded(BOOKS_SCOPE_ID, id, Some(&remote)));
+        assert!(!category_envelope_superseded(
+            BOOKS_SCOPE_ID,
+            id,
+            Some(&remote)
+        ));
     }
 
     #[test]
@@ -12856,7 +13261,10 @@ mod tests {
             books_category_assignments: BTreeMap::from([
                 (
                     "book-1".to_string(),
-                    vec!["novel-category-local-10".to_string(), "books-category:a".to_string()],
+                    vec![
+                        "novel-category-local-10".to_string(),
+                        "books-category:a".to_string(),
+                    ],
                 ),
                 (
                     "novel:fixture.plugin:%2Fnovel%2Fone".to_string(),
@@ -12886,14 +13294,21 @@ mod tests {
                 "book.category_assignment:merge:book-1",
             ]
         );
-        assert!(diff.iter().all(|mutation| mutation.base().scope_id == BOOKS_SCOPE_ID));
-        let SerializableMutationInput::BookCategoryAssignment { patch: Some(patch), .. } = &diff[2]
+        assert!(diff
+            .iter()
+            .all(|mutation| mutation.base().scope_id == BOOKS_SCOPE_ID));
+        let SerializableMutationInput::BookCategoryAssignment {
+            patch: Some(patch), ..
+        } = &diff[2]
         else {
             panic!("expected a book assignment merge");
         };
         assert_eq!(
             patch.category_ids,
-            vec!["books-category:a".to_string(), "novel-category-local-10".to_string()]
+            vec![
+                "books-category:a".to_string(),
+                "novel-category-local-10".to_string()
+            ]
         );
 
         let cleared = PersistedBookLibraryState {
@@ -12932,7 +13347,10 @@ mod tests {
         };
         assert!(clock(&first).physical_ms >= before);
         assert!(clock(&second).physical_ms > clock(&first).physical_ms);
-        assert_eq!(clock(&first).device_generation_id, DESKTOP_CATEGORY_CLOCK_GENERATION);
+        assert_eq!(
+            clock(&first).device_generation_id,
+            DESKTOP_CATEGORY_CLOCK_GENERATION
+        );
     }
 
     #[test]
@@ -12965,7 +13383,11 @@ mod tests {
         note_category_writes(std::slice::from_ref(&write));
         forget_superseded_category_writes(&request, &response);
         let winner = json!({"categoryId": id, "name": "Mais nova", "order": 1});
-        assert!(!category_envelope_superseded(BOOKS_SCOPE_ID, id, Some(&winner)));
+        assert!(!category_envelope_superseded(
+            BOOKS_SCOPE_ID,
+            id,
+            Some(&winner)
+        ));
     }
 
     #[test]
@@ -12982,7 +13404,8 @@ mod tests {
                 record_lamport: 5,
             },
         );
-        let assignment_id = canonical_novel_category_assignment_id(&canonical, "novel-category-local-10");
+        let assignment_id =
+            canonical_novel_category_assignment_id(&canonical, "novel-category-local-10");
         let record = NovelCategoryAssignmentRecord {
             assignment_id: assignment_id.clone(),
             novel_id: canonical.clone(),
@@ -13016,7 +13439,10 @@ mod tests {
             record_lamport: 5,
         };
         let assignment = NovelCategoryAssignmentRecord {
-            assignment_id: canonical_novel_category_assignment_id(&canonical, "novel-category-local-10"),
+            assignment_id: canonical_novel_category_assignment_id(
+                &canonical,
+                "novel-category-local-10",
+            ),
             novel_id: canonical.clone(),
             category_id: "novel-category-local-10".to_string(),
             record_lamport: 6,
@@ -13068,7 +13494,8 @@ mod tests {
     }
 
     #[test]
-    fn incremental_novel_state_initializes_missing_scope_metadata_without_overwriting_valid_values() {
+    fn incremental_novel_state_initializes_missing_scope_metadata_without_overwriting_valid_values()
+    {
         let mut empty = PersistedNovelLibraryState::default();
         ensure_novel_scope_metadata(&mut empty, "profile:test");
         assert_eq!(empty.version, Some(1));
@@ -13465,20 +13892,35 @@ mod tests {
         // A replayed batch does not duplicate what is already queued.
         enqueue_outbound_mutations(
             &mut queue,
-            &[outbox_mutation("m2", "history-b", MutationOperation::Merge, 11)],
+            &[outbox_mutation(
+                "m2",
+                "history-b",
+                MutationOperation::Merge,
+                11,
+            )],
         );
         assert_eq!(outbox_ids(&queue), ["m1", "m2", "m3"]);
 
         // A delete drops older writes to the same entity only; a newer write survives.
         enqueue_outbound_mutations(
             &mut queue,
-            &[outbox_mutation("m4", "history-a", MutationOperation::Delete, 20)],
+            &[outbox_mutation(
+                "m4",
+                "history-a",
+                MutationOperation::Delete,
+                20,
+            )],
         );
         assert_eq!(outbox_ids(&queue), ["m2", "m3", "m4"]);
 
         forget_outbound_mutations(
             &mut queue,
-            &[outbox_mutation("m3", "history-a", MutationOperation::Merge, 30)],
+            &[outbox_mutation(
+                "m3",
+                "history-a",
+                MutationOperation::Merge,
+                30,
+            )],
         );
         assert_eq!(outbox_ids(&queue), ["m2", "m4"]);
 
@@ -13506,7 +13948,12 @@ mod tests {
             queue.target = "local:local-a".to_string();
             enqueue_outbound_mutations(
                 &mut queue.mutations,
-                &[outbox_mutation("m1", "history-a", MutationOperation::Merge, 1)],
+                &[outbox_mutation(
+                    "m1",
+                    "history-a",
+                    MutationOperation::Merge,
+                    1,
+                )],
             )
         })
         .unwrap();
@@ -13824,7 +14271,10 @@ mod tests {
         assert_eq!(delivery.settled, batch.len());
         assert!(!delivery.retryable);
         // Still reported, so the bootstrap keeps offering this book until its file is back.
-        assert!(delivery.error.unwrap().contains("Book asset is unavailable"));
+        assert!(delivery
+            .error
+            .unwrap()
+            .contains("Book asset is unavailable"));
         task.abort();
     }
 
@@ -13877,7 +14327,9 @@ mod tests {
         let sent = publication.publishable(&mutations);
         assert!(sent.iter().any(|m| m.client_mutation_id() == good));
         assert!(sent.iter().all(|m| m.client_mutation_id() != missing));
-        assert!(sent.iter().all(|m| m.client_mutation_id() != no_fingerprint));
+        assert!(sent
+            .iter()
+            .all(|m| m.client_mutation_id() != no_fingerprint));
         assert!(publication.into_result().is_err());
         task.abort();
     }
@@ -13973,7 +14425,10 @@ mod tests {
         assert_eq!(stale.books[0]["updatedAt"], json!(20));
         assert_eq!(stale.books[0]["hardcoverBookId"], json!(7));
         assert_eq!(stale.books[0]["metadataBackfillVersion"], json!(2));
-        assert_eq!(book_entry_mutations(&diff_book_mutations(&on_disk, &stale)), 0);
+        assert_eq!(
+            book_entry_mutations(&diff_book_mutations(&on_disk, &stale)),
+            0
+        );
     }
 
     #[test]
@@ -13987,7 +14442,10 @@ mod tests {
         assert!(!keep_remote_book_applies(&on_disk, &mut edited));
 
         assert_eq!(edited.books[0]["title"], json!("Renamed"));
-        assert_eq!(book_entry_mutations(&diff_book_mutations(&on_disk, &edited)), 1);
+        assert_eq!(
+            book_entry_mutations(&diff_book_mutations(&on_disk, &edited)),
+            1
+        );
     }
 
     /// Forgetting the Core's entries clears a global the test below reads.
@@ -14051,7 +14509,10 @@ mod tests {
 
         // The frontend writes the list it loaded before the apply added the book.
         let mut written = stale.clone();
-        assert!(keep_books_the_frontend_has_not_loaded(&on_disk, &mut written));
+        assert!(keep_books_the_frontend_has_not_loaded(
+            &on_disk,
+            &mut written
+        ));
         assert!(has_book(&written));
         assert_eq!(
             written.books_category_assignments.get(&book_id),
@@ -14071,7 +14532,9 @@ mod tests {
             book_entry_mutations(
                 &diff_book_mutations(&on_disk, &removed)
                     .into_iter()
-                    .filter(|mutation| mutations_for(std::slice::from_ref(mutation), &fingerprint) > 0)
+                    .filter(
+                        |mutation| mutations_for(std::slice::from_ref(mutation), &fingerprint) > 0
+                    )
                     .collect::<Vec<_>>()
             ),
             1
@@ -14125,7 +14588,9 @@ mod tests {
         let mut next = stripped.clone();
         next.books[0]["tocCount"] = json!(3);
 
-        assert!(enrich_book_cover_assets(&previous, &mut next).await.unwrap());
+        assert!(enrich_book_cover_assets(&previous, &mut next)
+            .await
+            .unwrap());
 
         assert_eq!(next.books[0]["hasCover"], json!(true));
         assert_eq!(next.books[0]["coverAssetSha256"], json!(cover_sha));
@@ -14139,7 +14604,10 @@ mod tests {
             })
             .expect("the toc change is published");
         assert!(patch.has_cover);
-        assert_eq!(patch.cover_asset_sha256.as_deref(), Some(cover_sha.as_str()));
+        assert_eq!(
+            patch.cover_asset_sha256.as_deref(),
+            Some(cover_sha.as_str())
+        );
     }
 
     #[test]
@@ -14248,7 +14716,10 @@ mod tests {
         assert!(profile.novel_dependency_pending_deletes.is_empty());
         assert!(profile.pending_comic_reader_changes.is_empty());
         assert_eq!(profile.pending_comic_reader_snapshot, None);
-        assert_eq!(profile.active_session_key.as_deref(), Some("main:old-core:main"));
+        assert_eq!(
+            profile.active_session_key.as_deref(),
+            Some("main:old-core:main")
+        );
         assert!(profile.paused);
     }
 
@@ -14258,8 +14729,14 @@ mod tests {
 
         assert!(!adopt_cursor_owner(&mut profile, "main:old-core:main"));
 
-        assert_eq!(profile.novels_scope_checkpoint, Some(scope_checkpoint("novels:profile:main", 34)));
-        assert_eq!(profile.last_local_snapshot_digest_books.as_deref(), Some("books"));
+        assert_eq!(
+            profile.novels_scope_checkpoint,
+            Some(scope_checkpoint("novels:profile:main", 34))
+        );
+        assert_eq!(
+            profile.last_local_snapshot_digest_books.as_deref(),
+            Some("books")
+        );
         assert_eq!(profile.pending_comic_reader_changes.len(), 1);
     }
 
@@ -14270,21 +14747,39 @@ mod tests {
             ..profile_read_from_another_core()
         };
 
-        assert!(!adopt_cursor_owner(&mut profile, LOCAL_AUTHORITY_CURSOR_OWNER));
+        assert!(!adopt_cursor_owner(
+            &mut profile,
+            LOCAL_AUTHORITY_CURSOR_OWNER
+        ));
 
-        assert_eq!(profile.cursor_owner.as_deref(), Some(LOCAL_AUTHORITY_CURSOR_OWNER));
-        assert_eq!(profile.novels_scope_checkpoint, Some(scope_checkpoint("novels:profile:main", 34)));
-        assert_eq!(profile.last_local_snapshot_digest_novels.as_deref(), Some("novels"));
+        assert_eq!(
+            profile.cursor_owner.as_deref(),
+            Some(LOCAL_AUTHORITY_CURSOR_OWNER)
+        );
+        assert_eq!(
+            profile.novels_scope_checkpoint,
+            Some(scope_checkpoint("novels:profile:main", 34))
+        );
+        assert_eq!(
+            profile.last_local_snapshot_digest_novels.as_deref(),
+            Some("novels")
+        );
     }
 
     #[test]
     fn leaving_a_joined_core_for_this_desktops_own_core_starts_over_too() {
         let mut profile = profile_read_from_another_core();
 
-        assert!(adopt_cursor_owner(&mut profile, LOCAL_AUTHORITY_CURSOR_OWNER));
+        assert!(adopt_cursor_owner(
+            &mut profile,
+            LOCAL_AUTHORITY_CURSOR_OWNER
+        ));
 
         assert_eq!(profile.novels_scope_checkpoint, None);
-        assert!(!adopt_cursor_owner(&mut profile, LOCAL_AUTHORITY_CURSOR_OWNER));
+        assert!(!adopt_cursor_owner(
+            &mut profile,
+            LOCAL_AUTHORITY_CURSOR_OWNER
+        ));
     }
 
     #[test]
@@ -14295,7 +14790,10 @@ mod tests {
         let profile: PersistedReplicationProfileState = serde_json::from_value(saved).unwrap();
 
         assert_eq!(profile.cursor_owner, None);
-        assert_eq!(profile.novels_scope_checkpoint, Some(scope_checkpoint("novels:profile:main", 34)));
+        assert_eq!(
+            profile.novels_scope_checkpoint,
+            Some(scope_checkpoint("novels:profile:main", 34))
+        );
     }
 
     fn replica_snapshot(
@@ -14380,7 +14878,11 @@ mod tests {
             mutation("deleted", 99),
         ];
 
-        assert_eq!(republished_ids(mutations, &snapshot), ["newer", "missing"], "{entity_type}");
+        assert_eq!(
+            republished_ids(mutations, &snapshot),
+            ["newer", "missing"],
+            "{entity_type}"
+        );
     }
 
     #[test]
@@ -14551,7 +15053,14 @@ mod tests {
             .map(|mutation| format!("{}:{}", mutation.entity_type_label(), mutation.entity_id()))
             .collect::<Vec<_>>();
 
-        assert_eq!(kept, ["book.entry:changed", "book.entry:missing", "novel.entry:changed"]);
+        assert_eq!(
+            kept,
+            [
+                "book.entry:changed",
+                "book.entry:missing",
+                "novel.entry:changed"
+            ]
+        );
     }
 
     #[test]
@@ -14561,7 +15070,10 @@ mod tests {
                 "title": "Local", "subtype": "epub", "hasCover": false, "createdAtMs": 1,
                 "bookUpdatedAtMs": 20,
             });
-            patch.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+            patch
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
             SerializableMutationInput::BookEntry {
                 base: republish_base(id),
                 patch: Some(patch_from(patch)),
@@ -14572,7 +15084,10 @@ mod tests {
                 "bookId": "b", "title": "Core", "subtype": "epub", "hasCover": false,
                 "createdAtMs": 1, "bookUpdatedAtMs": 20, "recordLamport": 1,
             });
-            record.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+            record
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
             record
         };
         let file = json!({ "assetFingerprint": "aa" });
@@ -14605,7 +15120,11 @@ mod tests {
     #[test]
     fn republish_leaves_alone_a_core_record_it_cannot_read() {
         let snapshot = replica_snapshot(
-            vec![core_entity("book.progress", "unreadable", json!({ "bookId": "b" }))],
+            vec![core_entity(
+                "book.progress",
+                "unreadable",
+                json!({ "bookId": "b" }),
+            )],
             Vec::new(),
         );
         let progress = SerializableMutationInput::BookProgress {
@@ -14656,7 +15175,12 @@ mod tests {
             sync_id: None,
         };
         let current = PersistedNovelLibraryState {
-            entries: vec![kept_entry.clone(), deleted_entry, settled_entry.clone(), older_entry.clone()],
+            entries: vec![
+                kept_entry.clone(),
+                deleted_entry,
+                settled_entry.clone(),
+                older_entry.clone(),
+            ],
             chapters: vec![
                 json!({ "id": "chapter:kept", "novelId": kept_id }),
                 json!({ "id": "chapter:deleted", "novelId": deleted_id }),
@@ -14721,10 +15245,21 @@ mod tests {
 
         assert_eq!(kept, vec![kept_id.clone()]);
         assert!(next.entries.contains(&kept_entry));
-        assert_eq!(next.entries.len(), 3, "a deleted novel stays deleted: {:?}", next.entries);
-        assert_eq!(next.chapters, vec![json!({ "id": "chapter:kept", "novelId": kept_id })]);
+        assert_eq!(
+            next.entries.len(),
+            3,
+            "a deleted novel stays deleted: {:?}",
+            next.entries
+        );
+        assert_eq!(
+            next.chapters,
+            vec![json!({ "id": "chapter:kept", "novelId": kept_id })]
+        );
         assert_eq!(next.bookmarks, vec![bookmark(&kept_id)]);
-        assert_eq!(next.history, vec![json!({ "novelId": kept_id, "historyId": "history-kept" })]);
+        assert_eq!(
+            next.history,
+            vec![json!({ "novelId": kept_id, "historyId": "history-kept" })]
+        );
 
         let percent_of = |novel_id: &str| {
             next.progress
@@ -14734,8 +15269,16 @@ mod tests {
         };
         assert_eq!(percent_of(&kept_id), Some(0.4));
         assert_eq!(percent_of(&deleted_id), None);
-        assert_eq!(percent_of(&settled_canonical), Some(0.9), "newer local progress wins");
-        assert_eq!(percent_of(&older_canonical), Some(0.7), "older local progress does not");
+        assert_eq!(
+            percent_of(&settled_canonical),
+            Some(0.9),
+            "newer local progress wins"
+        );
+        assert_eq!(
+            percent_of(&older_canonical),
+            Some(0.7),
+            "older local progress does not"
+        );
         assert_eq!(next.progress.len(), 3);
 
         assert_eq!(
@@ -14841,9 +15384,21 @@ mod tests {
         };
         assert_eq!(percent_of("local-kept"), Some(0.4));
         assert_eq!(percent_of("local-deleted"), None);
-        assert_eq!(percent_of("local-settled"), Some(0.9), "newer local progress wins");
-        assert_eq!(percent_of("local-older"), Some(0.7), "older local progress does not");
-        assert_eq!(percent_of(&canonical("a5")), Some(0.8), "found through the canonical id");
+        assert_eq!(
+            percent_of("local-settled"),
+            Some(0.9),
+            "newer local progress wins"
+        );
+        assert_eq!(
+            percent_of("local-older"),
+            Some(0.7),
+            "older local progress does not"
+        );
+        assert_eq!(
+            percent_of(&canonical("a5")),
+            Some(0.8),
+            "found through the canonical id"
+        );
         assert_eq!(next.book_progress.len(), 4);
     }
 
@@ -14876,20 +15431,33 @@ mod tests {
             ..PersistedBookLibraryState::default()
         };
         let books = replica_snapshot(Vec::new(), Vec::new());
-        let novels = replica_snapshot(Vec::new(), vec![core_tombstone("novel.category", "folder-gone")]);
+        let novels = replica_snapshot(
+            Vec::new(),
+            vec![core_tombstone("novel.category", "folder-gone")],
+        );
 
         keep_unreconciled_categories(
             &current,
             &mut next,
-            &["kept".to_string(), "only-gone".to_string(), "already-placed".to_string()],
+            &[
+                "kept".to_string(),
+                "only-gone".to_string(),
+                "already-placed".to_string(),
+            ],
             &[&books, &novels],
         );
 
         assert_eq!(
             next.books_category_assignments,
-            assignment_of(&[("kept", &["folder-kept"]), ("already-placed", &["folder-core"])])
+            assignment_of(&[
+                ("kept", &["folder-kept"]),
+                ("already-placed", &["folder-core"])
+            ])
         );
-        assert_eq!(next.books_categories, vec![json!({ "id": "folder-kept", "name": "Kept" })]);
+        assert_eq!(
+            next.books_categories,
+            vec![json!({ "id": "folder-kept", "name": "Kept" })]
+        );
     }
 
     #[test]
@@ -14911,27 +15479,58 @@ mod tests {
             state
         };
 
-        assert!(profile_joined_remote_core(&state_with(Some("main:other:main")), &sessions, "main"));
-        assert!(!profile_joined_remote_core(&state_with(None), &sessions, "main"));
-        assert!(!profile_joined_remote_core(&state_with(Some("gone")), &sessions, "main"));
-        assert!(!profile_joined_remote_core(&state_with(Some("test:other:main")), &sessions, "main"));
-        assert!(!profile_joined_remote_core(&PersistedReplicationState::default(), &sessions, "main"));
+        assert!(profile_joined_remote_core(
+            &state_with(Some("main:other:main")),
+            &sessions,
+            "main"
+        ));
+        assert!(!profile_joined_remote_core(
+            &state_with(None),
+            &sessions,
+            "main"
+        ));
+        assert!(!profile_joined_remote_core(
+            &state_with(Some("gone")),
+            &sessions,
+            "main"
+        ));
+        assert!(!profile_joined_remote_core(
+            &state_with(Some("test:other:main")),
+            &sessions,
+            "main"
+        ));
+        assert!(!profile_joined_remote_core(
+            &PersistedReplicationState::default(),
+            &sessions,
+            "main"
+        ));
     }
 
     #[test]
     fn a_publication_counts_only_when_everything_reached_the_same_core() {
         let core = Some("core");
         assert!(publication_settled(false, core, core, false));
-        assert!(!publication_settled(true, core, core, false), "still queued");
+        assert!(
+            !publication_settled(true, core, core, false),
+            "still queued"
+        );
         assert!(!publication_settled(false, core, core, true), "paused");
-        assert!(!publication_settled(false, Some("other"), core, false), "the Core changed");
+        assert!(
+            !publication_settled(false, Some("other"), core, false),
+            "the Core changed"
+        );
     }
 
     #[test]
     fn a_publish_only_stops_for_a_lost_connection_or_login() {
         assert_eq!(settle_core_publish_step("books", "main", Ok(())), Ok(()));
-        assert!(settle_core_publish_step("books", "main", Err("connection refused".to_string())).is_err());
-        assert!(settle_core_publish_step("books", "main", Err("needs_reauth".to_string())).is_err());
+        assert!(
+            settle_core_publish_step("books", "main", Err("connection refused".to_string()))
+                .is_err()
+        );
+        assert!(
+            settle_core_publish_step("books", "main", Err("needs_reauth".to_string())).is_err()
+        );
         assert_eq!(
             settle_core_publish_step("books", "main", Err("Book cannot be published".to_string())),
             Ok(()),
@@ -14942,25 +15541,39 @@ mod tests {
     #[test]
     fn a_broken_live_stream_is_a_lost_connection() {
         assert!(is_connection_error(LIVE_STREAM_ENDED));
-        assert!(is_connection_error(&live_stream_error("error decoding response body".to_string())));
+        assert!(is_connection_error(&live_stream_error(
+            "error decoding response body".to_string()
+        )));
     }
 
     fn refusal(fields: Value) -> ErrorDetail {
         let mut detail = json!({ "code": "REPLAY_WINDOW_EXPIRED", "message": "refused" });
-        detail.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+        detail
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
         serde_json::from_value(detail).unwrap()
     }
 
     #[test]
     fn a_cursor_ahead_of_the_core_is_lost_history_not_an_old_cursor() {
         let lost = refusal(json!({ "details": { "reasonCode": "CURSOR_AHEAD_OF_SERVER" } }));
-        assert!(matches!(replay_refusal_outcome(&lost), ChangesFetchOutcome::CoreLostHistory));
+        assert!(matches!(
+            replay_refusal_outcome(&lost),
+            ChangesFetchOutcome::CoreLostHistory
+        ));
 
         let expired = refusal(json!({}));
-        assert!(matches!(replay_refusal_outcome(&expired), ChangesFetchOutcome::ReplayWindowExpired));
+        assert!(matches!(
+            replay_refusal_outcome(&expired),
+            ChangesFetchOutcome::ReplayWindowExpired
+        ));
 
         let other_reason = refusal(json!({ "details": { "reasonCode": "SOMETHING_ELSE" } }));
-        assert!(matches!(replay_refusal_outcome(&other_reason), ChangesFetchOutcome::ReplayWindowExpired));
+        assert!(matches!(
+            replay_refusal_outcome(&other_reason),
+            ChangesFetchOutcome::ReplayWindowExpired
+        ));
     }
 
     #[test]
@@ -14970,7 +15583,10 @@ mod tests {
         else {
             panic!("the Core refuses a cursor ahead of it");
         };
-        assert!(matches!(replay_refusal_outcome(&detail), ChangesFetchOutcome::CoreLostHistory));
+        assert!(matches!(
+            replay_refusal_outcome(&detail),
+            ChangesFetchOutcome::CoreLostHistory
+        ));
     }
 
     #[test]
@@ -14992,7 +15608,10 @@ mod tests {
         assert!(!cursors_ahead_of_core(&snapshot_of(profile.clone()), 90));
 
         reset_core_cursors(&mut profile);
-        assert!(!cursors_ahead_of_core(&snapshot_of(profile), 4), "a reset cannot loop");
+        assert!(
+            !cursors_ahead_of_core(&snapshot_of(profile), 4),
+            "a reset cannot loop"
+        );
     }
 
     #[test]
@@ -15037,8 +15656,11 @@ mod tests {
 
     #[test]
     fn novel_plugin_setting_diff_sends_changed_values_and_never_secrets() {
-        let everything =
-            diff_novel_plugin_setting_mutations("main", &Value::Null, &plugin_settings_document("ai"));
+        let everything = diff_novel_plugin_setting_mutations(
+            "main",
+            &Value::Null,
+            &plugin_settings_document("ai"),
+        );
         let mut ids = everything
             .iter()
             .map(|mutation| mutation.entity_id().to_string())
@@ -15072,7 +15694,10 @@ mod tests {
         let first_clock: EventClock =
             serde_json::from_value(serialized["eventClock"].clone()).unwrap();
         assert!(first_clock.physical_ms > 0);
-        assert_eq!(first_clock.device_generation_id, DESKTOP_CATEGORY_CLOCK_GENERATION);
+        assert_eq!(
+            first_clock.device_generation_id,
+            DESKTOP_CATEGORY_CLOCK_GENERATION
+        );
         assert_eq!(serialized["patch"]["updatedAtMs"], first_clock.physical_ms);
         let second = diff_novel_plugin_setting_mutations(
             "main",
@@ -15094,13 +15719,28 @@ mod tests {
     fn novel_plugin_settings_from_the_core_keep_local_secrets() {
         let mut document = plugin_settings_document("ai");
         let incoming = vec![
-            ("wtrlab".to_string(), "preferredMode".to_string(), PreferenceValue::String("web".into())),
-            ("boxnovel".to_string(), "hideLocked".to_string(), PreferenceValue::Boolean(false)),
-            ("novelupdates".to_string(), "hideLocked".to_string(), PreferenceValue::Boolean(true)),
+            (
+                "wtrlab".to_string(),
+                "preferredMode".to_string(),
+                PreferenceValue::String("web".into()),
+            ),
+            (
+                "boxnovel".to_string(),
+                "hideLocked".to_string(),
+                PreferenceValue::Boolean(false),
+            ),
+            (
+                "novelupdates".to_string(),
+                "hideLocked".to_string(),
+                PreferenceValue::Boolean(true),
+            ),
         ];
         assert!(merge_novel_plugin_settings(&mut document, &incoming));
         assert_eq!(document["plugins"]["wtrlab"]["preferredMode"], "web");
-        assert_eq!(document["plugins"]["wtrlab"]["sessionCookie"], "cf_clearance=abc");
+        assert_eq!(
+            document["plugins"]["wtrlab"]["sessionCookie"],
+            "cf_clearance=abc"
+        );
         assert_eq!(document["plugins"]["komga"]["password"], "hunter2");
         assert_eq!(document["plugins"]["novelupdates"]["hideLocked"], true);
         // Applying the same values again changes nothing, so it writes nothing.
@@ -15126,7 +15766,11 @@ mod tests {
         );
         assert_eq!(
             remote_novel_plugin_setting(&entity_id, Some(&record)),
-            Some(("wtrlab".into(), "preferredMode".into(), PreferenceValue::String("webplus".into())))
+            Some((
+                "wtrlab".into(),
+                "preferredMode".into(),
+                PreferenceValue::String("webplus".into())
+            ))
         );
         assert_eq!(remote_novel_plugin_setting(&entity_id, None), None);
         let forged = json!({
@@ -15134,7 +15778,10 @@ mod tests {
             "key": "sessionCookie", "valueType": "string", "value": "x", "updatedAtMs": 1,
         });
         assert_eq!(
-            remote_novel_plugin_setting("novel.plugin_setting::wtrlab::sessionCookie", Some(&forged)),
+            remote_novel_plugin_setting(
+                "novel.plugin_setting::wtrlab::sessionCookie",
+                Some(&forged)
+            ),
             None
         );
 
@@ -15156,9 +15803,15 @@ mod tests {
         assert_eq!(snapshot_novel_plugin_settings(&snapshot).len(), 1);
 
         // Joining a Core that already holds a value leaves that value alone.
-        let local = diff_novel_plugin_setting_mutations("main", &Value::Null, &plugin_settings_document("ai"));
+        let local = diff_novel_plugin_setting_mutations(
+            "main",
+            &Value::Null,
+            &plugin_settings_document("ai"),
+        );
         let kept = retain_republish_mutations(local, std::slice::from_ref(&snapshot), true);
         assert_eq!(kept.len(), 3);
-        assert!(kept.iter().all(|mutation| mutation.entity_id() != entity_id));
+        assert!(kept
+            .iter()
+            .all(|mutation| mutation.entity_id() != entity_id));
     }
 }

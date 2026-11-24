@@ -1,6 +1,7 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Path, State};
 use axum::http::header::{CACHE_CONTROL, EXPIRES, PRAGMA};
 use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Json, Response};
@@ -15,8 +16,16 @@ use crate::syncd::pairing_pin::{normalize_pin, pairing_pin, PIN_ATTEMPTS};
 
 pub async fn post_bootstrap_session(
     State(state): State<SharedAppState>,
+    remote: Option<ConnectInfo<SocketAddr>>,
     Json(request): Json<BootstrapSessionCreateRequest>,
 ) -> Response {
+    let from_loopback = remote.is_some_and(|ConnectInfo(addr)| addr.ip().is_loopback());
+    if !from_loopback {
+        return AppError::Forbidden(
+            "Bootstrap pairing sessions can only be created from loopback.".to_string(),
+        )
+        .into_response();
+    }
     bootstrap_response(create_bootstrap_session(state, request).await)
 }
 
@@ -116,7 +125,11 @@ async fn resolve_pairing_pin(
     request: PairingPinResolveRequest,
 ) -> Result<BootstrapPayloadResponse, AppError> {
     let now = db::now_ms();
-    if PIN_ATTEMPTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_locked(now) {
+    if PIN_ATTEMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .is_locked(now)
+    {
         return Err(pin_locked_error());
     }
     let Some(pin) = normalize_pin(&request.pin) else {
@@ -141,7 +154,9 @@ async fn resolve_pairing_pin(
     if reached_lock {
         db::expire_open_bootstrap_sessions(&state.pool)
             .await
-            .map_err(|error| AppError::Internal(format!("Failed to expire pairing sessions: {error}")))?;
+            .map_err(|error| {
+                AppError::Internal(format!("Failed to expire pairing sessions: {error}"))
+            })?;
         return Err(pin_locked_error());
     }
     Err(AppError::not_found(
@@ -333,13 +348,13 @@ mod tests {
         SyncdDiscoveryDescriptorProvider, SyncdDiscoveryProviderManager,
     };
     use crate::syncd::models::AppState;
+    use crate::syncd::test_dir::tempdir;
     use axum::body::Body;
     use axum::http::header::{CACHE_CONTROL, EXPIRES, PRAGMA};
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
     use serde_json::{json, Value};
     use std::sync::Arc;
-    use crate::syncd::test_dir::tempdir;
     use tempfile::TempDir;
     use tokio::sync::{broadcast, Mutex, RwLock};
     use tower::ServiceExt;
@@ -393,6 +408,7 @@ mod tests {
             .method("POST")
             .uri("/v1/bootstrap/session")
             .header("content-type", "application/json")
+            .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 4777))))
             .body(Body::from(
                 json!({
                     "profileId": profile_id

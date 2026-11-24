@@ -80,6 +80,8 @@ function normalizeLoadedBook(book: any): BookEntry {
   return {
     id: String(book?.id ?? ""),
     assetFingerprint: typeof book?.assetFingerprint === "string" ? book.assetFingerprint : undefined,
+    mimeType: typeof book?.mimeType === "string" ? book.mimeType : undefined,
+    byteSize: typeof book?.byteSize === "number" ? book.byteSize : null,
     title: String(book?.title ?? "Imported book"),
     author: typeof book?.author === "string" ? book.author : null,
     description: typeof book?.description === "string" ? book.description : null,

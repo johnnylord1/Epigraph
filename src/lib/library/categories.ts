@@ -27,8 +27,21 @@ export function normalizeCategories<T extends Category>(cats: T[]): T[] {
   });
 }
 
-// ensureCompleted answers with a summary refetch, which has no members, when it has to create or
-// dedupe the Completed category (as after restoring a backup without it). Fetch membership again then.
+export function completedCategoryCleanupPlan<T extends Category>(
+  cats: T[],
+): { keep: T | null; duplicates: T[] } {
+  const completed = cats.filter(isCompletedCategory);
+  if (completed.length === 0) return { keep: null, duplicates: [] };
+
+  const sorted = [...completed].sort((a, b) => {
+    if (a.default !== b.default) return a.default ? -1 : 1;
+    if (a.order !== b.order) return a.order - b.order;
+    return a.id - b.id;
+  });
+  return { keep: sorted[0] ?? null, duplicates: sorted.slice(1) };
+}
+
+// Duplicate cleanup uses a summary refetch with no members, so reload membership when needed.
 export async function loadCategoriesWithMembers<T extends Category>(
   fetchWithMembers: () => Promise<T[]>,
   ensureCompleted: (categories: T[]) => Promise<T[]>,

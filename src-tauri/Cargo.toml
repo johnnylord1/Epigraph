@@ -30,7 +30,7 @@ tauri-plugin-notification = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 base64 = "0.22"
 walkdir = "2"
 sysinfo = "0.32"
@@ -64,6 +64,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 rustls = "0.23"
 semver = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "migrate", "macros"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 thiserror = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "fs", "net", "io-util"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }

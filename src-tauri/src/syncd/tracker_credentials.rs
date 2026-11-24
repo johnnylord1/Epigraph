@@ -236,7 +236,11 @@ impl TrackerCredentialVault {
         }
     }
 
-    fn check_base(&self, tracker_key: &str, base_revision: i64) -> Result<(), CredentialWriteError> {
+    fn check_base(
+        &self,
+        tracker_key: &str,
+        base_revision: i64,
+    ) -> Result<(), CredentialWriteError> {
         let current_revision = self.current_revision(tracker_key);
         if base_revision != current_revision {
             return Err(CredentialWriteError::Stale { current_revision });
@@ -259,9 +263,22 @@ pub fn vault_path(data_dir: &Path) -> PathBuf {
     data_dir.join(TRACKER_CREDENTIALS_FILE)
 }
 
-async fn read_vault_unlocked(data_dir: &Path) -> anyhow::Result<TrackerCredentialVault> {
-    let path = vault_path(data_dir);
-    let sealed = match tokio::fs::read(&path).await {
+pub fn vault_path_for_profile(data_dir: &Path, profile_id: &str) -> PathBuf {
+    // Existing desktop and OAuth integrations own the main profile's vault.
+    if profile_id == "main" {
+        return vault_path(data_dir);
+    }
+    use sha2::{Digest, Sha256};
+    let hash: String = Sha256::digest(profile_id.as_bytes())
+        .iter()
+        .take(12)
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    data_dir.join(format!("tracker-credentials-v1-p-{hash}.bin"))
+}
+
+async fn read_vault_at_path_unlocked(path: &Path) -> anyhow::Result<TrackerCredentialVault> {
+    let sealed = match tokio::fs::read(path).await {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(TrackerCredentialVault {
@@ -284,7 +301,7 @@ async fn read_vault_unlocked(data_dir: &Path) -> anyhow::Result<TrackerCredentia
             // cannot be recovered.  Keep it aside for diagnosis (it stays sealed)
             // and start over; devices then converge on the next login they publish.
             let quarantine = path.with_extension("bin.unreadable");
-            let _ = tokio::fs::rename(&path, &quarantine).await;
+            let _ = tokio::fs::rename(path, &quarantine).await;
             tracing::warn!("tracker credential vault could not be unsealed; starting empty");
             TrackerCredentialVault {
                 schema_version: TRACKER_CREDENTIALS_SCHEMA_VERSION,
@@ -298,28 +315,39 @@ async fn read_vault_unlocked(data_dir: &Path) -> anyhow::Result<TrackerCredentia
     Ok(vault)
 }
 
-async fn write_vault_unlocked(data_dir: &Path, vault: &TrackerCredentialVault) -> anyhow::Result<()> {
+async fn write_vault_at_path_unlocked(
+    path: &Path,
+    vault: &TrackerCredentialVault,
+) -> anyhow::Result<()> {
     let plain = serde_json::to_vec(vault).context("failed to encode tracker credential vault")?;
     let sealed = tokio::task::spawn_blocking(move || dpapi::protect(&plain))
         .await
         .context("tracker credential vault seal task failed")??;
-    tokio::fs::create_dir_all(data_dir)
-        .await
-        .context("failed to create syncd data directory")?;
-    let path = vault_path(data_dir);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("failed to create syncd data directory")?;
+    }
     let temp = path.with_extension("bin.tmp");
     tokio::fs::write(&temp, &sealed)
         .await
         .context("failed to write tracker credential vault")?;
-    tokio::fs::rename(&temp, &path)
+    tokio::fs::rename(&temp, path)
         .await
         .context("failed to replace tracker credential vault")?;
     Ok(())
 }
 
 pub async fn load_vault(data_dir: &Path) -> anyhow::Result<TrackerCredentialVault> {
+    load_vault_for_profile(data_dir, "main").await
+}
+
+pub async fn load_vault_for_profile(
+    data_dir: &Path,
+    profile_id: &str,
+) -> anyhow::Result<TrackerCredentialVault> {
     let _guard = VAULT_LOCK.lock().await;
-    read_vault_unlocked(data_dir).await
+    read_vault_at_path_unlocked(&vault_path_for_profile(data_dir, profile_id)).await
 }
 
 /// Runs one read-modify-write transaction.  The closure's `Ok(Some(_))`
@@ -328,12 +356,21 @@ pub async fn update_vault<T>(
     data_dir: &Path,
     update: impl FnOnce(&mut TrackerCredentialVault) -> Result<(T, bool), CredentialWriteError>,
 ) -> anyhow::Result<Result<T, CredentialWriteError>> {
+    update_vault_for_profile(data_dir, "main", update).await
+}
+
+pub async fn update_vault_for_profile<T>(
+    data_dir: &Path,
+    profile_id: &str,
+    update: impl FnOnce(&mut TrackerCredentialVault) -> Result<(T, bool), CredentialWriteError>,
+) -> anyhow::Result<Result<T, CredentialWriteError>> {
     let _guard = VAULT_LOCK.lock().await;
-    let mut vault = read_vault_unlocked(data_dir).await?;
+    let path = vault_path_for_profile(data_dir, profile_id);
+    let mut vault = read_vault_at_path_unlocked(&path).await?;
     match update(&mut vault) {
         Ok((value, changed)) => {
             if changed {
-                write_vault_unlocked(data_dir, &vault).await?;
+                write_vault_at_path_unlocked(&path, &vault).await?;
             }
             Ok(Ok(value))
         }
@@ -343,7 +380,11 @@ pub async fn update_vault<T>(
 
 /// Mihon/Tachiyomi's AniList preference shape, which the mobile applies verbatim:
 /// username = numeric viewer id, password = access token, token = `ALOAuth` JSON.
-pub fn mihon_anilist_credential(viewer_id: i64, access_token: &str, now_ms: i64) -> CredentialValues {
+pub fn mihon_anilist_credential(
+    viewer_id: i64,
+    access_token: &str,
+    now_ms: i64,
+) -> CredentialValues {
     CredentialValues {
         username: viewer_id.to_string(),
         password: access_token.to_string(),
@@ -377,9 +418,10 @@ pub fn anilist_access_token(credential: &StoredTrackerCredential) -> Option<Stri
 pub fn is_safe_oauth_token(token: &str) -> bool {
     !token.is_empty()
         && token.len() <= MAX_CREDENTIAL_VALUE_BYTES
-        && token
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'+' | b'/' | b'='))
+        && token.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'+' | b'/' | b'=')
+        })
 }
 
 /// The callback Suwayomi's AniList `authCallback` parses (`access_token=` fragment).
@@ -405,7 +447,10 @@ pub async fn fetch_anilist_viewer_id(access_token: &str) -> anyhow::Result<i64> 
         .await
         .map_err(|_| anyhow::anyhow!("AniList viewer request failed"))?;
     if !response.status().is_success() {
-        bail!("AniList viewer request returned {}", response.status().as_u16());
+        bail!(
+            "AniList viewer request returned {}",
+            response.status().as_u16()
+        );
     }
     let payload: Value = response
         .json()
@@ -544,7 +589,9 @@ mod tests {
         assert!(!first.deleted);
         assert_eq!(
             vault.put("anilist", 0, values("t2"), "phone", 11),
-            Err(CredentialWriteError::Stale { current_revision: 1 })
+            Err(CredentialWriteError::Stale {
+                current_revision: 1
+            })
         );
         let second = vault.put("anilist", 1, values("t2"), "tablet", 12).unwrap();
         assert_eq!(second.revision, 2);
@@ -554,7 +601,9 @@ mod tests {
         assert!(tombstone.token.is_empty() && tombstone.password.is_empty());
         assert_eq!(
             vault.delete("anilist", 2, "phone", 14),
-            Err(CredentialWriteError::Stale { current_revision: 3 })
+            Err(CredentialWriteError::Stale {
+                current_revision: 3
+            })
         );
         assert_eq!(vault.current_revision("anilist"), 3);
         assert_eq!(vault.views().len(), 1);
@@ -659,7 +708,10 @@ mod tests {
 
         let reloaded = load_vault(temp.path()).await.unwrap();
         assert_eq!(reloaded.credentials["anilist"].token, "plain-token-value");
-        assert_eq!(reloaded.credentials["anilist"].updated_by_device_id, "phone");
+        assert_eq!(
+            reloaded.credentials["anilist"].updated_by_device_id,
+            "phone"
+        );
     }
 
     #[cfg(windows)]
@@ -669,6 +721,9 @@ mod tests {
         std::fs::write(vault_path(temp.path()), b"not a dpapi blob").unwrap();
         let vault = load_vault(temp.path()).await.unwrap();
         assert!(vault.credentials.is_empty());
-        assert!(temp.path().join("tracker-credentials-v1.bin.unreadable").exists());
+        assert!(temp
+            .path()
+            .join("tracker-credentials-v1.bin.unreadable")
+            .exists());
     }
 }

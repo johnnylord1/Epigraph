@@ -49,21 +49,39 @@ export function normalizeBookProgress(progress: unknown): BookProgress {
 
 export function normalizeBookBookmark(bookmark: unknown): BookBookmarkEntry {
   const entry = bookmark as any;
+  const bookId = String(entry?.bookId ?? "");
+  const progressPercent = clampPercent(entry?.progressPercent);
+  const savedAt = typeof entry?.savedAt === "number" && Number.isFinite(entry.savedAt)
+    ? entry.savedAt
+    : 0;
+  const existingId = typeof entry?.bookmarkId === "string" ? entry.bookmarkId.trim() : "";
   return {
-    bookId: String(entry?.bookId ?? ""),
+    bookId,
+    bookmarkId: existingId || `legacy-${savedAt}-${readOptionalNumber(entry?.pageIndex) ?? -1}-${Math.round(progressPercent * 1_000_000)}`,
     location: readOptionalString(entry?.location),
     href: readOptionalString(entry?.href),
     pageIndex: readOptionalNumber(entry?.pageIndex),
-    progressPercent: clampPercent(entry?.progressPercent),
+    progressPercent,
     label: typeof entry?.label === "string" ? entry.label : undefined,
-    savedAt: typeof entry?.savedAt === "number" && Number.isFinite(entry.savedAt)
-      ? entry.savedAt
-      : 0,
+    note: typeof entry?.note === "string" ? entry.note : undefined,
+    createdAtMs: readOptionalNumber(entry?.createdAtMs) ?? undefined,
+    updatedAtMs: readOptionalNumber(entry?.updatedAtMs) ?? undefined,
+    savedAt,
   };
 }
 
 export function createBookBookmark(entry: Omit<BookBookmarkEntry, "savedAt">, label?: string): BookBookmarkEntry {
-  return { ...entry, label: label ?? entry.label, savedAt: Date.now() };
+  const now = Date.now();
+  const cryptoApi = globalThis.crypto;
+  const bookmarkId = entry.bookmarkId ?? cryptoApi?.randomUUID?.() ?? `bookmark-${now.toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return {
+    ...entry,
+    bookmarkId,
+    createdAtMs: entry.createdAtMs ?? now,
+    updatedAtMs: entry.updatedAtMs ?? now,
+    label: label ?? entry.label,
+    savedAt: now,
+  };
 }
 
 function inferProgressRenderer(progress: BookProgress): BookSubtype | null {
