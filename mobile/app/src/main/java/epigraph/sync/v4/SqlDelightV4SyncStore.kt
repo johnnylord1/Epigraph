@@ -261,4 +261,21 @@ class SqlDelightV4SyncStore(
         }
         domainProgress?.clear(serverId)
     }
+
+    /**
+     * Hands V4 sync ownership to [newServerId] when switching Cores:
+     * moves any pending `v4_outbox` rows to [newServerId] (preserving their real HLCs and payloads)
+     * and clears `v4_entity_map`, `v4_sync_state`, pending extension prefs, and domain progress
+     * for all other servers.
+     */
+    fun handOverToServer(newServerId: String, newProfileId: String, domainProgress: V4SyncDomainProgress? = null) {
+        database.transaction {
+            queries.reassignV4OutboxToServer(newServerId = newServerId, newProfileId = newProfileId)
+            queries.deleteV4EntityMapExceptServer(newServerId)
+            queries.deleteV4SyncStateExceptServer(newServerId)
+            val serverKey = json.encodeToString(newServerId)
+            queries.clearV4PendingExtensionPrefsExceptServer("$serverKey/", "${serverKey}0")
+        }
+        domainProgress?.clearExcept(newServerId)
+    }
 }

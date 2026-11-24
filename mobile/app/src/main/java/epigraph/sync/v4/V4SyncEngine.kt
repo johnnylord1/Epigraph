@@ -6,6 +6,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
 sealed interface V4SyncRunResult {
@@ -80,6 +81,7 @@ class V4SyncEngine(
     )
 
     private fun persistClock(state: V4SyncCursorState, clock: V4HlcClock): V4SyncCursorState {
+        if (invalidated.get()) return state
         val (ts, counter, offset) = clock.snapshotState()
         val updated = state.copy(
             hlcLastTsMs = ts,
@@ -97,7 +99,26 @@ class V4SyncEngine(
      * - Normal reconnect: drains pending `v4_outbox` via `POST /v4/deltas`, then pulls paginated
      *   `GET /v4/changes?sinceSeq=...`.
      */
+    private val invalidated = AtomicBoolean(false)
+
+    /** Marks this engine as stale so it will not write state or outbox updates after handover/cleanup. */
+    fun invalidate() {
+        invalidated.set(true)
+    }
+
+    /**
+     * Invalidates this engine and waits for any pass already holding [syncMutex] to finish, so no
+     * write of the stale pass can land after the caller moves or clears its rows.
+     */
+    suspend fun invalidateAndAwaitIdle() {
+        invalidated.set(true)
+        syncMutex.withLock { }
+    }
+
     suspend fun syncOnce(accessToken: String): V4SyncRunResult = syncMutex.withLock {
+        if (invalidated.get()) {
+            return@withLock V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+        }
         var state = store.loadState(serverId, profileId)
         val previousSeq = state.serverSeq
         val clock = buildClock(state)
@@ -155,6 +176,9 @@ class V4SyncEngine(
             }
         }
 
+        if (invalidated.get()) {
+            return@withLock V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+        }
         state = persistClock(
             state.copy(serverSeq = cursor, minReplayableSeq = minReplayable),
             clock,
@@ -178,6 +202,9 @@ class V4SyncEngine(
      * Only invoked when local edits actually happened; idle reconnects stay on [syncOnce].
      */
     suspend fun syncWithLocalEdits(accessToken: String): V4SyncRunResult = syncMutex.withLock {
+        if (invalidated.get()) {
+            return@withLock V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+        }
         var state = store.loadState(serverId, profileId)
         val previousSeq = state.serverSeq
         val clock = buildClock(state)
@@ -253,6 +280,9 @@ class V4SyncEngine(
             }
         }
 
+        if (invalidated.get()) {
+            return@withLock V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+        }
         state = persistClock(
             state.copy(serverSeq = cursor, minReplayableSeq = minReplayable),
             clock,
@@ -280,9 +310,11 @@ class V4SyncEngine(
         }
         val currentSeq = store.loadState(serverId, profileId).serverSeq
         sse.stream(accessToken, sinceSeq = currentSeq) { msg ->
+            if (invalidated.get()) throw IOException("Engine invalidated")
             when (msg) {
                 is V4SseMessage.Delta -> {
                     syncMutex.withLock {
+                        if (invalidated.get()) throw IOException("Engine invalidated")
                         val cur = store.loadState(serverId, profileId)
                         if (msg.record.serverSeq <= cur.serverSeq) return@withLock
                         val clock = buildClock(cur)
@@ -303,6 +335,7 @@ class V4SyncEngine(
                 }
                 is V4SseMessage.ReplayExpired -> {
                     syncMutex.withLock {
+                        if (invalidated.get()) throw IOException("Engine invalidated")
                         val cur = store.loadState(serverId, profileId)
                         runFullMergeLocked(accessToken, cur, buildClock(cur)).requireSuccess()
                     }
@@ -543,6 +576,9 @@ class V4SyncEngine(
                         .mapNotNull { it.clientMutationId?.let { id -> id to "${it.code}: ${it.message}" } }
                         .toMap()
 
+                    if (invalidated.get()) {
+                        return V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+                    }
                     val ackedIds = due
                         .map { it.client_mutation_id }
                         .filter { it !in rejectedById }

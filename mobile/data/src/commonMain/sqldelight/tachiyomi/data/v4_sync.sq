@@ -284,3 +284,24 @@ WHERE kind = :kind AND source_or_plugin_id = :sourceOrPluginId AND pref_key = :p
 clearV4PendingExtensionPrefsForServer:
 DELETE FROM v4_pending_extension_prefs
 WHERE kind >= :scopePrefix AND kind < :scopeLimit;
+
+reassignV4OutboxToServer:
+UPDATE v4_outbox
+SET server_id = :newServerId,
+    profile_id = :newProfileId,
+    attempts = 0,
+    next_retry_at_ms = 0,
+    last_error = NULL
+WHERE server_id != :newServerId OR profile_id != :newProfileId;
+
+deleteV4EntityMapExceptServer:
+DELETE FROM v4_entity_map
+WHERE server_id != :serverId;
+
+deleteV4SyncStateExceptServer:
+DELETE FROM v4_sync_state
+WHERE server_id != :serverId;
+
+clearV4PendingExtensionPrefsExceptServer:
+DELETE FROM v4_pending_extension_prefs
+WHERE kind < :scopePrefix OR kind >= :scopeLimit;

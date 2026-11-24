@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - Library categories sync for comics, novels and books. A folder used by several libraries keeps one desktop category per library. A rename, reorder or delete of the folder reaches all of them, and books no longer take over the comic category.
 - A desktop category with the same name as an existing folder joins that folder instead of creating a duplicate, in every library.
 - Pairing with another desktop no longer deletes folders or their comics. When the desktop no longer lists a comic category, a folder that also holds novels or books stays and only loses its comics.
+- Re-pairing with the same desktop or switching to another Core preserves pending offline V4 sync edits with their original timestamps while clearing the previous Core's sync cursor, entity map, and domain progress.
 
 ## [android-0.1.0-alpha.1] - 2026-09-30
 

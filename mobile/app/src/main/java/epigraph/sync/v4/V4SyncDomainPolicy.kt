@@ -94,6 +94,7 @@ interface V4SyncDomainProgress {
     fun load(serverId: String, profileId: String): Set<String>?
     fun save(serverId: String, profileId: String, domains: Set<String>)
     fun clear(serverId: String)
+    fun clearExcept(serverId: String)
 }
 
 internal class SharedPreferencesV4SyncDomainProgress(context: Context) : V4SyncDomainProgress {
@@ -113,6 +114,16 @@ internal class SharedPreferencesV4SyncDomainProgress(context: Context) : V4SyncD
         }
         editor.apply()
     }
+    override fun clearExcept(serverId: String) {
+        val prefix = serverPrefix(serverId)
+        val editor = preferences.edit()
+        for (key in preferences.all.keys) {
+            if (!key.startsWith(prefix)) {
+                editor.remove(key)
+            }
+        }
+        editor.apply()
+    }
 }
 
 internal class MemoryV4SyncDomainProgress : V4SyncDomainProgress {
@@ -121,5 +132,8 @@ internal class MemoryV4SyncDomainProgress : V4SyncDomainProgress {
     override fun save(serverId: String, profileId: String, domains: Set<String>) { values[serverId to profileId] = domains.toSet() }
     override fun clear(serverId: String) {
         values.keys.removeAll { it.first == serverId }
+    }
+    override fun clearExcept(serverId: String) {
+        values.keys.removeAll { it.first != serverId }
     }
 }

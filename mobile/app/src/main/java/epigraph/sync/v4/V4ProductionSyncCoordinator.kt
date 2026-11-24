@@ -52,6 +52,7 @@ class V4ProductionSyncCoordinator(
     private val engines = ConcurrentHashMap<EngineKey, V4SyncEngine>()
     private val engineInitMutex = Mutex()
     private val localEditsPending = AtomicBoolean(false)
+    private val queueOwnerPrefs = appContext.getSharedPreferences("epigraph_v4_queue_owner_v1", Context.MODE_PRIVATE)
 
     /** Signals that a local edit occurred (online or offline) and must be merged on next V4 pass. */
     fun markLocalEditPending() {
@@ -60,9 +61,47 @@ class V4ProductionSyncCoordinator(
 
     /** Clears persisted V4 sync state and domain progress when unpairing a server. */
     fun clearServerState(serverId: String) {
-        engines.keys.removeAll { it.serverId == serverId }
+        val iterator = engines.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (entry.key.serverId == serverId) {
+                entry.value.invalidate()
+                iterator.remove()
+            }
+        }
         SqlDelightV4SyncStore(database).clearServerState(serverId, SharedPreferencesV4SyncDomainProgress(appContext))
     }
+
+    /**
+     * Hands V4 sync ownership to [serverId] when switching Cores:
+     * invalidates and evicts any stale engines for other servers, moves pending `v4_outbox` rows
+     * to [serverId] with their original HLCs, and clears other servers' sync state/entity map/progress.
+     */
+    suspend fun handOverIfNeeded(serverId: String, profileId: String) {
+        if (serverId.isBlank() || profileId.isBlank()) return
+        if (isQueueOwner(serverId, profileId)) return
+        engineInitMutex.withLock {
+            if (isQueueOwner(serverId, profileId)) return@withLock
+            val stale = engines.entries.filter { it.key.serverId != serverId || it.key.profileId != profileId }
+            for (entry in stale) {
+                engines.remove(entry.key, entry.value)
+                entry.value.invalidateAndAwaitIdle()
+            }
+            SqlDelightV4SyncStore(database).handOverToServer(
+                newServerId = serverId,
+                newProfileId = profileId,
+                domainProgress = SharedPreferencesV4SyncDomainProgress(appContext),
+            )
+            queueOwnerPrefs.edit()
+                .putString(QUEUE_OWNER_SERVER_KEY, serverId)
+                .putString(QUEUE_OWNER_PROFILE_KEY, profileId)
+                .commit()
+        }
+    }
+
+    private fun isQueueOwner(serverId: String, profileId: String): Boolean =
+        queueOwnerPrefs.getString(QUEUE_OWNER_SERVER_KEY, null) == serverId &&
+            queueOwnerPrefs.getString(QUEUE_OWNER_PROFILE_KEY, null) == profileId
 
     private data class EngineKey(
         val serverId: String,
@@ -170,6 +209,7 @@ class V4ProductionSyncCoordinator(
         drainBookAssets: suspend (Long) -> BookAssetDrainReport,
     ): CoreOutboxSyncOutcome {
         val startedNs = System.nanoTime()
+        handOverIfNeeded(session.serverId, session.profileId)
         val engine = getOrCreateEngine(session, openedOrigin)
         engine.useDomainPolicy(V4SyncDomainPolicy.from(policy))
         val hasLegacyPending = hasPendingLegacyOutbox(session.profileId, policy)
@@ -270,6 +310,7 @@ class V4ProductionSyncCoordinator(
         openedOrigin: String,
         policy: EffectiveSyncPolicy,
     ) {
+        handOverIfNeeded(session.serverId, session.profileId)
         val engine = getOrCreateEngine(session, openedOrigin)
         engine.useDomainPolicy(V4SyncDomainPolicy.from(policy))
         session.withAccessTokenString { token ->
@@ -278,6 +319,9 @@ class V4ProductionSyncCoordinator(
     }
 
     companion object {
+        private const val QUEUE_OWNER_SERVER_KEY = "server_id"
+        private const val QUEUE_OWNER_PROFILE_KEY = "profile_id"
+
         /**
          * Enqueues a durable `book.work` tombstone into `v4_outbox` inside the caller's active
          * SQLDelight transaction for every paired V4 Core so deleted books never resurrect.
