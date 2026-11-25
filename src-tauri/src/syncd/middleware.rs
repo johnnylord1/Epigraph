@@ -132,35 +132,6 @@ pub fn validate_scope(session: &AuthenticatedSession, scope: &str) -> Result<(),
     )))
 }
 
-pub fn filter_allowed_scopes<'a>(
-    session: &'a AuthenticatedSession,
-    scope_filter: Option<&'a str>,
-) -> Result<BTreeSet<String>, AppError> {
-    let mut allowed = BTreeSet::new();
-    if let Some(scope) = scope_filter {
-        validate_scope(session, scope)?;
-        allowed.insert(scope.to_string());
-        return Ok(allowed);
-    }
-
-    for scope in &session.scopes {
-        if scope == "books:global"
-            || scope == &format!("novels:profile:{}", session.profile_id)
-            || scope == &format!("comics:profile:{}", session.profile_id)
-        {
-            allowed.insert(scope.clone());
-        }
-    }
-
-    if allowed.is_empty() {
-        return Err(AppError::Forbidden(
-            "Authenticated token has no usable scopes.".to_string(),
-        ));
-    }
-
-    Ok(allowed)
-}
-
 pub fn bearer_token_public(headers: &HeaderMap) -> Result<String, AppError> {
     bearer_token(headers)
 }

@@ -79,44 +79,6 @@ pub enum AppError {
 }
 
 impl AppError {
-    pub fn replay_window_expired(
-        current_server_version: i64,
-        min_replayable_server_version: i64,
-    ) -> Self {
-        Self::Conflict(ErrorDetail {
-            code: "REPLAY_WINDOW_EXPIRED".to_string(),
-            message: "Client fell behind the replay retention window.".to_string(),
-            retryable: Some(false),
-            min_client_version: None,
-            current_server_version: Some(current_server_version),
-            min_replayable_server_version: Some(min_replayable_server_version),
-            required_action: Some("full_bootstrap".to_string()),
-            details: None,
-        })
-    }
-
-    /// A cursor beyond the newest published version can only come from an earlier server history
-    /// (for example a rewound change log). The client must rebuild from a snapshot; the code stays
-    /// `REPLAY_WINDOW_EXPIRED` so every client already knows how to recover.
-    pub fn replay_cursor_ahead(
-        cursor: i64,
-        current_server_version: i64,
-        min_replayable_server_version: i64,
-    ) -> Self {
-        Self::Conflict(ErrorDetail {
-            code: "REPLAY_WINDOW_EXPIRED".to_string(),
-            message: format!(
-                "Client cursor {cursor} is ahead of the server history ({current_server_version})."
-            ),
-            retryable: Some(false),
-            min_client_version: None,
-            current_server_version: Some(current_server_version),
-            min_replayable_server_version: Some(min_replayable_server_version),
-            required_action: Some("full_bootstrap".to_string()),
-            details: Some(serde_json::json!({ "reasonCode": "CURSOR_AHEAD_OF_SERVER" })),
-        })
-    }
-
     pub fn upgrade_required(
         code: impl Into<String>,
         message: impl Into<String>,
@@ -1075,13 +1037,6 @@ pub enum MutationOperation {
     Delete,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MutationsRequest {
-    pub request_id: String,
-    pub mutations: Vec<MutationInput>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EventClock {
@@ -1305,73 +1260,6 @@ pub struct MutationReceiptContext {
 }
 
 impl MutationInput {
-    pub fn entity_type(&self) -> MutationEntityType {
-        match self {
-            Self::BookEntry { .. } => MutationEntityType::BookEntry,
-            Self::BookCategory { .. } => MutationEntityType::BookCategory,
-            Self::BookCategoryAssignment { .. } => MutationEntityType::BookCategoryAssignment,
-            Self::BookLibraryUi { .. } => MutationEntityType::BookLibraryUi,
-            Self::BookProgress { .. } => MutationEntityType::BookProgress,
-            Self::NovelProgress { .. } => MutationEntityType::NovelProgress,
-            Self::BookBookmark { .. } => MutationEntityType::BookBookmark,
-            Self::BookHighlight { .. } => MutationEntityType::BookHighlight,
-            Self::BookHistory { .. } => MutationEntityType::BookHistory,
-            Self::NovelEntry { .. } => MutationEntityType::NovelEntry,
-            Self::NovelChapter { .. } => MutationEntityType::NovelChapter,
-            Self::NovelChapterAsset { .. } => MutationEntityType::NovelChapterAsset,
-            Self::NovelBookmark { .. } => MutationEntityType::NovelBookmark,
-            Self::NovelHistory { .. } => MutationEntityType::NovelHistory,
-            Self::NovelClassification { .. } => MutationEntityType::NovelClassification,
-            Self::NovelRepository { .. } => MutationEntityType::NovelRepository,
-            Self::NovelPlugin { .. } => MutationEntityType::NovelPlugin,
-            Self::NovelCategory { .. } => MutationEntityType::NovelCategory,
-            Self::NovelCategoryAssignment { .. } => MutationEntityType::NovelCategoryAssignment,
-            Self::ComicEntry { .. } => MutationEntityType::ComicEntry,
-            Self::ComicCategory { .. } => MutationEntityType::ComicCategory,
-            Self::ComicCategoryAssignment { .. } => MutationEntityType::ComicCategoryAssignment,
-            Self::ComicChapterState { .. } => MutationEntityType::ComicChapterState,
-            Self::ComicHistory { .. } => MutationEntityType::ComicHistory,
-            Self::ComicPageBookmark { .. } => MutationEntityType::ComicPageBookmark,
-            Self::ComicTracking { .. } => MutationEntityType::ComicTracking,
-            Self::NovelTracking { .. } => MutationEntityType::NovelTracking,
-            Self::ComicSourcePreference { .. } => MutationEntityType::ComicSourcePreference,
-            Self::NovelPluginSetting { .. } => MutationEntityType::NovelPluginSetting,
-        }
-    }
-
-    pub fn base(&self) -> &MutationBase {
-        match self {
-            Self::BookEntry { base, .. }
-            | Self::BookCategory { base, .. }
-            | Self::BookCategoryAssignment { base, .. }
-            | Self::BookLibraryUi { base, .. }
-            | Self::BookProgress { base, .. }
-            | Self::NovelProgress { base, .. }
-            | Self::BookBookmark { base, .. }
-            | Self::BookHighlight { base, .. }
-            | Self::BookHistory { base, .. }
-            | Self::NovelEntry { base, .. }
-            | Self::NovelChapter { base, .. }
-            | Self::NovelChapterAsset { base, .. }
-            | Self::NovelBookmark { base, .. }
-            | Self::NovelHistory { base, .. }
-            | Self::NovelClassification { base, .. }
-            | Self::NovelRepository { base, .. }
-            | Self::NovelPlugin { base, .. }
-            | Self::NovelCategory { base, .. }
-            | Self::NovelCategoryAssignment { base, .. }
-            | Self::ComicEntry { base, .. }
-            | Self::ComicCategory { base, .. }
-            | Self::ComicCategoryAssignment { base, .. }
-            | Self::ComicChapterState { base, .. }
-            | Self::ComicHistory { base, .. }
-            | Self::ComicPageBookmark { base, .. }
-            | Self::ComicTracking { base, .. }
-            | Self::NovelTracking { base, .. }
-            | Self::ComicSourcePreference { base, .. }
-            | Self::NovelPluginSetting { base, .. } => base,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1563,13 +1451,6 @@ impl PortableWorkRefV3 {
         }
     }
 
-    pub fn novel(plugin_id: impl Into<String>, novel_key: impl Into<String>) -> Self {
-        Self::Novel {
-            plugin_id: plugin_id.into(),
-            novel_key: novel_key.into(),
-        }
-    }
-
     pub fn validate(&self) -> Result<(), &'static str> {
         match self {
             Self::Comic {
@@ -1606,20 +1487,6 @@ pub enum PortableChapterRefV3 {
 }
 
 impl PortableChapterRefV3 {
-    pub fn comic(work: PortableWorkRefV3, chapter_key: impl Into<String>) -> Self {
-        Self::Comic {
-            work,
-            chapter_key: chapter_key.into(),
-        }
-    }
-
-    pub fn novel(work: PortableWorkRefV3, chapter_key: impl Into<String>) -> Self {
-        Self::Novel {
-            work,
-            chapter_key: chapter_key.into(),
-        }
-    }
-
     pub fn validate(&self) -> Result<(), &'static str> {
         match self {
             Self::Comic { work, chapter_key } => {
@@ -2246,14 +2113,6 @@ pub struct ComicPageBookmarkPatch {
     pub page_count: Option<i64>,
     pub label: Option<String>,
     pub saved_at_ms: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MutationsResponse {
-    pub request_id: String,
-    pub current_server_version: i64,
-    pub results: Vec<MutationResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -364,39 +364,6 @@ pub fn parse_projection_variables(variables: &Value) -> Option<(String, String, 
 // Suwayomi GraphQL
 // ---------------------------------------------------------------------------------------------
 
-const PREFERENCE_FIELDS: &str = r#"
-      __typename
-      ... on CheckBoxPreference { key enabled checkBoxDefault: default checkBoxCurrent: currentValue }
-      ... on SwitchPreference { key enabled switchDefault: default switchCurrent: currentValue }
-      ... on ListPreference { key enabled entryValues listDefault: default listCurrent: currentValue }
-      ... on EditTextPreference { key enabled editTextDefault: default editTextCurrent: currentValue }
-      ... on MultiSelectListPreference { key enabled entryValues multiSelectDefault: default multiSelectCurrent: currentValue }
-"#;
-
-pub fn source_preferences_query() -> String {
-    format!(
-        r#"
-  query EpigraphSourcePreferenceSync($id: LongString!) {{
-    source(id: $id) {{
-      preferences {{ {PREFERENCE_FIELDS} }}
-    }}
-  }}
-"#
-    )
-}
-
-pub fn update_source_preference_mutation() -> String {
-    format!(
-        r#"
-  mutation EpigraphSourcePreferenceSyncUpdate($input: UpdateSourcePreferenceInput!) {{
-    updateSourcePreference(input: $input) {{
-      preferences {{ {PREFERENCE_FIELDS} }}
-    }}
-  }}
-"#
-    )
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreferenceKind {
     CheckBox,

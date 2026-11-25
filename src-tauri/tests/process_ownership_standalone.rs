@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[path = "../src/process_ownership.rs"]
 mod process_ownership;
 use process_ownership::*;

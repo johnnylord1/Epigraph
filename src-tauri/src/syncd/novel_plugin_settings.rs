@@ -17,7 +17,6 @@ use serde_json::{json, Value};
 
 use super::source_preferences::{is_syncable_key, PreferenceValue, MAX_KEY_BYTES, MAX_RECORD_BYTES};
 
-pub const NOVEL_PLUGIN_SETTING: &str = "novel.plugin_setting";
 const ENTITY_PREFIX: &str = "novel.plugin_setting::";
 pub const MAX_PLUGIN_ID_BYTES: usize = 128;
 

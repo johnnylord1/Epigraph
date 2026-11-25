@@ -8,16 +8,11 @@ mod suwayomi_recovery;
 mod suwayomi_runtime;
 #[allow(dead_code)]
 mod suwayomi_runtime_store;
+// This binary compiles the whole `syncd` tree but runs only the daemon half. The desktop app
+// (`epigraph_lib`) uses the rest, so those items look unused here. To find real dead code, delete
+// what this target reports and keep only what still compiles with `cargo check --bins --lib --tests`.
+#[allow(dead_code)]
 mod syncd;
-
-// `desktop_library` is exercised by `v4_desktop_sync` in `epigraph_lib`; keep its entrypoints
-// reachable here without suppressing real `dead_code` warnings inside `desktop_library.rs`.
-const _: () = {
-    let _ = syncd::v4::desktop_library::export_desktop_novels_to_v4;
-    let _ = syncd::v4::desktop_library::apply_v4_records_to_desktop_novels;
-    let _ = syncd::v4::desktop_library::export_desktop_books_to_v4;
-    let _ = syncd::v4::desktop_library::apply_v4_records_to_desktop_books;
-};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
