@@ -2046,3 +2046,83 @@ async fn v4_mid_sync_core_restart_preserves_cursor_idempotency_and_convergence()
     assert_eq!(snap_desktop["recordCount"], json!(6));
     assert_eq!(snap_phone["records"], snap_desktop["records"]);
 }
+
+async fn store_unprojected_phone_category(app: &axum::Router, token: &str) {
+    let (status, _, _) = v4_request(
+        app,
+        Method::POST,
+        "/v4/sync/bulk",
+        token,
+        Some(json!({"finalBatch":true,"items":[{
+            "domain":"comics","entityType":"comic.category","entityKey":"from-phone",
+            "hlc":{"tsMs":1,"deviceId":"phone"},"payload":{"name":"From phone","order":1}
+        }]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+async fn stored_categories(state: &SharedAppState) -> Vec<(String, i64)> {
+    sqlx::query_as(
+        "SELECT entity_key, deleted FROM v4_records
+         WHERE profile_id = 'profile-alpha' AND entity_type = 'comic.category'",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn desktop_catalog_capture_skips_while_a_phone_category_awaits_projection() {
+    let (_temp, state, app, token, _) = build_v4_test_env().await;
+    store_unprojected_phone_category(&app, &token).await;
+    // A closed port: never reach a real Suwayomi from a test.
+    state
+        .config
+        .set_suwayomi_proxy_test_upstream("profile-alpha", "http://127.0.0.1:9/");
+    let runtime = V4Runtime::new();
+    // No Suwayomi answers here: reading it would fail, so Ok proves the capture never diffed a
+    // Suwayomi that lacks the phone's category, and the category must survive untouched.
+    super::suwayomi::capture_local_edits_with_wait(
+        &state,
+        &runtime,
+        "profile-alpha",
+        Vec::new(),
+        Vec::new(),
+        true,
+        std::time::Duration::from_millis(50),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
+}
+
+#[tokio::test]
+async fn desktop_catalog_capture_reads_suwayomi_once_the_projection_settles() {
+    let (_temp, state, app, token, _) = build_v4_test_env().await;
+    store_unprojected_phone_category(&app, &token).await;
+    // A closed port: never reach a real Suwayomi from a test.
+    state
+        .config
+        .set_suwayomi_proxy_test_upstream("profile-alpha", "http://127.0.0.1:9/");
+    sqlx::query(
+        "UPDATE v4_comics_projection SET applied_seq = target_seq WHERE profile_id = 'profile-alpha'",
+    )
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    let runtime = V4Runtime::new();
+    // Settled: the capture goes on to read Suwayomi, which is unreachable in this test.
+    let result = super::suwayomi::capture_local_edits_with_wait(
+        &state,
+        &runtime,
+        "profile-alpha",
+        Vec::new(),
+        Vec::new(),
+        true,
+        std::time::Duration::from_millis(50),
+    )
+    .await;
+    assert!(result.is_err(), "a settled projection must let the catalog capture read Suwayomi");
+    assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
+}

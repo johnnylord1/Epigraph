@@ -34,6 +34,11 @@ const WORK_PAGE_SIZE: usize = 500;
 const CHAPTER_PAGE_SIZE: usize = 2_000;
 const COMIC_PROJECTION_TOKEN: &str = "epigraph-v4-comics-projection";
 const LOCAL_DESKTOP_ORIGIN: &str = "epigraph-desktop";
+/// How long a catalog capture waits for remote comic records to reach Suwayomi.
+const CATALOG_PROJECTION_WAIT: Duration = Duration::from_secs(30);
+const CATALOG_PROJECTION_POLL: Duration = Duration::from_millis(200);
+/// Snapshots retried when another device commits between the snapshot and the write gate.
+const CATALOG_CAPTURE_ATTEMPTS: usize = 3;
 
 pub(in crate::syncd) async fn capture_local_edits(
     state: &SharedAppState,
@@ -42,6 +47,27 @@ pub(in crate::syncd) async fn capture_local_edits(
     work_ids: Vec<i64>,
     chapter_ids: Vec<i64>,
     catalog: bool,
+) -> anyhow::Result<()> {
+    capture_local_edits_with_wait(
+        state,
+        runtime,
+        profile,
+        work_ids,
+        chapter_ids,
+        catalog,
+        CATALOG_PROJECTION_WAIT,
+    )
+    .await
+}
+
+pub(super) async fn capture_local_edits_with_wait(
+    state: &SharedAppState,
+    runtime: &V4Runtime,
+    profile: &str,
+    work_ids: Vec<i64>,
+    chapter_ids: Vec<i64>,
+    catalog: bool,
+    projection_wait: Duration,
 ) -> anyhow::Result<()> {
     // Only project local edits onto V4 profiles after that protocol has initialized.
     if db::load_watermark(&state.pool, profile).await?.current_seq == 0 {
@@ -119,7 +145,12 @@ pub(in crate::syncd) async fn capture_local_edits(
             parents.entry(work).or_insert(payload);
         }
     }
-    let catalog_snapshot = if catalog {
+    // The catalog diff tombstones what Suwayomi lacks and re-sends what differs, so it may only
+    // read a Suwayomi that already shows every stored comic record. Otherwise a phone's category
+    // change that is still waiting for projection would be undone for every device.
+    let mut catalog_guard = None;
+    let mut catalog_snapshot = None;
+    if catalog {
         let categories_query = r#"
           query EpigraphV4LocalCategories($first: Int!, $offset: Int!) {
             categories(first: $first, offset: $offset) {
@@ -143,25 +174,45 @@ pub(in crate::syncd) async fn capture_local_edits(
             }
           }
         "#;
-        let categories = read_nodes(
-            state,
-            &session,
-            categories_query,
-            "categories",
-            500,
-            json!({}),
-        )
-        .await?;
-        let library_works =
-            read_nodes(state, &session, library_query, "mangas", 500, json!({})).await?;
-        Some((categories, library_works))
-    } else {
-        None
-    };
+        for _ in 0..CATALOG_CAPTURE_ATTEMPTS {
+            let Some(before) =
+                wait_for_settled_projection(&state.pool, profile, projection_wait).await?
+            else {
+                break;
+            };
+            let categories = read_nodes(
+                state,
+                &session,
+                categories_query,
+                "categories",
+                500,
+                json!({}),
+            )
+            .await?;
+            let library_works =
+                read_nodes(state, &session, library_query, "mangas", 500, json!({})).await?;
+            let guard = runtime.write_gate.lock().await;
+            let after = load_projection_progress(&state.pool, profile).await?;
+            if catalog_snapshot_is_current(before, after) {
+                catalog_guard = Some(guard);
+                catalog_snapshot = Some((categories, library_works));
+                break;
+            }
+        }
+        if catalog_snapshot.is_none() {
+            tracing::warn!(
+                %profile,
+                "V4 desktop category capture skipped: remote comic changes are still reaching Suwayomi"
+            );
+        }
+    }
     if updates.is_empty() && parents.is_empty() && catalog_snapshot.is_none() {
         return Ok(());
     }
-    let _guard = runtime.write_gate.lock().await;
+    let _guard = match catalog_guard {
+        Some(guard) => guard,
+        None => runtime.write_gate.lock().await,
+    };
     let now = crate::syncd::db::now_ms();
     let watermark = db::load_watermark(&state.pool, profile).await?;
     let mut items = Vec::new();
@@ -238,6 +289,63 @@ pub(in crate::syncd) async fn capture_local_edits(
     }
     wake_projection();
     Ok(())
+}
+
+/// The comic projection cursor of a profile: Suwayomi shows every record up to `applied`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProjectionProgress {
+    applied: i64,
+    target: i64,
+}
+
+impl ProjectionProgress {
+    fn settled(progress: Option<Self>) -> bool {
+        progress.is_none_or(|progress| progress.applied >= progress.target)
+    }
+}
+
+async fn load_projection_progress(
+    pool: &sqlx::SqlitePool,
+    profile: &str,
+) -> anyhow::Result<Option<ProjectionProgress>> {
+    let row: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT applied_seq, target_seq FROM v4_comics_projection WHERE profile_id = ?",
+    )
+    .bind(profile)
+    .fetch_optional(pool)
+    .await
+    .context("failed to read the V4 comic projection cursor")?;
+    Ok(row.map(|(applied, target)| ProjectionProgress { applied, target }))
+}
+
+/// Waits until Suwayomi shows every stored comic record of the profile. Returns the settled
+/// cursor (`None` inside when the profile never projected), or `None` when the wait ran out.
+async fn wait_for_settled_projection(
+    pool: &sqlx::SqlitePool,
+    profile: &str,
+    timeout: Duration,
+) -> anyhow::Result<Option<Option<ProjectionProgress>>> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let progress = load_projection_progress(pool, profile).await?;
+        if ProjectionProgress::settled(progress) {
+            return Ok(Some(progress));
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        wake_projection();
+        tokio::time::sleep(CATALOG_PROJECTION_POLL.min(timeout)).await;
+    }
+}
+
+/// A snapshot read after `before` is complete only if nothing new was committed for the
+/// profile before the write gate was taken and the projection is still settled.
+fn catalog_snapshot_is_current(
+    before: Option<ProjectionProgress>,
+    after: Option<ProjectionProgress>,
+) -> bool {
+    before == after && ProjectionProgress::settled(after)
 }
 
 fn is_reserved_category_name(name: &str) -> bool {
@@ -1546,5 +1654,24 @@ mod tests {
                 || key == "1:/missing|action"
                 || key == "1:/a|completed"
         }));
+    }
+
+    #[test]
+    fn catalog_snapshot_is_used_only_while_the_projection_stays_settled() {
+        let settled = |seq| Some(ProjectionProgress { applied: seq, target: seq });
+        assert!(catalog_snapshot_is_current(None, None));
+        assert!(catalog_snapshot_is_current(settled(5), settled(5)));
+        // A phone commit between the snapshot and the write gate moves the target.
+        assert!(!catalog_snapshot_is_current(
+            settled(5),
+            Some(ProjectionProgress { applied: 5, target: 6 })
+        ));
+        // A first remote record for a profile that never projected.
+        assert!(!catalog_snapshot_is_current(None, settled(1)));
+        assert!(!catalog_snapshot_is_current(settled(5), settled(6)));
+        assert!(!ProjectionProgress::settled(Some(ProjectionProgress {
+            applied: 0,
+            target: 3
+        })));
     }
 }

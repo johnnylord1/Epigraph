@@ -35,6 +35,7 @@ All `/v4/*` routes require `require_v4_session`, which validates `X-Epigraph-Cli
   - **Novels & Books**: connects each hosted profile to `/v4/*`, performs startup catch-up, subscribes to `GET /v4/events` SSE to apply remote deltas directly into `library_sqlite`, uploads book files and covers to `/v1/assets/:sha256`, and pushes local Desktop UI saves (including delete tombstones) via `POST /v4/deltas`.
   - **Extensions & Preferences**: syncs desktop novel repositories, plugins, and settings over Sync V4.
   - **Comics**: projected through the Suwayomi integration; local Desktop edits—including comic category creation, reordering, assignment changes, and deletions (`catalog: true` on `/v1/local/progress-mirror`)—are captured into Sync V4 records.
+    - Before reading Desktop categories, the capture waits (up to 30 s) until remote comic changes have been projected into Suwayomi, then confirms under the V4 write lock that nothing new arrived. If remote changes keep arriving after 3 attempts, it skips only the category part and logs a warning, so a phone edit that has not reached Suwayomi yet is never overwritten. A skipped Desktop-only category edit is picked up by the next catalog capture.
 
 ## Compatibility Boundaries
 
