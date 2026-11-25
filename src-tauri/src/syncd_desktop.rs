@@ -908,7 +908,7 @@ pub struct SyncdSyncProgress {
     pub landed: Option<crate::syncd::landed_works::LandedWorksView>,
     /// Works a paired device synced that this computer could not find; absent from older Cores.
     #[serde(default)]
-    pub not_found_works: Vec<crate::syncd::suwayomi_projection::NotFoundWork>,
+    pub not_found_works: Vec<crate::syncd::routes::local::NotFoundWork>,
 }
 
 /// What the running Core still has to apply from paired devices (works, progress, categories and

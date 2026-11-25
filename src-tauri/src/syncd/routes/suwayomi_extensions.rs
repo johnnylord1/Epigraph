@@ -25,18 +25,6 @@ const EXTENSIONS_V23_QUERY: &str = r#"
   }
 "#;
 
-const EXTENSIONS_V21_QUERY: &str = r#"
-  query EpigraphCoreExtensionInventory {
-    aboutServer { version revision buildType }
-    sources {
-      nodes {
-        id name displayName lang
-        extension { pkgName name versionName versionCode isInstalled repo }
-      }
-    }
-  }
-"#;
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CoreExtensionSource {
@@ -98,25 +86,7 @@ pub(crate) async fn load_inventory(
     .await
     {
         Ok(data) => (data, "versionCodeLong", "storeIndexUrl"),
-        Err(v23_error) => {
-            if super::portable_manifest::runtime_supports_v23_manifest(state, session).await
-                != Some(false)
-            {
-                return Err(v23_error);
-            }
-            (
-                suwayomi_catalog::execute_graphql_document(
-                    state,
-                    session,
-                    EXTENSIONS_V21_QUERY,
-                    json!({}),
-                    false,
-                )
-                .await?,
-                "versionCode",
-                "repo",
-            )
-        }
+        Err(v23_error) => return Err(v23_error),
     };
 
     let mut extensions = normalize_inventory(&data.0, data.1, data.2)?;
@@ -228,7 +198,7 @@ fn merge_portable_dependencies(
         let store_index_url = package_hints
             .iter()
             .find_map(|hint| hint.store_index_url.as_deref())
-            .and_then(super::portable_manifest::sanitize_extension_store_url);
+            .and_then(sanitize_extension_store_url);
         let mut sources = package_hints
             .iter()
             .filter_map(|hint| canonical_source_id(&hint.source_id).map(|id| (id, hint)))
@@ -377,7 +347,7 @@ fn normalize_inventory(
         let repository_url = extension
             .get(store_index_field)
             .and_then(Value::as_str)
-            .and_then(super::portable_manifest::sanitize_extension_store_url);
+            .and_then(sanitize_extension_store_url);
         // Suwayomi 2.1 exposes the old `repo` field. It is useful provenance for an
         // explicit mobile resolution step, but it is not an Extension Store reference
         // and must never be promoted to the modern portable dependency contract.
@@ -454,6 +424,20 @@ pub(crate) fn runtime_fingerprint(data: &Value) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn sanitize_extension_store_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parsed = reqwest::Url::parse(trimmed).ok()?;
+    (matches!(parsed.scheme(), "http" | "https")
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none())
+    .then(|| trimmed.to_string())
 }
 
 #[cfg(test)]
@@ -535,7 +519,7 @@ mod tests {
 
     #[test]
     fn production_inventory_queries_do_not_request_the_full_extension_catalog() {
-        for query in [EXTENSIONS_V23_QUERY, EXTENSIONS_V21_QUERY] {
+        for query in [EXTENSIONS_V23_QUERY] {
             assert!(!query.contains("extensions {"));
             assert!(query.contains("sources {"));
             assert!(query.contains("extension { pkgName"));

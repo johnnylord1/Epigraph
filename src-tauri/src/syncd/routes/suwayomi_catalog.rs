@@ -4,10 +4,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::syncd::{
-    catalog_revision, db, suwayomi_progress_mirror, suwayomi_projection,
-    suwayomi_source_preference_mirror, suwayomi_tracking_mirror,
-};
+use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
 use crate::syncd::routes::suwayomi_proxy;
@@ -296,60 +293,7 @@ pub(crate) async fn execute_graphql_document(
     variables: Value,
     mutation: bool,
 ) -> Result<Value, AppError> {
-    // Dropped before the write so it is not announced meanwhile, and after it so a revision read
-    // while it ran is not stored.
-    let catalog_write = mutation && catalog_revision::mutation_may_change_catalog(document);
-    if catalog_write {
-        catalog_revision::invalidate(&session.profile_id);
-    }
-    let result = send_graphql_document(state, session, document, variables, mutation).await;
-    if catalog_write {
-        catalog_revision::invalidate(&session.profile_id);
-        match catalog_write_notice(&session.token_id) {
-            CatalogWriteNotice::Now => {
-                suwayomi_progress_mirror::request_catalog_refresh();
-                suwayomi_progress_mirror::request_immediate_mirror(&[], &[]);
-            }
-            CatalogWriteNotice::AfterProjectionQueue => suwayomi_projection::note_catalog_write(),
-            CatalogWriteNotice::None => {}
-        }
-    }
-    result
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum CatalogWriteNotice {
-    /// Recompute now, so other devices hear about a device's change in seconds.
-    Now,
-    /// One read of the whole library per queue: each read per write would compete with the queue.
-    AfterProjectionQueue,
-    /// The mirrors write inside that recomputation, so they must not ask for another one.
-    None,
-}
-
-fn catalog_write_notice(token_id: &str) -> CatalogWriteNotice {
-    if token_id == suwayomi_progress_mirror::MIRROR_TOKEN_ID
-        || token_id == suwayomi_tracking_mirror::MIRROR_TOKEN_ID
-        || token_id == suwayomi_source_preference_mirror::MIRROR_TOKEN_ID
-    {
-        CatalogWriteNotice::None
-    } else if token_id == suwayomi_projection::PROJECTION_TOKEN_ID {
-        CatalogWriteNotice::AfterProjectionQueue
-    } else {
-        CatalogWriteNotice::Now
-    }
-}
-
-/// A source fetch, whose effect on the catalog revisions the next mirror tick picks up. Unlike
-/// [`execute_graphql_document`] it does not drop them, so a source that keeps failing does not keep
-/// them hidden; a caller whose fetch really changes a title drops them itself.
-pub(crate) async fn execute_source_fetch(
-    state: &SharedAppState,
-    session: &AuthenticatedSession,
-    document: &str,
-    variables: Value,
-) -> Result<Value, AppError> {
-    send_graphql_document(state, session, document, variables, true).await
+    send_graphql_document(state, session, document, variables, mutation).await
 }
 
 async fn send_graphql_document(
@@ -514,27 +458,6 @@ fn graphql_error_summary(errors: &[Value]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn catalog_writes_announce_by_who_wrote_them() {
-        assert_eq!(catalog_write_notice("a-device-token"), CatalogWriteNotice::Now);
-        assert_eq!(
-            catalog_write_notice(suwayomi_projection::PROJECTION_TOKEN_ID),
-            CatalogWriteNotice::AfterProjectionQueue
-        );
-        assert_eq!(
-            catalog_write_notice(suwayomi_progress_mirror::MIRROR_TOKEN_ID),
-            CatalogWriteNotice::None
-        );
-        assert_eq!(
-            catalog_write_notice(suwayomi_tracking_mirror::MIRROR_TOKEN_ID),
-            CatalogWriteNotice::None
-        );
-        assert_eq!(
-            catalog_write_notice(suwayomi_source_preference_mirror::MIRROR_TOKEN_ID),
-            CatalogWriteNotice::None
-        );
-    }
 
     #[test]
     fn graphql_failures_are_summarized_for_the_log() {

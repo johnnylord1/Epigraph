@@ -1,5 +1,6 @@
 //! Converts portable comic state to the same Mihon backup format supported by Suwayomi.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -19,7 +20,15 @@ use crate::syncd::routes::suwayomi_commands::{self, CommandOperation};
 use crate::syncd::routes::suwayomi_import::{
     restore_backup_confirmed, ImportCategory, ImportChapter, ImportTracking, ImportWork,
 };
+use crate::syncd::landed_works;
 use crate::syncd::routes::{suwayomi_catalog, suwayomi_proxy};
+
+/// Comic batches Suwayomi confirmed since Core started; the desktop window watches it move.
+static APPLIED_PROJECTIONS: AtomicU64 = AtomicU64::new(0);
+
+pub fn applied_projection_count() -> u64 {
+    APPLIED_PROJECTIONS.load(Ordering::Relaxed)
+}
 
 const WORK_PAGE_SIZE: usize = 500;
 const CHAPTER_PAGE_SIZE: usize = 2_000;
@@ -295,20 +304,40 @@ async fn project_comic_changes(
                 || record.entity_type == "comic.work" && record.payload["favorite"] == false
         })
         .collect::<Vec<_>>();
+    let mut restored = applied == 0 || needs_restore;
+    let mut touched = Vec::new();
     if !direct.is_empty() {
-        let applied = apply_direct_updates(state, session, &direct).await;
+        let result = apply_direct_updates(state, session, &direct).await;
         if !needs_restore
-            && applied
+            && result
                 .as_ref()
                 .is_err_and(|error| error.is::<MissingComicTarget>())
         {
             restore_current_snapshot(state, session).await?;
-            apply_direct_updates(state, session, &direct).await?;
+            restored = true;
+            touched = apply_direct_updates(state, session, &direct).await?;
         } else {
-            applied?;
+            touched = result?;
         }
     }
+    let catalog = restored
+        || changes
+            .iter()
+            .any(|record| record.entity_type != "comic.chapter");
+    record_landed_projection(&session.profile_id, catalog, &touched);
     Ok(())
+}
+
+fn record_landed_projection(profile_id: &str, catalog: bool, touched: &[i64]) {
+    APPLIED_PROJECTIONS.fetch_add(1, Ordering::Relaxed);
+    if catalog {
+        // A restore or a membership change can reach any work, so the window reads the library.
+        landed_works::record_projection(profile_id, "UpdateManga", &json!({}));
+        return;
+    }
+    for &manga_id in touched {
+        landed_works::record_work(profile_id, manga_id);
+    }
 }
 
 async fn restore_current_snapshot(
@@ -397,11 +426,12 @@ const UNBIND_TRACK: &str = r#"
   }
 "#;
 
+/// Returns the Suwayomi ids of the works it changed.
 async fn apply_direct_updates(
     state: &SharedAppState,
     session: &AuthenticatedSession,
     records: &[&V4WireRecord],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<i64>> {
     let manga_nodes = read_nodes(
         state,
         session,
@@ -561,7 +591,12 @@ async fn apply_direct_updates(
             }
         }
     }
-    apply_relation_deletes(state, session, records, &mangas).await
+    apply_relation_deletes(state, session, records, &mangas).await?;
+    let mut touched = removed;
+    touched.extend(chapters.keys().copied());
+    touched.sort_unstable();
+    touched.dedup();
+    Ok(touched)
 }
 
 fn chapter_by_number<'a>(chapters: &[&'a Value], fields: &Value) -> Option<&'a Value> {
@@ -1037,6 +1072,35 @@ mod tests {
     use super::*;
     use crate::syncd::v4::hlc::Hlc;
     use serde_json::json;
+
+    #[test]
+    fn a_landed_projection_tells_the_desktop_window_what_changed() {
+        let profile = "landing-wiring-profile";
+        let before = landed_works::view(None);
+        let count = applied_projection_count();
+
+        record_landed_projection(profile, false, &[7, 9]);
+        let chapters = landed_works::view(Some(before.sequence));
+        let mut works = chapters
+            .works
+            .iter()
+            .filter(|work| work.profile_id == profile)
+            .map(|work| work.manga_id)
+            .collect::<Vec<_>>();
+        works.sort_unstable();
+        assert_eq!(works, vec![7, 9]);
+        assert!(applied_projection_count() > count);
+
+        // A restore or membership change cannot name its works, so the window re-reads the library.
+        record_landed_projection(profile, true, &[11]);
+        let catalog = landed_works::view(Some(chapters.sequence));
+        assert!(catalog.catalog_sequence > chapters.sequence);
+        assert!(catalog.floor > chapters.sequence);
+        assert!(!catalog
+            .works
+            .iter()
+            .any(|work| work.profile_id == profile && work.manga_id == 11));
+    }
 
     #[test]
     fn backup_plan_restores_bookmarks_history_tracking_and_category_zero() {

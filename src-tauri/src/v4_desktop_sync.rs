@@ -29,10 +29,18 @@ use crate::syncd::v4::desktop_library::{
     apply_v4_records_to_desktop_books, apply_v4_records_to_desktop_novels,
     export_desktop_books_to_v4, export_desktop_novels_to_v4,
 };
+use crate::syncd::v4::desktop_extensions::{
+    apply_v4_records_to_desktop_novel_plugin_settings, export_desktop_novel_extensions_to_v4,
+    export_desktop_novel_plugin_settings_to_v4,
+};
 use crate::syncd::v4::hlc::{canonical_work_key, Hlc};
 use crate::syncd_desktop::desktop_state_dir;
+use crate::syncd_replication::{
+    apply_v4_novel_dependency_records, note_v4_novel_dependency_deletes,
+};
 use crate::{
-    book_library_state_path_for_profile, novel_library_state_path_for_target, LaunchTarget,
+    book_library_state_path_for_profile, novel_library_state_path_for_target,
+    novel_plugin_settings_path_for_target, novel_repository_state_path_for_target, LaunchTarget,
 };
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
@@ -136,6 +144,29 @@ fn observe_profile_hlc(profile_id: &str, remote: &Hlc) {
     }
 }
 
+/// Local documents the Desktop publishes, each exported to its own V4 items.
+const DOC_BOOKS: &str = "books";
+const DOC_NOVELS: &str = "novels";
+const DOC_NOVEL_EXTENSIONS: &str = "novel_extensions";
+const DOC_NOVEL_PLUGIN_SETTINGS: &str = "novel_plugin_settings";
+
+fn export_document_to_v4(
+    document: &str,
+    doc: &Value,
+    device_id: &str,
+    base_ts_ms: i64,
+) -> Vec<V4IncomingItem> {
+    match document {
+        DOC_BOOKS => export_desktop_books_to_v4(doc, device_id, base_ts_ms),
+        DOC_NOVELS => export_desktop_novels_to_v4(doc, device_id, base_ts_ms),
+        DOC_NOVEL_EXTENSIONS => export_desktop_novel_extensions_to_v4(doc, device_id, base_ts_ms),
+        DOC_NOVEL_PLUGIN_SETTINGS => {
+            export_desktop_novel_plugin_settings_to_v4(doc, device_id, base_ts_ms)
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn enqueue_stamped_diff(
     profile_id: &str,
     domain: &'static str,
@@ -150,55 +181,45 @@ fn enqueue_stamped_diff(
     let Some(device_id) = device_id else {
         return Ok(());
     };
-    let loaded = if domain == "books" {
-        loaded_books()
+    let loaded = match domain {
+        DOC_BOOKS => Some(loaded_books()),
+        DOC_NOVELS => Some(loaded_novels()),
+        _ => None,
+    }
+    .map(|loaded| {
+        loaded
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(profile_id)
             .cloned()
             .unwrap_or_default()
-    } else {
-        loaded_novels()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(profile_id)
-            .cloned()
-            .unwrap_or_default()
-    };
+    });
     let now = now_ms();
     let previous = previous_contents
         .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-        .map(|doc| {
-            if domain == "books" {
-                export_desktop_books_to_v4(&doc, &device_id, now)
-            } else {
-                export_desktop_novels_to_v4(&doc, &device_id, now)
-            }
-        })
+        .map(|doc| export_document_to_v4(domain, &doc, &device_id, now))
         .unwrap_or_default();
     let next_doc: Value = serde_json::from_str(next_contents).map_err(|error| error.to_string())?;
-    let next = if domain == "books" {
-        export_desktop_books_to_v4(&next_doc, &device_id, now)
-    } else {
-        export_desktop_novels_to_v4(&next_doc, &device_id, now)
-    };
-    let work_type = if domain == "books" {
-        "book.work"
-    } else {
-        "novel.work"
-    };
-    let mut items = diff_v4_items_with_work_delete_gate(
-        previous,
-        next,
-        &device_id,
-        now,
-        Some((work_type, &loaded)),
-    );
+    let next = export_document_to_v4(domain, &next_doc, &device_id, now);
+    let gate = loaded.as_ref().map(|loaded| {
+        let work_type = if domain == DOC_BOOKS {
+            "book.work"
+        } else {
+            "novel.work"
+        };
+        (work_type, loaded)
+    });
+    let mut items = diff_v4_items_with_work_delete_gate(previous, next, &device_id, now, gate);
     for item in &mut items {
         item.hlc = next_profile_hlc(profile_id, &device_id, now);
     }
     if items.is_empty() {
         return Ok(());
+    }
+    if domain == DOC_NOVEL_EXTENSIONS {
+        if let Err(error) = note_v4_novel_dependency_deletes(profile_id, &items) {
+            tracing::debug!(profile = %profile_id, error = %error, "V4 novel dependency delete note failed");
+        }
     }
     let sender = {
         let mut queues = publish_queues().lock().unwrap_or_else(|e| e.into_inner());
@@ -216,25 +237,31 @@ fn enqueue_stamped_diff(
                         .get(&queue_profile)
                         .cloned();
                     let Some(conn) = conn else { continue };
+                    let work_type = match batch.domain {
+                        DOC_BOOKS => Some("book.work"),
+                        DOC_NOVELS => Some("novel.work"),
+                        _ => None,
+                    };
                     let deleted: HashSet<String> = batch
                         .items
                         .iter()
-                        .filter(|item| {
-                            item.deleted
-                                && item.entity_type
-                                    == if batch.domain == "books" {
-                                        "book.work"
-                                    } else {
-                                        "novel.work"
-                                    }
-                        })
+                        .filter(|item| item.deleted && Some(item.entity_type.as_str()) == work_type)
                         .map(|item| item.entity_key.clone())
                         .collect();
+                    if batch.domain == DOC_BOOKS {
+                        let published: HashSet<String> = batch
+                            .items
+                            .iter()
+                            .filter(|item| !item.deleted && item.entity_type == "book.work")
+                            .filter_map(|item| canonical_book_sha(&item.entity_key))
+                            .collect();
+                        upload_book_assets(&conn, Some(&published)).await;
+                    }
                     if let Err(error) = push_v4_items(&conn, batch.items).await {
                         tracing::debug!(profile = %queue_profile, error = %error, "V4 desktop queued publish failed");
-                    } else if batch.domain == "books" {
+                    } else if batch.domain == DOC_BOOKS {
                         forget_published_books(Some(&batch.profile_id), &deleted);
-                    } else {
+                    } else if batch.domain == DOC_NOVELS {
                         forget_published_novels(Some(&batch.profile_id), &deleted);
                     }
                 }
@@ -848,6 +875,15 @@ pub async fn is_profile_active(profile_id: Option<&str>) -> bool {
         .contains_key(&profile_key(profile_id))
 }
 
+/// Stops the V4 worker for a profile. Its loop exits once the connection is gone.
+pub async fn stop_local_worker(profile_id: &str) {
+    registry()
+        .lock()
+        .await
+        .connections
+        .remove(&profile_key(Some(profile_id)));
+}
+
 fn forget_published_books(profile_id: Option<&str>, hashes: &HashSet<String>) {
     if let Some(loaded) = loaded_books()
         .lock()
@@ -960,6 +996,27 @@ pub async fn start_local_worker(
     if !should_spawn {
         return;
     }
+
+    // Catch up on book files and covers that never reached the Core (written offline, before
+    // V4, or after a failed upload).
+    let catch_up_app = app.clone();
+    let catch_up_profile = profile_id.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) =
+            fill_missing_book_cover_metadata(&catch_up_app, Some(&catch_up_profile)).await
+        {
+            tracing::warn!(profile = %catch_up_profile, error = %error, "V4 book cover fingerprint pass failed");
+        }
+        let conn = registry()
+            .lock()
+            .await
+            .connections
+            .get(&catch_up_profile)
+            .cloned();
+        if let Some(conn) = conn {
+            upload_book_assets(&conn, None).await;
+        }
+    });
 
     tauri::async_runtime::spawn(async move {
         run_profile_v4_loop(app, profile_id).await;
@@ -1123,6 +1180,15 @@ async fn run_initial_desktop_merge(
                 }
             }
         }
+        for document in [DOC_NOVEL_EXTENSIONS, DOC_NOVEL_PLUGIN_SETTINGS] {
+            if let Some(doc) = resolve_novel_json_path(app, &conn.profile_id, document)
+                .ok()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            {
+                local_items.extend(export_document_to_v4(document, &doc, &conn.device_id, 1));
+            }
+        }
         for (counter, item) in local_items.iter_mut().enumerate() {
             item.hlc = Hlc::new(1, counter as i64, &conn.device_id);
         }
@@ -1197,6 +1263,20 @@ fn resolve_novels_path(app: &AppHandle, profile_id: &str) -> Result<PathBuf, Str
     novel_library_state_path_for_target(&launch_target, Some(profile_id), None)
 }
 
+/// The plain JSON file behind the novel repository state or the novel plugin settings.
+fn resolve_novel_json_path(
+    app: &AppHandle,
+    profile_id: &str,
+    document: &str,
+) -> Result<PathBuf, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    if document == DOC_NOVEL_EXTENSIONS {
+        novel_repository_state_path_for_target(&launch_target, Some(profile_id), None)
+    } else {
+        novel_plugin_settings_path_for_target(&launch_target, Some(profile_id), None)
+    }
+}
+
 fn apply_remote_records_to_sqlite(
     app: &AppHandle,
     profile_id: &str,
@@ -1205,6 +1285,32 @@ fn apply_remote_records_to_sqlite(
 ) -> Result<(), String> {
     let has_novels = records.iter().any(|r| r.domain == "novels");
     let has_books = records.iter().any(|r| r.domain == "books");
+
+    for record in records
+        .iter()
+        .filter(|record| record.domain == "extensions" || record.domain == "preferences")
+    {
+        observe_profile_hlc(profile_id, &record.hlc);
+    }
+    // Repositories and plugins become declarations; the webview installs or removes them, as it
+    // owns the repository state file it keeps in memory.
+    if let Err(error) = apply_v4_novel_dependency_records(app, profile_id, records) {
+        tracing::warn!(profile = %profile_id, error = %error, "V4 novel dependency apply failed");
+    }
+    if records.iter().any(|record| record.domain == "preferences") {
+        with_library_state_lock(Some(profile_id), DOC_NOVEL_PLUGIN_SETTINGS, || {
+            let path = resolve_novel_json_path(app, profile_id, DOC_NOVEL_PLUGIN_SETTINGS)?;
+            let mut doc = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                .unwrap_or(Value::Null);
+            if apply_v4_records_to_desktop_novel_plugin_settings(&mut doc, records) {
+                let encoded = serde_json::to_string(&doc).map_err(|err| err.to_string())?;
+                crate::write_text_file_atomic(&path, &encoded)?;
+            }
+            Ok(())
+        })?;
+    }
 
     if has_novels {
         with_library_state_lock(Some(profile_id), "novels", || {
@@ -1321,6 +1427,163 @@ fn initial_snapshot_records(
 }
 
 /// Computes and queues a books delta while the SQLite profile/domain lock is still held.
+/// Uploads the files and covers of the given books (every book when `only` is None) that the
+/// Core does not hold yet, so other devices can download them. Failures are logged; the next
+/// write of the book or the next connection retries them.
+async fn upload_book_assets(conn: &ActiveV4Connection, only: Option<&HashSet<String>>) {
+    if only.is_some_and(HashSet::is_empty) {
+        return;
+    }
+    let doc = match book_library_state_path_for_profile(Some(&conn.profile_id))
+        .and_then(|path| library_sqlite::load(&path))
+    {
+        Ok(Some(raw)) => match serde_json::from_str::<Value>(&raw) {
+            Ok(doc) => doc,
+            Err(error) => {
+                tracing::warn!(profile = %conn.profile_id, error = %error, "V4 book asset upload skipped: library unreadable");
+                return;
+            }
+        },
+        Ok(None) => return,
+        Err(error) => {
+            tracing::warn!(profile = %conn.profile_id, error = %error, "V4 book asset upload skipped: library unavailable");
+            return;
+        }
+    };
+    let client = match build_local_v4_client() {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::warn!(profile = %conn.profile_id, error = %error, "V4 book asset upload skipped: no HTTP client");
+            return;
+        }
+    };
+    for book in doc.get("books").and_then(Value::as_array).into_iter().flatten() {
+        let Some(sha) = book_sha(book) else { continue };
+        if only.is_some_and(|keys| !keys.contains(&sha)) {
+            continue;
+        }
+        if let Err(error) = crate::syncd_replication::upload_book_entry_assets_to_core(
+            &client,
+            &conn.base_url,
+            &conn.access_token,
+            &sha,
+            book,
+        )
+        .await
+        {
+            tracing::warn!(profile = %conn.profile_id, book = %sha, error = %error, "V4 book asset upload failed");
+        }
+    }
+}
+
+/// Books whose local cover file has no recorded fingerprint yet, with the fingerprint filled in.
+/// Keyed by book SHA-256; each value keeps the cover path it was computed from.
+async fn books_missing_cover_metadata(doc: &Value) -> HashMap<String, (String, Value)> {
+    let mut filled = HashMap::new();
+    for book in doc.get("books").and_then(Value::as_array).into_iter().flatten() {
+        if book
+            .get("coverAssetSha256")
+            .and_then(Value::as_str)
+            .is_some_and(|sha| !sha.trim().is_empty())
+        {
+            continue;
+        }
+        let cover_path = book
+            .get("coverPath")
+            .and_then(Value::as_str)
+            .filter(|path| !path.trim().is_empty());
+        let (Some(sha), Some(cover_path)) = (book_sha(book), cover_path) else {
+            continue;
+        };
+        let mut updated = book.clone();
+        match crate::syncd_replication::refresh_local_book_cover_metadata(&mut updated).await {
+            Ok(true) => {
+                filled.insert(sha, (cover_path.to_owned(), updated));
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(book = %sha, error = %error, "V4 book cover fingerprint failed");
+            }
+        }
+    }
+    filled
+}
+
+/// Copies the computed cover fields into `doc` for books whose cover path is still the one the
+/// fingerprint came from and that still have no fingerprint. Returns true when `doc` changed.
+fn apply_filled_cover_metadata(doc: &mut Value, filled: &HashMap<String, (String, Value)>) -> bool {
+    let mut changed = false;
+    let Some(books) = doc.get_mut("books").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    for book in books.iter_mut() {
+        let Some(sha) = book_sha(book) else { continue };
+        let Some((cover_path, updated)) = filled.get(&sha) else {
+            continue;
+        };
+        let same_cover = book.get("coverPath").and_then(Value::as_str) == Some(cover_path.as_str());
+        let already_set = book
+            .get("coverAssetSha256")
+            .and_then(Value::as_str)
+            .is_some_and(|sha| !sha.trim().is_empty());
+        let Some(object) = book.as_object_mut() else {
+            continue;
+        };
+        if !same_cover || already_set {
+            continue;
+        }
+        for field in [
+            "coverAssetSha256",
+            "coverAssetByteSize",
+            "coverAssetMimeType",
+            "hasCover",
+        ] {
+            if let Some(value) = updated.get(field) {
+                object.insert(field.to_owned(), value.clone());
+            }
+        }
+        changed = true;
+    }
+    changed
+}
+
+/// Gives books with a local cover file but no recorded cover fingerprint their fingerprint, so
+/// the cover is published with the book. Cover files are hashed outside the library lock; the
+/// result is saved only for books whose cover did not change meanwhile.
+pub async fn fill_missing_book_cover_metadata(
+    app: &AppHandle,
+    profile_id: Option<&str>,
+) -> Result<(), String> {
+    let profile = profile_key(profile_id);
+    let path = book_library_state_path_for_profile(Some(&profile))?;
+    let Some(raw) = library_sqlite::load(&path)? else {
+        return Ok(());
+    };
+    let doc: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    let filled = books_missing_cover_metadata(&doc).await;
+    if filled.is_empty() {
+        return Ok(());
+    }
+    with_library_state_lock(Some(&profile), "books", || {
+        let Some(previous) = library_sqlite::load(&path)? else {
+            return Ok(());
+        };
+        let mut doc: Value = serde_json::from_str(&previous).map_err(|error| error.to_string())?;
+        if !apply_filled_cover_metadata(&mut doc, &filled) {
+            return Ok(());
+        }
+        let encoded = serde_json::to_string(&doc).map_err(|error| error.to_string())?;
+        library_sqlite::save(&path, &encoded)?;
+        note_library_saved(Some(&profile), "books", false);
+        enqueue_books_diff(Some(&profile), Some(&previous), &encoded)?;
+        let _ = app.emit(
+            V4_EVENT_LIBRARY_UPDATED,
+            json!({ "profileId": profile, "domain": "books" }),
+        );
+        Ok(())
+    })
+}
+
 pub fn enqueue_books_diff(
     profile_id: Option<&str>,
     previous_contents: Option<&str>,
@@ -1343,6 +1606,34 @@ pub fn enqueue_novels_diff(
     enqueue_stamped_diff(
         &profile_key(profile_id),
         "novels",
+        previous_contents,
+        next_contents,
+    )
+}
+
+/// Queues the repositories and plugins that changed in the novel repository state document.
+pub fn enqueue_novel_extensions_diff(
+    profile_id: Option<&str>,
+    previous_contents: Option<&str>,
+    next_contents: &str,
+) -> Result<(), String> {
+    enqueue_stamped_diff(
+        &profile_key(profile_id),
+        DOC_NOVEL_EXTENSIONS,
+        previous_contents,
+        next_contents,
+    )
+}
+
+/// Queues the shareable novel plugin settings that changed.
+pub fn enqueue_novel_plugin_settings_diff(
+    profile_id: Option<&str>,
+    previous_contents: Option<&str>,
+    next_contents: &str,
+) -> Result<(), String> {
+    enqueue_stamped_diff(
+        &profile_key(profile_id),
+        DOC_NOVEL_PLUGIN_SETTINGS,
         previous_contents,
         next_contents,
     )
@@ -1481,6 +1772,75 @@ async fn push_v4_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PNG_HEADER: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+    #[tokio::test]
+    async fn new_book_cover_gets_a_fingerprint_that_reaches_the_v4_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let cover = dir.path().join("cover.png");
+        std::fs::write(&cover, PNG_HEADER).unwrap();
+        let cover_path = cover.to_string_lossy().into_owned();
+        let sha = "a".repeat(64);
+        let synced = "c".repeat(64);
+        let mut doc = json!({
+            "books": [
+                { "id": "new", "assetFingerprint": sha, "title": "New", "subtype": "epub",
+                  "coverPath": cover_path },
+                { "id": "synced", "assetFingerprint": "b".repeat(64), "title": "Synced",
+                  "subtype": "pdf", "coverPath": cover_path,
+                  "coverAssetSha256": synced, "coverAssetByteSize": 99,
+                  "coverAssetMimeType": "image/jpeg" },
+                { "id": "bare", "assetFingerprint": "d".repeat(64), "title": "No cover",
+                  "subtype": "pdf" }
+            ]
+        });
+
+        let filled = books_missing_cover_metadata(&doc).await;
+        assert_eq!(filled.keys().collect::<Vec<_>>(), vec![&sha]);
+        assert!(apply_filled_cover_metadata(&mut doc, &filled));
+
+        let book = &doc["books"][0];
+        assert_eq!(book["coverAssetByteSize"], json!(PNG_HEADER.len()));
+        assert_eq!(book["coverAssetMimeType"], json!("image/png"));
+        assert_eq!(book["hasCover"], json!(true));
+        assert_eq!(doc["books"][1]["coverAssetSha256"], json!(synced));
+        assert!(doc["books"][2].get("coverAssetSha256").is_none());
+
+        let exported = export_desktop_books_to_v4(&doc, "desktop-1", 1_000);
+        let record = exported
+            .iter()
+            .find(|item| item.entity_type == "book.work" && item.entity_key == sha)
+            .expect("book.work record");
+        assert_eq!(
+            record.payload["coverSha256"],
+            doc["books"][0]["coverAssetSha256"]
+        );
+        // A second pass finds nothing left to fill.
+        assert!(books_missing_cover_metadata(&doc).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cover_fingerprint_is_not_applied_when_the_cover_changed_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let cover = dir.path().join("cover.png");
+        std::fs::write(&cover, PNG_HEADER).unwrap();
+        let sha = "a".repeat(64);
+        let doc = json!({
+            "books": [{ "id": "new", "assetFingerprint": sha, "title": "New", "subtype": "epub",
+                        "coverPath": cover.to_string_lossy() }]
+        });
+        let filled = books_missing_cover_metadata(&doc).await;
+        assert_eq!(filled.len(), 1);
+
+        let mut replaced = doc.clone();
+        replaced["books"][0]["coverPath"] = json!("C:/elsewhere/other.png");
+        assert!(!apply_filled_cover_metadata(&mut replaced, &filled));
+        assert!(replaced["books"][0].get("coverAssetSha256").is_none());
+
+        let mut removed = json!({ "books": [] });
+        assert!(!apply_filled_cover_metadata(&mut removed, &filled));
+    }
 
     #[test]
     fn diff_v4_item_work_tombstones_require_a_frontend_loaded_key() {

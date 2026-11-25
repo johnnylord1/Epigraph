@@ -4856,6 +4856,18 @@ fn novels_scope_root_for_target(
     local_server_profile_root(LocalServerProfile::Test)
 }
 
+fn is_remote_novel_scope(
+    launch_target: &LaunchTargetInfo,
+    profile_id: Option<&str>,
+    server_url: Option<&str>,
+) -> bool {
+    local_server_profile_key_from_id(profile_id).is_none()
+        && resolve_local_server_target(launch_target, server_url, None, None).is_err()
+        && server_url
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+}
+
 pub(crate) fn novel_repository_state_path_for_target(
     launch_target: &LaunchTargetInfo,
     profile_id: Option<&str>,
@@ -4933,23 +4945,22 @@ fn write_novel_plugin_settings(
         profile_id.as_deref(),
         server_url.as_deref(),
     )?;
-    let previous_contents = fs::read_to_string(&path).ok();
-    write_text_file_atomic(&path, &contents)?;
-    let notify_profile_id = profile_id.clone();
-    let notify_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = syncd_replication::notify_novel_plugin_settings_written(
-            &notify_app,
-            notify_profile_id.as_deref(),
-            previous_contents,
-            &contents,
-        )
-        .await
-        {
-            eprintln!("syncd replication novel plugin settings notify failed: {error}");
-        }
-    });
-    Ok(())
+    if is_remote_novel_scope(&launch_target, profile_id.as_deref(), server_url.as_deref()) {
+        return write_text_file_atomic(&path, &contents);
+    }
+    crate::v4_desktop_sync::with_library_state_lock(
+        profile_id.as_deref(),
+        "novel_plugin_settings",
+        || {
+            let previous_contents = std::fs::read_to_string(&path).ok();
+            write_text_file_atomic(&path, &contents)?;
+            crate::v4_desktop_sync::enqueue_novel_plugin_settings_diff(
+                profile_id.as_deref(),
+                previous_contents.as_deref(),
+                &contents,
+            )
+        },
+    )
 }
 
 fn extension_compatibility_state_path_for_target(
@@ -4974,7 +4985,7 @@ fn extension_compatibility_state_path_for_target(
     Ok(metadata_dir.join("extension-compatibility.json"))
 }
 
-fn write_text_file_atomic(path: &Path, contents: &str) -> Result<(), String> {
+pub(crate) fn write_text_file_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let temp_path = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -5073,23 +5084,23 @@ async fn write_novel_repository_state(
         profile_id.as_deref(),
         server_url.as_deref(),
     )?;
-    let previous_contents = if path.exists() {
-        Some(std::fs::read_to_string(&path).map_err(|err| err.to_string())?)
-    } else {
-        None
-    };
-    write_text_file_atomic(&path, &contents)?;
-    // The profile owns this file even when the UI also passes its runtime server URL.
-    if let Err(error) = syncd_replication::notify_novel_repository_state_written(
-        &app,
-        profile_id.as_deref(),
-        previous_contents,
-        &contents,
-    )
-    .await
-    {
-        eprintln!("Failed to publish LNReader repository state to Syncd: {error}");
+    if is_remote_novel_scope(&launch_target, profile_id.as_deref(), server_url.as_deref()) {
+        write_text_file_atomic(&path, &contents)?;
+        return Ok(path.to_string_lossy().into_owned());
     }
+    crate::v4_desktop_sync::with_library_state_lock(
+        profile_id.as_deref(),
+        "novel_extensions",
+        || {
+            let previous_contents = std::fs::read_to_string(&path).ok();
+            write_text_file_atomic(&path, &contents)?;
+            crate::v4_desktop_sync::enqueue_novel_extensions_diff(
+                profile_id.as_deref(),
+                previous_contents.as_deref(),
+                &contents,
+            )
+        },
+    )?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -5127,23 +5138,7 @@ fn write_novel_source_classification_state(
         profile_id.as_deref(),
         server_url.as_deref(),
     )?;
-    let previous_contents = fs::read_to_string(&path).ok();
     write_text_file_atomic(&path, &contents)?;
-    let next_contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
-    let notify_profile_id = profile_id.clone();
-    let notify_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = syncd_replication::notify_novel_source_classification_state_written(
-            &notify_app,
-            notify_profile_id.as_deref(),
-            previous_contents,
-            &next_contents,
-        )
-        .await
-        {
-            eprintln!("syncd replication novel classification notify failed: {error}");
-        }
-    });
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -5357,9 +5352,16 @@ fn write_book_library_state(
     let notify_profile_id = profile_id.clone();
     if let Some((previous_contents, contents)) = write {
         tauri::async_runtime::spawn(async move {
-            if notify_legacy
-                && !crate::v4_desktop_sync::is_profile_active(notify_profile_id.as_deref()).await
-            {
+            if crate::v4_desktop_sync::is_profile_active(notify_profile_id.as_deref()).await {
+                if let Err(error) = crate::v4_desktop_sync::fill_missing_book_cover_metadata(
+                    &app,
+                    notify_profile_id.as_deref(),
+                )
+                .await
+                {
+                    eprintln!("V4 book cover fingerprint failed: {error}");
+                }
+            } else if notify_legacy {
                 if let Err(error) =
                     syncd_replication::notify_book_state_written(&app, previous_contents, &contents)
                         .await
@@ -5412,11 +5414,11 @@ fn write_novel_library_state(
     let location = library_sqlite::database_path(&path)
         .to_string_lossy()
         .into_owned();
-    let (location, write) =
+    let location =
         crate::v4_desktop_sync::with_library_state_lock(profile_id.as_deref(), "novels", || {
             let previous_contents = library_sqlite::load(&path)?;
             if crate::v4_desktop_sync::frontend_write_is_stale(profile_id.as_deref(), "novels") {
-                return Ok((location.clone(), None));
+                return Ok(location.clone());
             }
             let contents = crate::v4_desktop_sync::reconcile_frontend_novel_write(
                 profile_id.as_deref(),
@@ -5430,26 +5432,8 @@ fn write_novel_library_state(
                 previous_contents.as_deref(),
                 &contents,
             )?;
-            Ok((location.clone(), Some((previous_contents, contents))))
+            Ok(location.clone())
         })?;
-    let notify_profile_id = profile_id.clone();
-    let notify_app = app.clone();
-    if let Some((previous_contents, contents)) = write {
-        tauri::async_runtime::spawn(async move {
-            if !crate::v4_desktop_sync::is_profile_active(notify_profile_id.as_deref()).await {
-                if let Err(error) = syncd_replication::notify_novel_state_written(
-                    &notify_app,
-                    notify_profile_id.as_deref(),
-                    previous_contents,
-                    &contents,
-                )
-                .await
-                {
-                    eprintln!("syncd replication novel notify failed: {error}");
-                }
-            }
-        });
-    }
     Ok(location)
 }
 

@@ -1,6 +1,5 @@
 pub mod app;
 pub mod autostart;
-pub mod catalog_revision;
 pub mod compression;
 pub mod config;
 pub mod db;
@@ -15,18 +14,11 @@ pub mod models;
 pub mod myanimelist_oauth;
 pub mod network;
 pub mod novel_plugin_settings;
-pub mod own_echoes;
 pub mod pairing_pin;
-pub mod replay;
 pub mod routes;
 pub mod runtime_manifest;
 pub mod source_preferences;
-pub mod suwayomi_category_mirror;
-pub mod suwayomi_hydration;
 pub mod suwayomi_process;
-pub mod suwayomi_progress_mirror;
-pub mod suwayomi_projection;
-pub mod suwayomi_source_preference_mirror;
 pub mod suwayomi_tracker_prefs;
 pub mod suwayomi_tracking_mirror;
 #[cfg(test)]

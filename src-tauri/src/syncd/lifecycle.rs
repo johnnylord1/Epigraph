@@ -1004,7 +1004,6 @@ mod tests {
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "a".repeat(64),
             device_presence: Default::default(),
-            own_echoes: Default::default(),
         });
         (temp, state)
     }

@@ -5,6 +5,7 @@
 //! package cache, and profile-scoped tracker credentials.
 
 pub mod db;
+pub mod desktop_extensions;
 pub mod desktop_library;
 pub mod hlc;
 pub mod merge;

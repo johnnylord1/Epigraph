@@ -682,7 +682,6 @@ mod tests {
                 mutation_gate: Arc::new(Mutex::new(())),
                 tls_cert_sha256: "fingerprint".to_string(),
                 device_presence: Default::default(),
-                own_echoes: Default::default(),
             }),
         )
     }
@@ -760,13 +759,71 @@ mod tests {
         request
     }
 
+    async fn seed_v4_record(
+        state: &SharedAppState,
+        profile_id: &str,
+        domain: &str,
+        entity_id: &str,
+    ) {
+        let entity_type = match domain {
+            "books" => "book.work",
+            "novels" => "novel.work",
+            _ => "comic.work",
+        };
+        let _receipt = crate::syncd::v4::db::apply_v4_batch(
+            &state.pool,
+            profile_id,
+            "seed-device",
+            vec![crate::syncd::v4::db::V4IncomingItem {
+                client_mutation_id: Some(format!("seed-{entity_id}")),
+                domain: domain.to_string(),
+                entity_type: entity_type.to_string(),
+                entity_key: entity_id.to_string(),
+                hlc: crate::syncd::v4::hlc::Hlc::new(1, 0, "seed-device"),
+                deleted: false,
+                payload: serde_json::json!({ "title": entity_id }),
+            }],
+            false,
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn snapshot_entity_ids(app: &axum::Router, access_token: &str) -> Vec<String> {
+        let response = app
+            .clone()
+            .oneshot(authorized_get("/v4/snapshot", access_token))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: Value = serde_json::from_slice(&body).unwrap();
+        let ids: Vec<String> = payload["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| {
+                r["entityKey"]
+                    .as_str()
+                    .or_else(|| r["entity_key"].as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        if ids.is_empty() {
+            eprintln!("EMPTY SNAPSHOT PAYLOAD: {payload}");
+        }
+        ids
+    }
+
     fn authorized_get(uri: &str, token: &str) -> Request<Body> {
         Request::builder()
             .method("GET")
             .uri(uri)
             .header("authorization", format!("Bearer {token}"))
             .header(CLIENT_VERSION_HEADER, "0.1.0")
-            .header(CLIENT_PROTOCOL_HEADER, "1")
+            .header(CLIENT_PROTOCOL_HEADER, "4")
             .body(Body::empty())
             .unwrap()
     }
@@ -874,34 +931,14 @@ mod tests {
             .unwrap()
             .to_string();
 
-        let books_response = app
-            .clone()
-            .oneshot(authorized_get(
-                "/v1/changes?scopeId=books%3Aglobal&sinceVersion=0",
-                &access_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(books_response.status(), StatusCode::OK);
+        seed_v4_record(&state, "main", "books", "book-allowed").await;
+        seed_v4_record(&state, "main", "novels", "novel-main-allowed").await;
+        seed_v4_record(&state, "test", "novels", "novel-test-forbidden").await;
 
-        let novels_main = app
-            .clone()
-            .oneshot(authorized_get(
-                "/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=0",
-                &access_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(novels_main.status(), StatusCode::OK);
-
-        let novels_test = app
-            .oneshot(authorized_get(
-                "/v1/changes?scopeId=novels%3Aprofile%3Atest&sinceVersion=0",
-                &access_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(novels_test.status(), StatusCode::FORBIDDEN);
+        let ids = snapshot_entity_ids(&app, &access_token).await;
+        assert!(ids.contains(&"book-allowed".to_string()));
+        assert!(ids.contains(&"novel-main-allowed".to_string()));
+        assert!(!ids.contains(&"novel-test-forbidden".to_string()));
     }
 
     #[tokio::test]
@@ -966,23 +1003,12 @@ mod tests {
         );
         let access_token = approved_payload["token"]["accessToken"].as_str().unwrap();
 
-        let books = app
-            .clone()
-            .oneshot(authorized_get(
-                "/v1/changes?scopeId=books%3Aglobal&sinceVersion=0",
-                access_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(books.status(), StatusCode::OK);
-        let novels = app
-            .oneshot(authorized_get(
-                "/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=0",
-                access_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(novels.status(), StatusCode::FORBIDDEN);
+        seed_v4_record(&state, "main", "books", "book-allowed").await;
+        seed_v4_record(&state, "main", "novels", "novel-forbidden").await;
+
+        let ids = snapshot_entity_ids(&app, access_token).await;
+        assert!(ids.contains(&"book-allowed".to_string()));
+        assert!(!ids.contains(&"novel-forbidden".to_string()));
 
         let stored = db::load_pairing_session(&state.pool, "session-scoped")
             .await
@@ -1138,23 +1164,12 @@ mod tests {
             json!(["novels:profile:main"])
         );
 
-        let books = app
-            .clone()
-            .oneshot(authorized_get(
-                "/v1/changes?scopeId=books%3Aglobal&sinceVersion=0",
-                &access_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(books.status(), StatusCode::FORBIDDEN);
-        let novels = app
-            .oneshot(authorized_get(
-                "/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=0",
-                &access_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(novels.status(), StatusCode::OK);
+        seed_v4_record(&state, "global", "books", "book-revoked").await;
+        seed_v4_record(&state, "main", "novels", "novel-granted").await;
+
+        let ids = snapshot_entity_ids(&app, &access_token).await;
+        assert!(!ids.contains(&"book-revoked".to_string()));
+        assert!(ids.contains(&"novel-granted".to_string()));
     }
 
     #[tokio::test]
@@ -1187,7 +1202,7 @@ mod tests {
             .unwrap();
         let approved = json_body(app.clone().oneshot(claim()).await.unwrap()).await;
         let access_token = approved["token"]["accessToken"].as_str().unwrap().to_string();
-        let changes = "/v1/changes?scopeId=comics%3Aprofile%3Amain&sinceVersion=0";
+        let changes = "/v4/snapshot?scopeId=comics%3Aprofile%3Amain";
         let before = app
             .clone()
             .oneshot(authorized_get(changes, &access_token))
@@ -1380,24 +1395,12 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        let allowed = app
-            .clone()
-            .oneshot(authorized_get(
-                "/v1/changes?scopeId=novels%3Aprofile%3Atest&sinceVersion=0",
-                &access_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(allowed.status(), StatusCode::OK);
+        seed_v4_record(&state, "test", "novels", "novel-test-allowed").await;
+        seed_v4_record(&state, "main", "novels", "novel-main-forbidden").await;
 
-        let forbidden = app
-            .oneshot(authorized_get(
-                "/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=0",
-                &access_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+        let ids = snapshot_entity_ids(&app, &access_token).await;
+        assert!(ids.contains(&"novel-test-allowed".to_string()));
+        assert!(!ids.contains(&"novel-main-forbidden".to_string()));
     }
 
     #[tokio::test]

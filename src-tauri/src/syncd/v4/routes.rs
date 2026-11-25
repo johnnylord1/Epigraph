@@ -489,6 +489,13 @@ pub async fn get_changes(
 
 // --- GET /v4/events (SSE Realtime Stream) ---
 
+/// Interval of the per-stream clock tick. Each tick re-checks the token (revocation and
+/// scope removal), extends the device inactivity window, and emits a `clock` event.
+#[cfg(not(test))]
+const V4_STREAM_CLOCK_TICK: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const V4_STREAM_CLOCK_TICK: Duration = Duration::from_millis(200);
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventsQuery {
@@ -606,7 +613,7 @@ pub async fn get_events(
             }
         }
 
-        let mut clock_tick = tokio::time::interval(Duration::from_secs(30));
+        let mut clock_tick = tokio::time::interval(V4_STREAM_CLOCK_TICK);
         clock_tick.tick().await; // consume immediate tick
 
         loop {

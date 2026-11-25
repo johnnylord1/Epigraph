@@ -10112,7 +10112,7 @@ fn next_lamport(current_lamport: i64, incoming_lamport: i64) -> i64 {
     current_lamport.max(incoming_lamport) + 1
 }
 
-fn hash_token(raw_token: &str) -> String {
+pub(crate) fn hash_token(raw_token: &str) -> String {
     use sha2::{Digest, Sha256};
 
     let digest = Sha256::digest(raw_token.as_bytes());
@@ -10464,8 +10464,6 @@ pub async fn upsert_portable_work_binding(
             .await?;
     }
     tx.commit().await?;
-    // Unresolved works carry the extensions a device is asked to install.
-    super::catalog_revision::invalidate(profile_id);
     Ok(())
 }
 

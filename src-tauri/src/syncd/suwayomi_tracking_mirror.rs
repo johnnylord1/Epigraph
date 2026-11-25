@@ -2091,7 +2091,6 @@ mod tests {
             mutation_gate: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             tls_cert_sha256: "test".to_string(),
             device_presence: Default::default(),
-            own_echoes: Default::default(),
         });
 
         sqlx::query(

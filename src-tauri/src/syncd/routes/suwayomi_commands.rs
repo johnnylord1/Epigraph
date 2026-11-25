@@ -8,7 +8,6 @@ use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
 use crate::syncd::routes::{suwayomi_catalog, suwayomi_import};
-use crate::syncd::suwayomi_projection;
 
 const COMMAND_SCHEMA_VERSION: u32 = 1;
 /// Chapters one `UpdateChaptersProgress` command names at most.
@@ -357,7 +356,7 @@ pub(crate) async fn execute_internal_command(
     }
     let (document, variables) = normalized_command(&operation, variables)?;
     let session = AuthenticatedSession {
-        token_id: suwayomi_projection::PROJECTION_TOKEN_ID.to_string(),
+        token_id: "suwayomi-projection".to_string(),
         device_id: "epigraph-core".to_string(),
         profile_id: profile_id.to_string(),
         scopes: BTreeSet::from([format!("comics:profile:{profile_id}")]),

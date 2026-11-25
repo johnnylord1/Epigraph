@@ -36,8 +36,6 @@ pub struct AppState {
     pub mutation_gate: Arc<Mutex<()>>,
     pub tls_cert_sha256: String,
     pub device_presence: super::device_presence::DevicePresence,
-    /// Merges each device just had applied, so its live stream can leave out their echo.
-    pub own_echoes: super::own_echoes::OwnEchoes,
 }
 
 pub type SharedAppState = Arc<AppState>;

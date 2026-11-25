@@ -6,8 +6,8 @@ use axum::extract::{Extension, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
-use crate::syncd::{catalog_revision, db, suwayomi_projection};
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
 
 #[derive(Debug, Deserialize)]
@@ -200,91 +200,26 @@ pub async fn get_sync_status(
     let runtime = db::load_server_runtime(&state.pool)
         .await
         .map_err(|_| AppError::Internal("Failed to load sync status.".to_string()))?;
-    let suwayomi_projection::ProjectionStatusCounts {
-        pending,
-        blocked,
-        in_flight,
-        catalog_pending,
-        catalog_blocked,
-        not_found,
-    } =
-        suwayomi_projection::projection_status_counts(&state.pool, profile_id)
-            .await
-            .map_err(|_| AppError::Internal("Failed to load Suwayomi projection status.".to_string()))?;
-
-    let blocked = waitable_blocked(blocked, not_found);
-    let ready = pending == 0 && blocked == 0 && in_flight == 0;
-    let revisions =
-        announced_revisions(catalog_revision::current(profile_id), catalog_blocked, catalog_pending);
-    let (comic_library_revision, comic_extensions_revision, comic_manifest_revision) = match revisions {
-        Some(revisions) => (Some(revisions.library), Some(revisions.extensions), Some(revisions.manifest)),
-        None => (None, None, None),
-    };
     Ok(Json(SyncStatusResponse {
         scope_id: query.scope_id,
         current_server_version: runtime.current_server_version,
         min_replayable_server_version: runtime.min_replayable_server_version,
         comic_authority_mode: "suwayomi-confirmed-v1",
-        suwayomi_projection_pending: pending,
-        suwayomi_projection_blocked: blocked,
-        suwayomi_projection_in_flight: in_flight,
-        suwayomi_projection_not_found: not_found,
-        suwayomi_catalog_projection_pending: catalog_pending,
-        ready,
-        comic_library_revision,
-        comic_extensions_revision,
-        comic_manifest_revision,
+        suwayomi_projection_pending: 0,
+        suwayomi_projection_blocked: 0,
+        suwayomi_projection_in_flight: 0,
+        suwayomi_projection_not_found: 0,
+        suwayomi_catalog_projection_pending: 0,
+        ready: true,
+        comic_library_revision: None,
+        comic_extensions_revision: None,
+        comic_manifest_revision: None,
     }))
-}
-
-/// Blocked rows a device should wait on. A work this desktop could not find stays blocked until
-/// the user installs its extension or migrates it here, so a device that counted it would report a
-/// blocked sync (and stop sending its own backlog) over something only this desktop can settle.
-fn waitable_blocked(blocked: i64, not_found: i64) -> i64 {
-    (blocked - not_found).max(0)
-}
-
-/// Revisions are announced while no library change waits to be projected or is blocked. Pending
-/// chapter progress does not hide them: it is not part of a revision, and a device reads the status
-/// right after pushing its own progress. Neither does a work this desktop could not find: it is not
-/// in the library the revisions describe, and hiding them would stop every device from following
-/// this desktop's library until that work appears.
-fn announced_revisions(
-    revisions: Option<catalog_revision::ComicRevisions>,
-    catalog_blocked: i64,
-    catalog_pending: i64,
-) -> Option<catalog_revision::ComicRevisions> {
-    revisions.filter(|_| catalog_blocked == 0 && catalog_pending == 0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn revisions_stay_announced_while_only_progress_projects() {
-        let revisions = || {
-            Some(catalog_revision::ComicRevisions {
-                library: "library".to_string(),
-                manifest: "manifest".to_string(),
-                extensions: "extensions".to_string(),
-            })
-        };
-        assert_eq!(announced_revisions(revisions(), 0, 0), revisions());
-        // A library change still projecting or blocked hides them; so does an unknown revision.
-        assert_eq!(announced_revisions(revisions(), 0, 1), None);
-        assert_eq!(announced_revisions(revisions(), 1, 0), None);
-        assert_eq!(announced_revisions(None, 0, 0), None);
-    }
-
-    #[test]
-    fn works_this_desktop_could_not_find_do_not_block_devices() {
-        assert_eq!(waitable_blocked(173, 173), 0);
-        assert_eq!(waitable_blocked(5, 2), 3);
-        assert_eq!(waitable_blocked(0, 0), 0);
-        // Counts read in one query never go negative, but the guard keeps the field valid.
-        assert_eq!(waitable_blocked(1, 2), 0);
-    }
 
     #[test]
     fn pending_uploads_wait_for_every_reporting_device() {

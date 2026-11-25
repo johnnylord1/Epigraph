@@ -162,7 +162,7 @@ async fn read_watermark<'a>(
     })
 }
 
-fn validate_incoming_item(item: &V4IncomingItem) -> Result<(), (&'static str, &'static str)> {
+pub(super) fn validate_incoming_item(item: &V4IncomingItem) -> Result<(), (&'static str, &'static str)> {
     if !ALLOWED_DOMAINS.contains(&item.domain.as_str()) {
         return Err((
             "INVALID_DOMAIN",

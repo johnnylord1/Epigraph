@@ -4,16 +4,22 @@ use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::syncd::landed_works::{self, LandedWorksView};
 use crate::syncd::models::{AppError, PairingTokenResponse, SharedAppState};
 use crate::syncd::tracker_credentials::{self, DESKTOP_DEVICE_ID};
-use crate::syncd::{
-    db, myanimelist_oauth, suwayomi_hydration, suwayomi_progress_mirror, suwayomi_projection,
-    suwayomi_tracking_mirror,
-};
+use crate::syncd::{db, myanimelist_oauth, suwayomi_tracking_mirror};
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NotFoundWork {
+    pub source_id: String,
+    pub work_url: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
 
 /// Upper bound for ids accepted by one progress-mirror request.
 const MAX_PROGRESS_MIRROR_IDS: usize = 1_024;
@@ -97,12 +103,6 @@ pub async fn post_local_progress_mirror(
             "Local progress mirror accepts at most {MAX_PROGRESS_MIRROR_IDS} ids per list."
         )));
     }
-    // A bare hint comes from a shell too old to say what it changed.
-    if request.catalog || (request.manga_ids.is_empty() && request.chapter_ids.is_empty()) {
-        crate::syncd::catalog_revision::invalidate_all();
-        suwayomi_progress_mirror::request_catalog_refresh();
-    }
-    suwayomi_progress_mirror::request_immediate_mirror(&request.manga_ids, &request.chapter_ids);
     if let Some(Extension(v4_runtime)) = v4_runtime {
         if !request.chapter_ids.is_empty() || !request.manga_ids.is_empty() {
             tokio::spawn(async move {
@@ -148,14 +148,127 @@ pub async fn post_local_stored_chapter_pages(
             "Stored chapter pages accept at most {MAX_PROGRESS_MIRROR_IDS} ids."
         )));
     }
-    let pages = suwayomi_progress_mirror::stored_chapter_pages(&state, &request.chapter_ids)
-        .await
-        .map_err(|error| AppError::Internal(format!("{error:#}")))?;
+    let pages = stored_chapter_pages_from_v4(&state, &request.chapter_ids).await;
     let pages = pages
         .into_iter()
         .map(|(chapter_id, page)| (chapter_id.to_string(), Value::from(page)))
         .collect::<serde_json::Map<_, _>>();
     Ok(Json(json!({ "pages": pages })))
+}
+
+fn resolve_stored_chapter_page(chapter: &Value, v4_payload: Option<&Value>) -> Option<i64> {
+    let suwayomi_page = chapter
+        .get("lastPageRead")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let is_read = chapter
+        .get("isRead")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if suwayomi_page != 0 || is_read {
+        return None;
+    }
+    let page = v4_payload?
+        .get("lastPageRead")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    (page > 0).then_some(page)
+}
+
+async fn stored_chapter_pages_from_v4(
+    state: &SharedAppState,
+    chapter_ids: &[i64],
+) -> std::collections::BTreeMap<i64, i64> {
+    let mut out = std::collections::BTreeMap::new();
+    if chapter_ids.is_empty() {
+        return out;
+    }
+    let instances = crate::syncd::suwayomi_process::attach_owned_instances();
+    if instances.is_empty() {
+        return out;
+    }
+    let query = r#"
+        query EpigraphStoredChapterPage($id: Int!) {
+          chapter(id: $id) {
+            id
+            url
+            lastPageRead
+            isRead
+            manga {
+              sourceId
+              url
+            }
+          }
+        }
+    "#;
+    let mut resolved_profiles: std::collections::HashMap<i64, usize> =
+        std::collections::HashMap::new();
+    let mut ambiguous: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    for instance in instances {
+        let profile_id = instance.profile_key;
+        let session = crate::syncd::models::AuthenticatedSession {
+            token_id: "local-stored-chapter-pages".to_string(),
+            device_id: DESKTOP_DEVICE_ID.to_string(),
+            profile_id: profile_id.clone(),
+            scopes: std::collections::BTreeSet::from([format!("comics:profile:{profile_id}")]),
+            mutation_receipt: None,
+        };
+        for &chapter_id in chapter_ids {
+            let Ok(body) = super::suwayomi_catalog::execute_graphql_document(
+                state,
+                &session,
+                query,
+                json!({ "id": chapter_id }),
+                false,
+            )
+            .await
+            else {
+                continue;
+            };
+            let Some(chapter) = body.get("chapter") else {
+                continue;
+            };
+            let count = resolved_profiles.entry(chapter_id).or_insert(0);
+            *count += 1;
+            if *count > 1 {
+                ambiguous.insert(chapter_id);
+                out.remove(&chapter_id);
+                continue;
+            }
+            let Some(chapter_url) = chapter.get("url").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(source_id) = chapter.pointer("/manga/sourceId").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(manga_url) = chapter.pointer("/manga/url").and_then(Value::as_str) else {
+                continue;
+            };
+            let work_key = crate::syncd::v4::hlc::canonical_work_key(source_id, manga_url);
+            let chapter_key = crate::syncd::v4::hlc::canonical_chapter_key(&work_key, chapter_url);
+            let Ok(row) = sqlx::query_scalar::<_, String>(
+                "SELECT payload_json
+                 FROM v4_records
+                 WHERE profile_id = ? AND entity_type = 'comic.chapter' AND entity_key = ? AND deleted = 0",
+            )
+            .bind(&profile_id)
+            .bind(&chapter_key)
+            .fetch_optional(&state.pool)
+            .await
+            else {
+                continue;
+            };
+            let v4_payload = row.and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+            if let Some(page) = resolve_stored_chapter_page(chapter, v4_payload.as_ref()) {
+                out.insert(chapter_id, page);
+            }
+        }
+    }
+    for id in ambiguous {
+        out.remove(&id);
+    }
+    out
 }
 
 #[derive(Deserialize)]
@@ -398,12 +511,13 @@ pub struct LocalSyncProgress {
     pub landed: LandedWorksView,
     /// Works a paired device synced that this desktop could not find, so the user can install
     /// their source or migrate them. Their changes wait here without holding the sync.
-    pub not_found_works: Vec<suwayomi_projection::NotFoundWork>,
+    pub not_found_works: Vec<NotFoundWork>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalSyncProgressQuery {
+    #[allow(dead_code)]
     pub landed_since: Option<u64>,
 }
 
@@ -419,27 +533,34 @@ pub async fn get_local_sync_progress(
             "Local sync progress is only available from loopback.".to_string(),
         ));
     }
-    let pending = suwayomi_projection::pending_projection_counts(&state)
-        .await
-        .map_err(|error| {
-            tracing::warn!(error = %error, "could not count pending Suwayomi projections");
-            AppError::Internal("Sync progress is unavailable.".to_string())
-        })?;
+    let pending_projections: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM v4_records r
+         JOIN v4_comics_projection p ON r.profile_id = p.profile_id
+         WHERE r.domain = 'comics' AND r.server_seq > p.applied_seq",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+    let pending_catalog_projections: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM v4_records r
+         JOIN v4_comics_projection p ON r.profile_id = p.profile_id
+         WHERE r.domain = 'comics' AND r.entity_type != 'comic.chapter' AND r.server_seq > p.applied_seq",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
     Ok(Json(LocalSyncProgress {
-        pending_projections: pending.total,
-        pending_catalog_projections: pending.catalog,
+        pending_projections,
+        pending_catalog_projections,
         pending_tracker_logins: suwayomi_tracking_mirror::pending_login_count(&state).await,
-        pending_details: suwayomi_hydration::pending_count(),
+        pending_details: 0,
         pending_uploads: super::status::pending_uploads(),
         pending_library_uploads: super::status::pending_library_uploads(),
-        applied_projections: suwayomi_projection::applied_projection_count(),
+        applied_projections: crate::syncd::v4::suwayomi::applied_projection_count(),
         landed: landed_works::view(query.landed_since),
-        not_found_works: suwayomi_projection::not_found_works(&state)
-            .await
-            .unwrap_or_else(|error| {
-                tracing::warn!(error = %error, "could not list works this desktop could not find");
-                Vec::new()
-            }),
+        not_found_works: Vec::new(),
     }))
 }
 
@@ -503,7 +624,6 @@ mod tests {
             mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
             device_presence: Default::default(),
-            own_echoes: Default::default(),
         })
     }
 
@@ -678,5 +798,72 @@ mod tests {
         let scopes = payload["scopes"].as_array().unwrap();
         assert!(scopes.iter().any(|scope| scope == "books:global"));
         assert!(scopes.iter().any(|scope| scope == "novels:profile:main"));
+    }
+
+    #[test]
+    fn resolve_stored_chapter_page_handles_all_cases() {
+        let suwayomi_unopened = json!({ "lastPageRead": 0, "isRead": false });
+        let suwayomi_has_page = json!({ "lastPageRead": 5, "isRead": false });
+        let suwayomi_read = json!({ "lastPageRead": 0, "isRead": true });
+        let v4_payload = json!({ "lastPageRead": 17, "isRead": false });
+
+        assert_eq!(
+            resolve_stored_chapter_page(&suwayomi_unopened, Some(&v4_payload)),
+            Some(17)
+        );
+        assert_eq!(
+            resolve_stored_chapter_page(&suwayomi_has_page, Some(&v4_payload)),
+            None
+        );
+        assert_eq!(
+            resolve_stored_chapter_page(&suwayomi_read, Some(&v4_payload)),
+            None
+        );
+        assert_eq!(
+            resolve_stored_chapter_page(&suwayomi_unopened, None),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn stored_chapter_pages_reads_v4_chapter_record_and_ignores_missing() {
+        let state = build_state().await;
+        let work_key = crate::syncd::v4::hlc::canonical_work_key("12345", "/manga/test-work");
+        let chapter_key =
+            crate::syncd::v4::hlc::canonical_chapter_key(&work_key, "/manga/test-work/ch-1");
+        crate::syncd::v4::db::apply_v4_batch(
+            &state.pool,
+            "main",
+            "seed-device",
+            vec![crate::syncd::v4::db::V4IncomingItem {
+                client_mutation_id: Some("seed-ch-1".to_string()),
+                domain: "comics".to_string(),
+                entity_type: "comic.chapter".to_string(),
+                entity_key: chapter_key.clone(),
+                hlc: crate::syncd::v4::hlc::Hlc::new(1, 0, "seed-device"),
+                deleted: false,
+                payload: json!({ "lastPageRead": 17, "isRead": false }),
+            }],
+            false,
+        )
+        .await
+        .unwrap();
+
+        let rows = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT profile_id, entity_key, payload_json
+             FROM v4_records
+             WHERE domain = 'comics' AND entity_type = 'comic.chapter' AND deleted = 0",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, chapter_key);
+        let payload: Value = serde_json::from_str(&rows[0].2).unwrap();
+        assert_eq!(payload["lastPageRead"], 17);
+
+        // Missing chapter key returns nothing, and Suwayomi unavailability returns empty map.
+        let pages = stored_chapter_pages_from_v4(&state, &[999999]).await;
+        assert!(pages.is_empty());
     }
 }

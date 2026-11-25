@@ -6,6 +6,8 @@ use axum::http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, ETAG, IF_NONE_MATCH}
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use axum::Extension;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -16,8 +18,12 @@ use crate::syncd::discovery::{
     SyncdClientDiscoveryContractProvider, SyncdClientDiscoveryGuidanceProvider,
     SyncdDiscoveryDescriptorProvider, SyncdDiscoveryProviderManager,
 };
+use crate::syncd::lifecycle::{ShutdownCoordinator, ShutdownReason, ShutdownRequest};
 use crate::syncd::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER};
 use crate::syncd::models::{AppState, SharedAppState};
+use crate::syncd::v4::{
+    build_v4_router, V4LiveEvent, V4LiveEventKind, V4Runtime, V4_LIVE_CHANNEL_CAPACITY,
+};
 use crate::syncd::v4::hlc::{
     canonical_chapter_key, canonical_work_key, normalize_portable_url, Hlc,
 };
@@ -59,7 +65,6 @@ async fn build_v4_test_env() -> (TempDir, SharedAppState, axum::Router, String, 
         mutation_gate: Arc::new(Mutex::new(())),
         tls_cert_sha256: "v4-test-fingerprint".to_string(),
         device_presence: Default::default(),
-        own_echoes: Default::default(),
     });
 
     let token_a = db::issue_local_authority_token(&pool, &config, "android-a", "profile-alpha")
@@ -1391,4 +1396,412 @@ async fn marco4_thirty_consecutive_empty_reconnects_under_500ms_p95() {
         p95_ms < 500.0,
         "p95 empty reconnect latency {p95_ms:.3}ms exceeded 500ms"
     );
+}
+
+// --- Ported lifecycle / security guarantees for the V4 SSE stream, bulk gzip and asset scopes ---
+
+const STREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Builds the V4 router with the shutdown coordinator and live runtime exposed, which
+/// `build_v4_test_env` hides. The stream tests need both to drive shutdown and live events.
+async fn build_v4_stream_app(
+    state: &SharedAppState,
+) -> (axum::Router, Arc<V4Runtime>, ShutdownCoordinator) {
+    let (shutdown, _rx) = ShutdownCoordinator::channel();
+    let runtime = Arc::new(V4Runtime::new());
+    let app = build_v4_router(state.clone(), runtime.clone())
+        .layer(Extension(shutdown.clone()))
+        .with_state(state.clone());
+    (app, runtime, shutdown)
+}
+
+fn sse_request(uri: &str, token: &str, last_event_id: Option<&str>) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(CLIENT_VERSION_HEADER, "0.1.0")
+        .header(CLIENT_PROTOCOL_HEADER, "4")
+        .header("authorization", format!("Bearer {token}"))
+        .header("accept", "text/event-stream");
+    if let Some(id) = last_event_id {
+        builder = builder.header("last-event-id", id);
+    }
+    builder.body(Body::empty()).unwrap()
+}
+
+/// Reads SSE frames until `marker` appears; panics if it does not arrive within `STREAM_WAIT`.
+async fn read_sse_until(body: &mut Body, marker: &str) -> String {
+    tokio::time::timeout(STREAM_WAIT, async {
+        let mut seen = String::new();
+        while let Some(frame) = body.frame().await {
+            let frame = frame.expect("SSE frame");
+            if let Some(data) = frame.data_ref() {
+                seen.push_str(&String::from_utf8_lossy(data));
+                if seen.contains(marker) {
+                    return seen;
+                }
+            }
+        }
+        panic!("SSE stream ended before `{marker}` was seen; got: {seen}");
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for `{marker}` on the SSE stream"))
+}
+
+/// Drains the SSE body and reports whether it ended (server closed the stream) in time.
+async fn sse_stream_ends(body: &mut Body) -> bool {
+    tokio::time::timeout(STREAM_WAIT, async {
+        while let Some(frame) = body.frame().await {
+            if frame.is_err() {
+                return false;
+            }
+        }
+        true
+    })
+    .await
+    .unwrap_or(false)
+}
+
+async fn v4_raw(
+    app: &axum::Router,
+    method: Method,
+    uri: &str,
+    token: &str,
+    body: Body,
+) -> (StatusCode, Vec<u8>) {
+    let request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(CLIENT_VERSION_HEADER, "0.1.0")
+        .header(CLIENT_PROTOCOL_HEADER, "4")
+        .header("authorization", format!("Bearer {token}"))
+        .body(body)
+        .unwrap();
+    let resp = app.clone().oneshot(request).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, bytes.to_vec())
+}
+
+fn stream_shutdown_request() -> ShutdownRequest {
+    ShutdownRequest {
+        run_id: "v4-test-run".to_owned(),
+        nonce: "v4-test-nonce".to_owned(),
+        server_id: "v4-test-fingerprint".to_owned(),
+        expected_pid: std::process::id(),
+        reason: ShutdownReason::Manual,
+        unless_devices_connected: false,
+    }
+}
+
+async fn seed_one_comic_change(app: &axum::Router, token: &str) {
+    let (status, _, summary) = v4_request(
+        app,
+        Method::POST,
+        "/v4/sync/bulk",
+        token,
+        Some(json!({"items":[{
+            "domain":"comics","entityType":"comic.work","entityKey":"123:/work",
+            "hlc":{"tsMs":1000,"deviceId":"android-a"},"payload":{"title":"Seed"}
+        }]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(summary["acceptedCount"], 1);
+}
+
+#[tokio::test]
+async fn v4_events_stream_ends_when_shutdown_is_requested() {
+    let (_temp, state, _, token_a, _) = build_v4_test_env().await;
+    let (app, _runtime, shutdown) = build_v4_stream_app(&state).await;
+    let resp = app
+        .clone()
+        .oneshot(sse_request("/v4/events", &token_a, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut body = resp.into_body();
+    read_sse_until(&mut body, "event: hello").await;
+
+    assert!(shutdown.request(stream_shutdown_request()));
+    assert!(sse_stream_ends(&mut body).await, "stream stayed open after shutdown");
+}
+
+#[tokio::test]
+async fn v4_events_lagged_receiver_is_told_to_catch_up() {
+    let (_temp, state, _, token_a, _) = build_v4_test_env().await;
+    let (app, runtime, _shutdown) = build_v4_stream_app(&state).await;
+    let resp = app
+        .clone()
+        .oneshot(sse_request("/v4/events", &token_a, None))
+        .await
+        .unwrap();
+    let mut body = resp.into_body();
+
+    // Overflow the live channel before the stream is polled, so its receiver lags.
+    for seq in 1..=(V4_LIVE_CHANNEL_CAPACITY as i64 + 64) {
+        let _ = runtime.live_sender.send(V4LiveEvent {
+            profile_id: "profile-alpha".to_owned(),
+            origin_device_id: "desktop-b".to_owned(),
+            server_seq: seq,
+            kind: V4LiveEventKind::BulkCommitted {
+                record_count: 0,
+                server_seq: seq,
+                server_time_ms: 0,
+            },
+        });
+    }
+    let seen = read_sse_until(&mut body, "event: catchup_required").await;
+    assert!(seen.contains("\"skipped\""), "catchup_required lacks skipped count: {seen}");
+}
+
+#[tokio::test]
+async fn v4_events_backlog_replays_from_last_event_id_and_skips_own_device_by_default() {
+    let (_temp, state, app, token_a, _) = build_v4_test_env().await;
+    seed_one_comic_change(&app, &token_a).await;
+    let token_c = db::issue_local_authority_token(&state.pool, &state.config, "phone-c", "profile-alpha")
+        .await
+        .unwrap()
+        .access_token;
+    let (stream_app, _runtime, _shutdown) = build_v4_stream_app(&state).await;
+
+    // Another device on the same profile replays the missed change from Last-Event-ID.
+    let resp = stream_app
+        .clone()
+        .oneshot(sse_request("/v4/events", &token_c, Some("0")))
+        .await
+        .unwrap();
+    let mut other_body = resp.into_body();
+    let replay = read_sse_until(&mut other_body, "event: delta").await;
+    assert!(replay.contains("\"entityKey\":\"123:/work\""), "backlog delta: {replay}");
+
+    // The originating device does not get its own change back unless includeOwn=true.
+    let resp = stream_app
+        .clone()
+        .oneshot(sse_request("/v4/events", &token_a, Some("0")))
+        .await
+        .unwrap();
+    let mut own_body = resp.into_body();
+    let own = read_sse_until(&mut own_body, "event: clock").await;
+    assert!(!own.contains("event: delta"), "own change echoed without includeOwn: {own}");
+}
+
+#[tokio::test]
+async fn v4_changes_and_events_refuse_a_cursor_ahead_of_the_server() {
+    let (_temp, state, app, token_a, _) = build_v4_test_env().await;
+    let (status, _, body) =
+        v4_request(&app, Method::GET, "/v4/changes?sinceSeq=999", &token_a, None).await;
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(body["error"]["code"], "CURSOR_AHEAD_OF_SERVER");
+    assert_eq!(body["error"]["requiredAction"], "snapshot_merge");
+
+    let (stream_app, _runtime, _shutdown) = build_v4_stream_app(&state).await;
+    let resp = stream_app
+        .clone()
+        .oneshot(sse_request("/v4/events?sinceSeq=999", &token_a, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::GONE);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["code"], "CURSOR_AHEAD_OF_SERVER");
+    assert_eq!(body["error"]["requiredAction"], "snapshot_merge");
+}
+
+#[tokio::test]
+async fn v4_replay_window_expiry_requires_a_snapshot_merge() {
+    let (_temp, state, app, token_a, _) = build_v4_test_env().await;
+    seed_one_comic_change(&app, &token_a).await;
+    sqlx::query("UPDATE v4_profile_watermarks SET min_replayable_seq = 1 WHERE profile_id = ?")
+        .bind("profile-alpha")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    let (status, _, body) =
+        v4_request(&app, Method::GET, "/v4/changes?sinceSeq=0", &token_a, None).await;
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(body["error"]["code"], "REPLAY_WINDOW_EXPIRED");
+    assert_eq!(body["error"]["requiredAction"], "snapshot_merge");
+    assert_eq!(body["error"]["minReplayableServerVersion"], 1);
+
+    let (stream_app, _runtime, _shutdown) = build_v4_stream_app(&state).await;
+    let resp = stream_app
+        .clone()
+        .oneshot(sse_request("/v4/events?sinceSeq=0", &token_a, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::GONE);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["code"], "REPLAY_WINDOW_EXPIRED");
+}
+
+#[tokio::test]
+async fn v4_events_stream_closes_after_token_revocation() {
+    let (_temp, state, _, token_a, _) = build_v4_test_env().await;
+    let (app, _runtime, _shutdown) = build_v4_stream_app(&state).await;
+    let resp = app
+        .clone()
+        .oneshot(sse_request("/v4/events", &token_a, None))
+        .await
+        .unwrap();
+    let mut body = resp.into_body();
+    read_sse_until(&mut body, "event: hello").await;
+
+    db::revoke_token(&state.pool, &db::hash_token(&token_a))
+        .await
+        .unwrap();
+    assert!(sse_stream_ends(&mut body).await, "revoked token kept streaming");
+}
+
+#[tokio::test]
+async fn v4_events_stream_closes_when_its_scope_is_removed() {
+    let (_temp, state, _, token_a, _) = build_v4_test_env().await;
+    let (app, _runtime, _shutdown) = build_v4_stream_app(&state).await;
+    let resp = app
+        .clone()
+        .oneshot(sse_request("/v4/events", &token_a, None))
+        .await
+        .unwrap();
+    let mut body = resp.into_body();
+    read_sse_until(&mut body, "event: hello").await;
+
+    sqlx::query("DELETE FROM paired_device_scopes WHERE token_id = ? AND scope_id != ?")
+        .bind("local-authority-android-a-profile-alpha")
+        .bind("novels:profile:profile-alpha")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    assert!(sse_stream_ends(&mut body).await, "stream kept running after scope removal");
+}
+
+#[tokio::test]
+async fn v4_active_stream_extends_the_device_inactivity_window() {
+    let (_temp, state, _, token_a, _) = build_v4_test_env().await;
+    let (app, _runtime, _shutdown) = build_v4_stream_app(&state).await;
+    let resp = app
+        .clone()
+        .oneshot(sse_request("/v4/events", &token_a, None))
+        .await
+        .unwrap();
+    // The tick only extends a window in its second half (before window/2 remains), so place the
+    // expiry one hour out and reset activity after the request authenticated. Only the stream's
+    // clock tick can then move both fields. The tick starts once the body is polled below.
+    let early_expiry = db::now_ms() + 60 * 60 * 1000;
+    sqlx::query(
+        "UPDATE paired_device_tokens SET last_seen_at_ms = 0, inactivity_expires_at_ms = ? WHERE token_id = ?",
+    )
+    .bind(early_expiry)
+    .bind("local-authority-android-a-profile-alpha")
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    let mut body = resp.into_body();
+    read_sse_until(&mut body, "event: clock").await;
+
+    let (last_seen, expires): (i64, i64) = sqlx::query_as(
+        "SELECT last_seen_at_ms, inactivity_expires_at_ms FROM paired_device_tokens WHERE token_id = ?",
+    )
+    .bind("local-authority-android-a-profile-alpha")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert!(last_seen > 0, "clock tick did not record device activity");
+    assert!(expires > early_expiry, "clock tick did not extend the inactivity window");
+}
+
+#[tokio::test]
+async fn v4_sync_bulk_rejects_corrupt_gzip_and_accepts_large_inflated_bodies() {
+    let (_temp, _state, app, token_a, _) = build_v4_test_env().await;
+
+    let (status, _) = {
+        let request = Request::post("/v4/sync/bulk")
+            .header(CLIENT_VERSION_HEADER, "0.1.0")
+            .header(CLIENT_PROTOCOL_HEADER, "4")
+            .header("authorization", format!("Bearer {token_a}"))
+            .header("content-type", "application/json")
+            .header(CONTENT_ENCODING, "gzip")
+            .body(Body::from(b"this is not gzip".to_vec()))
+            .unwrap();
+        let resp = app.clone().oneshot(request).await.unwrap();
+        let status = resp.status();
+        (status, resp.into_body().collect().await.unwrap().to_bytes())
+    };
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A valid gzip body whose inflated JSON is over 2 MiB still commits.
+    let big_title = "x".repeat(2 * 1024 * 1024 + 1024);
+    let raw = json!({"items":[{
+        "domain":"comics","entityType":"comic.work","entityKey":"123:/big",
+        "hlc":{"tsMs":1,"deviceId":"android-a"},"payload":{"title":big_title}
+    }]})
+    .to_string();
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    std::io::Write::write_all(&mut gzip, raw.as_bytes()).unwrap();
+    let request = Request::post("/v4/sync/bulk")
+        .header(CLIENT_VERSION_HEADER, "0.1.0")
+        .header(CLIENT_PROTOCOL_HEADER, "4")
+        .header("authorization", format!("Bearer {token_a}"))
+        .header("content-type", "application/json")
+        .header(CONTENT_ENCODING, "gzip")
+        .body(Body::from(gzip.finish().unwrap()))
+        .unwrap();
+    let resp = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let summary: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(summary["acceptedCount"], 1);
+}
+
+#[tokio::test]
+async fn v4_asset_blob_is_only_served_within_the_scope_it_was_stored_in() {
+    let (_temp, _state, app, token_a, token_b) = build_v4_test_env().await;
+    let bytes = b"epigraph v4 asset scope check".to_vec();
+    let sha = format!("{:x}", Sha256::digest(&bytes));
+    let books = "books:global";
+    let novels = "novels:profile:profile-alpha";
+
+    let (status, _) = v4_raw(
+        &app,
+        Method::PUT,
+        &format!("/v4/assets/{sha}?scopeId={books}"),
+        &token_a,
+        Body::from(bytes.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, served) = v4_raw(
+        &app,
+        Method::GET,
+        &format!("/v4/assets/{sha}?scopeId={books}"),
+        &token_a,
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(served, bytes);
+
+    // Same token, but the blob was never granted to the novels scope.
+    let (status, _) = v4_raw(
+        &app,
+        Method::GET,
+        &format!("/v4/assets/{sha}?scopeId={novels}"),
+        &token_a,
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A different profile's token is refused for a scope it does not hold.
+    let (status, _) = v4_raw(
+        &app,
+        Method::GET,
+        &format!("/v4/assets/{sha}?scopeId={novels}"),
+        &token_b,
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
