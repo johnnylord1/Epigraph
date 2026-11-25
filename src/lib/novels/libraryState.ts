@@ -380,7 +380,9 @@ export async function loadNovelLibraryStateForRestore(scopeInput: NovelRepositor
     const value = canUseDesktopNovelStorage() ? parsed : parsed[key];
     if (!value && !canUseDesktopNovelStorage()) return createEmptyState(scope);
     const arrays = ["entries", "chapters", "progress", "bookmarks", "history"] as const;
-    if (!value || value.version !== 1 || value.scopeKey !== key || arrays.some(k => !Array.isArray(value[k]))) throw Error();
+    // Sync wrote libraries it created without a scope key; the file is already this profile's.
+    const scopeMatches = value?.scopeKey === key || (value?.scopeKey === null && canUseDesktopNovelStorage());
+    if (!value || value.version !== 1 || !scopeMatches || arrays.some(k => !Array.isArray(value[k]))) throw Error();
     const normalized = normalizeNovelLibraryState(value, scope, key);
     if (arrays.some(k => normalized[k].length !== value[k].length)) throw Error();
     return normalized;

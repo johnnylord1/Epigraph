@@ -52,6 +52,16 @@ describe("restore destination validation", () => {
     invokeMock.mockResolvedValueOnce(JSON.stringify({ version: 1, entries: [] }));
     await expect(loadNovelLibraryStateForRestore(SCOPE)).rejects.toThrow("RESTORE_DESTINATION_CORRUPT");
   });
+  it("accepts a library sync created without a scope key but not one of another scope", async () => {
+    (globalThis as any).window = { __TAURI_INTERNALS__: {} };
+    const file = (scopeKey: string | null) => JSON.stringify({
+      version: 1, scopeKey, updatedAtMs: null, entries: [], chapters: [], progress: [], bookmarks: [], history: [],
+    });
+    invokeMock.mockResolvedValueOnce(file(null));
+    expect((await loadNovelLibraryStateForRestore(SCOPE)).scopeKey).toBe(SCOPE_KEY);
+    invokeMock.mockResolvedValueOnce(file("profile:other"));
+    await expect(loadNovelLibraryStateForRestore(SCOPE)).rejects.toThrow("RESTORE_DESTINATION_CORRUPT");
+  });
 });
 
 function createState(): PersistedNovelLibraryState {

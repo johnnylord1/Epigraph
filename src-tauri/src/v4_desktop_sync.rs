@@ -1258,6 +1258,19 @@ async fn pull_changes_paged(
     }
 }
 
+/// A library first created by sync names its profile like the window does, or the window's
+/// strict read (first-run sync, restore) rejects it as another scope.
+fn stamp_novel_library_scope(doc: &mut Value, profile_id: &str) {
+    if let Some(root) = doc.as_object_mut() {
+        if root.get("scopeKey").is_none_or(Value::is_null) {
+            root.insert(
+                "scopeKey".into(),
+                json!(format!("profile:{}", profile_id.trim().to_ascii_lowercase())),
+            );
+        }
+    }
+}
+
 fn resolve_novels_path(app: &AppHandle, profile_id: &str) -> Result<PathBuf, String> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
     novel_library_state_path_for_target(&launch_target, Some(profile_id), None)
@@ -1336,6 +1349,7 @@ fn apply_remote_records_to_sqlite(
                     preserve_local_work_tombstones,
                 );
                 apply_v4_records_to_desktop_novels(&mut doc, &safe_records);
+                stamp_novel_library_scope(&mut doc, profile_id);
                 let encoded = serde_json::to_string(&doc).map_err(|err| err.to_string())?;
                 library_sqlite::save(&path, &encoded)?;
                 note_library_saved(Some(profile_id), "novels", false);
@@ -2040,6 +2054,19 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].entity_key, format!("{:064x}", 5));
+    }
+
+    #[test]
+    fn a_novel_library_created_by_sync_names_its_profile_and_keeps_an_existing_scope() {
+        let mut created = json!({ "entries": [], "scopeKey": null });
+        stamp_novel_library_scope(&mut created, " Main ");
+        assert_eq!(created["scopeKey"], "profile:main");
+        let mut missing = json!({ "entries": [] });
+        stamp_novel_library_scope(&mut missing, "main");
+        assert_eq!(missing["scopeKey"], "profile:main");
+        let mut existing = json!({ "entries": [], "scopeKey": "profile:other" });
+        stamp_novel_library_scope(&mut existing, "main");
+        assert_eq!(existing["scopeKey"], "profile:other");
     }
 
     #[test]
