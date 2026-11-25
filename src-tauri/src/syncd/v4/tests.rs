@@ -1805,3 +1805,244 @@ async fn v4_asset_blob_is_only_served_within_the_scope_it_was_stored_in() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+async fn open_v4_env_at(data_dir: &std::path::Path) -> (SharedAppState, axum::Router) {
+    let mut config = SyncdConfig::from_env();
+    config.data_dir = data_dir.to_path_buf();
+    config.db_path = data_dir.join("syncd.sqlite");
+
+    let pool = db::connect(&config).await.unwrap();
+    db::upsert_server_identity(&pool, &config, "v4-test-fingerprint")
+        .await
+        .unwrap();
+
+    let advertised =
+        crate::syncd::config::SyncdAdvertisedEndpointResolver::from_config(&config).unwrap();
+    let descriptor = SyncdDiscoveryDescriptorProvider::from_config(&config).unwrap();
+    let manager = SyncdDiscoveryProviderManager::from_config(&config).unwrap();
+    let initial_status = manager.initial_status(&config, &advertised);
+
+    let (change_sender, _) = broadcast::channel(128);
+    let (pairing_status_sender, _) = broadcast::channel(32);
+
+    let state = Arc::new(AppState {
+        config: config.clone(),
+        advertised_endpoint_resolver: advertised,
+        discovery_descriptor_provider: descriptor,
+        client_discovery_contract_provider: SyncdClientDiscoveryContractProvider::default(),
+        client_discovery_guidance_provider: SyncdClientDiscoveryGuidanceProvider::default(),
+        discovery_provider_manager: manager,
+        discovery_provider_state: Arc::new(RwLock::new(initial_status)),
+        discovery_provider_runtime: Arc::new(Mutex::new(None)),
+        pool,
+        change_sender,
+        pairing_status_sender,
+        mutation_gate: Arc::new(Mutex::new(())),
+        tls_cert_sha256: "v4-test-fingerprint".to_string(),
+        device_presence: Default::default(),
+    });
+
+    let router = build_router_for_tests(state.clone());
+    (state, router)
+}
+
+#[tokio::test]
+async fn v4_mid_sync_core_restart_preserves_cursor_idempotency_and_convergence() {
+    let temp = TempDir::new().unwrap();
+    let (state_1, app_1) = open_v4_env_at(temp.path()).await;
+
+    let token_phone = db::issue_local_authority_token(
+        &state_1.pool,
+        &state_1.config,
+        "android-phone-a",
+        "profile-alpha",
+    )
+    .await
+    .unwrap()
+    .access_token;
+    let token_desktop = db::issue_local_authority_token(
+        &state_1.pool,
+        &state_1.config,
+        "desktop-pc-b",
+        "profile-alpha",
+    )
+    .await
+    .unwrap()
+    .access_token;
+
+    let now = db::now_ms();
+
+    // 1. Pre-restart: Phone uploads Batch 1 via /v4/sync/bulk across comics, novels, and books.
+    let (status, _, bulk_1) = v4_request(
+        &app_1,
+        Method::POST,
+        "/v4/sync/bulk",
+        &token_phone,
+        Some(json!({
+            "items": [
+                {
+                    "clientMutationId": "restart-mut-1",
+                    "domain": "comics",
+                    "entityType": "comic.work",
+                    "entityKey": "src1:/manga/alpha",
+                    "deleted": false,
+                    "hlc": { "tsMs": now, "counter": 0, "deviceId": "android-phone-a" },
+                    "payload": { "title": "Alpha Manga", "favorite": true }
+                },
+                {
+                    "clientMutationId": "restart-mut-2",
+                    "domain": "novels",
+                    "entityType": "novel.work",
+                    "entityKey": "p1:/novel/beta",
+                    "deleted": false,
+                    "hlc": { "tsMs": now, "counter": 1, "deviceId": "android-phone-a" },
+                    "payload": { "title": "Beta Novel", "inLibrary": true }
+                },
+                {
+                    "clientMutationId": "restart-mut-3",
+                    "domain": "books",
+                    "entityType": "book.item",
+                    "entityKey": "book:gamma",
+                    "deleted": false,
+                    "hlc": { "tsMs": now, "counter": 2, "deviceId": "android-phone-a" },
+                    "payload": { "title": "Gamma Book", "progressPercent": 15.0 }
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bulk_1["acceptedCount"], json!(3));
+
+    // 2. Pre-restart: Phone uploads Batch 2 (in-flight batch) via /v4/deltas.
+    let in_flight_deltas = json!({
+        "items": [
+            {
+                "clientMutationId": "restart-mut-4",
+                "domain": "comics",
+                "entityType": "comic.chapter",
+                "entityKey": "src1:/manga/alpha|/manga/alpha/ch-1",
+                "deleted": false,
+                "hlc": { "tsMs": now + 10, "counter": 0, "deviceId": "android-phone-a" },
+                "payload": { "isRead": true, "lastPageRead": 18 }
+            },
+            {
+                "clientMutationId": "restart-mut-5",
+                "domain": "novels",
+                "entityType": "novel.chapter",
+                "entityKey": "p1:/novel/beta|/novel/beta/ch-1",
+                "deleted": false,
+                "hlc": { "tsMs": now + 10, "counter": 1, "deviceId": "android-phone-a" },
+                "payload": { "isRead": true, "progressPercent": 100.0 }
+            }
+        ]
+    });
+    let (status, _, deltas_1) = v4_request(
+        &app_1,
+        Method::POST,
+        "/v4/deltas",
+        &token_phone,
+        Some(in_flight_deltas.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(deltas_1["acceptedCount"], json!(2));
+
+    // Desktop pulls only the first 3 changes before Core restarts, persisting its cursor.
+    let (status, _, pre_changes) = v4_request(
+        &app_1,
+        Method::GET,
+        "/v4/changes?sinceSeq=0&limit=3",
+        &token_desktop,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let pre_list = pre_changes["changes"].as_array().unwrap();
+    assert_eq!(pre_list.len(), 3);
+    assert_eq!(pre_changes["hasMore"], json!(true));
+    let persisted_cursor = pre_changes["nextSeq"].as_i64().unwrap();
+    assert!(persisted_cursor >= 3);
+
+    // 3. Simulate Core restart: drop router + AppState/V4Runtime and close SQLite pool.
+    drop(app_1);
+    let pool_1 = state_1.pool.clone();
+    drop(state_1);
+    pool_1.close().await;
+
+    // Reconstruct fresh SQLite pool, V4Runtime, and Axum router on the exact same syncd.sqlite.
+    let (_state_2, app_2) = open_v4_env_at(temp.path()).await;
+
+    // 4. Post-restart: Phone replays the in-flight /v4/deltas batch with the same clientMutationId.
+    let (status, _, replay_resp) = v4_request(
+        &app_2,
+        Method::POST,
+        "/v4/deltas",
+        &token_phone,
+        Some(in_flight_deltas),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replay_resp["acceptedCount"], json!(0));
+    assert_eq!(replay_resp["deduplicatedCount"], json!(2));
+
+    // Phone also uploads a post-restart /v4/sync/bulk batch (new book + updated comic).
+    let (status, _, bulk_2) = v4_request(
+        &app_2,
+        Method::POST,
+        "/v4/sync/bulk",
+        &token_phone,
+        Some(json!({
+            "items": [
+                {
+                    "clientMutationId": "restart-mut-6",
+                    "domain": "books",
+                    "entityType": "book.item",
+                    "entityKey": "book:delta",
+                    "deleted": false,
+                    "hlc": { "tsMs": now + 20, "counter": 0, "deviceId": "android-phone-a" },
+                    "payload": { "title": "Delta Book", "progressPercent": 42.0 }
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bulk_2["acceptedCount"], json!(1));
+
+    // 5. Desktop resumes /v4/changes from its persisted_cursor.
+    let (status, _, post_changes) = v4_request(
+        &app_2,
+        Method::GET,
+        &format!("/v4/changes?sinceSeq={persisted_cursor}&limit=20"),
+        &token_desktop,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let post_list = post_changes["changes"].as_array().unwrap();
+    // Exactly 3 remaining changes: mut-4, mut-5, mut-6 (no duplicates from replay).
+    assert_eq!(post_list.len(), 3);
+    assert_eq!(post_changes["hasMore"], json!(false));
+
+    // Verify monotonic serverSeq across the restart boundary.
+    let mut prev_seq = persisted_cursor;
+    for ch in post_list {
+        let seq = ch["serverSeq"].as_i64().unwrap();
+        assert!(seq > prev_seq, "serverSeq must be strictly monotonic");
+        assert_eq!(ch["deleted"], json!(false), "no phantom tombstones");
+        prev_seq = seq;
+    }
+
+    // 6. Exact convergence across both devices via /v4/snapshot.
+    let (status, _, snap_phone) =
+        v4_request(&app_2, Method::GET, "/v4/snapshot", &token_phone, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, snap_desktop) =
+        v4_request(&app_2, Method::GET, "/v4/snapshot", &token_desktop, None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert_eq!(snap_phone["recordCount"], json!(6));
+    assert_eq!(snap_desktop["recordCount"], json!(6));
+    assert_eq!(snap_phone["records"], snap_desktop["records"]);
+}

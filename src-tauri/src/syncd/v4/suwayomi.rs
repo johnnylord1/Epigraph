@@ -41,6 +41,7 @@ pub(in crate::syncd) async fn capture_local_edits(
     profile: &str,
     work_ids: Vec<i64>,
     chapter_ids: Vec<i64>,
+    catalog: bool,
 ) -> anyhow::Result<()> {
     // Only project local edits onto V4 profiles after that protocol has initialized.
     if db::load_watermark(&state.pool, profile).await?.current_seq == 0 {
@@ -118,7 +119,46 @@ pub(in crate::syncd) async fn capture_local_edits(
             parents.entry(work).or_insert(payload);
         }
     }
-    if updates.is_empty() && parents.is_empty() {
+    let catalog_snapshot = if catalog {
+        let categories_query = r#"
+          query EpigraphV4LocalCategories($first: Int!, $offset: Int!) {
+            categories(first: $first, offset: $offset) {
+              nodes {
+                id
+                name
+                order
+                mangas {
+                  nodes { sourceId url title inLibrary }
+                }
+              }
+              pageInfo { hasNextPage }
+            }
+          }
+        "#;
+        let library_query = r#"
+          query EpigraphV4LocalLibraryWorks($first: Int!, $offset: Int!) {
+            mangas(condition: { inLibrary: true }, first: $first, offset: $offset) {
+              nodes { sourceId url }
+              pageInfo { hasNextPage }
+            }
+          }
+        "#;
+        let categories = read_nodes(
+            state,
+            &session,
+            categories_query,
+            "categories",
+            500,
+            json!({}),
+        )
+        .await?;
+        let library_works =
+            read_nodes(state, &session, library_query, "mangas", 500, json!({})).await?;
+        Some((categories, library_works))
+    } else {
+        None
+    };
+    if updates.is_empty() && parents.is_empty() && catalog_snapshot.is_none() {
         return Ok(());
     }
     let _guard = runtime.write_gate.lock().await;
@@ -137,15 +177,41 @@ pub(in crate::syncd) async fn capture_local_edits(
         if !explicitly_changed_works.contains(&key) && known.contains(&key) {
             continue;
         }
-        items.push(("comic.work", key, payload));
+        let deleted = payload["favorite"] == false;
+        items.push(("comic.work", key, payload, deleted));
     }
-    items.extend(updates);
+    for (entity_type, key, payload) in updates {
+        items.push((entity_type, key, payload, false));
+    }
+    if let Some((categories, library_works)) = catalog_snapshot {
+        let existing_categories: Vec<(String, String)> = sqlx::query_as(
+            "SELECT entity_key, payload_json FROM v4_records WHERE profile_id = ? AND entity_type = 'comic.category' AND deleted = 0",
+        )
+        .bind(profile)
+        .fetch_all(&state.pool)
+        .await?;
+        let existing_assignments: Vec<(String, String)> = sqlx::query_as(
+            "SELECT entity_key, payload_json FROM v4_records WHERE profile_id = ? AND entity_type = 'comic.category_assignment' AND deleted = 0",
+        )
+        .bind(profile)
+        .fetch_all(&state.pool)
+        .await?;
+        items.extend(plan_catalog_category_edits(
+            &categories,
+            &library_works,
+            &existing_categories,
+            &existing_assignments,
+            &known,
+        ));
+    }
+    if items.is_empty() {
+        return Ok(());
+    }
     let items = items
         .into_iter()
         .enumerate()
-        .map(|(index, (entity_type, entity_key, payload))| {
-            let deleted = entity_type == "comic.work" && payload["favorite"] == false;
-            db::V4IncomingItem {
+        .map(
+            |(index, (entity_type, entity_key, payload, deleted))| db::V4IncomingItem {
                 client_mutation_id: None,
                 domain: "comics".to_owned(),
                 entity_type: entity_type.to_owned(),
@@ -157,8 +223,8 @@ pub(in crate::syncd) async fn capture_local_edits(
                     LOCAL_DESKTOP_ORIGIN,
                 ),
                 payload,
-            }
-        })
+            },
+        )
         .collect();
     let summary =
         db::apply_v4_batch(&state.pool, profile, LOCAL_DESKTOP_ORIGIN, items, true).await?;
@@ -172,6 +238,178 @@ pub(in crate::syncd) async fn capture_local_edits(
     }
     wake_projection();
     Ok(())
+}
+
+fn is_reserved_category_name(name: &str) -> bool {
+    let normalized = name.trim();
+    normalized.eq_ignore_ascii_case("default") || normalized.eq_ignore_ascii_case("completed")
+}
+
+fn plan_catalog_category_edits(
+    categories: &[Value],
+    library_works: &[Value],
+    existing_categories: &[(String, String)],
+    existing_assignments: &[(String, String)],
+    known_works: &BTreeSet<String>,
+) -> Vec<(&'static str, String, Value, bool)> {
+    let mut live_library_works = BTreeSet::new();
+    for work in library_works {
+        let Some(source) = scalar_text(&work["sourceId"]) else {
+            continue;
+        };
+        if source == "0" {
+            continue;
+        }
+        let Some(url) = work["url"].as_str() else {
+            continue;
+        };
+        live_library_works.insert(canonical_work_key(&source, url));
+    }
+
+    let mut live_categories = BTreeMap::new();
+    let mut live_assignments = BTreeMap::new();
+    let mut missing_parent_works = BTreeMap::new();
+    for category in categories {
+        if category["id"].as_i64() == Some(0) {
+            continue;
+        }
+        let Some(raw_name) = category["name"].as_str() else {
+            continue;
+        };
+        if is_reserved_category_name(raw_name) {
+            continue;
+        }
+        let trimmed_name = raw_name.trim();
+        let category_key = trimmed_name.to_lowercase();
+        let order = category["order"].as_i64().unwrap_or(0);
+        live_categories.insert(
+            category_key.clone(),
+            json!({
+                "name": trimmed_name,
+                "order": order,
+                "flags": 0,
+            }),
+        );
+        if let Some(mangas) = category["mangas"]["nodes"].as_array() {
+            for manga in mangas {
+                if manga["inLibrary"].as_bool() == Some(false) {
+                    continue;
+                }
+                let Some(source) = scalar_text(&manga["sourceId"]) else {
+                    continue;
+                };
+                if source == "0" {
+                    continue;
+                }
+                let Some(url) = manga["url"].as_str() else {
+                    continue;
+                };
+                let work_key = canonical_work_key(&source, url);
+                live_library_works.insert(work_key.clone());
+                if !known_works.contains(&work_key) {
+                    missing_parent_works.entry(work_key.clone()).or_insert_with(|| {
+                        json!({
+                            "sourceId": source,
+                            "url": url,
+                            "title": manga["title"].as_str().unwrap_or(url),
+                            "favorite": true,
+                        })
+                    });
+                }
+                let assignment_key = format!("{work_key}|{category_key}");
+                live_assignments.insert(
+                    assignment_key,
+                    json!({
+                        "workKey": work_key,
+                        "categoryKey": category_key,
+                    }),
+                );
+            }
+        }
+    }
+
+    let existing_cat_map: HashMap<&str, Value> = existing_categories
+        .iter()
+        .filter_map(|(key, payload_json)| {
+            serde_json::from_str::<Value>(payload_json)
+                .ok()
+                .map(|payload| (key.as_str(), payload))
+        })
+        .collect();
+    let existing_assign_map: HashMap<&str, Value> = existing_assignments
+        .iter()
+        .filter_map(|(key, payload_json)| {
+            serde_json::from_str::<Value>(payload_json)
+                .ok()
+                .map(|payload| (key.as_str(), payload))
+        })
+        .collect();
+
+    let mut out = Vec::new();
+    for (key, payload) in missing_parent_works {
+        out.push(("comic.work", key, payload, false));
+    }
+    for (key, payload) in &live_categories {
+        let unchanged = existing_cat_map.get(key.as_str()).is_some_and(|prev| {
+            prev["name"].as_str() == payload["name"].as_str()
+                && prev["order"].as_i64() == payload["order"].as_i64()
+        });
+        if !unchanged {
+            out.push(("comic.category", key.clone(), payload.clone(), false));
+        }
+    }
+    for (key, prev) in &existing_cat_map {
+        if live_categories.contains_key(*key) {
+            continue;
+        }
+        let prev_name = prev["name"].as_str().unwrap_or(*key);
+        if is_reserved_category_name(prev_name) || is_reserved_category_name(key) {
+            continue;
+        }
+        out.push(("comic.category", (*key).to_owned(), json!({}), true));
+    }
+
+    for (key, payload) in &live_assignments {
+        if !existing_assign_map.contains_key(key.as_str()) {
+            out.push((
+                "comic.category_assignment",
+                key.clone(),
+                payload.clone(),
+                false,
+            ));
+        }
+    }
+    for (key, prev) in &existing_assign_map {
+        if live_assignments.contains_key(*key) {
+            continue;
+        }
+        let work_key = prev["workKey"]
+            .as_str()
+            .or_else(|| key.split('|').next())
+            .unwrap_or_default();
+        let category_key = prev["categoryKey"]
+            .as_str()
+            .or_else(|| key.split('|').nth(1))
+            .unwrap_or_default();
+        if work_key.is_empty()
+            || category_key.is_empty()
+            || is_reserved_category_name(category_key)
+            || !live_library_works.contains(work_key)
+        {
+            continue;
+        }
+        out.push((
+            "comic.category_assignment",
+            (*key).to_owned(),
+            json!({
+                "workKey": work_key,
+                "categoryKey": category_key,
+            }),
+            true,
+        ));
+    }
+
+    out
 }
 
 fn capture_work(work: &Value) -> Option<(String, Value)> {
@@ -1213,5 +1451,100 @@ mod tests {
         assert_eq!(plan.categories.len(), 1);
         assert_eq!(plan.categories[0].name, "Reading");
         assert_eq!(plan.works[0].category_orders, [0]);
+    }
+
+    #[test]
+    fn plan_catalog_category_edits_captures_add_reorder_assignment_removal_and_exclusions() {
+        let categories = vec![
+            json!({
+                "id": 0,
+                "name": "Default",
+                "order": 0,
+                "mangas": { "nodes": [{ "sourceId": "1", "url": "/a", "inLibrary": true }] }
+            }),
+            json!({
+                "id": 2,
+                "name": "Completed",
+                "order": 1,
+                "mangas": { "nodes": [{ "sourceId": "1", "url": "/a", "inLibrary": true }] }
+            }),
+            json!({
+                "id": 3,
+                "name": "Action",
+                "order": 2,
+                "mangas": { "nodes": [{ "sourceId": "1", "url": "/a", "inLibrary": true }] }
+            }),
+        ];
+        let library_works = vec![
+            json!({ "sourceId": "1", "url": "/a" }),
+            json!({ "sourceId": "1", "url": "/b" }),
+        ];
+        let existing_categories = vec![
+            (
+                "action".to_owned(),
+                json!({ "name": "Action", "order": 1, "flags": 0 }).to_string(),
+            ),
+            (
+                "removed".to_owned(),
+                json!({ "name": "Removed", "order": 3, "flags": 0 }).to_string(),
+            ),
+            (
+                "completed".to_owned(),
+                json!({ "name": "Completed", "order": 4, "flags": 0 }).to_string(),
+            ),
+        ];
+        let existing_assignments = vec![
+            // /b is in library_works (moved to Default-only) -> should be tombstoned.
+            (
+                "1:/b|action".to_owned(),
+                json!({ "workKey": "1:/b", "categoryKey": "action" }).to_string(),
+            ),
+            // /missing is NOT in library_works -> must NOT be tombstoned.
+            (
+                "1:/missing|action".to_owned(),
+                json!({ "workKey": "1:/missing", "categoryKey": "action" }).to_string(),
+            ),
+            // Completed assignment -> must NOT be tombstoned.
+            (
+                "1:/a|completed".to_owned(),
+                json!({ "workKey": "1:/a", "categoryKey": "completed" }).to_string(),
+            ),
+        ];
+
+        let known_works = BTreeSet::from(["1:/b".to_owned()]);
+        let edits = plan_catalog_category_edits(
+            &categories,
+            &library_works,
+            &existing_categories,
+            &existing_assignments,
+            &known_works,
+        );
+
+        assert!(edits.iter().any(|(ty, key, payload, deleted)| {
+            *ty == "comic.work" && key == "1:/a" && payload["favorite"] == true && !*deleted
+        }));
+
+        assert!(edits.iter().any(|(ty, key, payload, deleted)| {
+            *ty == "comic.category" && key == "action" && payload["order"] == 2 && !*deleted
+        }));
+        assert!(edits.iter().any(|(ty, key, _, deleted)| {
+            *ty == "comic.category" && key == "removed" && *deleted
+        }));
+        assert!(edits.iter().any(|(ty, key, payload, deleted)| {
+            *ty == "comic.category_assignment"
+                && key == "1:/a|action"
+                && payload["workKey"] == "1:/a"
+                && payload["categoryKey"] == "action"
+                && !*deleted
+        }));
+        assert!(edits.iter().any(|(ty, key, _, deleted)| {
+            *ty == "comic.category_assignment" && key == "1:/b|action" && *deleted
+        }));
+        assert!(!edits.iter().any(|(_, key, _, _)| {
+            key == "default"
+                || key == "completed"
+                || key == "1:/missing|action"
+                || key == "1:/a|completed"
+        }));
     }
 }

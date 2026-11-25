@@ -34,7 +34,7 @@ All `/v4/*` routes require `require_v4_session`, which validates `X-Epigraph-Cli
 - **Desktop client (`src-tauri/src/v4_desktop_sync.rs`)**:
   - **Novels & Books**: connects each hosted profile to `/v4/*`, performs startup catch-up, subscribes to `GET /v4/events` SSE to apply remote deltas directly into `library_sqlite`, uploads book files and covers to `/v1/assets/:sha256`, and pushes local Desktop UI saves (including delete tombstones) via `POST /v4/deltas`.
   - **Extensions & Preferences**: syncs desktop novel repositories, plugins, and settings over Sync V4.
-  - **Comics**: projected through the Suwayomi integration and Core outbox.
+  - **Comics**: projected through the Suwayomi integration; local Desktop edits—including comic category creation, reordering, assignment changes, and deletions (`catalog: true` on `/v1/local/progress-mirror`)—are captured into Sync V4 records.
 
 ## Compatibility Boundaries
 

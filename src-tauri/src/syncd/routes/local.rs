@@ -104,7 +104,7 @@ pub async fn post_local_progress_mirror(
         )));
     }
     if let Some(Extension(v4_runtime)) = v4_runtime {
-        if !request.chapter_ids.is_empty() || !request.manga_ids.is_empty() {
+        if request.catalog || !request.chapter_ids.is_empty() || !request.manga_ids.is_empty() {
             tokio::spawn(async move {
                 let profile = request.profile_id.as_deref().unwrap_or("main");
                 if let Err(error) = crate::syncd::v4::suwayomi::capture_local_edits(
@@ -113,6 +113,7 @@ pub async fn post_local_progress_mirror(
                     profile,
                     request.manga_ids,
                     request.chapter_ids,
+                    request.catalog,
                 )
                 .await
                 {
@@ -865,5 +866,25 @@ mod tests {
         // Missing chapter key returns nothing, and Suwayomi unavailability returns empty map.
         let pages = stored_chapter_pages_from_v4(&state, &[999999]).await;
         assert!(pages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn local_progress_mirror_accepts_catalog_flag_without_ids() {
+        let state = build_state().await;
+        let request: LocalProgressMirrorRequest =
+            serde_json::from_value(json!({ "catalog": true })).unwrap();
+        assert!(request.catalog);
+        assert!(request.manga_ids.is_empty());
+        assert!(request.chapter_ids.is_empty());
+
+        let status = post_local_progress_mirror(
+            State(state),
+            ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))),
+            None,
+            Json(request),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, StatusCode::ACCEPTED);
     }
 }
