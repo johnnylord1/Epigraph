@@ -117,6 +117,13 @@ pub(super) async fn capture_local_edits_with_wait(
             }
         }
     }
+    // A chapter moved back on the desktop may reset progress other devices made only if this
+    // Suwayomi read already showed every stored comic record; see `stamp_desktop_reset`.
+    let reset_baseline = if chapter_ids.is_empty() {
+        None
+    } else {
+        Some(load_projection_progress(&state.pool, profile).await?)
+    };
     if !chapter_ids.is_empty() {
         let chapters = read_nodes(
             state,
@@ -231,6 +238,30 @@ pub(super) async fn capture_local_edits_with_wait(
         let deleted = payload["favorite"] == false;
         items.push(("comic.work", key, payload, deleted));
     }
+    let mut stored_chapters = BTreeMap::new();
+    if let Some(before) = reset_baseline {
+        if catalog_snapshot_is_current(
+            before,
+            load_projection_progress(&state.pool, profile).await?,
+        ) {
+            for (entity_type, key, _) in &updates {
+                if *entity_type != "comic.chapter" {
+                    continue;
+                }
+                let stored = sqlx::query_scalar::<_, String>(
+                    "SELECT payload_json FROM v4_records
+                     WHERE profile_id = ? AND entity_type = 'comic.chapter' AND entity_key = ? AND deleted = 0",
+                )
+                .bind(profile)
+                .bind(key)
+                .fetch_optional(&state.pool)
+                .await?;
+                if let Some(stored) = stored.and_then(|json| serde_json::from_str(&json).ok()) {
+                    stored_chapters.insert(key.clone(), stored);
+                }
+            }
+        }
+    }
     for (entity_type, key, payload) in updates {
         items.push((entity_type, key, payload, false));
     }
@@ -261,21 +292,25 @@ pub(super) async fn capture_local_edits_with_wait(
     let items = items
         .into_iter()
         .enumerate()
-        .map(
-            |(index, (entity_type, entity_key, payload, deleted))| db::V4IncomingItem {
+        .map(|(index, (entity_type, entity_key, mut payload, deleted))| {
+            let hlc = super::hlc::Hlc::new(
+                now,
+                watermark.current_seq.saturating_add(index as i64),
+                LOCAL_DESKTOP_ORIGIN,
+            );
+            if let Some(stored) = stored_chapters.get(&entity_key) {
+                stamp_desktop_reset(&mut payload, stored, &hlc);
+            }
+            db::V4IncomingItem {
                 client_mutation_id: None,
                 domain: "comics".to_owned(),
                 entity_type: entity_type.to_owned(),
                 entity_key,
                 deleted,
-                hlc: super::hlc::Hlc::new(
-                    now,
-                    watermark.current_seq.saturating_add(index as i64),
-                    LOCAL_DESKTOP_ORIGIN,
-                ),
+                hlc,
                 payload,
-            },
-        )
+            }
+        })
         .collect();
     let summary =
         db::apply_v4_batch(&state.pool, profile, LOCAL_DESKTOP_ORIGIN, items, true).await?;
@@ -289,6 +324,26 @@ pub(super) async fn capture_local_edits_with_wait(
     }
     wake_projection();
     Ok(())
+}
+
+/// Marks a desktop chapter edit that moved the chapter back (unread, or an earlier page) as an
+/// explicit reset, as the phone does. Without one the merge keeps the furthest progress any device
+/// reported and the desktop edit is lost. The reset sits one tick before the edit itself, so the
+/// merge drops every older progress but keeps the page the desktop now shows.
+///
+/// `stored` must come from a Core whose records Suwayomi already showed when it was read; a
+/// remote read that had not reached Suwayomi yet would otherwise look like a desktop rewind.
+fn stamp_desktop_reset(payload: &mut Value, stored: &Value, hlc: &super::hlc::Hlc) {
+    let page = |record: &Value| record["lastPageRead"].as_i64().unwrap_or(0);
+    let unread = payload["isRead"] == false && stored["isRead"] == true;
+    let rewound = payload["lastPageRead"].is_i64() && page(payload) < page(stored);
+    if !(unread || rewound) || hlc.counter == 0 {
+        return;
+    }
+    let reset = super::hlc::Hlc::new(hlc.ts_ms, hlc.counter - 1, hlc.device_id.clone());
+    if let (Some(object), Ok(reset)) = (payload.as_object_mut(), serde_json::to_value(reset)) {
+        object.insert("explicitResetHlc".to_owned(), reset);
+    }
 }
 
 /// The comic projection cursor of a profile: Suwayomi shows every record up to `applied`.
@@ -1673,5 +1728,63 @@ mod tests {
             applied: 0,
             target: 3
         })));
+    }
+
+    #[test]
+    fn a_desktop_rewind_wins_over_older_progress_from_the_phone() {
+        use crate::syncd::v4::merge::{merge_record, StoredRecordState};
+        let record = |payload: Value, hlc: Hlc| StoredRecordState {
+            domain: "comics".into(),
+            entity_type: "comic.chapter".into(),
+            entity_key: "1:/work|/work/ch-1".into(),
+            payload,
+            deleted: false,
+            hlc: hlc.clone(),
+            origin_device_id: hlc.device_id,
+        };
+        let phone_read = record(
+            json!({"isRead": true, "lastPageRead": 12}),
+            Hlc::new(1_000, 0, "phone"),
+        );
+        let edit_hlc = Hlc::new(2_000, 7, LOCAL_DESKTOP_ORIGIN);
+
+        // Marked unread on the desktop: the phone's older read must not come back.
+        let mut unread = json!({"isRead": false, "lastPageRead": 0, "isBookmarked": false});
+        stamp_desktop_reset(&mut unread, &phone_read.payload, &edit_hlc);
+        assert_eq!(
+            unread["explicitResetHlc"],
+            json!({"tsMs": 2_000, "counter": 6, "deviceId": LOCAL_DESKTOP_ORIGIN})
+        );
+        let merged = merge_record(Some(&phone_read), record(unread, edit_hlc.clone())).state;
+        assert_eq!(merged.payload["isRead"], false);
+        assert_eq!(merged.payload["lastPageRead"], 0);
+
+        // Moved back to an earlier page: that page is kept, not cleared to zero.
+        let in_progress = record(
+            json!({"isRead": false, "lastPageRead": 12}),
+            Hlc::new(1_000, 0, "phone"),
+        );
+        let mut earlier = json!({"isRead": false, "lastPageRead": 3});
+        stamp_desktop_reset(&mut earlier, &in_progress.payload, &edit_hlc);
+        let merged = merge_record(Some(&in_progress), record(earlier, edit_hlc.clone())).state;
+        assert_eq!(merged.payload["lastPageRead"], 3);
+        assert_eq!(merged.payload["isRead"], false);
+
+        // Rereading a read chapter from an earlier page keeps it read.
+        let mut reread = json!({"isRead": true, "lastPageRead": 2});
+        stamp_desktop_reset(&mut reread, &phone_read.payload, &edit_hlc);
+        let merged = merge_record(Some(&phone_read), record(reread, edit_hlc.clone())).state;
+        assert_eq!(merged.payload["isRead"], true);
+        assert_eq!(merged.payload["lastPageRead"], 2);
+
+        // Forward progress and bookmark-only edits carry no reset.
+        for payload in [
+            json!({"isRead": true, "lastPageRead": 20}),
+            json!({"isRead": true, "lastPageRead": 12, "isBookmarked": true}),
+        ] {
+            let mut forward = payload;
+            stamp_desktop_reset(&mut forward, &phone_read.payload, &edit_hlc);
+            assert!(forward.get("explicitResetHlc").is_none());
+        }
     }
 }
