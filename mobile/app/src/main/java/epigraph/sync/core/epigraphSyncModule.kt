@@ -70,12 +70,10 @@ import epigraph.sync.core.novels.CoreNovelPluginArtifactGateway
 import epigraph.sync.core.novels.ManagedCoreNovelPluginArtifactGateway
 import epigraph.sync.core.novels.ManagedLnReaderDependencyActionGateway
 import epigraph.sync.core.novels.ManagedLnReaderPluginGateway
-import epigraph.sync.core.novels.ReplicaCoreNovelDependencyReader
+import epigraph.sync.v4.V4NovelDependencyReader
 import epigraph.sync.core.novels.SharedPreferencesNovelDependencyBaseline
 import epigraph.sync.core.novels.SqlDelightLnReaderDependencyInventoryStore
 import epigraph.sync.core.persistence.SqlDelightCoreIdentityInventoryStore
-import epigraph.sync.core.portable.PortableManifestSync
-import epigraph.sync.core.portable.PortableNovelManifestSync
 import epigraph.sync.core.portable.PortableHydrationCoordinator
 import epigraph.sync.core.portable.PortableHydrationStore
 import epigraph.sync.core.portable.SqlDelightPortableHydrationStore
@@ -317,7 +315,7 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreReplicaSyncPort>(named(EXTENSION_INVENTORY_REPLICA)) {
         ExtensionInventoryReplicaSync(get(), get(), get(), get(), get())
     }
-    single<CoreNovelDependencyReader> { ReplicaCoreNovelDependencyReader(get(), get()) }
+    single<CoreNovelDependencyReader> { V4NovelDependencyReader(get()) }
     single<LnReaderPluginGateway> { ManagedLnReaderPluginGateway(get(), get(), get()) }
     single<LnReaderDependencyInventoryStore> { SqlDelightLnReaderDependencyInventoryStore(get()) }
     single<LnReaderDependencyActionGateway> {
@@ -507,12 +505,6 @@ fun epigraphSyncModule(app: Application) = module {
             v4Coordinator = get(),
         )
     }
-    single<CoreReplicaSyncPort>(named(PORTABLE_MANIFEST_REPLICA)) {
-        PortableManifestSync(get(), get(), get(), get())
-    }
-    single<CoreReplicaSyncPort>(named(PORTABLE_NOVEL_MANIFEST_REPLICA)) {
-        PortableNovelManifestSync(get(), get(), get(), get())
-    }
     single<PortableLocalEntityLookup> { EpigraphPortableLocalEntityLookup(get(), get()) }
     single<PortableWorkMaterializer> { EpigraphPortableWorkMaterializer(get(), get(), get()) }
     single<ComicDependencyRegistry> { MihonComicDependencyRegistry(get(), get()) }
@@ -576,6 +568,10 @@ fun epigraphSyncModule(app: Application) = module {
             clock = System::currentTimeMillis,
             queueHandOver = get(),
             v4Coordinator = get(),
+            postV4Stages = listOf(
+                get<CoreReplicaSyncPort>(named(EXTENSION_INVENTORY_REPLICA)),
+                get<CoreReplicaSyncPort>(named(NOVEL_PLUGIN_REPLICA)),
+            ),
         )
     }
 }
@@ -589,8 +585,6 @@ private const val CORE_COVER_QUEUE_CURSOR = "next_missing_cover"
 
 private const val PAIRING_HTTP_CLIENT = "epigraphCorePairingHttp"
 private const val CATALOG_REPLICA = "epigraphCatalogReplica"
-private const val PORTABLE_MANIFEST_REPLICA = "epigraphPortableManifestReplica"
-private const val PORTABLE_NOVEL_MANIFEST_REPLICA = "epigraphPortableNovelManifestReplica"
 private const val PORTABLE_COMICS_PROVIDER = "epigraphPortableComicsProvider"
 private const val PORTABLE_NOVELS_PROVIDER = "epigraphPortableNovelsProvider"
 private const val EXTENSION_INVENTORY_REPLICA = "epigraphExtensionInventoryReplica"

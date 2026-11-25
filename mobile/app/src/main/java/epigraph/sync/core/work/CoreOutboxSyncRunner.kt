@@ -437,6 +437,11 @@ class CoreOutboxSyncRunner(
     private val queueHandOver: CoreQueueHandOver? = null,
     /** Production Sync V4 coordinator used automatically whenever the Core advertises V4. */
     private val v4Coordinator: epigraph.sync.v4.V4ProductionSyncCoordinator? = null,
+    /**
+     * Inventory stages run after every completed Sync V4 pass (comic extensions, then LNReader
+     * plugins). Best effort: a failing stage never changes the sync outcome.
+     */
+    private val postV4Stages: List<CoreReplicaSyncPort> = emptyList(),
 ) {
     @Volatile
     private var lastRunUsedSyncV4: Boolean = false
@@ -641,13 +646,29 @@ class CoreOutboxSyncRunner(
             }
             if (capabilities.supportsSyncV4 && v4Coordinator != null) {
                 lastRunUsedSyncV4 = true
-                return v4Coordinator.syncOnce(
+                val stageTime = clock?.invoke()?.coerceAtLeast(nowEpochMillis) ?: nowEpochMillis
+                val outcome = v4Coordinator.syncOnce(
                     session = session,
                     openedOrigin = connection.openedOrigin,
                     policy = policy,
-                    nowEpochMillis = clock?.invoke()?.coerceAtLeast(nowEpochMillis) ?: nowEpochMillis,
+                    nowEpochMillis = stageTime,
                     drainBookAssets = connection::drainBookAssets,
                 )
+                if (
+                    outcome is CoreOutboxSyncOutcome.OutboxDrained ||
+                    outcome is CoreOutboxSyncOutcome.OutboxDeferred
+                ) {
+                    postV4Stages.forEach { stage ->
+                        try {
+                            stage.synchronize(session, capabilities, stageTime)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            reportCoreSyncFailure("v4.inventory", failure)
+                        }
+                    }
+                }
+                return outcome
             }
             lastRunUsedSyncV4 = false
             return CoreOutboxSyncOutcome.NeedsUserAction(

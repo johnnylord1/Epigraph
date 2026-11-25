@@ -179,6 +179,7 @@ class SqlDelightV4SyncStore(
         localId: String?,
         hlc: V4Hlc,
         deleted: Boolean,
+        payloadJson: String? = null,
     ) {
         queries.upsertV4EntityMap(
             serverId = serverId,
@@ -192,6 +193,7 @@ class SqlDelightV4SyncStore(
             hlcDeviceId = hlc.deviceId,
             deleted = if (deleted) 1L else 0L,
             updatedAtMs = wallClockMs(),
+            payloadJson = payloadJson,
         )
     }
 

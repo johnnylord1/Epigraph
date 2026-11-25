@@ -2,16 +2,11 @@ package epigraph.sync.core.novels
 
 import epigraph.sync.core.credentials.CoreCredentialSession
 import epigraph.sync.core.protocol.CoreCapabilities
-import epigraph.sync.core.replica.CoreConfirmedRecord
-import epigraph.sync.core.replica.CoreReplicaKey
-import epigraph.sync.core.replica.CoreReplicaRecordReader
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import epigraph.sync.core.portable.canonicalRepositoryUrl
 import epigraph.novel.plugin.model.NovelPluginIndex
 import java.security.MessageDigest
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -155,46 +150,98 @@ class LnReaderPluginReplicaSyncTest {
     }
 
     @Test
-    fun `replica reader accepts novel records and ignores comic extension records`() = runTest {
-        val bytes = "plugin-code".encodeToByteArray()
-        val hash = bytes.sha256()
-        val reader = ReplicaCoreNovelDependencyReader(CoreReplicaRecordReader { scope, entityTypes ->
-            listOf(
-                CoreConfirmedRecord(
-                    CoreReplicaKey(scope, "novel.repository", "repo"),
-                    1,
-                    1,
-                    buildJsonObject {
-                        put("repositoryId", "repo")
-                        put("canonicalUrl", REPOSITORY_URL)
-                        put("name", "LNReader")
-                        put("enabled", true)
-                    },
-                ),
-                CoreConfirmedRecord(
-                    CoreReplicaKey(scope, "novel.plugin", "plugin-entity"),
-                    2,
-                    2,
-                    buildJsonObject {
-                        put("pluginEntityId", "plugin-entity")
-                        put("repositoryId", "repo")
-                        put("pluginId", "plugin.test")
-                        put("sourceId", "source.test")
-                        put("version", "1.0.0")
-                        put("enabled", true)
-                        put("artifactSha256", hash)
-                        put("artifactByteLength", bytes.size)
-                    },
-                ),
-            ).filter { it.key.entityType in entityTypes }
-        })
-
-        val manifest = reader.read("novels:profile:$PROFILE")
-
-        assertEquals(1, manifest.repositories.size)
-        assertEquals(1, manifest.plugins.size)
-        assertEquals("plugin.test", manifest.plugins.single().pluginId)
+    fun `v4 requirement without hash is installed when local version is current or newer`() = runTest {
+        val inventory = syncV4(installedVersion = "1.0.10", offered = "1.0.10", required = "1.0.9")
+        assertEquals(LnReaderPluginParityStatus.INSTALLED, inventory.plugins.single().status)
     }
+
+    @Test
+    fun `v4 requirement without hash offers update when installed version is older`() = runTest {
+        val inventory = syncV4(installedVersion = "1.0.2", offered = "1.0.4", required = "1.0.3")
+        val item = inventory.plugins.single()
+        assertEquals(LnReaderPluginParityStatus.UPDATE_AVAILABLE, item.status)
+        assertEquals("1.0.4", item.requirement.version)
+    }
+
+    @Test
+    fun `v4 requirement without hash is available when not installed`() = runTest {
+        val inventory = syncV4(installedVersion = null, offered = "1.0.3", required = "1.0.3")
+        assertEquals(LnReaderPluginParityStatus.MISSING_AVAILABLE, inventory.plugins.single().status)
+    }
+
+    @Test
+    fun `v4 requirement without hash is unavailable when index only has an older version`() = runTest {
+        val inventory = syncV4(installedVersion = "1.0.0", offered = "1.0.1", required = "1.0.3")
+        assertEquals(LnReaderPluginParityStatus.MISSING_UNAVAILABLE, inventory.plugins.single().status)
+    }
+
+    @Test
+    fun `v4 requirement without hash is unavailable when no index has the plugin`() = runTest {
+        val inventory = syncV4(installedVersion = null, offered = null, required = "1.0.3")
+        assertEquals(LnReaderPluginParityStatus.MISSING_UNAVAILABLE, inventory.plugins.single().status)
+    }
+
+    @Test
+    fun `v4 requirement is found in a repository other than the declared site url`() = runTest {
+        val requirement = v4Requirement("1.0.0").copy(repositoryId = "https://plugin-site.test")
+        val store = InMemoryLnReaderDependencyInventoryStore()
+        val gateway = RecordingInventoryGateway(
+            configuredUrl = REPOSITORY_URL,
+            plugins = listOf(pluginIndex("1.0.0")),
+        )
+        LnReaderPluginReplicaSync(
+            dependencies = CoreNovelDependencyReader {
+                CoreNovelDependencyManifest(listOf(repositoryRequirement()), listOf(requirement))
+            },
+            gateway = gateway,
+            inventories = store,
+        ).synchronize(session, capabilities(), 20)
+
+        val item = store.get(SERVER, PROFILE)!!.plugins.single()
+        assertEquals(LnReaderPluginParityStatus.MISSING_AVAILABLE, item.status)
+        assertEquals("repo", item.requirement.repositoryId)
+    }
+
+    @Test
+    fun `plugin versions compare numerically`() {
+        assertEquals(true, compareNovelPluginVersions("1.0.10", "1.0.9") > 0)
+        assertEquals(0, compareNovelPluginVersions("1.0", "1.0.0"))
+        assertEquals(true, compareNovelPluginVersions("2.0.0", "10.0.0") < 0)
+    }
+
+    private suspend fun syncV4(
+        installedVersion: String?,
+        offered: String?,
+        required: String,
+    ): LnReaderDependencyInventory {
+        val store = InMemoryLnReaderDependencyInventoryStore()
+        val gateway = RecordingInventoryGateway(
+            configuredUrl = REPOSITORY_URL,
+            plugins = listOfNotNull(offered?.let(::pluginIndex)),
+            installedVersion = installedVersion,
+            // A V4 requirement must never consult the artifact hash check.
+            artifactMatches = true,
+        )
+        sync(v4Requirement(required), gateway, store).synchronize(session, capabilities(), 20)
+        return store.get(SERVER, PROFILE)!!
+    }
+
+    private fun v4Requirement(version: String) = CoreNovelPluginRequirement(
+        repositoryId = "repo",
+        pluginId = "plugin.test",
+        sourceId = "plugin.test",
+        version = version,
+        enabled = true,
+        artifactSha256 = "",
+        artifactByteLength = 0L,
+    )
+
+    private fun pluginIndex(version: String) = NovelPluginIndex(
+        id = "plugin.test",
+        name = "Novel source",
+        version = version,
+        url = "https://lnreader.test/plugin.js",
+    )
 
     private fun sync(
         requirement: CoreNovelPluginRequirement,

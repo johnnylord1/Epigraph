@@ -1,0 +1,5 @@
+-- Add payload_json to v4_entity_map so V4 extension.installed records retain remote plugin metadata.
+-- Rollback note: SQLite <3.35 cannot DROP COLUMN; rolling back requires recreating v4_entity_map
+-- without payload_json or leaving the nullable column unused.
+
+ALTER TABLE v4_entity_map ADD COLUMN payload_json TEXT;

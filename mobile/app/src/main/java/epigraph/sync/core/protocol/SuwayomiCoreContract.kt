@@ -1,8 +1,5 @@
 package epigraph.sync.core.protocol
 
-import epigraph.contract.ComicDependency
-import epigraph.contract.NovelDependency
-import epigraph.contract.PortableWorkRef
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.PrimitiveKind
@@ -253,116 +250,6 @@ object CanonicalSourceIdSerializer : KSerializer<String> {
             "extension source id must be canonical signed-64-bit decimal"
         }
         encoder.encodeString(value)
-    }
-}
-
-@Serializable
-data class CorePortableManifestPage(
-    val offset: Long,
-    val pageSize: Long,
-    val hasNextPage: Boolean,
-    val totalCount: Long,
-    val omittedCount: Long = 0,
-) {
-    init {
-        require(offset >= 0) { "portable manifest offset must not be negative" }
-        require(pageSize in 1L..250L) { "portable manifest page size is outside the Core limit" }
-        require(totalCount >= 0) { "portable manifest total count must not be negative" }
-        require(omittedCount >= 0) { "portable manifest omitted count must not be negative" }
-    }
-}
-
-@Serializable
-data class CorePortableComicWork(
-    val portableId: String,
-    val reference: PortableWorkRef.Comic,
-    val dependencyPackageName: String? = null,
-    val titleHint: String? = null,
-    val providerLabelHint: String? = null,
-) {
-    init {
-        require(portableId.startsWith("comic:") && portableId.length <= 128) {
-            "portable comic ID is invalid"
-        }
-        dependencyPackageName?.let {
-            require(it.isNotBlank() && it == it.trim()) { "dependency package name must be canonical" }
-        }
-    }
-}
-
-@Serializable
-data class CorePortableManifest(
-    val schemaVersion: Int,
-    val scopeId: String,
-    val runtimeFingerprint: String,
-    val generatedAtMs: Long,
-    val snapshotId: String,
-    val snapshotFingerprint: String,
-    val snapshotExpiresAtMs: Long,
-    val page: CorePortableManifestPage,
-    val comicDependencies: List<ComicDependency>,
-    val works: List<CorePortableComicWork>,
-) {
-    init {
-        require(schemaVersion == 3) { "unsupported portable manifest schema version" }
-        require(scopeId.startsWith("comics:profile:")) { "portable manifest scope is invalid" }
-        require(runtimeFingerprint.isNotBlank()) { "portable manifest runtime fingerprint is missing" }
-        require(generatedAtMs >= 0) { "portable manifest timestamp must not be negative" }
-        require(snapshotId.isNotBlank() && snapshotId.length <= 128) {
-            "portable manifest snapshot ID is invalid"
-        }
-        require(snapshotFingerprint.startsWith("sha256:") && snapshotFingerprint.length == 71) {
-            "portable manifest snapshot fingerprint is invalid"
-        }
-        require(snapshotExpiresAtMs > generatedAtMs) { "portable manifest snapshot expiry is invalid" }
-    }
-}
-
-@Serializable
-data class CorePortableNovelWork(
-    val portableId: String,
-    val reference: PortableWorkRef.Novel,
-    val dependencyPluginId: String,
-    val titleHint: String? = null,
-    val providerLabelHint: String? = null,
-) {
-    init {
-        require(portableId.startsWith("novel:") && portableId.length <= 128) {
-            "portable novel ID is invalid"
-        }
-        require(dependencyPluginId.isNotBlank() && dependencyPluginId == dependencyPluginId.trim()) {
-            "dependency plugin ID must be canonical"
-        }
-    }
-}
-
-@Serializable
-data class CorePortableNovelManifest(
-    val schemaVersion: Int,
-    val scopeId: String,
-    val manifestFingerprint: String,
-    val generatedAtMs: Long,
-    val snapshotId: String,
-    val snapshotFingerprint: String,
-    val snapshotExpiresAtMs: Long,
-    val page: CorePortableManifestPage,
-    val novelDependencies: List<NovelDependency>,
-    val works: List<CorePortableNovelWork>,
-) {
-    init {
-        require(schemaVersion == 3) { "unsupported portable novel manifest schema version" }
-        require(scopeId.startsWith("novels:profile:")) { "portable novel manifest scope is invalid" }
-        require(manifestFingerprint.startsWith("sha256:") && manifestFingerprint.length == 71) {
-            "portable novel manifest fingerprint is invalid"
-        }
-        require(generatedAtMs >= 0) { "portable novel manifest timestamp must not be negative" }
-        require(snapshotId.isNotBlank() && snapshotId.length <= 128) {
-            "portable novel manifest snapshot ID is invalid"
-        }
-        require(snapshotFingerprint == manifestFingerprint) {
-            "portable novel manifest fingerprints do not match"
-        }
-        require(snapshotExpiresAtMs > generatedAtMs) { "portable novel manifest snapshot expiry is invalid" }
     }
 }
 

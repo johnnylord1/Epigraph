@@ -365,6 +365,7 @@ class EpigraphTrackingMutationRouterTest {
             hlcDeviceId = "dev-1",
             deleted = 0L,
             updatedAtMs = 100L,
+            payloadJson = null,
         )
         var wakeCount = 0
         val wakeCoordinator = EpigraphMutationCoordinator(

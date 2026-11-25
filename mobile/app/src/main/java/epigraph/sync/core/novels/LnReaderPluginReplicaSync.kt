@@ -1,12 +1,8 @@
 package epigraph.sync.core.novels
 
 import epigraph.sync.core.credentials.CoreCredentialSession
-import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.core.protocol.CoreCapabilities
 import epigraph.sync.core.portable.PortableDependencyTrustCoordinator
-import epigraph.sync.core.replica.CoreConfirmedRecord
-import epigraph.sync.core.replica.CoreReplicaRecordReader
-import epigraph.sync.core.replica.CoreReplicaTombstoneReader
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import epigraph.sync.core.work.CoreReplicaSyncPort
 import epigraph.novel.plugin.NovelPluginManager
@@ -15,10 +11,6 @@ import epigraph.novel.repo.NovelRepoRepository
 import epigraph.novel.repo.interactor.NovelRepoIndexValidator
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
 
 @Serializable
 data class CoreNovelRepositoryRequirement(
@@ -50,71 +42,6 @@ data class CoreNovelDependencyManifest(
 
 fun interface CoreNovelDependencyReader {
     suspend fun read(scopeId: String): CoreNovelDependencyManifest
-}
-
-/** Reads only LNReader dependency declarations from the authenticated Core mirror. */
-class ReplicaCoreNovelDependencyReader(
-    private val records: CoreReplicaRecordReader,
-    private val tombstones: CoreReplicaTombstoneReader = CoreReplicaTombstoneReader { _, _ -> emptyList() },
-) : CoreNovelDependencyReader {
-    override suspend fun read(scopeId: String): CoreNovelDependencyManifest {
-        val confirmed = records.confirmedRecords(scopeId, ENTITY_TYPES)
-        return CoreNovelDependencyManifest(
-            repositories = confirmed.mapNotNull(::repository),
-            plugins = confirmed.mapNotNull(::plugin),
-            removed = tombstones.confirmedTombstones(scopeId, ENTITY_TYPES)
-                .associate { it.key.entityId to it.lamport },
-        )
-    }
-
-    private fun repository(record: CoreConfirmedRecord): CoreNovelRepositoryRequirement? {
-        if (record.key.entityType != EpigraphCoreEntityType.NOVEL_REPOSITORY) return null
-        val value = record.record as? JsonObject ?: return null
-        val repositoryId = value.string("repositoryId") ?: record.key.entityId
-        if (repositoryId != record.key.entityId) return null
-        return CoreNovelRepositoryRequirement(
-            repositoryId = repositoryId,
-            canonicalUrl = value.string("canonicalUrl") ?: return null,
-            displayName = value.string("name")?.takeIf(String::isNotBlank) ?: "LNReader repository",
-            enabled = value.boolean("enabled") ?: false,
-        )
-    }
-
-    private fun plugin(record: CoreConfirmedRecord): CoreNovelPluginRequirement? {
-        if (record.key.entityType != EpigraphCoreEntityType.NOVEL_PLUGIN) return null
-        val value = record.record as? JsonObject ?: return null
-        val entityId = value.string("pluginEntityId") ?: record.key.entityId
-        if (entityId != record.key.entityId) return null
-        val artifactSha256 = value.string("artifactSha256") ?: return null
-        if (!SHA_256.matches(artifactSha256)) return null
-        return CoreNovelPluginRequirement(
-            repositoryId = value.string("repositoryId") ?: return null,
-            pluginId = value.string("pluginId") ?: return null,
-            sourceId = value.string("sourceId") ?: return null,
-            version = value.string("version") ?: return null,
-            enabled = value.boolean("enabled") ?: false,
-            artifactSha256 = artifactSha256,
-            artifactByteLength = value.long("artifactByteLength")?.takeIf { it > 0 } ?: return null,
-            name = value.string("name").orEmpty(),
-            lang = value.string("lang").orEmpty(),
-        )
-    }
-
-    private fun JsonObject.string(key: String): String? =
-        (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty)
-
-    private fun JsonObject.boolean(key: String): Boolean? =
-        (this[key] as? JsonPrimitive)?.booleanOrNull
-
-    private fun JsonObject.long(key: String): Long? = string(key)?.toLongOrNull()
-
-    private companion object {
-        val ENTITY_TYPES = setOf(
-            EpigraphCoreEntityType.NOVEL_REPOSITORY,
-            EpigraphCoreEntityType.NOVEL_PLUGIN,
-        )
-        val SHA_256 = Regex("[0-9a-f]{64}")
-    }
 }
 
 interface LnReaderPluginGateway {
@@ -200,6 +127,9 @@ class LnReaderPluginReplicaSync(
                 .filter(CoreNovelPluginRequirement::enabled)
                 .distinctBy(CoreNovelPluginRequirement::pluginId)
                 .map { requirement ->
+                    if (!requirement.hasArtifactIdentity) {
+                        return@map versionOnlyInventoryItem(requirement, repositoryPlugins)
+                    }
                     val candidates = repositoryPlugins[requirement.repositoryId]
                     val candidate = candidates?.singleMatching(requirement)
                     val installedVersion = gateway.installedVersion(requirement.pluginId)
@@ -248,4 +178,72 @@ class LnReaderPluginReplicaSync(
             CoreReplicaSyncOutcome.DEFERRED
         }
     }
+
+    /**
+     * Sync V4 declares installed plugins by id and version only (no artifact hash). Any
+     * configured repository may serve the plugin; the declared repository is only preferred.
+     * The stored requirement points at the serving repository and its offered version, so the
+     * explicit install action resolves the same index entry.
+     */
+    private fun versionOnlyInventoryItem(
+        requirement: CoreNovelPluginRequirement,
+        repositoryPlugins: Map<String, List<NovelPluginIndex>>,
+    ): LnReaderPluginInventoryItem {
+        val installedVersion = gateway.installedVersion(requirement.pluginId)
+        val served = repositoryPlugins.entries
+            .sortedByDescending { it.key == requirement.repositoryId }
+            .firstNotNullOfOrNull { (repositoryId, plugins) ->
+                plugins.singleMatching(requirement)
+                    ?.takeIf { it.url.isNotBlank() }
+                    ?.let { repositoryId to it }
+            }
+        val offered = served?.second?.takeIf {
+            compareNovelPluginVersions(it.version, requirement.version) >= 0
+        }
+        val installedCurrent = installedVersion != null &&
+            compareNovelPluginVersions(installedVersion, requirement.version) >= 0
+        val status = when {
+            installedCurrent -> LnReaderPluginParityStatus.INSTALLED
+            offered == null -> LnReaderPluginParityStatus.MISSING_UNAVAILABLE
+            installedVersion != null -> LnReaderPluginParityStatus.UPDATE_AVAILABLE
+            else -> LnReaderPluginParityStatus.MISSING_AVAILABLE
+        }
+        val stored = if (served != null && offered != null && !installedCurrent) {
+            requirement.copy(repositoryId = served.first, version = offered.version)
+        } else if (served != null) {
+            requirement.copy(repositoryId = served.first)
+        } else {
+            requirement
+        }
+        return LnReaderPluginInventoryItem(
+            requirement = stored,
+            status = status,
+            installedVersion = installedVersion,
+            availableVersion = served?.second?.version,
+        )
+    }
+}
+
+/** A requirement without an artifact hash comes from Sync V4 and is matched by id and version. */
+val CoreNovelPluginRequirement.hasArtifactIdentity: Boolean
+    get() = artifactSha256.isNotEmpty()
+
+/** Compares dotted numeric plugin versions ("1.0.10" > "1.0.9"); non-numeric parts compare as text. */
+internal fun compareNovelPluginVersions(left: String, right: String): Int {
+    val a = left.trim().removePrefix("v").split('.', '-', '+')
+    val b = right.trim().removePrefix("v").split('.', '-', '+')
+    for (index in 0 until maxOf(a.size, b.size)) {
+        val x = a.getOrNull(index).orEmpty()
+        val y = b.getOrNull(index).orEmpty()
+        val xn = x.toLongOrNull()
+        val yn = y.toLongOrNull()
+        val result = when {
+            xn != null && yn != null -> xn.compareTo(yn)
+            x.isEmpty() && y.isNotEmpty() -> if (yn == 0L) 0 else -1
+            y.isEmpty() && x.isNotEmpty() -> if (xn == 0L) 0 else 1
+            else -> x.compareTo(y)
+        }
+        if (result != 0) return result
+    }
+    return 0
 }

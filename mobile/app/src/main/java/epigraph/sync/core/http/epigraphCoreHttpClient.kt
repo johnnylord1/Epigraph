@@ -6,8 +6,6 @@ import epigraph.sync.core.protocol.CoreChangesResponse
 import epigraph.sync.core.protocol.CoreErrorEnvelope
 import epigraph.sync.core.protocol.CoreErrorDetail
 import epigraph.sync.core.protocol.CoreExtensionInventory
-import epigraph.sync.core.protocol.CorePortableManifest
-import epigraph.sync.core.protocol.CorePortableNovelManifest
 import epigraph.sync.core.protocol.CoreMutationsRequest
 import epigraph.sync.core.protocol.CoreMutationsResponse
 import epigraph.sync.core.protocol.CoreSnapshot
@@ -492,80 +490,6 @@ class EpigraphCoreHttpClient internal constructor(
                 .header("Accept", "application/json")
                 .get()
                 .build(),
-        )
-    }
-
-    suspend fun portableManifest(
-        accessToken: String,
-        profileId: String,
-        pageSize: Long = DEFAULT_CATALOG_PAGE_SIZE,
-        offset: Long = 0,
-        snapshotId: String? = null,
-        snapshotFingerprint: String? = null,
-    ): CoreHttpResult<CorePortableManifest> {
-        val canonicalProfileId = canonicalProfileId(profileId)
-        require(pageSize in 1..MAX_CATALOG_PAGE_SIZE) {
-            "pageSize must be between 1 and $MAX_CATALOG_PAGE_SIZE"
-        }
-        require(offset in 0..Int.MAX_VALUE.toLong()) {
-            "offset must be a non-negative Suwayomi integer"
-        }
-        require((snapshotId == null) == (snapshotFingerprint == null)) {
-            "snapshot ID and fingerprint must be supplied together"
-        }
-        val urlBuilder = endpoint("v1/portable/manifest")
-            .newBuilder()
-            .addQueryParameter("scopeId", "comics:profile:$canonicalProfileId")
-            .addQueryParameter("pageSize", pageSize.toString())
-            .addQueryParameter("offset", offset.toString())
-        snapshotId?.let { urlBuilder.addQueryParameter("snapshotId", it) }
-        snapshotFingerprint?.let { urlBuilder.addQueryParameter("snapshotFingerprint", it) }
-        val url = urlBuilder.build()
-        return execute(
-            protectedRequestBuilder(url, accessToken)
-                .header("Accept", "application/json")
-                .get()
-                .build(),
-        )
-    }
-
-    suspend fun portableNovelManifest(
-        accessToken: String,
-        profileId: String,
-        pageSize: Long = DEFAULT_CATALOG_PAGE_SIZE,
-        offset: Long = 0,
-        snapshotId: String? = null,
-        snapshotFingerprint: String? = null,
-        ifNoneMatch: String? = null,
-    ): CoreHttpResult<CorePortableNovelManifest> {
-        val canonicalProfileId = canonicalProfileId(profileId)
-        require(pageSize in 1..MAX_CATALOG_PAGE_SIZE) {
-            "pageSize must be between 1 and $MAX_CATALOG_PAGE_SIZE"
-        }
-        require(offset in 0..Int.MAX_VALUE.toLong()) {
-            "offset must be a non-negative integer"
-        }
-        require((snapshotId == null) == (snapshotFingerprint == null)) {
-            "snapshot ID and fingerprint must be supplied together"
-        }
-        require(ifNoneMatch == null || (offset == 0L && snapshotId == null)) {
-            "only the first page of a new manifest can be revalidated"
-        }
-        val urlBuilder = endpoint("v1/portable/novel-manifest")
-            .newBuilder()
-            .addQueryParameter("scopeId", "novels:profile:$canonicalProfileId")
-            .addQueryParameter("pageSize", pageSize.toString())
-            .addQueryParameter("offset", offset.toString())
-        snapshotId?.let { urlBuilder.addQueryParameter("snapshotId", it) }
-        snapshotFingerprint?.let { urlBuilder.addQueryParameter("snapshotFingerprint", it) }
-        val url = urlBuilder.build()
-        return execute(
-            protectedRequestBuilder(url, accessToken)
-                .header("Accept", "application/json")
-                .apply { ifNoneMatch?.let { header("If-None-Match", it) } }
-                .get()
-                .build(),
-            captureEtag = true,
         )
     }
 

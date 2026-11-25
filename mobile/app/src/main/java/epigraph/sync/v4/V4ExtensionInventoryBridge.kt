@@ -130,6 +130,11 @@ internal class V4ExtensionInventoryBridge(
                     REPO -> applyRepo(record, payload)
                     INSTALLED -> Unit // Persisted in v4_entity_map for the async installer lane.
                 }
+                val payloadJson = if (record.entityType == INSTALLED && !record.deleted) {
+                    payload.toString()
+                } else {
+                    null
+                }
                 store.upsertEntityMap(
                     serverId = serverId,
                     profileId = profileId,
@@ -139,6 +144,7 @@ internal class V4ExtensionInventoryBridge(
                     localId = record.entityKey,
                     hlc = record.hlc,
                     deleted = record.deleted,
+                    payloadJson = payloadJson,
                 )
             }
         }

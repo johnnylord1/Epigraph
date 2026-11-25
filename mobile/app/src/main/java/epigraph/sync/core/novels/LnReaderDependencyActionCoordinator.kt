@@ -80,6 +80,7 @@ class ManagedLnReaderDependencyActionGateway(
         repositoryIndexUrl: String,
         requirement: CoreNovelPluginRequirement,
     ): LnReaderPluginInstallResult {
+        if (!requirement.hasArtifactIdentity) return installVersionOnly(repositoryIndexUrl, requirement)
         if (plugins.installedArtifactMatches(
                 pluginId = requirement.pluginId,
                 expectedVersion = requirement.version,
@@ -112,6 +113,26 @@ class ManagedLnReaderDependencyActionGateway(
                 expectedByteLength = requirement.artifactByteLength,
             )
         ) {
+            LnReaderPluginInstallResult.Installed
+        } else {
+            LnReaderPluginInstallResult.ArtifactRejected
+        }
+    }
+
+    /** Sync V4 requirement: install the repository's plugin when it is at least the declared version. */
+    private suspend fun installVersionOnly(
+        repositoryIndexUrl: String,
+        requirement: CoreNovelPluginRequirement,
+    ): LnReaderPluginInstallResult {
+        val installedVersion = plugins.getInstalledVersion(requirement.pluginId)
+        if (installedVersion != null && compareNovelPluginVersions(installedVersion, requirement.version) >= 0) {
+            return LnReaderPluginInstallResult.AlreadyInstalled
+        }
+        val candidate = repositoryPlugins(repositoryIndexUrl).singleMatching(requirement)
+            ?.takeIf { it.url.isNotBlank() && compareNovelPluginVersions(it.version, requirement.version) >= 0 }
+            ?: return LnReaderPluginInstallResult.PluginUnavailable
+        if (!plugins.installPlugin(candidate)) return LnReaderPluginInstallResult.ArtifactRejected
+        return if (plugins.getInstalledVersion(requirement.pluginId) == candidate.version) {
             LnReaderPluginInstallResult.Installed
         } else {
             LnReaderPluginInstallResult.ArtifactRejected
@@ -232,7 +253,10 @@ class LnReaderDependencyActionCoordinator(
         // The paired Core serves the desktop's exact artifact, verified by hash and size, so a
         // repository that was not added, lacks that version or republished it with other bytes
         // no longer blocks the install.
-        val resolvedResult = if (repositoryResult in CORE_ARTIFACT_FALLBACK) {
+        // A Sync V4 requirement has no artifact hash, so the Core cannot serve exact bytes for it.
+        val resolvedResult = if (
+            repositoryResult in CORE_ARTIFACT_FALLBACK && plugin.requirement.hasArtifactIdentity
+        ) {
             coreArtifacts?.install(serverId, profileId, plugin.requirement) ?: repositoryResult
         } else {
             repositoryResult
