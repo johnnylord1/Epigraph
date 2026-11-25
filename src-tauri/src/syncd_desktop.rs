@@ -1867,8 +1867,9 @@ pub(crate) async fn revalidate_session(session: &PersistedSyncSession) -> SyncdR
 async fn validate_token(origin: &str, session: &PersistedSyncSession) -> Result<(), String> {
     let client = build_pinned_http_client(&session.tls_cert_sha256)?;
     let response = client
-        .get(format!("{origin}/v1/changes"))
-        .query(&[("scopeId", "books:global"), ("sinceVersion", "0")])
+        // `/v1/session` is the authenticated, read-only session probe (Android uses it too); the
+        // legacy `/v1/changes` feed it used to hit is gone and would answer 404.
+        .get(format!("{origin}/v1/session"))
         .header("Authorization", format!("Bearer {}", session.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
@@ -1887,7 +1888,7 @@ async fn validate_token(origin: &str, session: &PersistedSyncSession) -> Result<
         .await
         .map_err(transport_error_message)?;
 
-    if response.status().is_success() || response.status().as_u16() == 409 {
+    if response.status().is_success() {
         return Ok(());
     }
 

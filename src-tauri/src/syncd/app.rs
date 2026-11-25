@@ -618,7 +618,10 @@ mod tests {
             .method(method)
             .uri(uri)
             .header(CLIENT_VERSION_HEADER, "0.1.0")
-            .header(CLIENT_PROTOCOL_HEADER, "1")
+            .header(
+                CLIENT_PROTOCOL_HEADER,
+                if uri.starts_with("/v4/") { "4" } else { "1" },
+            )
             .extension(axum::extract::ConnectInfo(SocketAddr::from((
                 [127, 0, 0, 1],
                 4777,
@@ -1108,23 +1111,25 @@ mod tests {
         assert_eq!(payload["revision"], 3);
 
         // Credentials never reach the snapshot, the change feed or the replica database.
-        let (_, snapshot) = request_json(
+        let (status, snapshot) = request_json(
             &app,
             Method::GET,
-            "/v1/snapshot?scopeId=comics%3Aprofile%3Amain",
+            "/v4/snapshot",
             Some("secret-token"),
             None,
         )
         .await;
+        assert_eq!(status, StatusCode::OK);
         assert!(!snapshot.to_string().contains("tr4ck3r-secret"));
-        let (_, changes) = request_json(
+        let (status, changes) = request_json(
             &app,
             Method::GET,
-            "/v1/changes?sinceVersion=0&scopeId=comics%3Aprofile%3Amain",
+            "/v4/changes?sinceSeq=0",
             Some("secret-token"),
             None,
         )
         .await;
+        assert_eq!(status, StatusCode::OK);
         assert!(!changes.to_string().contains("tr4ck3r-secret"));
         for entry in std::fs::read_dir(temp.path()).unwrap() {
             let path = entry.unwrap().path();

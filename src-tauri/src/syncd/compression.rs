@@ -19,9 +19,6 @@ use flate2::Compression;
 
 /// Routes whose request and response bodies are whole JSON documents.
 const GZIP_PATHS: &[&str] = &[
-    "/v1/mutations",
-    "/v1/changes",
-    "/v1/snapshot",
     "/v4/sync/bulk",
     "/v4/deltas",
     "/v4/changes",

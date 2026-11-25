@@ -1,5 +1,10 @@
 # Aethon Core comic reader-state contract
 
+> **Superseded.** This describes the retired protocol-v1 record sync (`/v1/mutations`,
+> `/v1/changes`, `/v1/snapshot`), which is removed. Comic history now
+> replicates through Sync V4 (see [sync-v4.md](sync-v4.md)); page bookmarks are not synced
+> yet. Kept for history only.
+
 This additive protocol slice synchronizes state that Suwayomi does not expose
 with sufficient page precision. Suwayomi remains authoritative for the comic
 catalog, library membership, categories, chapters, and chapter read flags.

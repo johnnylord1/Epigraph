@@ -26,6 +26,7 @@ All `/v4/*` routes require `require_v4_session`, which validates `X-Epigraph-Cli
 - `POST /v4/sync/bulk`: bulk initial sync (max 50,000 items per request).
 - Extension package upload/download and tracker credential endpoints (tracker credentials live in per-profile DPAPI-sealed vaults and never enter snapshots, change logs, backups, or logs).
 - Book/cover binary asset transfers continue to use `/v1/assets/:sha256` (`HEAD`/`GET`/`PUT`) scoped by `scopeId`.
+- The legacy record sync routes (`POST /v1/mutations`, `GET /v1/changes`, `GET /v1/snapshot`) and the Portable Sync V3 manifests are removed; Desktop and Android replicate records only through `/v4/*`. Pairing, discovery, capabilities, the Suwayomi proxy and `/v1/assets` stay on `/v1`.
 
 ## Domains and Conflict Resolution
 
