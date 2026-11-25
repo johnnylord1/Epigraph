@@ -55,7 +55,6 @@ import epigraph.sync.core.outbox.CoreOutboxRetryPlanner
 import epigraph.sync.core.outbox.CoreOutboxStore
 import epigraph.sync.core.outbox.CoreRequestIdSource
 import epigraph.sync.core.outbox.CoreStagedOutbox
-import epigraph.sync.core.outbox.CoreV1OutboxAdapter
 import epigraph.sync.core.outbox.ExponentialCoreOutboxRetryPlanner
 import epigraph.sync.core.outbox.UuidCoreRequestIdSource
 import epigraph.sync.core.novels.LnReaderPluginReplicaSync
@@ -440,7 +439,6 @@ fun epigraphSyncModule(app: Application) = module {
         )
     }
     single { CoreStagedOutbox() }
-    single { CoreV1OutboxAdapter() }
     single<CoreLamportSource> {
         val serverClock = get<CoreServerClock>()
         SqlDelightCoreLamportSource(get(), serverClock::nowMs)
