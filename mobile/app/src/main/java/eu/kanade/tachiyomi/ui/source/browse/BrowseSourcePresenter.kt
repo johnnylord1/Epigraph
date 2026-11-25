@@ -116,6 +116,17 @@ open class BrowseSourcePresenter(
 
     override fun onCreate() {
         super.onCreate()
+        startSourceInitialization()
+    }
+
+    fun retrySourceInitialization() {
+        if (sourceIsInitialized || sourceInitializationState == SourceInitializationState.LOADING) return
+        sourceInitializationState = SourceInitializationState.LOADING
+        sourceInitializationStarted = false
+        startSourceInitialization()
+    }
+
+    private fun startSourceInitialization() {
         if (sourceInitializationStarted) return
         sourceInitializationStarted = true
 
@@ -127,6 +138,7 @@ open class BrowseSourcePresenter(
                 ?: sourceManager.awaitCatalogueSource(sourceId)
             if (resolvedSource == null) {
                 sourceInitializationState = SourceInitializationState.UNAVAILABLE
+                sourceInitializationStarted = false
                 withUIContext { view?.onSourceUnavailable() }
                 return@launchIO
             }

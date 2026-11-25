@@ -30,7 +30,15 @@ fun preferenceModule(application: Application) = module {
 
     single { SourcePreferences(get()) }
 
-    single { TrackPreferences(get()) }
+    single {
+        TrackPreferences(
+            preferenceStore = get(),
+            onCredentialsChanged = {
+                getOrNull<epigraph.sync.core.events.CoreBackgroundSyncScheduler>()
+                    ?.enqueue(epigraph.sync.core.events.CoreBackgroundSyncReason.OUTBOX_PENDING)
+            },
+        )
+    }
 
     single { UiPreferences(get()) }
 

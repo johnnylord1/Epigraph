@@ -13,6 +13,7 @@ import epigraph.contract.TrackingField
 import epigraph.contract.TrackingFieldPatch
 import epigraph.sync.portable.PortableWorkBindingRecord
 import epigraph.sync.portable.SqlDelightPortableBindingStore
+import epigraph.sync.v4.V4PortableUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
@@ -139,7 +140,11 @@ class EpigraphTrackingMutationRouter(
                     }
                 }
             }
-            LocalMutationResult(TrackingMutationResult(changed, envelopes.size), envelopes)
+            LocalMutationResult(
+                value = TrackingMutationResult(changed, envelopes.size),
+                envelopes = envelopes,
+                wakesSync = changed > 0 && origin.emitsOutbox,
+            )
         }
     }
 
@@ -162,7 +167,102 @@ class EpigraphTrackingMutationRouter(
                     }
                 },
             )
-            LocalMutationResult(TrackingMutationResult(1, envelopes.size), envelopes)
+            if (origin.emitsOutbox) {
+                enqueueV4TrackingTombstone(mangaId, syncId, createdAtEpochMillis)
+            }
+            LocalMutationResult(
+                value = TrackingMutationResult(1, envelopes.size),
+                envelopes = envelopes,
+                wakesSync = origin.emitsOutbox,
+            )
+        }
+    }
+
+    private fun Database.enqueueV4TrackingTombstone(
+        mangaId: Long,
+        syncId: Long,
+        createdAtEpochMillis: Long,
+    ) {
+        val states = v4_syncQueries.selectAllV4SyncStates().executeAsList()
+        if (states.isEmpty()) return
+        val localIdStr = mangaId.toString()
+        val hasNovelIdentity = aethon_syncQueries
+            .selectIdentityByLocalReference("NOVEL", localIdStr)
+            .executeAsOneOrNull() != null
+        val fallbackComicKey = if (!hasNovelIdentity) {
+            mangasQueries.findById(mangaId).executeAsOneOrNull()
+                ?.takeIf { it.source != 0L }
+                ?.let { V4PortableUrl.canonicalWorkKey(it.source.toString(), it.url) }
+        } else {
+            null
+        }
+        states.forEach { state ->
+            val mappedNovelKey = v4_syncQueries.selectV4EntityMapByLocalId(
+                serverId = state.server_id,
+                profileId = state.profile_id,
+                entityType = "novel.work",
+                localId = localIdStr,
+            ).executeAsOneOrNull()?.entity_key
+            val mappedComicKey = if (mappedNovelKey == null) {
+                v4_syncQueries.selectV4EntityMapByLocalId(
+                    serverId = state.server_id,
+                    profileId = state.profile_id,
+                    entityType = "comic.work",
+                    localId = localIdStr,
+                ).executeAsOneOrNull()?.entity_key
+            } else {
+                null
+            }
+            val isNovel = mappedNovelKey != null || (mappedComicKey == null && hasNovelIdentity)
+            val workKey = mappedNovelKey ?: mappedComicKey ?: fallbackComicKey ?: return@forEach
+            val domain = if (isNovel) "novels" else "comics"
+            val trackingEntityType = if (isNovel) COMIC_NOVEL_TRACKING_NOVEL else COMIC_NOVEL_TRACKING_COMIC
+            val entityKey = "$workKey|$syncId"
+            val existingMap = v4_syncQueries.selectV4EntityMapByKey(
+                serverId = state.server_id,
+                profileId = state.profile_id,
+                entityType = trackingEntityType,
+                entityKey = entityKey,
+            ).executeAsOneOrNull()
+            val previous = v4_syncQueries.selectLastV4OutboxForEntity(
+                serverId = state.server_id,
+                profileId = state.profile_id,
+                entityType = trackingEntityType,
+                entityKey = entityKey,
+            ).executeAsOneOrNull()
+            val hlcTsMs = maxOf(
+                createdAtEpochMillis,
+                state.hlc_last_ts_ms,
+                existingMap?.hlc_ts_ms ?: 0L,
+                previous?.hlc_ts_ms ?: 0L,
+            )
+            var hlcCounter = 0L
+            if (hlcTsMs == state.hlc_last_ts_ms) {
+                hlcCounter = maxOf(hlcCounter, state.hlc_last_counter + 1L)
+            }
+            if (existingMap != null && hlcTsMs == existingMap.hlc_ts_ms) {
+                hlcCounter = maxOf(hlcCounter, existingMap.hlc_counter + 1L)
+            }
+            if (previous != null && hlcTsMs == previous.hlc_ts_ms) {
+                hlcCounter = maxOf(hlcCounter, previous.hlc_counter + 1L)
+            }
+            if (previous != null) {
+                v4_syncQueries.deleteV4OutboxByMutationIds(listOf(previous.client_mutation_id))
+            }
+            v4_syncQueries.enqueueV4Outbox(
+                clientMutationId = mutationIds.next().value,
+                serverId = state.server_id,
+                profileId = state.profile_id,
+                domain = domain,
+                entityType = trackingEntityType,
+                entityKey = entityKey,
+                deleted = 1L,
+                hlcTsMs = hlcTsMs,
+                hlcCounter = hlcCounter,
+                hlcDeviceId = deviceId.value,
+                payloadJson = "{}",
+                createdAtMs = createdAtEpochMillis,
+            )
         }
     }
 
@@ -493,6 +593,8 @@ class EpigraphTrackingMutationRouter(
     companion object {
         val COMIC_TRACKING = SyncEntityType("comic.tracking")
         val NOVEL_TRACKING = SyncEntityType("novel.tracking")
+        private const val COMIC_NOVEL_TRACKING_COMIC = "comic.tracking"
+        private const val COMIC_NOVEL_TRACKING_NOVEL = "novel.tracking"
         private val TRACKING_TYPES = listOf(COMIC_TRACKING, NOVEL_TRACKING)
 
         /** `<entityType>::<workId>::<trackerKey>`, the Core record ID of one tracker binding. */

@@ -639,8 +639,8 @@ open class BrowseSourceController(bundle: Bundle) :
      * @param newQuery the new query.
      */
     private fun searchWithQuery(newQuery: String) {
-        // If text didn't change, do nothing
-        if (presenter.query == newQuery) {
+        // If text didn't change and we're not showing an error/empty view, do nothing
+        if (presenter.query == newQuery && !binding.emptyView.isVisible) {
             return
         }
 
@@ -692,19 +692,25 @@ open class BrowseSourceController(bundle: Bundle) :
 
         val message = getErrorMessage(error)
         val retryAction = {
-            // If not the first page, show bottom binding.progress bar.
-            if (adapter.mainItemCount > 0 && progressItem != null) {
-                adapter.addScrollableFooterWithDelay(progressItem!!, 0, true)
-            } else {
+            if (presenter.sourceInitializationState == SourceInitializationState.UNAVAILABLE) {
                 showProgressBar()
+                presenter.retrySourceInitialization()
+            } else {
+                // If not the first page, show bottom binding.progress bar.
+                if (adapter.mainItemCount > 0 && progressItem != null) {
+                    adapter.addScrollableFooterWithDelay(progressItem!!, 0, true)
+                } else {
+                    showProgressBar()
+                }
+                presenter.requestNext()
             }
-            presenter.requestNext()
         }
 
         if (adapter.isEmpty) {
             val actions = emptyList<EmptyView.Action>().toMutableList()
+            val initializedSource = if (presenter.sourceIsInitialized) presenter.source else null
 
-            actions += if (presenter.source is LocalSource) {
+            actions += if (initializedSource is LocalSource) {
                 EmptyView.Action(
                     MR.strings.local_source_help_guide,
                 ) { openLocalSourceHelpGuide() }
@@ -712,14 +718,14 @@ open class BrowseSourceController(bundle: Bundle) :
                 EmptyView.Action(MR.strings.retry, retryAction)
             }
 
-            if (presenter.source.webViewUrl != null) {
+            if (initializedSource?.webViewUrl != null) {
                 actions += EmptyView.Action(
                     MR.strings.open_in_webview,
                 ) { openInWebView() }
             }
 
             binding.emptyView.show(
-                if (presenter.source is HttpSource) {
+                if (initializedSource == null || initializedSource is HttpSource) {
                     Icons.Filled.ExploreOff
                 } else {
                     CustomIcons.LocalSource

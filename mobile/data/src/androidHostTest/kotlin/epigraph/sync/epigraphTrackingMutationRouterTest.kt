@@ -338,6 +338,91 @@ class EpigraphTrackingMutationRouterTest {
         return mangaId to "comic.tracking::${PortableIdentityV3.workId(work)}::anilist"
     }
 
+    @Test
+    fun v4UnboundComicUpsertAndDeleteWakeSyncAndDeleteEnqueuesV4Tombstone() = runTest {
+        val mangaId = insertManga("https://example.invalid/v4-comic", source = 10002L)
+        database.v4_syncQueries.upsertV4SyncState(
+            serverId = "srv-1",
+            profileId = "main",
+            serverSeq = 5L,
+            minReplayableSeq = 0L,
+            lastSnapshotEtag = null,
+            hlcLastTsMs = 100L,
+            hlcLastCounter = 0L,
+            clockOffsetMs = 0L,
+            initialSyncCompleted = 1L,
+            updatedAtMs = 100L,
+        )
+        database.v4_syncQueries.upsertV4EntityMap(
+            serverId = "srv-1",
+            profileId = "main",
+            domain = "comics",
+            entityType = "comic.work",
+            entityKey = "10002:/v4-comic",
+            localId = mangaId.toString(),
+            hlcTsMs = 100L,
+            hlcCounter = 0L,
+            hlcDeviceId = "dev-1",
+            deleted = 0L,
+            updatedAtMs = 100L,
+        )
+        var wakeCount = 0
+        val wakeCoordinator = EpigraphMutationCoordinator(
+            databaseHandler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            onLocalMutationEnqueued = { wakeCount++ },
+        )
+        val router = EpigraphTrackingMutationRouter(
+            coordinator = wakeCoordinator,
+            deviceId = DeviceId("dev-1"),
+            mutationIds = sequentialMutationIds(),
+            scopeProvider = EpigraphSyncScopeProvider { scopes },
+            gate = TrackingSyncGate { false },
+        )
+
+        val upsertResult = router.upsert(
+            rows = listOf(
+                TrackingRow(
+                    mangaId = mangaId,
+                    syncId = 2L,
+                    remoteId = 99L,
+                    libraryId = null,
+                    title = "V4 Comic",
+                    lastChapterRead = 5.0,
+                    totalChapters = 10L,
+                    status = 1L,
+                    score = 8.0,
+                    remoteUrl = "https://anilist.co/manga/99",
+                    startDate = 0L,
+                    finishDate = 0L,
+                ),
+            ),
+            origin = EpigraphMutationOrigin.LOCAL_USER,
+            createdAtEpochMillis = 1_000L,
+        )
+        assertEquals(1, upsertResult.changedRows)
+        assertEquals(0, upsertResult.emittedCommandCount)
+        assertEquals(1, wakeCount)
+
+        val deleteResult = router.delete(
+            mangaId = mangaId,
+            syncId = 2L,
+            origin = EpigraphMutationOrigin.LOCAL_USER,
+            createdAtEpochMillis = 2_000L,
+        )
+        assertEquals(1, deleteResult.changedRows)
+        assertEquals(0, deleteResult.emittedCommandCount)
+        assertEquals(2, wakeCount)
+
+        val outbox = database.v4_syncQueries.selectLastV4OutboxForEntity(
+            serverId = "srv-1",
+            profileId = "main",
+            entityType = "comic.tracking",
+            entityKey = "10002:/v4-comic|2",
+        ).executeAsOneOrNull()
+        assertEquals(1L, outbox?.deleted)
+        assertEquals("comics", outbox?.domain)
+    }
+
     /** A comic shown through its Core-backed row while its native extension is missing. */
     private fun coreBackedComic(providerKey: String = "/Manga/Waiting"): Pair<Long, String> {
         val mangaId = insertManga(providerKey, source = CORE_SOURCE_ID)

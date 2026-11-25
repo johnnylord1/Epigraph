@@ -59,7 +59,8 @@ open class GlobalSearchPresenter(
     /**
      * Enabled sources.
      */
-    val sources by lazy { getSourcesToQuery() }
+    val sources: List<CatalogueSource>
+        get() = getSourcesToQuery()
 
     private var fetchSourcesJob: Job? = null
 
@@ -167,8 +168,14 @@ open class GlobalSearchPresenter(
      * @param query query on which to search.
      */
     fun search(query: String) {
-        // Return if there's nothing to do
-        if (this.query == query) return
+        val activeSources = sources
+        val isSameQuery = this.query == query
+        if (isSameQuery) {
+            val existingSourceIds = items.mapTo(HashSet()) { it.source.id }
+            val hasFailedItems = items.any { it.searchFailed }
+            val hasNewSources = activeSources.any { it.id !in existingSourceIds }
+            if (!hasFailedItems && !hasNewSources) return
+        }
 
         // Update query
         this.query = query
@@ -176,16 +183,27 @@ open class GlobalSearchPresenter(
         // Create image fetch subscription
         initializeFetchImageSubscription()
 
-        // Create items with the initial state
-        val initialItems = sources.map { createCatalogueSearchItem(it, null) }
-        items = initialItems
+        // Create items with the initial state, preserving already-succeeded results on retry
+        if (isSameQuery) {
+            val existingById = items.associateBy { it.source.id }
+            items = activeSources.map { source ->
+                val existing = existingById[source.id]
+                if (existing != null && !existing.searchFailed) {
+                    existing
+                } else {
+                    createCatalogueSearchItem(source, null)
+                }
+            }
+        } else {
+            items = activeSources.map { createCatalogueSearchItem(it, null) }
+        }
         presenterScope.launchUI { view?.setItems(items) }
         val pinnedSourceIds = preferences.pinnedCatalogues().get()
 
         fetchSourcesJob?.cancel()
         fetchSourcesJob = presenterScope.launch {
             val blocked = activeBlockedTags(preferences.filterBlockedTags().get(), preferences.blockedTags().get())
-            sources.map { source ->
+            activeSources.map { source ->
                 launch mainLaunch@{
                     semaphore.withPermit {
                         if (this@GlobalSearchPresenter.items.find { it.source == source }?.results != null) {

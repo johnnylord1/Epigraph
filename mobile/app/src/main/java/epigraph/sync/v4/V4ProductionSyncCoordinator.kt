@@ -27,7 +27,6 @@ import yokai.data.Database
 import yokai.data.DatabaseHandler
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Production Android coordinator for Epigraph Sync V4.
@@ -47,17 +46,17 @@ class V4ProductionSyncCoordinator(
     private val comicPreferenceStore: AndroidSourcePreferenceStore,
     private val novelPreferenceStore: AndroidNovelPluginSettingStore,
     private val clientVersion: String = BuildConfig.VERSION_NAME,
+    private val localEditPendingStore: V4LocalEditPendingStore = SharedPreferencesV4LocalEditPendingStore(context.applicationContext),
 ) {
     private val appContext = context.applicationContext
     private val logger = Logger.withTag("EpigraphSyncV4")
     private val engines = ConcurrentHashMap<EngineKey, V4SyncEngine>()
     private val engineInitMutex = Mutex()
-    private val localEditsPending = AtomicBoolean(false)
     private val queueOwnerPrefs = appContext.getSharedPreferences("epigraph_v4_queue_owner_v1", Context.MODE_PRIVATE)
 
     /** Signals that a local edit occurred (online or offline) and must be merged on next V4 pass. */
     fun markLocalEditPending() {
-        localEditsPending.set(true)
+        localEditPendingStore.markPending()
     }
 
     /** Clears persisted V4 sync state and domain progress when unpairing a server. */
@@ -214,7 +213,8 @@ class V4ProductionSyncCoordinator(
         val engine = getOrCreateEngine(session, openedOrigin)
         engine.useDomainPolicy(V4SyncDomainPolicy.from(policy))
         val hasLegacyPending = hasPendingLegacyOutbox(session.profileId, policy)
-        val hadLocalEdits = localEditsPending.getAndSet(false) || hasLegacyPending
+        val pendingGeneration = localEditPendingStore.snapshotGeneration()
+        val hadLocalEdits = pendingGeneration != 0L || hasLegacyPending
         val result = session.withAccessTokenString { token ->
             if (hadLocalEdits) {
                 engine.syncWithLocalEdits(token)
@@ -224,6 +224,9 @@ class V4ProductionSyncCoordinator(
         }
         return when (result) {
             is V4SyncRunResult.Synced -> {
+                if (pendingGeneration != 0L) {
+                    localEditPendingStore.clearIfUnchanged(pendingGeneration)
+                }
                 if (hasLegacyPending) {
                     clearSupersededLegacyOutbox(session.profileId, policy)
                 }
@@ -282,7 +285,6 @@ class V4ProductionSyncCoordinator(
                 }
             }
             is V4SyncRunResult.Failed -> {
-                if (hadLocalEdits) localEditsPending.set(true)
                 val elapsedMs = (System.nanoTime() - startedNs) / 1_000_000
                 val pending = SqlDelightV4SyncStore(database).countPendingOutbox(session.serverId, session.profileId)
                 val summary = CoreSyncReleaseLog.formatV4Failed(

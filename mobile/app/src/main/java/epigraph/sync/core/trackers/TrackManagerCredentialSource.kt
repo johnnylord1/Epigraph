@@ -34,15 +34,17 @@ class TrackManagerCredentialSource(
     override fun apply(syncId: Long, secret: TrackerSecret?) {
         if (syncId !in syncIds) return
         val service = trackManager.getService(syncId) ?: return
-        // logout() also drops the service's in-memory auth, so the next request reloads it.
-        service.logout()
-        if (secret == null || !secret.isLogin) {
-            preferences.tokenPreference(syncId).set("")
-            return
+        preferences.withoutCredentialWake {
+            // logout() also drops the service's in-memory auth, so the next request reloads it.
+            service.logout()
+            if (secret == null || !secret.isLogin) {
+                preferences.tokenPreference(syncId).set("")
+                return@withoutCredentialWake
+            }
+            preferences.usernamePreference(syncId).set(secret.username)
+            preferences.passwordPreference(syncId).set(secret.password)
+            preferences.tokenPreference(syncId).set(secret.token)
+            preferences.trackAuthExpired(service).set(false)
         }
-        preferences.usernamePreference(syncId).set(secret.username)
-        preferences.passwordPreference(syncId).set(secret.password)
-        preferences.tokenPreference(syncId).set(secret.token)
-        preferences.trackAuthExpired(service).set(false)
     }
 }

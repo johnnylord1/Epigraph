@@ -17,6 +17,9 @@ All notable changes to this project will be documented in this file.
 - Pairing with another desktop no longer deletes folders or their comics. When the desktop no longer lists a comic category, a folder that also holds novels or books stays and only loses its comics.
 - Re-pairing with the same desktop or switching to another Core preserves pending offline V4 sync edits with their original timestamps while clearing the previous Core's sync cursor, entity map, and domain progress.
 - Reopening an EPUB book after Android kills the app in the background no longer crashes with Readium's restoration error; the reader restores cleanly at the saved position.
+- Tracker logins, logouts, and tracking updates now wake Core sync immediately without requiring an app restart (without echoing remote applies), and removing a tracker binding enqueues a Sync V4 delete tombstone.
+- Sync V4 pending local-edit state is now persisted durably so offline edits survive Android process death and concurrent edits during an in-flight sync are never dropped.
+- Retrying the same search query in Global Search or Browse Source after a failure (or after extensions finish loading) now re-runs failed or newly loaded sources instead of returning early.
 
 ## [android-0.1.0-alpha.1] - 2026-09-30
 
