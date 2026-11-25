@@ -3,7 +3,6 @@ package epigraph.sync.core.session
 import epigraph.sync.core.credentials.CoreCredentialSession
 import epigraph.sync.core.assets.CoreAssetHttpClient
 import epigraph.sync.core.assets.OkHttpCoreAssetHttpClient
-import epigraph.sync.core.events.OkHttpCoreEventStream
 import epigraph.sync.core.http.CoreServerClock
 import epigraph.sync.core.http.EpigraphCoreHttpClient
 import epigraph.sync.core.pairing.transport.EpigraphCoreTlsClientFactory
@@ -13,7 +12,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 data class CoreSessionTransports(
     val http: EpigraphCoreHttpClient,
     val assets: CoreAssetHttpClient,
-    val events: OkHttpCoreEventStream,
     val suwayomi: SuwayomiCoreProxyClient,
 )
 
@@ -41,7 +39,6 @@ class CoreSessionTransportFactory(
         return CoreSessionTransports(
             http = http,
             assets = OkHttpCoreAssetHttpClient(client, origin),
-            events = OkHttpCoreEventStream(client, origin, clientVersion),
             suwayomi = SuwayomiCoreProxyClient(http),
         )
     }

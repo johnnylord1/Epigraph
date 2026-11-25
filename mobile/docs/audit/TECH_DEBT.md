@@ -6,7 +6,7 @@
 2. **Complete:** SQLDelight migration verification passes; `.github/workflows/android_ci.yml` runs it with the unit tests, lint and `assembleDevDebug` on Linux.
 3. **Complete:** download finalization cannot report success after failed rename/validation, with rollback and focused tests.
 4. **Partial:** history restore is idempotent and scoped by manga + chapter URL; whole-restore transaction/resume remains P1.
-5. **Complete foundation:** `ContentType`, Epigraph identity/source bindings, `ReaderLocator`, and 18-command protocol v2 are implemented; later protocol changes must be additive.
+5. **Complete foundation:** `ContentType`, Epigraph identity/source bindings, and `ReaderLocator` are implemented; Sync V4 is the sole sync path and later protocol changes must be additive.
 6. **Complete:** min SDK is 24; API 24 install, onboarding, library and CBZ/EPUB/PDF reader smoke passed on an emulator.
 
 ## P1 before four-reader milestone
@@ -20,8 +20,8 @@
 
 ## P2 before sync release
 
-1. **Substantially complete (Sync V4):** `V4ProductionSyncCoordinator`, `V4SyncEngine`, domain bridges, `V4SyncDomainPolicy`, and SQLDelight migration `66.sqm` -> `67.db` are implemented and covered by unit/host/migration checks.
-2. **Partial:** secure pairing/token storage, TLS fingerprint pinning, WorkManager, replay policy, snapshots, receipts, tombstones, resumable downloads, and `/v4/events` SSE support are implemented.
+1. **Substantially complete (Sync V4):** `V4ProductionSyncCoordinator`, `V4SyncEngine`, domain bridges, `V4SyncDomainPolicy`, and SQLDelight migration `66.sqm` -> `67.db` are implemented and covered by unit/host/migration checks. Legacy V1/V2/V3 sync engines have been removed and `CoreOutboxSyncRunner`, `CoreLiveEventSupervisor`, `CoreSessionTransportFactory`, and `epigraphSyncModule` are slimmed to V4-only.
+2. **Partial:** secure pairing/token storage, TLS fingerprint pinning, WorkManager, snapshots, receipts, tombstones, resumable downloads, and `/v4/events` SSE support are implemented.
 3. Live-Core two-device convergence and offline tests remain skipped by default in unit runs and require a running Core for E2E certification.
 4. Add category scopes and explicit content types to Epigraph backup.
 

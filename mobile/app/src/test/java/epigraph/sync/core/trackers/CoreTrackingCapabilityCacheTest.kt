@@ -14,7 +14,6 @@ import epigraph.sync.core.protocol.CoreTrackerCredentialList
 import epigraph.sync.core.protocol.CoreTrackerCredentialWrite
 import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.core.protocol.EpigraphCoreWireProtocol
-import epigraph.sync.core.suwayomi.SuwayomiMutationDrainReport
 import epigraph.sync.core.work.CoreOutboxSyncConnection
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -140,17 +139,6 @@ class CoreTrackingCapabilityCacheTest {
         override val openedOrigin: String = "https://core.test"
 
         override suspend fun capabilities(): CoreHttpResult<CoreCapabilities> = error("not used")
-
-        override suspend fun drainSuwayomi(
-            nowEpochMillis: Long,
-            canonicalProjectionEnabled: Boolean,
-        ): SuwayomiMutationDrainReport = error("not used")
-
-        override suspend fun drain(
-            authorization: CoreOutboxAuthorization,
-            capabilities: CoreCapabilities,
-            nowEpochMillis: Long,
-        ): CoreOutboxDrainReport = error("not used")
 
         override fun trackerCredentials(): TrackerCredentialChannel = channel
     }

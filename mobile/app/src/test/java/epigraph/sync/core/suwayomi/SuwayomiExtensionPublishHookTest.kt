@@ -126,13 +126,6 @@ class SuwayomiExtensionPublishHookTest {
     private class FakeConnection(private val channel: SuwayomiCommandChannel?) : CoreOutboxSyncConnection {
         override val openedOrigin: String = "https://core.local"
         override suspend fun capabilities(): CoreHttpResult<CoreCapabilities> = error("unused")
-        override suspend fun drainSuwayomi(nowEpochMillis: Long, canonicalProjectionEnabled: Boolean) =
-            error("unused")
-        override suspend fun drain(
-            authorization: CoreOutboxAuthorization,
-            capabilities: CoreCapabilities,
-            nowEpochMillis: Long,
-        ): CoreOutboxDrainReport = error("unused")
         override fun suwayomiCommands(): SuwayomiCommandChannel? = channel
     }
 

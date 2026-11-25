@@ -28,7 +28,6 @@ import epigraph.sync.core.credentials.SharedPreferencesLastPairedProfileStore
 import epigraph.sync.EpigraphSyncScopeProvider
 import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.events.CoreBackgroundSyncReason
-import epigraph.sync.core.events.CoreCatalogRevisionWatcher
 import epigraph.sync.core.events.CoreLiveEventSupervisor
 import epigraph.sync.core.extensions.ExtensionInventoryReplicaSync
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
@@ -45,15 +44,9 @@ import epigraph.sync.core.suwayomi.DisplacedComicRowRepair
 import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
 import epigraph.sync.core.suwayomi.CoreHeldChapterProgressFilter
 import epigraph.sync.core.suwayomi.COMIC_PROGRESS_HELD_PREFERENCES
-import epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook
 import epigraph.sync.core.suwayomi.SuwayomiExtensionPublishHook
 import epigraph.sync.core.suwayomi.PhoneExtensionState
-import epigraph.sync.core.suwayomi.SharedPreferencesCatalogApplyStampStore
 import epigraph.sync.core.suwayomi.SharedPreferencesPublishedExtensionLedger
-import epigraph.sync.core.suwayomi.UnpublishedComicCategorySource
-import epigraph.sync.core.suwayomi.UnpublishedComicCategory
-import epigraph.sync.core.suwayomi.CreatedComicCategoryBinder
-import epigraph.sync.core.suwayomi.PreviousServerComicCategoryReleaser
 import epigraph.sync.core.replica.releasePreviousServerComicCategories
 import epigraph.sync.core.outbox.EpigraphCoordinatorOutboxStore
 import epigraph.sync.core.outbox.CoreLamportSource
@@ -130,7 +123,6 @@ import epigraph.sync.core.pairing.transport.OkHttpCoreHostProbe
 import epigraph.sync.core.pairing.transport.OkHttpPairingTransport
 import epigraph.sync.core.pairing.transport.EpigraphCoreTlsClientFactory
 import epigraph.sync.core.replica.SqlDelightCoreLamportSource
-import epigraph.sync.core.replica.CoreReplicaApplier
 import epigraph.sync.core.replica.CoreReplicaCheckpointReader
 import epigraph.sync.core.replica.CoreReplicaCheckpointResetter
 import epigraph.sync.core.work.CoreQueueHandOver
@@ -145,10 +137,6 @@ import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.session.AndroidCoreEndpointResolver
 import epigraph.sync.core.session.CoreEndpointResolver
 import epigraph.sync.core.session.HttpCoreSessionEnder
-import epigraph.sync.core.suwayomi.CoreSuwayomiCatalogPageSource
-import epigraph.sync.core.suwayomi.CoreSuwayomiProjectionStatusSource
-import epigraph.sync.core.suwayomi.SuwayomiCatalogPageSource
-import epigraph.sync.core.suwayomi.SuwayomiCatalogSync
 import epigraph.sync.core.suwayomi.EpigraphCoreCoverClient
 import epigraph.sync.core.suwayomi.BackgroundCoreCatalogCoverSink
 import epigraph.sync.core.suwayomi.CoreCatalogCoverCache
@@ -160,17 +148,9 @@ import epigraph.sync.core.suwayomi.AuthenticatedEpigraphCoreSourceGateway
 import epigraph.sync.core.suwayomi.BRIDGED_READ_BASELINE_PREFERENCES
 import epigraph.sync.core.suwayomi.BridgedChapterReadState
 import epigraph.sync.core.suwayomi.CoreBridgedChapterReadState
-import epigraph.sync.core.suwayomi.SuwayomiMutationQueueDrainer
-import epigraph.sync.core.work.CoreCatalogRevisionGate
-import epigraph.sync.core.work.DatabaseCoreCatalogLocalState
-import epigraph.sync.core.work.SharedPreferencesCoreStageRevisionStore
-import epigraph.sync.core.work.CoreStageRevisionStore
-import epigraph.sync.core.work.coreStageRevisionKey
-import epigraph.sync.core.work.CompositeCoreReplicaSync
 import epigraph.sync.core.work.AndroidCoreDeviceIdentityProvider
 import epigraph.sync.core.work.CoordinatorPendingOutbox
 import epigraph.sync.core.work.CoreDeviceIdentityProvider
-import epigraph.sync.core.work.CoreOutboxDrainerFactory
 import epigraph.sync.core.work.CoreOutboxSyncConnectionFactory
 import epigraph.sync.core.work.CoreOutboxSyncRunner
 import epigraph.sync.core.work.CoreReplicaAppliedHook
@@ -179,7 +159,6 @@ import epigraph.sync.core.work.CoreSyncWakeStore
 import epigraph.sync.core.assets.BookAssetCoordinator
 import epigraph.sync.core.work.CoreReplicaSyncPort
 import epigraph.sync.core.work.PinnedCoreOutboxSyncConnectionFactory
-import epigraph.sync.core.work.SnapshotCoreReplicaSync
 import epigraph.sync.core.work.SqlDelightCoreSyncWakeStore
 import epigraph.sync.core.work.CoreSyncNotifier
 import epigraph.sync.core.work.CoreSyncRunStore
@@ -351,8 +330,6 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreReplicaSyncPort>(named(NOVEL_PLUGIN_REPLICA)) {
         LnReaderPluginReplicaSync(get(), get(), get(), get())
     }
-    single<SuwayomiCatalogPageSource> { CoreSuwayomiCatalogPageSource(get(), get()) }
-    single { CoreSuwayomiProjectionStatusSource(get(), get()) }
 
     single {
         val serverClock = get<CoreServerClock>()
@@ -472,12 +449,10 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single<CoreRequestIdSource> { UuidCoreRequestIdSource() }
     single<CoreOutboxRetryPlanner> { ExponentialCoreOutboxRetryPlanner() }
-    single { CoreOutboxDrainerFactory(get(), get(), get(), get(), get()) }
     single<CoreOutboxSyncConnectionFactory> {
-        PinnedCoreOutboxSyncConnectionFactory(get(), get(), get(), get(), get())
+        PinnedCoreOutboxSyncConnectionFactory(get(), get(), get())
     }
     single<CoreDeviceIdentityProvider> { AndroidCoreDeviceIdentityProvider(get()) }
-    single { SuwayomiMutationQueueDrainer(get()) }
     single<CorePendingOutbox> { CoordinatorPendingOutbox(get(), get(), get()) }
     single<CoreSyncWakeStore> { SqlDelightCoreSyncWakeStore(get()) }
     single {
@@ -506,7 +481,6 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreReplicaRecordReader> { get<SqlDelightCoreReplicaStore>() }
     single<CoreReplicaTombstoneReader> { get<SqlDelightCoreReplicaStore>() }
     single { NovelChapterCoverageCheck(get()) }
-    single { CoreReplicaApplier(get()) }
     single {
         epigraph.sync.v4.V4ProductionSyncCoordinator(
             context = app,
@@ -528,32 +502,9 @@ fun epigraphSyncModule(app: Application) = module {
             transports = get(),
             policyResolver = get(),
             devices = get(),
-            checkpoints = get(),
-            applier = get(),
             scheduler = get(),
             syncPause = get(),
             v4Coordinator = get(),
-            catalogRevisions = CoreCatalogRevisionWatcher(
-                foreground = ProcessLifecycleOwner.get().lifecycle.currentStateFlow
-                    .map { state -> state.isAtLeast(Lifecycle.State.STARTED) },
-                status = get<CoreSuwayomiProjectionStatusSource>(),
-                applied = { credentials, stage ->
-                    get<CoreStageRevisionStore>().get(coreStageRevisionKey(credentials, stage))?.revision
-                },
-                wake = { get<CoreBackgroundSyncScheduler>().enqueue(CoreBackgroundSyncReason.APP_START) },
-            ),
-        )
-    }
-    single<CoreStageRevisionStore> { SharedPreferencesCoreStageRevisionStore(app) }
-    single { SnapshotCoreReplicaSync(get(), get(), get(), get(), get()) }
-    single<CoreReplicaSyncPort>(named(CATALOG_REPLICA)) {
-        SuwayomiCatalogSync(
-            get(),
-            get(),
-            get(),
-            get(),
-            projectionStatus = get<CoreSuwayomiProjectionStatusSource>(),
-            stamps = SharedPreferencesCatalogApplyStampStore(app),
         )
     }
     single<CoreReplicaSyncPort>(named(PORTABLE_MANIFEST_REPLICA)) {
@@ -600,23 +551,7 @@ fun epigraphSyncModule(app: Application) = module {
             get(named(PORTABLE_NOVELS_PROVIDER)),
         )
     }
-    single<CoreReplicaSyncPort> {
-        CompositeCoreReplicaSync(
-            get<SnapshotCoreReplicaSync>(),
-            get(named(CATALOG_REPLICA)),
-            get(named(EXTENSION_INVENTORY_REPLICA)),
-            get(named(NOVEL_PLUGIN_REPLICA)),
-            get(),
-            get(),
-            get(named(PORTABLE_MANIFEST_REPLICA)),
-            get(named(PORTABLE_NOVEL_MANIFEST_REPLICA)),
-            revisions = CoreCatalogRevisionGate(
-                status = get<CoreSuwayomiProjectionStatusSource>(),
-                store = get(),
-                localState = DatabaseCoreCatalogLocalState(get(), get(), SharedPreferencesCatalogApplyStampStore(app)),
-            ),
-        )
-    }
+
     single { CoreTrackingCapabilityCache.create(app) }
     single<TrackingSyncGate> { get<CoreTrackingCapabilityCache>() }
     single { TrackerCredentialVault.create(app) }
@@ -629,9 +564,7 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single {
         val database = get<DatabaseHandler>()
-        val categoryRouter = get<EpigraphCategoryMutationRouter>()
         CoreOutboxSyncRunner(
-            get(),
             get(),
             get(),
             get(),
@@ -639,60 +572,7 @@ fun epigraphSyncModule(app: Application) = module {
             get(),
             negotiatedHooks = listOf(
                 TrackerSyncSessionHook(get<CoreTrackingCapabilityCache>(), get()),
-                // Release bindings to a previous Core before the catalog sync runs so same-name
-                // local folders are held back from duplicating while waiting for category creation.
-                CoreNegotiatedSessionHook { capabilities, connection ->
-                    if (!SuwayomiCategoryCreateHook.isEnabled(capabilities)) return@CoreNegotiatedSessionHook
-                    val channel = connection.suwayomiCommands() ?: return@CoreNegotiatedSessionHook
-                    if (channel.serverId == epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID) {
-                        return@CoreNegotiatedSessionHook
-                    }
-                    database.await(inTransaction = true) {
-                        releasePreviousServerComicCategories(this, channel.serverId, channel.profileId)
-                    }
-                },
             ),
-            postBackfillHooks = listOf(
-                SuwayomiCategoryCreateHook(
-                    categories = UnpublishedComicCategorySource {
-                        database.awaitList { aethon_syncQueries.selectUnpublishedComicCategories() }
-                            .map { UnpublishedComicCategory(localCategoryId = it._id, name = it.name) }
-                    },
-                    binder = CreatedComicCategoryBinder { localCategoryId, expectedName, categoryEntityId, suwayomiOrder ->
-                        categoryRouter.bindCreatedComicCategory(localCategoryId, expectedName, categoryEntityId, suwayomiOrder)
-                    },
-                    previousServer = PreviousServerComicCategoryReleaser { serverId, profileId ->
-                        database.await(inTransaction = true) {
-                            releasePreviousServerComicCategories(this, serverId, profileId)
-                        }
-                    },
-                ),
-                SuwayomiExtensionPublishHook(
-                    phone = {
-                        val extensions = get<eu.kanade.tachiyomi.extension.ExtensionManager>()
-                        PhoneExtensionState(
-                            packageNames = if (extensions.isInitialized.value) {
-                                extensions.installedExtensionsFlow.value.map { it.pkgName }
-                            } else {
-                                emptyList()
-                            },
-                            repoIndexUrls = get<yokai.domain.extension.repo.interactor.GetExtensionRepo>().getAll()
-                                .map { it.baseUrl.trimEnd('/') + "/index.min.json" },
-                        )
-                    },
-                    ledger = SharedPreferencesPublishedExtensionLedger(app),
-                ),
-            ),
-            replicaAppliedHooks = listOf(
-                CoreReplicaAppliedHook { now -> get<EpigraphTrackingMutationRouter>().reconcileWithReplica(now) },
-                // Comic extension settings, such as a preferred mirror, follow the paired desktop.
-                CoreReplicaAppliedHook { now -> get<EpigraphSourcePreferenceSync>().reconcile(now) },
-                // Novel plugin settings, such as a preferred translation, too.
-                CoreReplicaAppliedHook { now ->
-                    get<EpigraphSourcePreferenceSync>(named(NOVEL_PLUGIN_SETTING_SYNC)).reconcile(now)
-                },
-            ),
-            policyHooks = listOf(get<LocalNovelDependencyPublisher>()),
             clock = System::currentTimeMillis,
             queueHandOver = get(),
             v4Coordinator = get(),

@@ -8,11 +8,6 @@ import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.policy.SyncPolicyResolver
 import epigraph.sync.core.protocol.CoreCapabilities
 import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
-import epigraph.sync.core.replica.CoreReplicaApplier
-import epigraph.sync.core.replica.CoreReplicaCheckpointReader
-import epigraph.sync.core.replica.fetchAndApplySnapshot
-import epigraph.sync.core.replay.CoreReplayCoverage
-import epigraph.sync.core.replay.CoreReplaySession
 import epigraph.sync.core.session.CoreEndpointResolver
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.work.CoreDeviceIdentityProvider
@@ -50,11 +45,8 @@ class CoreLiveEventSupervisor(
     private val transports: CoreSessionTransportFactory,
     private val policyResolver: SyncPolicyResolver,
     private val devices: CoreDeviceIdentityProvider,
-    private val checkpoints: CoreReplicaCheckpointReader,
-    private val applier: CoreReplicaApplier,
     private val scheduler: CoreBackgroundSyncScheduler,
     private val syncPause: CoreSyncPause = InMemoryCoreSyncPause(),
-    private val catalogRevisions: CoreCatalogRevisionWatcher? = null,
     private val v4Coordinator: epigraph.sync.v4.V4ProductionSyncCoordinator? = null,
 ) {
     private val logger = Logger.withTag(LOG_TAG)
@@ -163,30 +155,8 @@ class CoreLiveEventSupervisor(
             return
         }
 
-        // A revoked token in one scope invalidates the credential session for all scopes. Use a
-        // regular scope so the parent reloads the encrypted credential instead of leaving other
-        // streams attached to a session that Core has rejected.
-        coroutineScope {
-            policy.selectedScopes.forEach { scopeId ->
-                launch(CoroutineName("epigraph-core-events-$scopeId")) {
-                    runScope(
-                        credentials = credentials,
-                        capabilities = capabilities,
-                        scopeId = scopeId,
-                        sessionTransports = sessionTransports,
-                    )
-                }
-            }
-            launch(CoroutineName("epigraph-core-events-watch")) {
-                watchSession(credentials, capabilities, policy.selectedScopes)
-            }
-            catalogRevisions?.let { watcher ->
-                // Desktop library and extension changes are not on the event feed; see the watcher.
-                launch(CoroutineName("epigraph-core-catalog-revisions")) {
-                    watcher.watch(credentials, capabilities)
-                }
-            }
-        }
+        logger.w { "Core does not support Sync V4; live event stream disabled" }
+        delay(NO_SELECTED_SCOPE_RETRY_MS)
     }
 
     /**
@@ -217,145 +187,6 @@ class CoreLiveEventSupervisor(
                     (selectedDomains != null && epigraph.sync.v4.V4SyncDomainPolicy.from(latestPolicy) != selectedDomains)
             }
             if (changed) throw CoreLiveSessionChanged()
-        }
-    }
-
-    private suspend fun runScope(
-        credentials: CoreCredentialSession,
-        capabilities: CoreCapabilities,
-        scopeId: String,
-        sessionTransports: epigraph.sync.core.session.CoreSessionTransports,
-    ) {
-        val coverage = CoreReplayCoverage.Filtered(scopeId)
-        val network = AndroidCoreNetworkGate(connectivity)
-        val reconnect = ExponentialCoreReconnectGate(logger, scopeId)
-        val sink = CoreDurableChangeSink { change, nextCheckpoint ->
-            applier.applyChange(
-                change = change,
-                nextCheckpoint = nextCheckpoint,
-                capabilities = capabilities,
-                originServerId = credentials.serverId,
-            )
-        }
-        val bootstrap = CoreFullBootstrap {
-            snapshotSession(
-                credentials = credentials,
-                capabilities = capabilities,
-                scopeId = scopeId,
-                http = sessionTransports.http,
-            )
-        }
-        // Catalog revision events let the watcher react to desktop and other-device catalog
-        // changes as they happen instead of on its next check.
-        val onCatalogRevision = catalogRevisions
-            ?.takeIf {
-                scopeId == "comics:profile:${credentials.profileId}" &&
-                    EpigraphCoreCompatibilityEvaluator.supportsCatalogRevisionEvents(capabilities)
-            }
-            ?.let { watcher -> { _: String -> watcher.nudge() } }
-        val connection = CoreEventConnection { replaySession ->
-            credentials.withAccessTokenString { token ->
-                sessionTransports.events.collect(
-                    accessToken = token,
-                    session = replaySession,
-                    onCatalogRevision = onCatalogRevision,
-                    sink = sink,
-                    skipOwnEchoes = capabilities.supportsSkipOwnEchoesV1,
-                )
-            }
-        }
-        val orchestrator = CoreEventOrchestrator(network, reconnect, bootstrap, connection)
-
-        while (currentCoroutineContext().isActive) {
-            try {
-                val initial = initialSession(
-                    credentials = credentials,
-                    capabilities = capabilities,
-                    scopeId = scopeId,
-                    http = sessionTransports.http,
-                )
-                when (val result = orchestrator.run(initial)) {
-                    is CoreEventLoopResult.NeedsUserAction -> {
-                        // A 401/403 parks this credential in the parent until it changes. Do not
-                        // spin on a revoked token and do not expose the token in logs.
-                        throw CoreLiveEventNeedsUserAction(result.statusCode)
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (needsUserAction: CoreLiveEventNeedsUserAction) {
-                throw needsUserAction
-            } catch (failure: Throwable) {
-                logger.w {
-                    "scope $scopeId live feed retry: ${failure::class.simpleName ?: "UnknownFailure"}"
-                }
-                delay(SCOPE_RETRY_MS)
-            }
-        }
-    }
-
-    private suspend fun initialSession(
-        credentials: CoreCredentialSession,
-        capabilities: CoreCapabilities,
-        scopeId: String,
-        http: epigraph.sync.core.http.EpigraphCoreHttpClient,
-    ): CoreReplaySession {
-        checkpoints.latestCheckpoint(CoreReplayCoverage.Filtered(scopeId))?.let { checkpoint ->
-            return CoreReplaySession.afterSnapshot(checkpoint.lastGlobalEventId, checkpoint.coverage)
-        }
-        return snapshotSession(credentials, capabilities, scopeId, http)
-    }
-
-    private suspend fun snapshotSession(
-        credentials: CoreCredentialSession,
-        capabilities: CoreCapabilities,
-        scopeId: String,
-        http: epigraph.sync.core.http.EpigraphCoreHttpClient,
-    ): CoreReplaySession = credentials.withAccessTokenString { token ->
-        when (
-            val response = applier.fetchAndApplySnapshot(
-                http = http,
-                accessToken = token,
-                scopeId = scopeId,
-                capabilities = capabilities,
-                originServerId = credentials.serverId,
-            )
-        ) {
-            is CoreHttpResult.Success -> CoreReplaySession.afterSnapshot(
-                response.value.checkpoint.lastGlobalEventId,
-                response.value.checkpoint.coverage,
-            )
-            is CoreHttpResult.Failure -> {
-                if (response.statusCode.isAuthorizationFailure()) {
-                    throw CoreLiveEventNeedsUserAction(response.statusCode)
-                }
-                error("Core snapshot failed for $scopeId: ${response.statusCode}")
-            }
-        }
-    }
-
-    private class AndroidCoreNetworkGate(
-        private val connectivity: ConnectivityManager?,
-    ) : CoreNetworkGate {
-        override suspend fun awaitAvailable() {
-            while (currentCoroutineContext().isActive) {
-                // LAN-only Core deployments may not advertise VALIDATED/INTERNET. An active
-                // network is therefore the correct gate; the stream itself handles reachability.
-                if (connectivity == null || connectivity.activeNetwork != null) return
-                delay(NETWORK_POLL_MS)
-            }
-        }
-    }
-
-    private class ExponentialCoreReconnectGate(
-        private val logger: Logger,
-        private val scopeId: String,
-    ) : CoreReconnectGate {
-        override suspend fun awaitRetry(attempt: Int, reason: CoreReconnectReason) {
-            val exponent = (attempt - 1).coerceIn(0, 5)
-            val delayMs = (1_000L shl exponent).coerceAtMost(MAX_RECONNECT_DELAY_MS)
-            logger.i { "scope $scopeId live feed reconnect #$attempt in ${delayMs}ms: $reason" }
-            delay(delayMs)
         }
     }
 

@@ -32,7 +32,6 @@ import epigraph.sync.core.protocol.CoreCapabilities
 import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.core.replica.SqlDelightCoreReplicaStore
 import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
-import epigraph.sync.core.suwayomi.SuwayomiMutationDrainReport
 import epigraph.sync.portable.PortableWorkBindingRecord
 import epigraph.sync.portable.SqlDelightPortableBindingStore
 import eu.kanade.tachiyomi.source.SourceManager
@@ -219,7 +218,6 @@ class CoreQueueHandOverTest {
     @Test
     fun `sync runner hands over queue before draining outbox`() = runTest {
         enqueueOutbox("mut-blocked", "comic:blocked", status = "ERROR", lastError = "blocked:old_core")
-        var blockedSeenAtDrain = -1L
         val session = CoreCredentialSession(
             origin = "https://core.test/",
             tlsCertSha256 = "a".repeat(64),
@@ -243,22 +241,11 @@ class CoreQueueHandOverTest {
                 object : CoreOutboxSyncConnection {
                     override val openedOrigin = "https://core.test/"
                     override suspend fun capabilities() = CoreHttpResult.Success(compatibleCapabilities())
-                    override suspend fun drainSuwayomi(nowEpochMillis: Long, canonicalProjectionEnabled: Boolean) =
-                        SuwayomiMutationDrainReport(0, 0, 0, 0, 0)
-                    override suspend fun drain(
-                        authorization: CoreOutboxAuthorization,
-                        capabilities: CoreCapabilities,
-                        nowEpochMillis: Long,
-                    ): CoreOutboxDrainReport {
-                        blockedSeenAtDrain = queries.blockedMutationCount().executeAsOne()
-                        return CoreOutboxDrainReport(0, 0, 0, 0, 0)
-                    }
                 }
             },
             pendingOutbox = object : CorePendingOutbox {
                 override suspend fun count(): Long = 0
             },
-            replica = CoreReplicaSyncPort { _, _, _ -> CoreReplicaSyncOutcome.DEFERRED },
             policies = SyncPolicyResolver(
                 object : DeviceSyncSelectionStore {
                     override fun load(serverId: String, profileId: String, deviceId: String) = null
@@ -271,7 +258,6 @@ class CoreQueueHandOverTest {
 
         runner.run(nowEpochMillis = 1_000)
 
-        assertEquals(0L, blockedSeenAtDrain)
         assertEquals("server-b", owner.current)
         assertNotNull(coordinator.claimReady(1_000, 1_000, 10).singleOrNull())
         session.close()
