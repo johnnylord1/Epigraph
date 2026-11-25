@@ -126,6 +126,12 @@ class EpigraphMutationCoordinator(
         }
     }
 
+    /**
+     * Reports a committed local edit that queued no command, such as a chapter only Sync V4 knows.
+     * The next sync run then exports local state instead of treating the reconnect as idle.
+     */
+    fun notifyLocalEditWithoutCommand() = notifyLocalMutationEnqueued()
+
     /** Wakes the sync scheduler after a transaction that called [enqueueInTransaction] committed. */
     private fun notifyLocalMutationEnqueued() {
         runCatching { onLocalMutationEnqueued?.invoke() }

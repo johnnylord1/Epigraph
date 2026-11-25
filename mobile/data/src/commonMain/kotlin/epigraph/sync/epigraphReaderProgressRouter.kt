@@ -19,11 +19,15 @@ import epigraph.contract.SyncScopeId
 import epigraph.sync.portable.SqlDelightPortableBindingStore
 import epigraph.sync.portable.PortableChapterBindingRecord
 import epigraph.sync.portable.PortableWorkBindingRecord
+import epigraph.sync.v4.V4Hlc
+import epigraph.sync.v4.V4PortableUrl
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
@@ -423,6 +427,7 @@ class EpigraphReaderProgressRouter(
         val createdAt = clock().also { require(it >= 0) { "mutation timestamp must be epoch milliseconds" } }
         return coordinator.mutateLocalBatch(createdAt) {
             val novelByManga = mutableMapOf<Long, Boolean?>()
+            var changedWhilePaired = false
             val envelopes = changes.flatMap { change ->
                 val before = chaptersQueries.getChaptersById(change.localChapterId).executeAsOneOrNull()
                     ?: return@flatMap emptyList()
@@ -448,9 +453,13 @@ class EpigraphReaderProgressRouter(
                 val lastPageRead = change.lastPageRead
                     ?.takeIf { it != before.last_page_read && it in 0..Int.MAX_VALUE.toLong() }
                 if (read == null && bookmarked == null && lastPageRead == null) return@flatMap emptyList()
-                val novel = novelByManga.getOrPut(before.manga_id) { isNovelWork(before.manga_id) }
-                    ?: return@flatMap emptyList()
+                changedWhilePaired = true
+                val knownNovel = novelByManga.getOrPut(before.manga_id) { isNovelWork(before.manga_id) }
                 val after = chaptersQueries.getChaptersById(change.localChapterId).executeAsOne()
+                if (read == false || (lastPageRead != null && lastPageRead < before.last_page_read)) {
+                    enqueueV4ChapterReset(after, knownNovel, createdAt)
+                }
+                val novel = knownNovel ?: return@flatMap emptyList()
                 val resolved = resolveChapter(before.manga_id, change.localChapterId, after, novel, createdAt)
                     ?: return@flatMap emptyList()
                 if (novel) {
@@ -469,9 +478,18 @@ class EpigraphReaderProgressRouter(
                     )
                 }
             }
-            LocalMutationResult(ChapterStateMutationResult(envelopes.size), envelopes)
+            LocalMutationResult(
+                value = ChapterStateMutationResult(envelopes.size),
+                envelopes = envelopes,
+                // Chapters bound only through Sync V4 queue no command; the next sync run publishes
+                // them from its local export, so it must know an edit happened.
+                wakesSync = changedWhilePaired,
+            )
         }
     }
+
+    /** Reports a reader edit the caller saved locally because no chapter binding could carry it. */
+    fun notifyUnboundLocalEdit() = coordinator.notifyLocalEditWithoutCommand()
 
     /**
      * Publishes the comic reading progress this phone holds but the paired Core does not, such as
@@ -779,6 +797,87 @@ class EpigraphReaderProgressRouter(
         val url = mangasQueries.findById(localMangaId).executeAsOneOrNull()?.url ?: return entityId
         val scoped = suwayomiMangaEntityIdForCoreUrl(url) ?: return entityId
         return scoped.takeIf { chapterEntityId.startsWith(it.substringBeforeLast(":manga:") + ":chapter:") } ?: entityId
+    }
+
+    /**
+     * Queues a Sync V4 chapter record that carries an explicit reset for every paired Core. Core
+     * keeps the furthest progress any device reports, so an unread mark or an earlier page wins
+     * only with this reset clock. The reset sits one tick before the record itself, so Core drops
+     * every older progress but keeps the state this record carries. The record is written in the caller's transaction; the sync run
+     * sends it after the local export.
+     */
+    private fun Database.enqueueV4ChapterReset(chapter: Chapters, knownNovel: Boolean?, createdAt: Long) {
+        val states = v4_syncQueries.selectAllV4SyncStates().executeAsList()
+        if (states.isEmpty()) return
+        val localWorkId = chapter.manga_id.toString()
+        // A novel key names its plugin, which only a received binding knows. A comic key derives
+        // from its source like the comic export does, which leaves out LNReader works.
+        val derivedComicKey by lazy {
+            mangasQueries.findById(chapter.manga_id).executeAsOneOrNull()
+                ?.takeIf { it.source != 0L }
+                ?.takeUnless { SqlDelightPortableBindingStore(this).workByLocalReference(localWorkId)?.ref is PortableWorkRef.Novel }
+                ?.let { V4PortableUrl.canonicalWorkKey(it.source.toString(), it.url) }
+        }
+        fun boundKey(serverId: String, profileId: String, type: String) = v4_syncQueries.selectV4EntityMapByLocalId(
+            serverId = serverId,
+            profileId = profileId,
+            entityType = type,
+            localId = localWorkId,
+        ).executeAsOneOrNull()?.entity_key
+        for (state in states) {
+            val novelKey = if (knownNovel != false) boundKey(state.server_id, state.profile_id, "novel.work") else null
+            val comicKey = if (novelKey == null && knownNovel != true) {
+                boundKey(state.server_id, state.profile_id, "comic.work") ?: derivedComicKey
+            } else {
+                null
+            }
+            val workKey = novelKey ?: comicKey ?: continue
+            val novel = novelKey != null
+            val entityType = if (novel) "novel.chapter" else "comic.chapter"
+            val entityKey = V4PortableUrl.canonicalChapterKey(workKey, chapter.url)
+            val previous = v4_syncQueries.selectLastV4OutboxForEntity(
+                serverId = state.server_id,
+                profileId = state.profile_id,
+                entityType = entityType,
+                entityKey = entityKey,
+            ).executeAsOneOrNull()
+            // Calibrated to the Core clock like the sync engine's own records, so a skewed phone
+            // clock cannot discard progress other devices make after this reset.
+            var reset = V4Hlc(maxOf(1L, createdAt + state.clock_offset_ms), 0L, deviceId.value)
+            for (known in listOfNotNull(
+                V4Hlc(state.hlc_last_ts_ms, state.hlc_last_counter, deviceId.value),
+                previous?.let { V4Hlc(it.hlc_ts_ms, it.hlc_counter, deviceId.value) },
+            )) {
+                if (reset <= known) reset = known.copy(counter = known.counter + 1L)
+            }
+            val hlc = reset.copy(counter = reset.counter + 1L)
+            val payload = buildJsonObject {
+                put("workKey", workKey)
+                put("url", chapter.url)
+                put("isRead", chapter.read)
+                put("isBookmarked", chapter.bookmark)
+                if (novel) {
+                    put("progressPercent", (chapter.last_page_read / 100.0).coerceIn(0.0, 1.0))
+                } else {
+                    put("lastPageRead", chapter.last_page_read)
+                }
+                put("explicitResetHlc", Json.encodeToJsonElement(V4Hlc.serializer(), reset))
+            }
+            v4_syncQueries.enqueueV4Outbox(
+                clientMutationId = mutationIds.next().value,
+                serverId = state.server_id,
+                profileId = state.profile_id,
+                domain = if (novel) "novels" else "comics",
+                entityType = entityType,
+                entityKey = entityKey,
+                deleted = 0L,
+                hlcTsMs = hlc.tsMs,
+                hlcCounter = hlc.counter,
+                hlcDeviceId = hlc.deviceId,
+                payloadJson = payload.toString(),
+                createdAtMs = createdAt,
+            )
+        }
     }
 
     /** A bound V3 work decides the content type; otherwise the legacy identity does. Null stays local. */

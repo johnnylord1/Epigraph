@@ -504,6 +504,90 @@ class EpigraphReaderProgressRouterTest {
     }
 
     @Test
+    fun `a paired edit of a chapter only Sync V4 knows still wakes sync`() = runTest {
+        var wakes = 0
+        val waking = EpigraphMutationCoordinator(
+            AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            onLocalMutationEnqueued = { wakes++ },
+        )
+        val chapter = insertChapter(insertManga())
+        fun router(scopes: EpigraphSyncScopeProvider? = null) = EpigraphReaderProgressRouter(
+            coordinator = waking,
+            deviceId = DeviceId("phone"),
+            scopeId = SyncScopeId("novels:profile:main"),
+            mutationIds = ClientMutationIdFactory { ClientMutationId("v4-${System.nanoTime()}") },
+            scopeProvider = scopes ?: EpigraphSyncScopeProvider {
+                EpigraphSyncScopes(
+                    novels = SyncScopeId("novels:profile:main"),
+                    comics = SyncScopeId("comics:profile:main"),
+                )
+            },
+        )
+
+        router(EpigraphSyncScopeProvider { error("not paired") })
+            .setChapterStates(listOf(ChapterStateChange(chapter, bookmarked = true)))
+        assertEquals(0, wakes)
+
+        val paired = router()
+        paired.setChapterStates(listOf(ChapterStateChange(chapter, read = true)))
+        assertEquals(1, wakes)
+        assertTrue(queuedMutations().isEmpty())
+
+        paired.setChapterStates(listOf(ChapterStateChange(chapter, read = true)))
+        assertEquals(1, wakes, "an unchanged chapter must not wake sync")
+
+        paired.notifyUnboundLocalEdit()
+        assertEquals(2, wakes)
+    }
+
+    @Test
+    fun `a paired unread mark queues a Sync V4 chapter reset on the Core clock`() = runTest {
+        val chapter = insertChapter(insertManga())
+        database.v4_syncQueries.upsertV4SyncState(
+            serverId = "core", profileId = "main", serverSeq = 9, minReplayableSeq = 0,
+            lastSnapshotEtag = null, hlcLastTsMs = 4_000, hlcLastCounter = 3,
+            clockOffsetMs = -1_000, initialSyncCompleted = 1, updatedAtMs = 0,
+        )
+        val router = EpigraphReaderProgressRouter(
+            coordinator = coordinator,
+            deviceId = DeviceId("phone"),
+            scopeId = SyncScopeId("novels:profile:main"),
+            mutationIds = ClientMutationIdFactory { ClientMutationId("v4-${System.nanoTime()}") },
+            clock = { 5_000L },
+            scopeProvider = EpigraphSyncScopeProvider {
+                EpigraphSyncScopes(SyncScopeId("novels:profile:main"), SyncScopeId("comics:profile:main"))
+            },
+        )
+        fun resets() = database.v4_syncQueries.selectV4OutboxDue(
+            serverId = "core", profileId = "main", domains = listOf("comics"),
+            syncComics = 1, syncNovels = 0, reconcileComicRepositories = 0, reconcileComicExtensions = 0,
+            reconcileNovelRepositories = 0, reconcileNovelPlugins = 0, nowMs = Long.MAX_VALUE, limit = 10,
+        ).executeAsList()
+
+        router.setChapterStates(listOf(ChapterStateChange(chapter, read = true, lastPageRead = 7)))
+        assertTrue(resets().isEmpty(), "progress forward needs no reset")
+
+        router.setChapterStates(listOf(ChapterStateChange(chapter, read = false, lastPageRead = 0)))
+        val reset = resets().single()
+        assertEquals("comic.chapter", reset.entity_type)
+        assertEquals("1:/comic/1|/chapter/900", reset.entity_key)
+        // 5_000 + offset -1_000 = 4_000 equals the last engine clock, so the counter moves past it,
+        // and the record sits one tick after its reset so Core keeps the state it carries.
+        assertEquals(4_000, reset.hlc_ts_ms)
+        assertEquals(5, reset.hlc_counter)
+        val payload = Json.parseToJsonElement(reset.payload_json).jsonObject
+        assertEquals("false", payload["isRead"]!!.jsonPrimitive.content)
+        assertEquals("0", payload["lastPageRead"]!!.jsonPrimitive.content)
+        val resetClock = payload["explicitResetHlc"]!!.jsonObject
+        assertEquals("4000", resetClock["tsMs"]!!.jsonPrimitive.content)
+        assertEquals("4", resetClock["counter"]!!.jsonPrimitive.content)
+        assertEquals("phone", resetClock["deviceId"]!!.jsonPrimitive.content)
+
+        router.setChapterStates(listOf(ChapterStateChange(chapter, bookmarked = true)))
+        assertEquals(1, resets().size, "a bookmark alone is not a reset")
+    }
+
+    @Test
     fun `backfill queues progress read before pairing dated when it was read`() = runTest {
         bindReadComicChapter()
         val router = backfillRouter()

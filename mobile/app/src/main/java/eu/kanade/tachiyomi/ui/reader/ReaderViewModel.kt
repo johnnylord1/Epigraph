@@ -598,6 +598,7 @@ class ReaderViewModel(
         val localChapterId = chapter.id
         val resolvedNovelTextPosition = novelTextPosition
             ?: localChapterId?.let(novelTextPositionByChapterId::get)
+        var paired = localMangaId != null && localChapterId != null
         val emitted = if (localMangaId != null && localChapterId != null) {
             try {
                 if (source?.isNovelSource() == true) {
@@ -636,6 +637,7 @@ class ReaderViewModel(
                     ).emitted
                 }
             } catch (_: epigraph.sync.core.credentials.CoreProfileNotPairedException) {
+                paired = false
                 false
             } catch (error: Exception) {
                 Logger.w(error) { "Unable to persist Epigraph reader progress atomically" }
@@ -654,6 +656,8 @@ class ReaderViewModel(
                     pagesLeft = chapter.pages_left.toLong(),
                 ),
             )
+            // A chapter bound only through Sync V4 reaches the Core from the next local export.
+            if (paired) epigraphProgressRouter.notifyUnboundLocalEdit()
         }
     }
 
