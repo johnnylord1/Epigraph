@@ -21,8 +21,9 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         clock: V4HlcClock,
     ): List<V4OutgoingItem> = handler.await(inTransaction = true) {
         val works = v4_syncQueries.selectV4ComicWorks(favoritesOnly = 1).executeAsList()
+        // Default and Completed are each app's own folders, so neither side exports them.
         val categories = categoriesQueries.findAllComics().executeAsList()
-            .filterNot { categoryKey(it.name) == "completed" }
+            .filterNot { it._id == 0L || isReservedCategory(it.name) }
         val workKeys = works.associate { it._id to V4PortableUrl.canonicalWorkKey(it.source.toString(), it.url) }
         // The desktop names a folder by its lowercase name, so a rename is a new key there too.
         val categoryKeys = categories.associate { it._id to categoryKey(it.name) }
@@ -233,6 +234,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         }
         private val categories by lazy {
             database.categoriesQueries.findAllComics().executeAsList()
+                .filterNot { it._id == 0L || isReservedCategory(it.name) }
                 .associateTo(mutableMapOf()) { categoryKey(it.name) to it._id }
         }
         private val chaptersByWork = mutableMapOf<Long, MutableMap<String, Chapters>>()
@@ -297,9 +299,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
 
         private fun applyCategory(record: V4WireRecord, payload: JsonObject): Long? {
             val key = record.entityKey
-            if (key.trim().equals("completed", ignoreCase = true) ||
-                payload.text("name")?.trim()?.equals("completed", ignoreCase = true) == true
-            ) {
+            if (isReservedCategory(key) || payload.text("name")?.let(::isReservedCategory) == true) {
                 return null
             }
             // A folder's key is its name, so the bound row can be a folder renamed since then.
@@ -372,7 +372,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             val workKey = payload.text("workKey") ?: record.entityKey.substringBeforeLast('|')
             val categoryKey = payload.text("categoryKey") ?: record.entityKey.substringAfterLast('|')
             val work = workId(workKey)
-            if (categoryKey.trim().equals("completed", ignoreCase = true)) return work
+            if (isReservedCategory(categoryKey)) return work
             val categoryBinding = binding(CATEGORY, categoryKey)
             // Deleting the category removes its rows from mangas_categories. A snapshot
             // can still contain an assignment created before the category was deleted.

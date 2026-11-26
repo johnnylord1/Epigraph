@@ -266,6 +266,36 @@ class V4ComicDomainBridgeTest {
     }
 
     @Test
+    fun `Default and Completed folders never leave or get removed by the Core`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = folderLibrary(driver)
+            val bridge = V4ComicDomainBridge(handler(db, driver))
+            db.categoriesQueries.insert("Completed", 2, 0, "")
+            val completed = db.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+            db.mangas_categoriesQueries.insert(1, completed)
+
+            val export = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+            assertEquals(setOf("waketest", "action"), export.keys("comic.category"))
+            assertTrue(export.keys("comic.category_assignment").none { it.endsWith("|completed") })
+
+            fun remote(seq: Long, type: String, key: String, deleted: Boolean, payload: String? = null) = V4WireRecord(
+                seq, "comics", type, key, deleted, V4Hlc(10 + seq, 0, "desktop"), "desktop",
+                Json.parseToJsonElement(payload ?: "null"),
+            )
+            bridge.applyRemoteRecords("core", "main", listOf(
+                remote(1, "comic.category", "default", false, """{"name":"Default","order":0}"""),
+                remote(2, "comic.category_assignment", "123:/a|default", false, """{"workKey":"123:/a","categoryKey":"default"}"""),
+                remote(3, "comic.category_assignment", "123:/a|completed", true),
+                remote(4, "comic.category", "completed", true),
+            ))
+
+            val names = db.categoriesQueries.findAllComics().executeAsList().map { it.name }
+            assertEquals(listOf("WakeTest", "Action", "Completed"), names)
+            assertEquals(setOf("WakeTest", "Completed"), db.categoriesQueries.findAllByMangaId(1).executeAsList().map { it.name }.toSet())
+        }
+    }
+
+    @Test
     fun `deleting a folder or taking a work out of one sends tombstones but leaving the library does not`() = runTest {
         JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
             val db = folderLibrary(driver)
