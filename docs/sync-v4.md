@@ -37,6 +37,7 @@ All `/v4/*` routes require `require_v4_session`, which validates `X-Epigraph-Cli
   - **Extensions & Preferences**: syncs desktop novel repositories, plugins, and settings over Sync V4.
   - **Comics**: projected through the Suwayomi integration; local Desktop edits—including comic category creation, reordering, assignment changes, and deletions (`catalog: true` on `/v1/local/progress-mirror`)—are captured into Sync V4 records.
     - Before reading Desktop categories, the capture waits (up to 30 s) until remote comic changes have been projected into Suwayomi, then confirms under the V4 write lock that nothing new arrived. If remote changes keep arriving after 3 attempts, it skips only the category part and logs a warning, so a phone edit that has not reached Suwayomi yet is never overwritten. A skipped Desktop-only category edit is picked up by the next catalog capture.
+    - Desktop library baseline: once per profile per Core process, after its projection settles, Core publishes Desktop library works that Sync V4 has never recorded (including Default-only and Completed-only works, with their titles), real categories and memberships, and chapter progress (read, bookmarked, partly read) as records. It only fills gaps: works, categories, and chapters already in Sync V4, live or tombstoned, are never re-emitted, chapter progress only moves forward, and Default and Completed are never shared as categories. A second run commits nothing. If Suwayomi is unavailable or projection is still settling, it retries on later ticks.
 
 ## Compatibility Boundaries
 

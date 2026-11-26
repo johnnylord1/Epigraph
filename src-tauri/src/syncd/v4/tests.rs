@@ -2126,3 +2126,137 @@ async fn desktop_catalog_capture_reads_suwayomi_once_the_projection_settles() {
     assert!(result.is_err(), "a settled projection must let the catalog capture read Suwayomi");
     assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
 }
+
+/// A stand-in Suwayomi GraphQL endpoint answering the three baseline queries by operation name.
+async fn fake_suwayomi_library() -> String {
+    async fn graphql(axum::Json(body): axum::Json<Value>) -> axum::Json<Value> {
+        let query = body["query"].as_str().unwrap_or_default();
+        let data = if query.contains("EpigraphV4ComicLibrary") {
+            json!({"mangas": {
+                "nodes": [
+                    {"id": 1, "sourceId": "100", "url": "https://s/alpha", "title": "Alpha"},
+                    {"id": 2, "sourceId": "100", "url": "https://s/default-only", "title": "Default Only"},
+                    {"id": 3, "sourceId": "200", "url": "https://s/completed-only", "title": "Completed Only"}
+                ],
+                "pageInfo": {"hasNextPage": false}
+            }})
+        } else if query.contains("EpigraphV4ComicCategoryMembership") {
+            let alpha = json!({"id": 1, "sourceId": "100", "url": "https://s/alpha", "title": "Alpha", "inLibrary": true});
+            let default_only = json!({"id": 2, "sourceId": "100", "url": "https://s/default-only", "title": "Default Only", "inLibrary": true});
+            let completed_only = json!({"id": 3, "sourceId": "200", "url": "https://s/completed-only", "title": "Completed Only", "inLibrary": true});
+            json!({"categories": {
+                "nodes": [
+                    {"id": 0, "name": "Default", "order": 0, "mangas": {"nodes": [alpha.clone(), default_only]}},
+                    {"id": -2, "name": "Completed", "order": 1, "mangas": {"nodes": [completed_only]}},
+                    {"id": 7, "name": "Reading", "order": 2, "mangas": {"nodes": [alpha]}}
+                ],
+                "pageInfo": {"hasNextPage": false}
+            }})
+        } else if query.contains("EpigraphV4ComicChapters") {
+            json!({"chapters": {
+                "nodes": [
+                    {"id": 11, "mangaId": 1, "url": "https://s/alpha/1", "name": "One", "chapterNumber": 1, "scanlator": null, "isRead": true, "isBookmarked": false, "lastPageRead": 0},
+                    {"id": 12, "mangaId": 1, "url": "https://s/alpha/2", "name": "Two", "chapterNumber": 2, "scanlator": null, "isRead": false, "isBookmarked": false, "lastPageRead": 7},
+                    {"id": 13, "mangaId": 2, "url": "https://s/default-only/1", "name": "One", "chapterNumber": 1, "scanlator": null, "isRead": false, "isBookmarked": false, "lastPageRead": 0}
+                ],
+                "pageInfo": {"hasNextPage": false}
+            }})
+        } else {
+            return axum::Json(json!({"errors": [{"message": "unexpected operation"}]}));
+        };
+        axum::Json(json!({"data": data}))
+    }
+    let app = axum::Router::new().route("/api/graphql", axum::routing::post(graphql));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{address}/")
+}
+
+async fn live_record_counts(state: &SharedAppState) -> Vec<(String, i64)> {
+    sqlx::query_as(
+        "SELECT entity_type, COUNT(*) FROM v4_records
+         WHERE profile_id = 'profile-alpha' AND deleted = 0
+         GROUP BY entity_type ORDER BY entity_type",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap()
+}
+
+async fn settle_projection(state: &SharedAppState) {
+    sqlx::query(
+        "UPDATE v4_comics_projection SET applied_seq = target_seq WHERE profile_id = 'profile-alpha'",
+    )
+    .execute(&state.pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn desktop_comic_baseline_publishes_the_library_and_then_commits_nothing() {
+    let (_temp, state, app, token, _) = build_v4_test_env().await;
+    store_unprojected_phone_category(&app, &token).await;
+    state
+        .config
+        .set_suwayomi_proxy_test_upstream("profile-alpha", &fake_suwayomi_library().await);
+    let runtime = V4Runtime::new();
+
+    settle_projection(&state).await;
+    assert!(super::suwayomi::capture_comic_library_baseline(&state, &runtime, "profile-alpha")
+        .await
+        .unwrap());
+    let published = live_record_counts(&state).await;
+    let count = |counts: &[(String, i64)], entity: &str| {
+        counts
+            .iter()
+            .find(|(kind, _)| kind == entity)
+            .map_or(0, |(_, n)| *n)
+    };
+    // Three library works (including Default-only and Completed-only), one real category next
+    // to the phone's, one membership, and the two chapters that carry progress.
+    assert_eq!(count(&published, "comic.work"), 3, "{published:?}");
+    assert_eq!(count(&published, "comic.category"), 2, "{published:?}");
+    assert_eq!(count(&published, "comic.category_assignment"), 1, "{published:?}");
+    assert_eq!(count(&published, "comic.chapter"), 2, "{published:?}");
+    let title: (String,) = sqlx::query_as(
+        "SELECT payload_json FROM v4_records WHERE profile_id = 'profile-alpha'
+         AND entity_type = 'comic.work' AND entity_key = ?",
+    )
+    .bind(canonical_work_key("100", "https://s/default-only"))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    let payload: Value = serde_json::from_str(&title.0).unwrap();
+    assert_eq!(payload["title"], "Default Only");
+    let reserved: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM v4_records WHERE profile_id = 'profile-alpha'
+         AND entity_type = 'comic.category' AND entity_key IN ('default', 'completed')",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(reserved, 0);
+
+    // A second run, against a settled projection again, commits zero records.
+    let seq_before: i64 = sqlx::query_scalar(
+        "SELECT current_seq FROM v4_profile_watermarks WHERE profile_id = 'profile-alpha'",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    settle_projection(&state).await;
+    assert!(super::suwayomi::capture_comic_library_baseline(&state, &runtime, "profile-alpha")
+        .await
+        .unwrap());
+    let seq_after: i64 = sqlx::query_scalar(
+        "SELECT current_seq FROM v4_profile_watermarks WHERE profile_id = 'profile-alpha'",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(seq_after, seq_before, "the second run must not append to the change log");
+    assert_eq!(live_record_counts(&state).await, published);
+}

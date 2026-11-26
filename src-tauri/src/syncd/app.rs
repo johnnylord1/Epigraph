@@ -107,14 +107,15 @@ pub async fn run() -> anyhow::Result<()> {
     let (shutdown, shutdown_receiver) = ShutdownCoordinator::channel();
     spawn_gc_task(state.clone(), shutdown.subscribe());
     spawn_wal_checkpoint_task(state.clone(), shutdown.subscribe());
-    super::v4::suwayomi::spawn_projection(state.clone(), shutdown.subscribe());
+    let v4_runtime = Arc::new(super::v4::V4Runtime::new());
+    super::v4::suwayomi::spawn_projection(state.clone(), v4_runtime.clone(), shutdown.subscribe());
     super::suwayomi_tracking_mirror::spawn_tracking_mirror_task(
         state.clone(),
         shutdown.subscribe(),
     );
     spawn_parent_watchdog(state.clone(), shutdown.clone());
     spawn_discovery_provider_task(state.clone(), shutdown.subscribe());
-    let router = build_router(state.clone(), shutdown.clone());
+    let router = build_router(state.clone(), shutdown.clone(), v4_runtime);
 
     tracing::info!(
         bind = %config.bind_addr,
@@ -168,7 +169,11 @@ pub async fn run() -> anyhow::Result<()> {
     serve_result
 }
 
-fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
+fn build_router(
+    state: Arc<AppState>,
+    shutdown: ShutdownCoordinator,
+    v4_runtime: Arc<super::v4::V4Runtime>,
+) -> Router {
     let protected = Router::new()
         .route("/v1/sync/status", get(status::get_sync_status))
         .route(
@@ -220,7 +225,6 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             require_authenticated_session,
         ));
 
-    let v4_runtime = Arc::new(super::v4::V4Runtime::new());
     let v4_router =
         super::v4::build_v4_router(state.clone(), v4_runtime.clone()).layer(Extension(shutdown));
 
@@ -318,7 +322,7 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
 #[cfg(test)]
 pub fn build_router_for_tests(state: Arc<AppState>) -> Router {
     let (shutdown, _rx) = ShutdownCoordinator::channel();
-    build_router(state, shutdown)
+    build_router(state, shutdown, Arc::new(super::v4::V4Runtime::new()))
 }
 
 fn desired_extension_stores() -> Vec<String> {
@@ -518,7 +522,7 @@ fn install_tracing() {
 #[cfg(test)]
 pub fn build_test_router(state: Arc<AppState>) -> Router {
     let (shutdown, _) = ShutdownCoordinator::channel();
-    build_router(state, shutdown)
+    build_router(state, shutdown, Arc::new(super::v4::V4Runtime::new()))
 }
 
 #[cfg(test)]
@@ -526,7 +530,7 @@ pub fn build_test_router_with_shutdown(
     state: Arc<AppState>,
     shutdown: ShutdownCoordinator,
 ) -> Router {
-    build_router(state, shutdown)
+    build_router(state, shutdown, Arc::new(super::v4::V4Runtime::new()))
 }
 
 #[cfg(test)]

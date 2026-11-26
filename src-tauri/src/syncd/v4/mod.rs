@@ -54,6 +54,9 @@ pub struct V4LiveEvent {
 pub struct V4Runtime {
     pub live_sender: broadcast::Sender<V4LiveEvent>,
     pub write_gate: Arc<Mutex<()>>,
+    /// Per-profile state of the desktop comic library baseline. In memory only: a fresh process
+    /// runs the baseline again, and the fill-gaps rule makes that a no-op.
+    comic_baseline: std::sync::Mutex<suwayomi::ComicBaselineProgress>,
 }
 
 impl Default for V4Runtime {
@@ -68,6 +71,7 @@ impl V4Runtime {
         Self {
             live_sender,
             write_gate: Arc::new(Mutex::new(())),
+            comic_baseline: std::sync::Mutex::new(suwayomi::ComicBaselineProgress::default()),
         }
     }
 }

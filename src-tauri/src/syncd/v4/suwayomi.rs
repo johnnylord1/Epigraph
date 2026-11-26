@@ -1,8 +1,8 @@
 //! Converts portable comic state to the same Mihon backup format supported by Suwayomi.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Context};
 use serde_json::{json, Value};
@@ -158,29 +158,8 @@ pub(super) async fn capture_local_edits_with_wait(
     let mut catalog_guard = None;
     let mut catalog_snapshot = None;
     if catalog {
-        let categories_query = r#"
-          query EpigraphV4LocalCategories($first: Int!, $offset: Int!) {
-            categories(first: $first, offset: $offset) {
-              nodes {
-                id
-                name
-                order
-                mangas {
-                  nodes { sourceId url title inLibrary }
-                }
-              }
-              pageInfo { hasNextPage }
-            }
-          }
-        "#;
-        let library_query = r#"
-          query EpigraphV4LocalLibraryWorks($first: Int!, $offset: Int!) {
-            mangas(condition: { inLibrary: true }, first: $first, offset: $offset) {
-              nodes { sourceId url }
-              pageInfo { hasNextPage }
-            }
-          }
-        "#;
+        let categories_query = COMIC_CATEGORY_MEMBERSHIP_QUERY;
+        let library_query = COMIC_LIBRARY_QUERY;
         for _ in 0..CATALOG_CAPTURE_ATTEMPTS {
             let Some(before) =
                 wait_for_settled_projection(&state.pool, profile, projection_wait).await?
@@ -416,22 +395,23 @@ fn plan_catalog_category_edits(
     known_works: &BTreeSet<String>,
 ) -> Vec<(&'static str, String, Value, bool)> {
     let mut live_library_works = BTreeSet::new();
+    let mut missing_parent_works = BTreeMap::new();
+    // Every library work is published, including works only in Default or Completed, which
+    // belong to no shared category.
     for work in library_works {
-        let Some(source) = scalar_text(&work["sourceId"]) else {
+        let Some((work_key, source, url)) = comic_identity(work) else {
             continue;
         };
-        if source == "0" {
-            continue;
+        if !known_works.contains(&work_key) {
+            missing_parent_works
+                .entry(work_key.clone())
+                .or_insert_with(|| missing_work_payload(&source, url, &work["title"]));
         }
-        let Some(url) = work["url"].as_str() else {
-            continue;
-        };
-        live_library_works.insert(canonical_work_key(&source, url));
+        live_library_works.insert(work_key);
     }
 
     let mut live_categories = BTreeMap::new();
     let mut live_assignments = BTreeMap::new();
-    let mut missing_parent_works = BTreeMap::new();
     for category in categories {
         if category["id"].as_i64() == Some(0) {
             continue;
@@ -470,14 +450,9 @@ fn plan_catalog_category_edits(
                 let work_key = canonical_work_key(&source, url);
                 live_library_works.insert(work_key.clone());
                 if !known_works.contains(&work_key) {
-                    missing_parent_works.entry(work_key.clone()).or_insert_with(|| {
-                        json!({
-                            "sourceId": source,
-                            "url": url,
-                            "title": manga["title"].as_str().unwrap_or(url),
-                            "favorite": true,
-                        })
-                    });
+                    missing_parent_works
+                        .entry(work_key.clone())
+                        .or_insert_with(|| missing_work_payload(&source, url, &manga["title"]));
                 }
                 let assignment_key = format!("{work_key}|{category_key}");
                 live_assignments.insert(
@@ -601,6 +576,7 @@ pub(super) fn wake_projection() {
 
 pub(in crate::syncd) fn spawn_projection(
     state: SharedAppState,
+    runtime: Arc<V4Runtime>,
     mut shutdown: watch::Receiver<Option<ShutdownRequest>>,
 ) {
     tokio::spawn(async move {
@@ -620,8 +596,415 @@ pub(in crate::syncd) fn spawn_projection(
                     }
                 }
             }
+            tokio::select! {
+                _ = wait_for_shutdown_request(&mut shutdown) => break,
+                result = run_comic_library_baselines(&state, &runtime) => {
+                    if let Err(error) = result {
+                        tracing::warn!(error = %error, "V4 desktop comic baseline check failed");
+                    }
+                }
+            }
         }
     });
+}
+
+/// How long a profile waits before the baseline runs again after a deferral.
+const BASELINE_RETRY: Duration = Duration::from_secs(10);
+/// Chapter reads cover this many library works per request instead of one request per work.
+const BASELINE_WORKS_PER_CHAPTER_REQUEST: usize = 100;
+
+/// Per-profile state of the desktop comic library baseline, kept in memory.
+#[derive(Debug, Default)]
+pub(super) struct ComicBaselineProgress {
+    done: BTreeSet<String>,
+    retry_after: BTreeMap<String, Instant>,
+}
+
+impl ComicBaselineProgress {
+    fn is_ready(&self, profile: &str, now: Instant) -> bool {
+        !self.done.contains(profile) && self.retry_after.get(profile).is_none_or(|at| now >= *at)
+    }
+
+    fn defer(&mut self, profile: &str, now: Instant) {
+        self.retry_after
+            .insert(profile.to_owned(), now + BASELINE_RETRY);
+    }
+
+    fn mark_done(&mut self, profile: &str) {
+        self.done.insert(profile.to_owned());
+        self.retry_after.remove(profile);
+    }
+}
+
+/// Publishes desktop library state that Core has never recorded: works (including Default-only
+/// and Completed-only ones), real categories, memberships, and chapter progress. It only fills
+/// gaps, so it never re-emits a record Core already holds, live or tombstoned.
+pub(super) async fn run_comic_library_baselines(
+    state: &SharedAppState,
+    runtime: &V4Runtime,
+) -> anyhow::Result<()> {
+    let profiles: Vec<String> =
+        sqlx::query_scalar("SELECT profile_id FROM v4_profile_watermarks WHERE current_seq > 0")
+            .fetch_all(&state.pool)
+            .await?;
+    for profile in profiles {
+        let now = Instant::now();
+        let ready = runtime
+            .comic_baseline
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_ready(&profile, now);
+        if !ready {
+            continue;
+        }
+        let outcome = capture_comic_library_baseline(state, runtime, &profile).await;
+        let mut progress = runtime
+            .comic_baseline
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match outcome {
+            Ok(true) => progress.mark_done(&profile),
+            // Projection has not settled yet: try again once it has.
+            Ok(false) => progress.defer(&profile, Instant::now()),
+            Err(error) => {
+                tracing::debug!(%profile, error = %error, "V4 desktop comic baseline deferred");
+                progress.defer(&profile, Instant::now());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns `Ok(true)` once the baseline has run against a settled projection, and `Ok(false)`
+/// when it had to wait for remote comic changes to reach Suwayomi first.
+pub(super) async fn capture_comic_library_baseline(
+    state: &SharedAppState,
+    runtime: &V4Runtime,
+    profile: &str,
+) -> anyhow::Result<bool> {
+    let before = load_projection_progress(&state.pool, profile).await?;
+    if !ProjectionProgress::settled(before) {
+        return Ok(false);
+    }
+    let session = AuthenticatedSession {
+        profile_id: profile.to_owned(),
+        token_id: COMIC_PROJECTION_TOKEN.to_owned(),
+        device_id: LOCAL_DESKTOP_ORIGIN.to_owned(),
+        scopes: BTreeSet::from([format!("comics:profile:{profile}")]),
+        mutation_receipt: None,
+    };
+    let library = read_nodes(
+        state,
+        &session,
+        COMIC_LIBRARY_QUERY,
+        "mangas",
+        WORK_PAGE_SIZE,
+        json!({}),
+    )
+    .await?;
+    let categories = read_nodes(
+        state,
+        &session,
+        COMIC_CATEGORY_MEMBERSHIP_QUERY,
+        "categories",
+        WORK_PAGE_SIZE,
+        json!({}),
+    )
+    .await?;
+    let work_ids: Vec<i64> = library.iter().filter_map(|work| work["id"].as_i64()).collect();
+    let mut chapters = Vec::new();
+    for ids in work_ids.chunks(BASELINE_WORKS_PER_CHAPTER_REQUEST) {
+        chapters.extend(
+            read_nodes(
+                state,
+                &session,
+                COMIC_CHAPTERS_QUERY,
+                "chapters",
+                CHAPTER_PAGE_SIZE,
+                json!({ "ids": ids }),
+            )
+            .await?,
+        );
+    }
+
+    // Same ordering as the catalog capture: plan from Core only while holding the write gate,
+    // and only if nothing was committed while Suwayomi was read.
+    let _guard = runtime.write_gate.lock().await;
+    let after = load_projection_progress(&state.pool, profile).await?;
+    if !catalog_snapshot_is_current(before, after) {
+        return Ok(false);
+    }
+    let stored = load_stored_comic_records(&state.pool, profile).await?;
+    let planned = plan_comic_library_baseline(&library, &chapters, &categories, &stored);
+    if planned.is_empty() {
+        return Ok(true);
+    }
+    let now = crate::syncd::db::now_ms();
+    let watermark = db::load_watermark(&state.pool, profile).await?;
+    let items = planned
+        .into_iter()
+        .enumerate()
+        .map(|(index, (entity_type, entity_key, payload))| db::V4IncomingItem {
+            client_mutation_id: None,
+            domain: "comics".to_owned(),
+            entity_type: entity_type.to_owned(),
+            entity_key,
+            deleted: false,
+            hlc: super::hlc::Hlc::new(
+                now,
+                watermark.current_seq.saturating_add(index as i64),
+                LOCAL_DESKTOP_ORIGIN,
+            ),
+            payload,
+        })
+        .collect();
+    let summary =
+        db::apply_v4_batch(&state.pool, profile, LOCAL_DESKTOP_ORIGIN, items, true).await?;
+    for record in summary.committed_records {
+        let _ = runtime.live_sender.send(V4LiveEvent {
+            profile_id: profile.to_owned(),
+            origin_device_id: LOCAL_DESKTOP_ORIGIN.to_owned(),
+            server_seq: record.server_seq,
+            kind: V4LiveEventKind::Delta(record),
+        });
+    }
+    wake_projection();
+    Ok(true)
+}
+
+#[derive(Debug, Clone)]
+struct StoredComicRecord {
+    deleted: bool,
+    payload: Value,
+}
+
+async fn load_stored_comic_records(
+    pool: &sqlx::SqlitePool,
+    profile: &str,
+) -> anyhow::Result<BTreeMap<(String, String), StoredComicRecord>> {
+    let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
+        "SELECT entity_type, entity_key, deleted, payload_json FROM v4_records
+         WHERE profile_id = ? AND entity_type IN
+           ('comic.work', 'comic.category', 'comic.category_assignment', 'comic.chapter')",
+    )
+    .bind(profile)
+    .fetch_all(pool)
+    .await
+    .context("failed to read stored V4 comic records")?;
+    Ok(rows
+        .into_iter()
+        .map(|(entity_type, entity_key, deleted, payload_json)| {
+            (
+                (entity_type, entity_key),
+                StoredComicRecord {
+                    deleted: deleted != 0,
+                    payload: serde_json::from_str(&payload_json).unwrap_or(Value::Null),
+                },
+            )
+        })
+        .collect())
+}
+
+/// Reading progress of one chapter. Merging keeps the furthest value of each field, so the
+/// desktop can never move a device backwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ChapterProgress {
+    read: bool,
+    bookmarked: bool,
+    page: i64,
+}
+
+impl ChapterProgress {
+    fn from_suwayomi(chapter: &Value) -> Self {
+        Self {
+            read: chapter["isRead"] == true,
+            bookmarked: chapter["isBookmarked"] == true,
+            page: chapter["lastPageRead"].as_i64().unwrap_or(0),
+        }
+    }
+
+    fn from_record(payload: &Value) -> Option<Self> {
+        payload.is_object().then(|| Self {
+            read: payload["isRead"] == true,
+            bookmarked: payload["isBookmarked"] == true,
+            page: payload["lastPageRead"].as_i64().unwrap_or(0),
+        })
+    }
+
+    fn has_progress(self) -> bool {
+        self.read || self.bookmarked || self.page > 0
+    }
+
+    fn furthest(self, other: Self) -> Self {
+        Self {
+            read: self.read || other.read,
+            bookmarked: self.bookmarked || other.bookmarked,
+            page: self.page.max(other.page),
+        }
+    }
+}
+
+fn missing_work_payload(source: &str, url: &str, title: &Value) -> Value {
+    json!({
+        "sourceId": source,
+        "url": url,
+        "title": title.as_str().unwrap_or(url),
+        "favorite": true,
+    })
+}
+
+/// The canonical key, Suwayomi source id and url of a comic. Internal Suwayomi ids are not
+/// global identities, so they are never returned here.
+fn comic_identity(work: &Value) -> Option<(String, String, &str)> {
+    let source = scalar_text(&work["sourceId"])?;
+    if source == "0" {
+        return None;
+    }
+    let url = work["url"].as_str()?;
+    Some((canonical_work_key(&source, url), source, url))
+}
+
+/// Plans the baseline. Core holds the authority: a work, category, membership or chapter record
+/// that already exists (live or tombstoned) is never emitted again. Tombstoned works and
+/// categories are never resurrected, and their memberships and chapters are skipped too.
+fn plan_comic_library_baseline(
+    library: &[Value],
+    chapters: &[Value],
+    categories: &[Value],
+    stored: &BTreeMap<(String, String), StoredComicRecord>,
+) -> Vec<(&'static str, String, Value)> {
+    let stored_record = |entity_type: &str, key: &str| {
+        stored.get(&(entity_type.to_owned(), key.to_owned()))
+    };
+    let mut out = Vec::new();
+    let mut live_works = BTreeSet::new();
+    let mut work_keys_by_id = BTreeMap::new();
+    for work in library {
+        let Some((key, source, url)) = comic_identity(work) else {
+            continue;
+        };
+        if let Some(id) = work["id"].as_i64() {
+            work_keys_by_id.insert(id, key.clone());
+        }
+        match stored_record("comic.work", &key) {
+            Some(record) => {
+                if !record.deleted {
+                    live_works.insert(key);
+                }
+            }
+            None => {
+                if live_works.insert(key.clone()) {
+                    out.push(("comic.work", key, missing_work_payload(&source, url, &work["title"])));
+                }
+            }
+        }
+    }
+
+    let mut usable_categories = BTreeSet::new();
+    let mut emitted_assignments = BTreeSet::new();
+    for category in categories {
+        if category["id"].as_i64() == Some(0) {
+            continue;
+        }
+        let Some(raw_name) = category["name"].as_str() else {
+            continue;
+        };
+        if is_reserved_category_name(raw_name) {
+            continue;
+        }
+        let name = raw_name.trim();
+        let category_key = name.to_lowercase();
+        match stored_record("comic.category", &category_key) {
+            Some(record) if record.deleted => continue,
+            Some(_) => {}
+            None if usable_categories.contains(&category_key) => {}
+            None => out.push((
+                "comic.category",
+                category_key.clone(),
+                json!({
+                    "name": name,
+                    "order": category["order"].as_i64().unwrap_or(0),
+                    "flags": 0,
+                }),
+            )),
+        }
+        usable_categories.insert(category_key.clone());
+        for manga in category["mangas"]["nodes"].as_array().into_iter().flatten() {
+            if manga["inLibrary"].as_bool() == Some(false) {
+                continue;
+            }
+            let Some((work_key, _, _)) = comic_identity(manga) else {
+                continue;
+            };
+            if !live_works.contains(&work_key) {
+                continue;
+            }
+            let assignment_key = format!("{work_key}|{category_key}");
+            if stored_record("comic.category_assignment", &assignment_key).is_some()
+                || !emitted_assignments.insert(assignment_key.clone())
+            {
+                continue;
+            }
+            out.push((
+                "comic.category_assignment",
+                assignment_key,
+                json!({ "workKey": work_key, "categoryKey": category_key }),
+            ));
+        }
+    }
+
+    for chapter in chapters {
+        let Some(work_key) = chapter["mangaId"]
+            .as_i64()
+            .and_then(|id| work_keys_by_id.get(&id))
+        else {
+            continue;
+        };
+        if !live_works.contains(work_key) {
+            continue;
+        }
+        let Some(url) = chapter["url"].as_str() else {
+            continue;
+        };
+        let desktop = ChapterProgress::from_suwayomi(chapter);
+        if !desktop.has_progress() {
+            continue;
+        }
+        let key = canonical_chapter_key(work_key, url);
+        let progress = match stored_record("comic.chapter", &key) {
+            None => desktop,
+            Some(record) => {
+                // A tombstone or an explicit reset is Core's decision, which the baseline never
+                // overrides.
+                if record.deleted || record.payload.get("explicitResetHlc").is_some() {
+                    continue;
+                }
+                let Some(stored_progress) = ChapterProgress::from_record(&record.payload) else {
+                    continue;
+                };
+                let merged = stored_progress.furthest(desktop);
+                if merged == stored_progress {
+                    continue;
+                }
+                merged
+            }
+        };
+        out.push((
+            "comic.chapter",
+            key,
+            json!({
+                "workKey": work_key,
+                "url": url,
+                "name": chapter["name"],
+                "chapterNumber": chapter["chapterNumber"],
+                "scanlator": chapter["scanlator"],
+                "isRead": progress.read,
+                "isBookmarked": progress.bookmarked,
+                "lastPageRead": progress.page,
+            }),
+        ));
+    }
+    out
 }
 
 pub(super) async fn drain_projection_once(state: &SharedAppState) -> anyhow::Result<()> {
@@ -791,7 +1174,34 @@ const COMIC_WORKS_QUERY: &str = r#"
 const COMIC_CHAPTERS_QUERY: &str = r#"
   query EpigraphV4ComicChapters($ids: [Int!]!, $first: Int!, $offset: Int!) {
     chapters(filter: { mangaId: { in: $ids } }, orderBy: ID, orderByType: ASC, first: $first, offset: $offset) {
-      nodes { id mangaId url chapterNumber scanlator isRead isBookmarked lastPageRead }
+      nodes { id mangaId url name chapterNumber scanlator isRead isBookmarked lastPageRead }
+      pageInfo { hasNextPage }
+    }
+  }
+"#;
+
+const COMIC_LIBRARY_QUERY: &str = r#"
+  query EpigraphV4ComicLibrary($first: Int!, $offset: Int!) {
+    mangas(condition: { inLibrary: true }, first: $first, offset: $offset) {
+      nodes { id sourceId url title }
+      pageInfo { hasNextPage }
+    }
+  }
+"#;
+
+/// Categories with their members, so the baseline can tell real categories from the reserved
+/// Default and Completed folders, which are never shared as categories.
+const COMIC_CATEGORY_MEMBERSHIP_QUERY: &str = r#"
+  query EpigraphV4ComicCategoryMembership($first: Int!, $offset: Int!) {
+    categories(first: $first, offset: $offset) {
+      nodes {
+        id
+        name
+        order
+        mangas {
+          nodes { id sourceId url title inLibrary }
+        }
+      }
       pageInfo { hasNextPage }
     }
   }
@@ -1836,5 +2246,212 @@ mod tests {
             stamp_desktop_reset(&mut forward, &phone_read.payload, &edit_hlc);
             assert!(forward.get("explicitResetHlc").is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod baseline_plan_tests {
+    use super::*;
+    use serde_json::json;
+
+    const SOURCE: &str = "100";
+
+    fn work(id: i64, url: &str, title: &str, in_library: bool) -> Value {
+        json!({ "id": id, "sourceId": SOURCE, "url": url, "title": title, "inLibrary": in_library })
+    }
+
+    fn category(id: i64, name: &str, order: i64, members: Vec<Value>) -> Value {
+        json!({ "id": id, "name": name, "order": order, "mangas": { "nodes": members } })
+    }
+
+    fn chapter(id: i64, manga_id: i64, url: &str, read: bool, bookmarked: bool, page: i64) -> Value {
+        json!({
+            "id": id, "mangaId": manga_id, "url": url, "name": format!("Chapter {id}"),
+            "chapterNumber": id, "scanlator": null,
+            "isRead": read, "isBookmarked": bookmarked, "lastPageRead": page,
+        })
+    }
+
+    fn store(planned: &[(&'static str, String, Value)]) -> BTreeMap<(String, String), StoredComicRecord> {
+        planned
+            .iter()
+            .map(|(entity_type, key, payload)| {
+                (
+                    ((*entity_type).to_owned(), key.clone()),
+                    StoredComicRecord { deleted: false, payload: payload.clone() },
+                )
+            })
+            .collect()
+    }
+
+    fn of_type<'a>(
+        planned: &'a [(&'static str, String, Value)],
+        entity_type: &str,
+    ) -> Vec<&'a (&'static str, String, Value)> {
+        planned.iter().filter(|(kind, _, _)| *kind == entity_type).collect()
+    }
+
+    fn key_of(url: &str) -> String {
+        canonical_work_key(SOURCE, url)
+    }
+
+    #[test]
+    fn default_only_and_completed_only_works_are_published_with_their_title() {
+        let library = vec![
+            work(1, "https://s/default-only", "Default Only", true),
+            work(2, "https://s/completed-only", "Completed Only", true),
+        ];
+        let categories = vec![
+            category(0, "Default", 0, vec![library[0].clone()]),
+            category(-2, "Completed", 1, vec![library[1].clone()]),
+        ];
+        let planned = plan_comic_library_baseline(&library, &[], &categories, &BTreeMap::new());
+        let works = of_type(&planned, "comic.work");
+        assert_eq!(works.len(), 2);
+        let default_only = works.iter().find(|(_, key, _)| *key == key_of("https://s/default-only")).unwrap();
+        assert_eq!(default_only.2["title"], "Default Only");
+        assert_eq!(default_only.2["favorite"], true);
+        assert_eq!(default_only.2["sourceId"], SOURCE);
+        assert_eq!(default_only.2["url"], "https://s/default-only");
+        let completed_only = works.iter().find(|(_, key, _)| *key == key_of("https://s/completed-only")).unwrap();
+        assert_eq!(completed_only.2["title"], "Completed Only");
+        // Reserved folders are never shared as categories, and Default is not an assignment.
+        assert!(of_type(&planned, "comic.category").is_empty());
+        assert!(of_type(&planned, "comic.category_assignment").is_empty());
+    }
+
+    #[test]
+    fn real_categories_and_their_memberships_are_published_once() {
+        let library = vec![work(1, "https://s/a", "Alpha", true)];
+        let categories = vec![
+            category(0, "Default", 0, vec![library[0].clone()]),
+            category(7, "  Reading ", 2, vec![library[0].clone()]),
+        ];
+        let planned = plan_comic_library_baseline(&library, &[], &categories, &BTreeMap::new());
+        let real = of_type(&planned, "comic.category");
+        assert_eq!(real.len(), 1);
+        assert_eq!(real[0].1, "reading");
+        assert_eq!(real[0].2["name"], "Reading");
+        assert_eq!(real[0].2["order"], 2);
+        let assignments = of_type(&planned, "comic.category_assignment");
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].1, format!("{}|reading", key_of("https://s/a")));
+        assert_eq!(assignments[0].2["workKey"], key_of("https://s/a"));
+        assert_eq!(assignments[0].2["categoryKey"], "reading");
+    }
+
+    #[test]
+    fn a_second_run_plans_nothing_once_the_first_run_is_stored() {
+        let library = vec![
+            work(1, "https://s/a", "Alpha", true),
+            work(2, "https://s/b", "Beta", true),
+        ];
+        let chapters = vec![
+            chapter(11, 1, "https://s/a/1", true, false, 0),
+            chapter(12, 1, "https://s/a/2", false, false, 7),
+        ];
+        let categories = vec![category(7, "Reading", 1, vec![library[0].clone()])];
+        let first = plan_comic_library_baseline(&library, &chapters, &categories, &BTreeMap::new());
+        assert!(!first.is_empty());
+        let second = plan_comic_library_baseline(&library, &chapters, &categories, &store(&first));
+        assert!(second.is_empty(), "stored records must not be emitted again: {second:?}");
+    }
+
+    #[test]
+    fn tombstoned_works_are_never_resurrected_with_their_memberships_or_chapters() {
+        let library = vec![work(1, "https://s/gone", "Gone", true)];
+        let categories = vec![category(7, "Reading", 1, vec![library[0].clone()])];
+        let chapters = vec![chapter(11, 1, "https://s/gone/1", true, true, 4)];
+        let mut stored = BTreeMap::new();
+        stored.insert(
+            ("comic.work".to_owned(), key_of("https://s/gone")),
+            StoredComicRecord { deleted: true, payload: Value::Null },
+        );
+        let planned = plan_comic_library_baseline(&library, &chapters, &categories, &stored);
+        // The real category is still shared, but the tombstoned work, its membership and its
+        // chapter progress never come back.
+        assert!(of_type(&planned, "comic.work").is_empty(), "{planned:?}");
+        assert!(of_type(&planned, "comic.category_assignment").is_empty(), "{planned:?}");
+        assert!(of_type(&planned, "comic.chapter").is_empty(), "{planned:?}");
+    }
+
+    #[test]
+    fn a_stored_work_is_kept_and_its_membership_is_still_filled() {
+        let library = vec![work(1, "https://s/a", "Alpha", true)];
+        let categories = vec![category(7, "Reading", 1, vec![library[0].clone()])];
+        let mut stored = BTreeMap::new();
+        stored.insert(
+            ("comic.work".to_owned(), key_of("https://s/a")),
+            StoredComicRecord { deleted: false, payload: json!({ "title": "Core title" }) },
+        );
+        let planned = plan_comic_library_baseline(&library, &[], &categories, &stored);
+        assert!(of_type(&planned, "comic.work").is_empty());
+        assert_eq!(of_type(&planned, "comic.category").len(), 1);
+        assert_eq!(of_type(&planned, "comic.category_assignment").len(), 1);
+    }
+
+    #[test]
+    fn chapter_progress_is_published_and_never_moves_backwards() {
+        let library = vec![work(1, "https://s/a", "Alpha", true)];
+        let work_key = key_of("https://s/a");
+        let read_key = canonical_chapter_key(&work_key, "https://s/a/1");
+        let ahead_key = canonical_chapter_key(&work_key, "https://s/a/2");
+        let untouched_key = canonical_chapter_key(&work_key, "https://s/a/3");
+        let chapters = vec![
+            chapter(11, 1, "https://s/a/1", true, false, 0),
+            // Core already holds further progress on this chapter: nothing is published.
+            chapter(12, 1, "https://s/a/2", false, false, 5),
+            chapter(13, 1, "https://s/a/3", false, false, 0),
+        ];
+        let mut stored = BTreeMap::new();
+        stored.insert(
+            ("comic.work".to_owned(), work_key.clone()),
+            StoredComicRecord { deleted: false, payload: Value::Null },
+        );
+        stored.insert(
+            ("comic.chapter".to_owned(), ahead_key.clone()),
+            StoredComicRecord {
+                deleted: false,
+                payload: json!({ "isRead": true, "isBookmarked": false, "lastPageRead": 9 }),
+            },
+        );
+        let planned = plan_comic_library_baseline(&library, &chapters, &[], &stored);
+        let published = of_type(&planned, "comic.chapter");
+        assert_eq!(published.len(), 1, "{published:?}");
+        assert_eq!(published[0].1, read_key);
+        assert_eq!(published[0].2["isRead"], true);
+        assert_eq!(published[0].2["workKey"], work_key);
+        assert!(published.iter().all(|(_, key, _)| *key != ahead_key && *key != untouched_key));
+        assert!(published[0].2.get("explicitResetHlc").is_none());
+    }
+
+    #[test]
+    fn a_chapter_with_a_stored_reset_or_tombstone_is_left_to_core() {
+        let library = vec![work(1, "https://s/a", "Alpha", true)];
+        let work_key = key_of("https://s/a");
+        let reset_key = canonical_chapter_key(&work_key, "https://s/a/1");
+        let tomb_key = canonical_chapter_key(&work_key, "https://s/a/2");
+        let chapters = vec![
+            chapter(11, 1, "https://s/a/1", true, false, 3),
+            chapter(12, 1, "https://s/a/2", true, false, 3),
+        ];
+        let mut stored = BTreeMap::new();
+        stored.insert(
+            ("comic.work".to_owned(), work_key),
+            StoredComicRecord { deleted: false, payload: Value::Null },
+        );
+        stored.insert(
+            ("comic.chapter".to_owned(), reset_key),
+            StoredComicRecord {
+                deleted: false,
+                payload: json!({ "isRead": false, "lastPageRead": 0, "explicitResetHlc": "1" }),
+            },
+        );
+        stored.insert(
+            ("comic.chapter".to_owned(), tomb_key),
+            StoredComicRecord { deleted: true, payload: Value::Null },
+        );
+        let planned = plan_comic_library_baseline(&library, &chapters, &[], &stored);
+        assert!(of_type(&planned, "comic.chapter").is_empty(), "{planned:?}");
     }
 }
