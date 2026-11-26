@@ -81,6 +81,7 @@ class V4SyncEngineTest {
             val request = chain.request()
             paths += request.url.encodedPath
             when (request.url.encodedPath) {
+                "/v4/capabilities" -> jsonResponse(request, 200, capabilitiesJson(6, pagedSnapshot = false))
                 "/v4/sync/bulk" -> jsonResponse(request, 200, """{"serverSeq":6,"serverTimeMs":2000000,"acceptedCount":1,"mergedCount":0,"deduplicatedCount":0,"noopCount":0,"rejected":[]}""")
                 "/v4/snapshot" -> jsonResponse(request, 200, """{"profileId":"main","serverSeq":6,"minReplayableSeq":0,"serverTimeMs":2000000,"recordCount":2,"records":[
                     {"serverSeq":5,"domain":"comics","entityType":"comic.work","entityKey":"src:/work","deleted":false,"originDeviceId":"desktop","hlc":{"tsMs":5,"counter":0,"deviceId":"desktop"},"payload":{}},
@@ -159,6 +160,7 @@ class V4SyncEngineTest {
             val request = chain.request()
             paths += request.url.encodedPath
             when (request.url.encodedPath) {
+                "/v4/capabilities" -> jsonResponse(request, 200, capabilitiesJson(6, pagedSnapshot = false))
                 "/v4/changes" -> {
                     currentSeq = 6L
                     jsonResponse(request, 200, """{"profileId":"main","serverSeq":6,"minReplayableSeq":0,"nextSeq":6,"hasMore":false,"serverTimeMs":2000000,"changes":[]}""")
@@ -476,6 +478,180 @@ class V4SyncEngineTest {
         val result = engine.syncOnce("tok-1") as V4SyncRunResult.Synced
         assertEquals(7L, result.serverSeq)
         assertEquals(7L, store.loadState("srv-1", "main").serverSeq)
+    }
+
+    private fun record(seq: Long, domain: String = "comics"): String {
+        val entityType = if (domain == "books") "book.work" else "comic.work"
+        val entityKey = if (domain == "books") "b".repeat(64) else "src:/w$seq"
+        return """{"serverSeq":$seq,"domain":"$domain","entityType":"$entityType","entityKey":"$entityKey","deleted":false,"originDeviceId":"desktop","hlc":{"tsMs":$seq,"counter":0,"deviceId":"desktop"},"payload":{}}"""
+    }
+
+    private fun snapshotPage(serverSeq: Long, records: List<String>, hasMore: Boolean = false, nextAfterSeq: Long = 0L): String =
+        """{"profileId":"main","serverSeq":$serverSeq,"minReplayableSeq":0,"serverTimeMs":2000000,"recordCount":${records.size},"records":[${records.joinToString(",")}],"hasMore":$hasMore,"nextAfterSeq":$nextAfterSeq}"""
+
+    private fun capabilitiesJson(serverSeq: Long, pagedSnapshot: Boolean, maxSnapshotPageItems: Int = 0): String =
+        """{"protocolVersion":4,"minClientVersion":"0.1.0","profileId":"main","deviceId":"android-1","serverSeq":$serverSeq,"minReplayableSeq":0,"serverTimeMs":2000000,"supportsPagedSnapshot":$pagedSnapshot,"maxSnapshotPageItems":$maxSnapshotPageItems}"""
+
+    private class PagedMerge(
+        val store: SqlDelightV4SyncStore,
+        val engine: V4SyncEngine,
+        val snapshotRequests: MutableList<okhttp3.HttpUrl>,
+        val applyCalls: MutableList<List<V4WireRecord>>,
+    )
+
+    /** Core is rewound to serverSeq 9 while the phone is at 10, so every run takes the full-merge recovery path. */
+    private fun pagedMergeScenario(
+        pagedSnapshot: Boolean,
+        snapshot: (okhttp3.Request, Long?) -> Response,
+    ): PagedMerge {
+        val store = SqlDelightV4SyncStore(createInMemoryDatabase(), wallClockMs = { 1_000_000L })
+        store.saveState(V4SyncCursorState("srv-1", "main", serverSeq = 10, initialSyncCompleted = true))
+        val snapshotRequests = mutableListOf<okhttp3.HttpUrl>()
+        val applyCalls = mutableListOf<List<V4WireRecord>>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            when (request.url.encodedPath) {
+                "/v4/capabilities" -> jsonResponse(request, 200, capabilitiesJson(9, pagedSnapshot, maxSnapshotPageItems = 2))
+                "/v4/changes" -> jsonResponse(request, 410, "")
+                "/v4/sync/bulk" -> jsonResponse(request, 200, """{"serverSeq":9,"serverTimeMs":2000000,"acceptedCount":0,"mergedCount":0,"deduplicatedCount":0,"noopCount":0,"rejected":[]}""")
+                "/v4/snapshot" -> {
+                    snapshotRequests += request.url
+                    snapshot(request, request.url.queryParameter("afterSeq")?.toLong())
+                }
+                else -> error("Unexpected call: ${request.url.encodedPath}")
+            }
+        }.build()
+        val bridge = object : V4DomainBridge {
+            override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock) = emptyList<V4OutgoingItem>()
+            override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) { applyCalls += records }
+        }
+        val url = "https://127.0.0.1:4777/".toHttpUrl()
+        val engine = V4SyncEngine("srv-1", "main", "android-1", store,
+            V4CoreHttpClient(client, url, "0.1.0"), V4SseClient(client, url, "0.1.0"), bridge)
+        return PagedMerge(store, engine, snapshotRequests, applyCalls)
+    }
+
+    @Test
+    fun `paged recovery snapshot applies all pages once and saves the first page watermark`() = runTest {
+        val s = pagedMergeScenario(pagedSnapshot = true) { request, afterSeq ->
+            when (afterSeq) {
+                null -> jsonResponse(request, 200, snapshotPage(9, listOf(record(1), record(2)), hasMore = true, nextAfterSeq = 2))
+                2L -> jsonResponse(request, 200, snapshotPage(12, listOf(record(3), record(4)), hasMore = true, nextAfterSeq = 4))
+                else -> jsonResponse(request, 200, snapshotPage(12, listOf(record(5)), hasMore = false))
+            }
+        }
+
+        val result = s.engine.syncOnce("tok-1") as V4SyncRunResult.Synced
+
+        assertEquals(9L, result.serverSeq)
+        assertEquals(9L, s.store.loadState("srv-1", "main").serverSeq)
+        assertEquals(1, s.applyCalls.size)
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L), s.applyCalls.single().map { it.serverSeq })
+        assertEquals(listOf(null, "2", "4"), s.snapshotRequests.map { it.queryParameter("afterSeq") })
+        assertEquals(setOf("2"), s.snapshotRequests.map { it.queryParameter("limit") }.toSet())
+    }
+
+    @Test
+    fun `a failed snapshot page fails the step retryably, applies nothing, and saves no cursor`() = runTest {
+        val s = pagedMergeScenario(pagedSnapshot = true) { request, afterSeq ->
+            when (afterSeq) {
+                null -> jsonResponse(request, 200, snapshotPage(9, listOf(record(1)), hasMore = true, nextAfterSeq = 1))
+                else -> jsonResponse(request, 503, "")
+            }
+        }
+
+        val failed = s.engine.syncOnce("tok-1") as V4SyncRunResult.Failed
+
+        assertEquals(503, failed.statusCode)
+        assertTrue(failed.retryable)
+        assertEquals(10L, s.store.loadState("srv-1", "main").serverSeq)
+        assertTrue(s.applyCalls.isEmpty())
+    }
+
+    @Test
+    fun `an old Core without paging gets one full snapshot request with no limit or afterSeq`() = runTest {
+        val s = pagedMergeScenario(pagedSnapshot = false) { request, _ ->
+            jsonResponse(request, 200, snapshotPage(9, listOf(record(1), record(2))))
+        }
+
+        val result = s.engine.syncOnce("tok-1") as V4SyncRunResult.Synced
+
+        assertEquals(9L, result.serverSeq)
+        assertEquals(1, s.snapshotRequests.size)
+        assertEquals(null, s.snapshotRequests.single().queryParameter("limit"))
+        assertEquals(null, s.snapshotRequests.single().queryParameter("afterSeq"))
+        assertEquals(listOf(1L, 2L), s.applyCalls.single().map { it.serverSeq })
+    }
+
+    @Test
+    fun `a 304 on the first page fails the step without saving a cursor`() = runTest {
+        val s = pagedMergeScenario(pagedSnapshot = true) { request, _ -> jsonResponse(request, 304, "") }
+
+        val failed = s.engine.syncOnce("tok-1") as V4SyncRunResult.Failed
+
+        assertEquals(304, failed.statusCode)
+        assertEquals(10L, s.store.loadState("srv-1", "main").serverSeq)
+        assertTrue(s.applyCalls.isEmpty())
+    }
+
+    @Test
+    fun `a page that does not advance the cursor fails retryably instead of looping`() = runTest {
+        val s = pagedMergeScenario(pagedSnapshot = true) { request, afterSeq ->
+            when (afterSeq) {
+                null -> jsonResponse(request, 200, snapshotPage(9, listOf(record(1)), hasMore = true, nextAfterSeq = 2))
+                else -> jsonResponse(request, 200, snapshotPage(9, listOf(record(3)), hasMore = true, nextAfterSeq = 2))
+            }
+        }
+
+        val failed = s.engine.syncOnce("tok-1") as V4SyncRunResult.Failed
+
+        assertTrue(failed.retryable)
+        assertTrue(failed.reason.contains("did not advance"))
+        assertEquals(10L, s.store.loadState("srv-1", "main").serverSeq)
+        assertTrue(s.applyCalls.isEmpty())
+    }
+
+    @Test
+    fun `re-enabled domain bootstrap pages the snapshot when the Core supports it`() = runTest {
+        val store = SqlDelightV4SyncStore(createInMemoryDatabase())
+        store.saveState(V4SyncCursorState("srv-1", "main", serverSeq = 5, initialSyncCompleted = true))
+        val progress = MemoryV4SyncDomainProgress().also { it.save("srv-1", "main", setOf("comics")) }
+        val snapshotRequests = mutableListOf<okhttp3.HttpUrl>()
+        val applied = mutableListOf<V4WireRecord>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            when (request.url.encodedPath) {
+                "/v4/capabilities" -> jsonResponse(request, 200, capabilitiesJson(6, pagedSnapshot = true, maxSnapshotPageItems = 1))
+                "/v4/sync/bulk" -> jsonResponse(request, 200, """{"serverSeq":6,"serverTimeMs":2000000,"acceptedCount":0,"mergedCount":0,"deduplicatedCount":0,"noopCount":0,"rejected":[]}""")
+                "/v4/snapshot" -> {
+                    snapshotRequests += request.url
+                    if (request.url.queryParameter("afterSeq") == null) {
+                        jsonResponse(request, 200, snapshotPage(6, listOf(record(5, "comics")), hasMore = true, nextAfterSeq = 5))
+                    } else {
+                        jsonResponse(request, 200, snapshotPage(6, listOf(record(6, "books")), hasMore = false))
+                    }
+                }
+                "/v4/changes" -> jsonResponse(request, 200, """{"profileId":"main","serverSeq":6,"minReplayableSeq":0,"nextSeq":6,"hasMore":false,"serverTimeMs":2000000,"changes":[]}""")
+                else -> error("Unexpected path ${request.url.encodedPath}")
+            }
+        }.build()
+        val bridge = object : V4DomainBridge {
+            override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock) = emptyList<V4OutgoingItem>()
+            override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) { applied += records }
+        }
+        val endpoint = "https://127.0.0.1:4777/".toHttpUrl()
+        val engine = V4SyncEngine("srv-1", "main", "android-1", store,
+            V4CoreHttpClient(client, endpoint, "0.1.0"), V4SseClient(client, endpoint, "0.1.0"), bridge,
+            domainProgress = progress)
+        engine.useDomainPolicy(V4SyncDomainPolicy(syncComics = true, syncNovels = false, syncBooks = true,
+            reconcileComicRepositories = false, reconcileComicExtensions = false,
+            reconcileNovelRepositories = false, reconcileNovelPlugins = false))
+
+        assertTrue(engine.syncOnce("tok") is V4SyncRunResult.Synced)
+        assertEquals(listOf("books"), applied.map { it.domain })
+        assertEquals(listOf(null, "5"), snapshotRequests.map { it.queryParameter("afterSeq") })
+        assertEquals(setOf("1"), snapshotRequests.map { it.queryParameter("limit") }.toSet())
+        assertEquals(setOf("comics", "books"), progress.load("srv-1", "main"))
     }
 
     private fun fullMergeScenario(

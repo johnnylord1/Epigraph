@@ -62,6 +62,7 @@ long-press routing used by Comics.
 - Ordered bootstrap stages for extension inventory/repositories (review-only), portable bindings, catalog materialization and Core replica replay; APK installation runs after the user taps "Install all", through the private installer (or Shizuku) with no prompt per APK.
 - Core readiness is capability-gated by `suwayomi-confirmed-v1`; the mobile worker does not report a drained outbox while the desktop projection queue is pending or blocked.
 - Incremental SSE decoder/replay policy with durable two-phase checkpoint advancement and snapshot fallback after replay expiry.
+- Snapshot exchange: when the Core advertises `supportsPagedSnapshot`, the client pages `/v4/snapshot` with `afterSeq`/`limit`, gathers every page, then applies once. The saved cursor is the first page's `serverSeq`/`minReplayableSeq`. A failed or non-advancing page fails the step without saving a cursor (5xx/429 retryable). Older Cores get one full request.
 - Immutable Core asset transfer with resumable downloads, verified atomic publication and intentionally non-resumable whole-body uploads.
 - Ordered bootstrap planner and per-mutation receipt policy for Syncd's non-atomic batches.
 - Product DI binds the encrypted pairing store, pinned Core session transport, outbox drainer, WorkManager scheduler, SQLDelight replica store/applier and snapshot bootstrap.

@@ -20,6 +20,8 @@ data class V4CapabilitiesResponse(
     val supportsConditionalBulk: Boolean = false,
     val supportsExtensionLanCache: Boolean = true,
     val supportsTrackerCredentials: Boolean = false,
+    val supportsPagedSnapshot: Boolean = false,
+    val maxSnapshotPageItems: Int = 0,
     val tlsCertSha256: String = "",
 )
 
@@ -84,6 +86,9 @@ data class V4SnapshotResponse(
     val serverTimeMs: Long,
     val recordCount: Int,
     val records: List<V4WireRecord>,
+    /** Paged snapshots only: more records follow after [nextAfterSeq]. Older Cores omit both. */
+    val hasMore: Boolean = false,
+    val nextAfterSeq: Long = 0L,
 )
 
 @Serializable

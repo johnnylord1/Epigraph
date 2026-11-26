@@ -55,19 +55,26 @@ class V4CoreHttpClient(
         )
 
     /**
-     * Fetches the full V4 snapshot for the authenticated profile. Returns `Success(null)` on
+     * Fetches the V4 snapshot for the authenticated profile. Returns `Success(null)` on
      * HTTP `304 Not Modified` when `ifNoneMatch` matches the Core's current `(profile, serverSeq)`.
+     *
+     * With [limit] set, the Core returns one page of records with `serverSeq > afterSeq`; without
+     * it, the request is the classic single full snapshot.
      */
     suspend fun snapshot(
         accessToken: String,
         domain: String? = null,
         includeTombstones: Boolean = true,
         ifNoneMatch: String? = null,
+        afterSeq: Long? = null,
+        limit: Long? = null,
     ): CoreHttpResult<V4SnapshotResponse?> {
         val url = endpoint("v4/snapshot").newBuilder()
             .apply {
                 if (!domain.isNullOrBlank()) addQueryParameter("domain", domain)
                 addQueryParameter("includeTombstones", includeTombstones.toString())
+                if (afterSeq != null) addQueryParameter("afterSeq", afterSeq.toString())
+                if (limit != null) addQueryParameter("limit", limit.toString())
             }
             .build()
         val req = protectedBuilder(url, accessToken)

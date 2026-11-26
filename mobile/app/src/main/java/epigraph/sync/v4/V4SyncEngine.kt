@@ -1,6 +1,7 @@
 package epigraph.sync.v4
 
 import epigraph.sync.core.http.CoreHttpResult
+import epigraph.sync.core.protocol.CoreErrorEnvelope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -23,6 +24,18 @@ sealed interface V4SyncRunResult {
         val statusCode: Int? = null,
         val retryable: Boolean = true,
     ) : V4SyncRunResult
+}
+
+/** Outcome of gathering a snapshot, possibly across several pages. */
+private sealed interface SnapshotGather {
+    /** [head] is the first page: its `serverSeq` and `minReplayableSeq` are the watermark. */
+    class Gathered(
+        val head: V4SnapshotResponse,
+        val records: List<V4WireRecord>,
+        val etag: String?,
+    ) : SnapshotGather
+
+    class Failed(val failure: V4SyncRunResult.Failed) : SnapshotGather
 }
 
 /**
@@ -383,15 +396,23 @@ class V4SyncEngine(
                 )
             }
         }
-        val snapshot = when (val result = http.snapshot(accessToken)) {
-            is CoreHttpResult.Success -> result.value ?: return V4SyncRunResult.Failed("Core returned no domain bootstrap snapshot", 304)
+        val capabilities = when (val capRes = http.capabilities(accessToken)) {
+            is CoreHttpResult.Success -> capRes.value
             is CoreHttpResult.Failure -> return V4SyncRunResult.Failed(
-                result.errorEnvelope?.error?.message ?: "HTTP ${result.statusCode}",
-                result.statusCode,
-                result.statusCode >= 500 || result.statusCode == 429,
+                reason = capRes.errorEnvelope?.error?.message ?: "HTTP ${capRes.statusCode}",
+                statusCode = capRes.statusCode,
+                retryable = capRes.statusCode >= 500 || capRes.statusCode == 429,
             )
         }
-        val records = enabled(snapshot.records, catchupPolicy)
+        val gathered = when (val g = gatherSnapshot(
+            accessToken,
+            snapshotPageLimit(capabilities),
+            "Core returned no domain bootstrap snapshot",
+        )) {
+            is SnapshotGather.Failed -> return g.failure
+            is SnapshotGather.Gathered -> g
+        }
+        val records = enabled(gathered.records, catchupPolicy)
         records.forEach { clock.observe(it.hlc) }
         if (records.isNotEmpty()) bridge.applyRemoteRecords(serverId, profileId, records)
         // Keep the cursor unchanged here. The normal changes pass must still cover mutations in
@@ -494,34 +515,28 @@ class V4SyncEngine(
 
         // A write receipt gives the Core's latest sequence, but only applying its snapshot
         // advances the local cursor. After a Core rewind, that cursor can also move backwards.
-        val (snapshot, etag) = when (val snapRes = http.snapshot(accessToken)) {
-            is CoreHttpResult.Success -> {
-                val snap = snapRes.value ?: run {
-                    persistClock(initialState, clock)
-                    return V4SyncRunResult.Failed("Core returned no recovery snapshot", statusCode = 304)
-                }
-                snap to snapRes.etag
-            }
-            is CoreHttpResult.Failure -> {
+        val gathered = when (val g = gatherSnapshot(
+            accessToken,
+            snapshotPageLimit(capabilities),
+            "Core returned no recovery snapshot",
+        )) {
+            is SnapshotGather.Failed -> {
                 persistClock(initialState, clock)
-                return V4SyncRunResult.Failed(
-                    reason = snapRes.errorEnvelope?.error?.message ?: "HTTP ${snapRes.statusCode}",
-                    statusCode = snapRes.statusCode,
-                    retryable = snapRes.statusCode >= 500 || snapRes.statusCode == 429,
-                )
+                return g.failure
             }
+            is SnapshotGather.Gathered -> g
         }
 
-        snapshot.records.forEach { clock.observe(it.hlc) }
-        val applicableSnapshotRecords = enabled(snapshot.records)
+        gathered.records.forEach { clock.observe(it.hlc) }
+        val applicableSnapshotRecords = enabled(gathered.records)
         if (applicableSnapshotRecords.isNotEmpty()) {
             bridge.applyRemoteRecords(serverId, profileId, applicableSnapshotRecords)
         }
         val state = persistClock(
             initialState.copy(
-                serverSeq = snapshot.serverSeq,
-                minReplayableSeq = snapshot.minReplayableSeq,
-                lastSnapshotEtag = etag,
+                serverSeq = gathered.head.serverSeq,
+                minReplayableSeq = gathered.head.minReplayableSeq,
+                lastSnapshotEtag = gathered.etag,
                 initialSyncCompleted = true,
             ),
             clock,
@@ -535,6 +550,71 @@ class V4SyncEngine(
             wasNoOpReconnect = false,
         )
     }
+
+    /** Page size for snapshot paging, or null when the Core only serves the single full snapshot. */
+    private fun snapshotPageLimit(capabilities: V4CapabilitiesResponse): Long? {
+        if (!capabilities.supportsPagedSnapshot) return null
+        return (capabilities.maxSnapshotPageItems.takeIf { it > 0 } ?: DEFAULT_SNAPSHOT_PAGE_ITEMS).toLong()
+    }
+
+    /**
+     * Gathers every page of the snapshot before anything is applied, so a failed page leaves the
+     * local state and cursor untouched. With [pageLimit] null the classic single request is used.
+     */
+    private suspend fun gatherSnapshot(
+        accessToken: String,
+        pageLimit: Long?,
+        missingReason: String,
+    ): SnapshotGather {
+        if (pageLimit == null) {
+            return when (val res = http.snapshot(accessToken)) {
+                is CoreHttpResult.Success -> {
+                    val snap = res.value
+                        ?: return SnapshotGather.Failed(V4SyncRunResult.Failed(missingReason, statusCode = 304))
+                    SnapshotGather.Gathered(snap, snap.records, res.etag)
+                }
+                is CoreHttpResult.Failure -> SnapshotGather.Failed(snapshotFailure(res.errorEnvelope, res.statusCode))
+            }
+        }
+
+        var head: V4SnapshotResponse? = null
+        var etag: String? = null
+        var afterSeq: Long? = null
+        val records = ArrayList<V4WireRecord>()
+        while (true) {
+            when (val res = http.snapshot(accessToken, afterSeq = afterSeq, limit = pageLimit)) {
+                is CoreHttpResult.Failure -> return SnapshotGather.Failed(snapshotFailure(res.errorEnvelope, res.statusCode))
+                is CoreHttpResult.Success -> {
+                    // A 304 is only meaningful on the first page; later pages send no If-None-Match.
+                    val page = res.value ?: return SnapshotGather.Failed(
+                        V4SyncRunResult.Failed(
+                            if (head == null) missingReason else "Core returned no snapshot page after seq ${afterSeq ?: 0L}",
+                            statusCode = 304,
+                        ),
+                    )
+                    val first = head ?: page.also {
+                        head = it
+                        etag = res.etag
+                    }
+                    records.addAll(page.records)
+                    if (!page.hasMore) return SnapshotGather.Gathered(first, records, etag)
+                    val previous = afterSeq ?: 0L
+                    if (page.nextAfterSeq <= previous) {
+                        return SnapshotGather.Failed(
+                            V4SyncRunResult.Failed("Core snapshot page did not advance past seq $previous"),
+                        )
+                    }
+                    afterSeq = page.nextAfterSeq
+                }
+            }
+        }
+    }
+
+    private fun snapshotFailure(envelope: CoreErrorEnvelope?, statusCode: Int) = V4SyncRunResult.Failed(
+        reason = envelope?.error?.message ?: "HTTP $statusCode",
+        statusCode = statusCode,
+        retryable = statusCode >= 500 || statusCode == 429,
+    )
 
     private suspend fun drainOutboxLocked(
         accessToken: String,
@@ -631,5 +711,6 @@ class V4SyncEngine(
         private const val BULK_CHUNK_SIZE = 20_000
         private const val DELTA_BATCH_SIZE = 250
         private const val CHANGES_PAGE_SIZE = 2_000
+        private const val DEFAULT_SNAPSHOT_PAGE_ITEMS = 5_000
     }
 }
