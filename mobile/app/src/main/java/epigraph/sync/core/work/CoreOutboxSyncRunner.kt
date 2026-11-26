@@ -668,6 +668,7 @@ class CoreOutboxSyncRunner(
                         }
                     }
                 }
+                reportV4Uploads(connection, capabilities, session.profileId, outcome)
                 return outcome
             }
             lastRunUsedSyncV4 = false
@@ -680,6 +681,36 @@ class CoreOutboxSyncRunner(
 
     private companion object {
         val EMPTY_REPORT = CoreOutboxDrainReport(0, 0, 0, 0, 0)
+    }
+}
+
+/**
+ * Tells the Core what this device still has to upload after a Sync V4 run. A desktop's first run
+ * waits for this report from each paired device before it calls the comic library and trackers
+ * ready. V4 does not tell library rows from reading state, so all of it counts as library.
+ */
+internal suspend fun reportV4Uploads(
+    connection: CoreOutboxSyncConnection,
+    capabilities: CoreCapabilities,
+    profileId: String,
+    outcome: CoreOutboxSyncOutcome,
+) {
+    if (!EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities)) return
+    val pending = when (outcome) {
+        is CoreOutboxSyncOutcome.OutboxDrained -> 0L
+        is CoreOutboxSyncOutcome.OutboxDeferred -> outcome.pendingCount.coerceAtLeast(0)
+        else -> return
+    }
+    try {
+        connection.syncStatus(
+            "comics:profile:$profileId",
+            pendingUploads = pending,
+            pendingLibraryUploads = pending,
+        )
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        reportCoreSyncFailure("v4.uploadReport", failure)
     }
 }
 
