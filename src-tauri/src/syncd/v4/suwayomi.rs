@@ -1015,6 +1015,19 @@ fn chapter_by_number<'a>(chapters: &[&'a Value], fields: &Value) -> Option<&'a V
     candidates.next().is_none().then_some(found)
 }
 
+/// Folders an incoming tombstone may delete or unassign. Default and Completed belong to the
+/// app on both sides, so a remote deletion never removes them or their members.
+fn removable_categories(nodes: &[Value]) -> HashMap<String, i64> {
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let id = node["id"].as_i64().filter(|id| *id > 0)?;
+            let name = node["name"].as_str()?;
+            (!is_reserved_category_name(name)).then(|| (name.trim().to_lowercase(), id))
+        })
+        .collect()
+}
+
 async fn apply_relation_deletes(
     state: &SharedAppState,
     session: &AuthenticatedSession,
@@ -1058,14 +1071,7 @@ async fn apply_relation_deletes(
             json!({}),
         )
         .await?;
-        for node in nodes {
-            if let (Some(id), Some(name)) = (
-                node["id"].as_i64().filter(|id| *id > 0),
-                node["name"].as_str(),
-            ) {
-                categories.insert(name.trim().to_lowercase(), id);
-            }
-        }
+        categories = removable_categories(&nodes);
     }
     let mut trackers = HashMap::new();
     if records
@@ -1243,7 +1249,7 @@ pub(super) fn prepare_restore(records: &[V4WireRecord]) -> anyhow::Result<ComicR
             record.entity_type == "comic.category"
                 && !record.deleted
                 && !text(&record.payload, "name")
-                    .is_some_and(|name| name.trim().eq_ignore_ascii_case("completed"))
+                    .is_some_and(is_reserved_category_name)
         })
         .collect::<Vec<_>>();
     categories.sort_by_key(|record| {
@@ -1614,6 +1620,50 @@ mod tests {
         assert_eq!(plan.categories.len(), 1);
         assert_eq!(plan.categories[0].name, "Reading");
         assert_eq!(plan.works[0].category_orders, [0]);
+    }
+
+    #[test]
+    fn remote_tombstones_never_target_default_or_completed() {
+        let targets = removable_categories(&[
+            json!({"id": 0, "name": "Default"}),
+            json!({"id": 3, "name": "Completed"}),
+            json!({"id": 4, "name": " default "}),
+            json!({"id": 5, "name": "Reading"}),
+        ]);
+        assert_eq!(targets, HashMap::from([("reading".to_owned(), 5)]));
+    }
+
+    #[test]
+    fn restore_omits_default_category_and_its_assignments() {
+        let record = |kind: &str, key: &str, payload| V4WireRecord {
+            server_seq: 1,
+            domain: "comics".to_owned(),
+            entity_type: kind.to_owned(),
+            entity_key: key.to_owned(),
+            hlc: Hlc::new(1, 0, "android"),
+            origin_device_id: "android".to_owned(),
+            deleted: false,
+            payload,
+            updated_at_ms: 1,
+        };
+        let plan = prepare_restore(&[
+            record("comic.category", "default", json!({"name":"Default","order":0})),
+            record("comic.category", "reading", json!({"name":"Reading","order":1})),
+            record(
+                "comic.work",
+                "1:/book",
+                json!({"sourceId":"1","url":"/book","title":"Book"}),
+            ),
+            record(
+                "comic.category_assignment",
+                "1:/book|default",
+                json!({"workKey":"1:/book","categoryKey":"default"}),
+            ),
+        ])
+        .unwrap();
+        assert_eq!(plan.categories.len(), 1);
+        assert_eq!(plan.categories[0].name, "Reading");
+        assert!(plan.works[0].category_orders.is_empty());
     }
 
     #[test]
