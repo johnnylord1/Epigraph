@@ -212,22 +212,25 @@ impl IntoResponse for AppError {
             AppError::ServiceUnavailable(error) => {
                 (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorBody { error })).into_response()
             }
-            AppError::Internal(message) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorBody {
-                    error: ErrorDetail {
-                        code: "INTERNAL".to_string(),
-                        message,
-                        retryable: Some(true),
-                        min_client_version: None,
-                        current_server_version: None,
-                        min_replayable_server_version: None,
-                        required_action: None,
-                        details: None,
-                    },
-                }),
-            )
-                .into_response(),
+            AppError::Internal(message) => {
+                tracing::error!(error = %message, "syncd request failed with an internal error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorBody {
+                        error: ErrorDetail {
+                            code: "INTERNAL".to_string(),
+                            message,
+                            retryable: Some(true),
+                            min_client_version: None,
+                            current_server_version: None,
+                            min_replayable_server_version: None,
+                            required_action: None,
+                            details: None,
+                        },
+                    }),
+                )
+                    .into_response()
+            }
         }
     }
 }
@@ -1259,8 +1262,7 @@ pub struct MutationReceiptContext {
     pub event_clock: Option<EventClock>,
 }
 
-impl MutationInput {
-}
+impl MutationInput {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
