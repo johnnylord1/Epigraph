@@ -94,8 +94,14 @@ class EpigraphCategoryMutationRouter(
                         ),
                     )
                 }
-            LocalMutationResult(CategoryMutationResult(envelopes.size), envelopes)
+            // Sync V4 exports folders by name with no identity here, so the next run publishes it.
+            LocalMutationResult(CategoryMutationResult(envelopes.size), envelopes, wakesSync = true)
         }
+    }
+
+    /** A comic folder created while paired reaches paired devices from the next local export. */
+    suspend fun notifyCategoryCreated() {
+        if (pairedScopes() != null) coordinator.notifyLocalEditWithoutCommand()
     }
 
     /**
@@ -161,7 +167,7 @@ class EpigraphCategoryMutationRouter(
                     }
                 }
             delete()
-            LocalMutationResult(CategoryMutationResult(envelopes.size), envelopes)
+            LocalMutationResult(CategoryMutationResult(envelopes.size), envelopes, wakesSync = true)
         }
     }
 

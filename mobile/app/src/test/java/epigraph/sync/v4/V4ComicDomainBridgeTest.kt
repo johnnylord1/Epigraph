@@ -241,6 +241,130 @@ class V4ComicDomainBridgeTest {
         }
     }
 
+    @Test
+    fun `a renamed folder retracts its old key once and keeps its works`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = folderLibrary(driver)
+            val bridge = V4ComicDomainBridge(handler(db, driver))
+            val folder = db.categoriesQueries.findAllComics().executeAsList().single { it.name == "WakeTest" }._id
+
+            bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+            assertEquals(0L, pending(db))
+
+            db.categoriesQueries.update("WakeTest2", null, null, null, folder)
+            val export = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+
+            assertEquals(setOf("action", "waketest2"), export.keys("comic.category"))
+            assertEquals(setOf("123:/a|waketest2", "123:/b|action"), export.keys("comic.category_assignment"))
+            assertEquals(Triple(true, "comic.category", """{"name":"waketest"}"""), retracted(db, "comic.category", "waketest"))
+            assertEquals(Triple(true, "comic.category_assignment", "{}"), retracted(db, "comic.category_assignment", "123:/a|waketest"))
+            assertEquals(2L, pending(db))
+
+            bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+            assertEquals(2L, pending(db))
+        }
+    }
+
+    @Test
+    fun `deleting a folder or taking a work out of one sends tombstones but leaving the library does not`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = folderLibrary(driver)
+            val bridge = V4ComicDomainBridge(handler(db, driver))
+            val folders = db.categoriesQueries.findAllComics().executeAsList().associate { it.name to it._id }
+            bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+
+            db.categoriesQueries.delete(folders.getValue("WakeTest"))
+            driver.execute(null, "UPDATE mangas SET favorite = 0 WHERE _id = 2", 0)
+            val export = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+
+            assertEquals(setOf("action"), export.keys("comic.category"))
+            assertTrue(export.none { it.deleted })
+            assertEquals(Triple(true, "comic.category", """{"name":"waketest"}"""), retracted(db, "comic.category", "waketest"))
+            assertEquals(Triple(true, "comic.category_assignment", "{}"), retracted(db, "comic.category_assignment", "123:/a|waketest"))
+            assertEquals(null, retracted(db, "comic.category_assignment", "123:/b|action"))
+            assertEquals(2L, pending(db))
+
+            driver.execute(null, "UPDATE mangas SET favorite = 1 WHERE _id = 2", 0)
+            db.mangas_categoriesQueries.delete(2)
+            bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+            assertEquals(Triple(true, "comic.category_assignment", "{}"), retracted(db, "comic.category_assignment", "123:/b|action"))
+        }
+    }
+
+    @Test
+    fun `remote folder edits still apply after this device exported the folder`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = database(driver)
+            val bridge = V4ComicDomainBridge(handler(db, driver))
+            db.categoriesQueries.insert("Sci-Fi", 2, 0, "")
+            bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+
+            val edit = V4WireRecord(
+                1, "comics", "comic.category", "sci-fi", false, V4Hlc(2, 0, "desktop"), "desktop",
+                Json.parseToJsonElement("""{"name":"Sci-Fi","order":5,"flags":0}"""),
+            )
+            bridge.applyRemoteRecords("core", "main", listOf(edit))
+            val folder = db.categoriesQueries.findAllComics().executeAsList().single()
+            assertEquals(5L, folder.sort.toLong())
+
+            db.categoriesQueries.delete(folder._id)
+            bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+            assertEquals(Triple(true, "comic.category", """{"name":"sci-fi"}"""), retracted(db, "comic.category", "sci-fi"))
+        }
+    }
+
+    @Test
+    fun `the Core echoing a rename tombstone back leaves the renamed folder and its works`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = folderLibrary(driver)
+            val bridge = V4ComicDomainBridge(handler(db, driver))
+            val folder = db.categoriesQueries.findAllComics().executeAsList().single { it.name == "WakeTest" }._id
+            bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+
+            // Rename, then rename back: each sync pulls its own tombstones after draining them.
+            for ((from, to) in listOf("waketest" to "WakeTest2", "waketest2" to "WakeTest")) {
+                db.categoriesQueries.update(to, null, null, null, folder)
+                bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+                bridge.applyRemoteRecords("core", "main", listOf(echo(db, "comic.category", from), echo(db, "comic.category_assignment", "123:/a|$from")))
+
+                val folders = db.categoriesQueries.findAllComics().executeAsList()
+                assertEquals(setOf(to, "Action"), folders.map { it.name }.toSet())
+                assertEquals(listOf(folder), db.categoriesQueries.findAllByMangaId(1).executeAsList().map { it._id })
+            }
+        }
+    }
+
+    private fun echo(db: Database, type: String, key: String): V4WireRecord {
+        val row = db.v4_syncQueries.selectLastV4OutboxForEntity("core", "main", type, key).executeAsOne()
+        return V4WireRecord(
+            1, "comics", type, key, true, V4Hlc(row.hlc_ts_ms, row.hlc_counter, row.hlc_device_id), "phone",
+        )
+    }
+
+    private fun folderLibrary(driver: JdbcSqliteDriver): Database {
+        val db = database(driver)
+        driver.execute(null, "PRAGMA foreign_keys = ON", 0)
+        driver.execute(null, """
+            INSERT INTO mangas (_id, source, url, title, status, favorite, initialized, viewer, hide_title, chapter_flags)
+            VALUES (1, 123, '/a', 'A', 1, 1, 1, 0, 0, 0), (2, 123, '/b', 'B', 1, 1, 1, 0, 0, 0)
+        """.trimIndent(), 0)
+        db.categoriesQueries.insert("WakeTest", 0, 0, "")
+        val wake = db.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        db.categoriesQueries.insert("Action", 1, 0, "")
+        val action = db.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        db.mangas_categoriesQueries.insert(1, wake)
+        db.mangas_categoriesQueries.insert(2, action)
+        return db
+    }
+
+    private fun List<V4OutgoingItem>.keys(type: String) = filter { it.entityType == type }.map { it.entityKey }.toSet()
+
+    private fun pending(db: Database) = db.v4_syncQueries.countV4OutboxPending("core", "main").executeAsOne()
+
+    private fun retracted(db: Database, type: String, key: String) =
+        db.v4_syncQueries.selectLastV4OutboxForEntity("core", "main", type, key).executeAsOneOrNull()
+            ?.let { Triple(it.deleted == 1L, it.entity_type, it.payload_json) }
+
     private fun database(driver: JdbcSqliteDriver): Database {
         Database.Schema.create(driver)
         return Database(driver, Chapters.Adapter(memoColumnAdapter), Mangas.Adapter(memoColumnAdapter))

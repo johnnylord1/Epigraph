@@ -497,10 +497,10 @@ class EpigraphLibraryMutationRouter(
             ),
             envelopes = envelopes,
             suwayomiMutations = suwayomiMutations,
-            // A comic added to a local-only category is published when a sync run creates that
-            // category on the Core, so start one now instead of waiting for the next scheduled run.
+            // V4 publishes comic folders and library changes from a sync run's export, not from
+            // envelopes, so any local change starts one instead of waiting for the next scheduled run.
             wakesSync = !isNovel && mutation.origin.emitsOutbox &&
-                addedCategoryIds.any { it !in categoryEntities },
+                (membershipChanged || addedCategoryIds.isNotEmpty() || removedCategoryIds.isNotEmpty()),
         )
     }
 

@@ -23,15 +23,14 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         val works = v4_syncQueries.selectV4ComicWorks(favoritesOnly = 1).executeAsList()
         val categories = categoriesQueries.findAllComics().executeAsList()
             .filterNot { categoryKey(it.name) == "completed" }
-        val categoryBindings = v4_syncQueries.selectV4ActiveCategories(serverId, profileId)
-            .executeAsList()
-            .associate { it.local_id to it.entity_key }
         val workKeys = works.associate { it._id to V4PortableUrl.canonicalWorkKey(it.source.toString(), it.url) }
-        val categoryKeys = categories.associate { it._id to (categoryBindings[it._id.toString()] ?: categoryKey(it.name)) }
+        // The desktop names a folder by its lowercase name, so a rename is a new key there too.
+        val categoryKeys = categories.associate { it._id to categoryKey(it.name) }
+        val assignmentWorks = mutableMapOf<String, Long>()
         val chapterKeys = mutableMapOf<Long, String>()
         val chaptersToWorks = mutableMapOf<Long, String>()
 
-        buildList {
+        val exported = buildList {
             fun emit(type: String, key: String, payload: JsonObject) {
                 add(V4OutgoingItem(domain = COMICS, entityType = type, entityKey = key, hlc = clock.next(), payload = payload))
             }
@@ -96,6 +95,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             for (assignment in v4_syncQueries.selectV4FavoriteCategoryAssignments().executeAsList()) {
                 val workKey = workKeys[assignment.manga_id] ?: continue
                 val categoryKey = categoryKeys[assignment.category_id] ?: continue
+                assignmentWorks["$workKey|$categoryKey"] = assignment.manga_id
                 emit(ASSIGNMENT, "$workKey|$categoryKey", buildJsonObject {
                     put("workKey", workKey)
                     put("categoryKey", categoryKey)
@@ -130,6 +130,64 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
                     put("finishDate", track.finish_date)
                 })
             }
+        }
+        retractVanishedRelations(
+            store = SqlDelightV4SyncStore(this),
+            serverId = serverId,
+            profileId = profileId,
+            clock = clock,
+            categoryIds = categoryKeys.entries.associate { (id, key) -> key to id },
+            assignmentWorks = assignmentWorks,
+            libraryWorks = workKeys.values.toSet(),
+        )
+        exported
+    }
+
+    /**
+     * Sends a tombstone for each folder and folder assignment this device synced before but no
+     * longer has, which is how a delete, a rename or a removal from a folder reaches the Core.
+     * Only rows this device projected or exported count, so a record it never held stays alone.
+     * The tombstones go through the outbox, which keeps them until the Core accepts them.
+     */
+    private fun Database.retractVanishedRelations(
+        store: SqlDelightV4SyncStore,
+        serverId: String,
+        profileId: String,
+        clock: V4HlcClock,
+        categoryIds: Map<String, Long>,
+        assignmentWorks: Map<String, Long>,
+        libraryWorks: Set<String>,
+    ) {
+        val rows = v4_syncQueries.selectV4ActiveDomainEntityMap(serverId, profileId, COMICS).executeAsList()
+            .filter { it.entity_type == CATEGORY || it.entity_type == ASSIGNMENT }
+        val known = rows.associateBy { it.entity_type to it.entity_key }
+        // Remember what this device exported. The zero clock never outranks a remote record.
+        fun remember(type: String, key: String, localId: Long) {
+            if (known[type to key]?.local_id == localId.toString()) return
+            store.upsertEntityMap(serverId, profileId, COMICS, type, key, localId.toString(), EXPORTED, deleted = false)
+        }
+        categoryIds.forEach { (key, id) -> remember(CATEGORY, key, id) }
+        assignmentWorks.forEach { (key, work) -> remember(ASSIGNMENT, key, work) }
+
+        for (row in rows) {
+            val key = row.entity_key
+            if (row.local_id == null) continue
+            val retract = when (row.entity_type) {
+                CATEGORY -> key !in categoryIds && !isReservedCategory(key)
+                else -> {
+                    val workKey = key.substringBeforeLast('|')
+                    val folder = key.substringAfterLast('|')
+                    // A work that left the library keeps its folders until that removal syncs.
+                    key !in assignmentWorks && !isReservedCategory(folder) &&
+                        (workKey in libraryWorks || folder !in categoryIds)
+                }
+            }
+            if (!retract) continue
+            val hlc = clock.next()
+            // The desktop finds the folder to delete by this name.
+            val payload = if (row.entity_type == CATEGORY) buildJsonObject { put("name", key) } else JsonObject(emptyMap())
+            store.enqueueOutbox(serverId, profileId, COMICS, row.entity_type, key, deleted = true, hlc = hlc, payload = payload)
+            store.upsertEntityMap(serverId, profileId, COMICS, row.entity_type, key, row.local_id, hlc, deleted = true)
         }
     }
 
@@ -186,7 +244,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             val payload = record.payload as? JsonObject ?: JsonObject(emptyMap())
             val localId = when (record.entityType) {
                 WORK -> applyWork(record, payload, previous?.localId, wasBound = previous != null && !previous.deleted)
-                CATEGORY -> applyCategory(record, payload, previous?.localId)
+                CATEGORY -> applyCategory(record, payload)
                 CHAPTER -> applyChapter(record, payload, previous?.localId)
                 ASSIGNMENT -> applyAssignment(record, payload)
                 HISTORY -> applyHistory(record, payload, previous?.localId)
@@ -237,14 +295,17 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             return current
         }
 
-        private fun applyCategory(record: V4WireRecord, payload: JsonObject, bound: Long?): Long? {
+        private fun applyCategory(record: V4WireRecord, payload: JsonObject): Long? {
             val key = record.entityKey
             if (key.trim().equals("completed", ignoreCase = true) ||
                 payload.text("name")?.trim()?.equals("completed", ignoreCase = true) == true
             ) {
                 return null
             }
-            val current = bound?.takeIf { it in categories.values } ?: categories[key]
+            // A folder's key is its name, so the bound row can be a folder renamed since then.
+            // Deleting through it would remove the renamed folder when the old key's tombstone
+            // comes back from the Core.
+            val current = categories[key]
             val query = database.categoriesQueries
             if (record.deleted) {
                 current?.let(query::delete)
@@ -317,7 +378,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             // can still contain an assignment created before the category was deleted.
             if (categoryBinding?.deleted == true) return work
             if (work == null && workWasDeleted(workKey)) return null
-            val category = categories[categoryKey] ?: categoryBinding?.localId
+            val category = categories[categoryKey]
             if (record.deleted) {
                 if (work != null && category != null) {
                     database.aethon_syncQueries.deleteMangaCategoryAssignment(work, category)
@@ -406,7 +467,10 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         private const val HISTORY = "comic.history"
         private const val TRACKING = "comic.tracking"
 
+        private val EXPORTED = V4Hlc(tsMs = 0L, counter = 0L, deviceId = "")
+
         private fun categoryKey(name: String): String = name.trim().lowercase()
+        private fun isReservedCategory(key: String) = categoryKey(key).let { it == "completed" || it == "default" }
         private fun dependencyOrder(type: String): Int = when (type) {
             WORK, CATEGORY -> 0
             CHAPTER -> 1

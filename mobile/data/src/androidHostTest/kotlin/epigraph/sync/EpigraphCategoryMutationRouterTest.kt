@@ -41,8 +41,10 @@ class EpigraphCategoryMutationRouterTest {
         chaptersAdapter = tachiyomi.data.Chapters.Adapter(yokai.data.memoColumnAdapter),
         mangasAdapter = tachiyomi.data.Mangas.Adapter(yokai.data.memoColumnAdapter),
     )
+    private var syncWakes = 0
     private val coordinator = EpigraphMutationCoordinator(
         AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+        onLocalMutationEnqueued = { syncWakes++ },
     )
     private val json = Json {
         classDiscriminator = "operation"
@@ -289,6 +291,30 @@ class EpigraphCategoryMutationRouterTest {
 
         assertEquals(0, database.aethon_syncQueries.pendingMutationCount().executeAsOne())
         assertEquals(listOf("Offline"), database.categoriesQueries.findAll().executeAsList().map { it.name })
+    }
+
+    @Test
+    fun `a paired edit of a folder only Sync V4 knows wakes sync so the next run exports it`() = runTest {
+        val plain = insertCategory("Plain", sort = 0)
+        val other = insertCategory("Other", sort = 1)
+
+        router().updateCategories(setOf(plain)) {
+            categoriesQueries.update(id = plain, name = "Renamed", mangaOrder = null, sort = null, flags = null)
+        }
+        assertEquals(1, syncWakes)
+        router().deleteCategory(other) { categoriesQueries.delete(other) }
+        assertEquals(2, syncWakes)
+        router().notifyCategoryCreated()
+        assertEquals(3, syncWakes)
+
+        val unpaired = router(EpigraphSyncScopeProvider { error("not paired") })
+        unpaired.updateCategories(setOf(plain)) {
+            categoriesQueries.update(id = plain, name = "Offline", mangaOrder = null, sort = null, flags = null)
+        }
+        unpaired.deleteCategory(plain) { categoriesQueries.delete(plain) }
+        unpaired.notifyCategoryCreated()
+        assertEquals(3, syncWakes)
+        assertEquals(0, database.aethon_syncQueries.pendingMutationCount().executeAsOne())
     }
 
     @Test

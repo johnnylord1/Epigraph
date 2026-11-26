@@ -635,6 +635,40 @@ class EpigraphLibraryMutationRouterTest {
     }
 
     @Test
+    fun `moving a comic between synced folders wakes the Core worker without an envelope`() = runTest {
+        val mangaId = insertManga(favorite = true)
+        val from = insertCategory("Default", sort = 0)
+        val to = insertCategory("Reading", sort = 1)
+        bindCategoryIdentity(from, "comic-category:default", "Default", 0)
+        bindCategoryIdentity(to, "comic-category:reading", "Reading", 1)
+        bindMangaIdentity(mangaId)
+        database.mangas_categoriesQueries.insert(mangaId, from)
+        var notifications = 0
+        val router = EpigraphLibraryMutationRouter(
+            coordinator = EpigraphMutationCoordinator(
+                AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+                onLocalMutationEnqueued = { notifications++ },
+            ),
+            deviceId = DeviceId("phone-a"),
+            scopeId = SyncScopeId("comics:profile:main"),
+            mutationIds = sequentialMutationIds(),
+        )
+        val move = LibraryMembershipMutation(
+            localMangaId = mangaId,
+            inLibrary = true,
+            categoryIds = setOf(to),
+            origin = EpigraphMutationOrigin.LOCAL_USER,
+        )
+
+        router.setMembership(move, createdAtEpochMillis = 100)
+        router.setMembership(move, createdAtEpochMillis = 200)
+
+        assertEquals(listOf(to), database.categoriesQueries.findAllByMangaId(mangaId).executeAsList().map { it._id })
+        assertEquals(0, coordinator.claimReady(200, 1_000, 10).size)
+        assertEquals(1, notifications)
+    }
+
+    @Test
     fun `non-suwayomi legacy comic emits no Core envelope`() = runTest {
         val mangaId = insertManga(favorite = false)
         bindMangaIdentity(mangaId)

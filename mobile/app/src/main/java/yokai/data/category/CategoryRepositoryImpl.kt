@@ -66,9 +66,9 @@ class CategoryRepositoryImpl(
                 flags = category.flags.toLong(),
             )
             categoriesQueries.selectLastInsertedRowId()
-        }
+        }.also { syncRouter?.notifyCategoryCreated() }
 
-    override suspend fun insertBulk(categories: List<Category>) =
+    override suspend fun insertBulk(categories: List<Category>) {
         handler.await(true) {
             categories.forEach { category ->
                 categoriesQueries.insert(
@@ -79,6 +79,8 @@ class CategoryRepositoryImpl(
                 )
             }
         }
+        if (categories.isNotEmpty()) syncRouter?.notifyCategoryCreated()
+    }
 
     override suspend fun update(update: CategoryUpdate): Boolean {
         return try {
