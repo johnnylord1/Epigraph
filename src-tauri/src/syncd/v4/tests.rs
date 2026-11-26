@@ -549,6 +549,213 @@ async fn v4_projects_only_the_domains_granted_to_the_device() {
     assert_eq!(response["serverSeq"], snapshot["serverSeq"]);
 }
 
+async fn seed_snapshot_items(app: &axum::Router, token: &str, items: Vec<Value>) {
+    let (status, _, _) = v4_request(
+        app,
+        Method::POST,
+        "/v4/sync/bulk",
+        token,
+        Some(json!({ "items": items })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+fn snapshot_comic_item(key: &str, ts_ms: i64) -> Value {
+    json!({"domain":"comics","entityType":"comic.work","entityKey":key,
+        "hlc":{"tsMs":ts_ms,"deviceId":"android-a"},"payload":{"title":key}})
+}
+
+/// Follows `nextAfterSeq` until `hasMore` is false. Returns every record and the page count.
+async fn collect_snapshot_pages(
+    app: &axum::Router,
+    token: &str,
+    query: &str,
+    limit: usize,
+) -> (Vec<Value>, usize) {
+    let mut after_seq = 0;
+    let mut records = Vec::new();
+    let mut pages = 0;
+    loop {
+        pages += 1;
+        assert!(pages <= 1_000, "snapshot paging never reached hasMore:false");
+        let uri = format!("/v4/snapshot?{query}&limit={limit}&afterSeq={after_seq}");
+        let (status, _, page) = v4_request(app, Method::GET, &uri, token, None).await;
+        assert_eq!(status, StatusCode::OK);
+        records.extend(page["records"].as_array().unwrap().iter().cloned());
+        after_seq = page["nextAfterSeq"].as_i64().unwrap();
+        if !page["hasMore"].as_bool().unwrap() {
+            return (records, pages);
+        }
+    }
+}
+
+fn entity_keys(records: &[Value]) -> Vec<String> {
+    let mut keys: Vec<String> = records
+        .iter()
+        .map(|record| record["entityKey"].as_str().unwrap().to_string())
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[tokio::test]
+async fn v4_snapshot_pages_return_every_record_exactly_once() {
+    let (_temp, _state, app, token, _) = build_v4_test_env().await;
+    let keys: Vec<String> = (0..7).map(|i| format!("{}:/c{i}", 100 + i)).collect();
+    seed_snapshot_items(
+        &app,
+        &token,
+        keys.iter().map(|key| snapshot_comic_item(key, 1000)).collect(),
+    )
+    .await;
+
+    let (records, pages) =
+        collect_snapshot_pages(&app, &token, "includeTombstones=true", 3).await;
+    assert_eq!(pages, 3, "7 records at 3 per page take three pages");
+    let mut expected = keys.clone();
+    expected.sort();
+    assert_eq!(entity_keys(&records), expected);
+
+    // A zero limit is clamped up to one row, and the page says more follow.
+    let (status, _, page) =
+        v4_request(&app, Method::GET, "/v4/snapshot?limit=0", &token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["recordCount"], json!(1));
+    assert_eq!(page["hasMore"], json!(true));
+
+    // No limit still returns the whole profile in one response.
+    let (status, _, full) = v4_request(&app, Method::GET, "/v4/snapshot", &token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(full["recordCount"], json!(7));
+    assert_eq!(full["hasMore"], json!(false));
+}
+
+#[tokio::test]
+async fn v4_snapshot_pages_keep_the_domain_and_tombstone_filters() {
+    let (_temp, _state, app, token, _) = build_v4_test_env().await;
+    seed_snapshot_items(
+        &app,
+        &token,
+        vec![
+            snapshot_comic_item("200:/a", 1000),
+            snapshot_comic_item("200:/b", 1000),
+            json!({"domain":"novels","entityType":"novel.work","entityKey":"plugin:/n",
+                "hlc":{"tsMs":1000,"deviceId":"android-a"},"payload":{"title":"Novel"}}),
+        ],
+    )
+    .await;
+    seed_snapshot_items(
+        &app,
+        &token,
+        vec![json!({"domain":"comics","entityType":"comic.work","entityKey":"200:/b",
+            "deleted":true,"hlc":{"tsMs":2000,"deviceId":"android-a"},"payload":{}})],
+    )
+    .await;
+
+    let (records, pages) =
+        collect_snapshot_pages(&app, &token, "domain=comics&includeTombstones=true", 1).await;
+    assert_eq!(pages, 2);
+    assert_eq!(entity_keys(&records), vec!["200:/a", "200:/b"]);
+    assert!(records.iter().all(|record| record["domain"] == json!("comics")));
+    assert_eq!(
+        records.iter().filter(|record| record["deleted"] == json!(true)).count(),
+        1
+    );
+
+    let (records, pages) =
+        collect_snapshot_pages(&app, &token, "domain=comics&includeTombstones=false", 1).await;
+    assert_eq!(pages, 1);
+    assert_eq!(entity_keys(&records), vec!["200:/a"]);
+}
+
+#[tokio::test]
+async fn v4_snapshot_pages_reach_the_end_for_a_grant_restricted_session() {
+    let (_temp, state, app, token, _) = build_v4_test_env().await;
+    seed_snapshot_items(
+        &app,
+        &token,
+        vec![
+            snapshot_comic_item("300:/a", 1000),
+            snapshot_comic_item("300:/b", 1000),
+            json!({"domain":"novels","entityType":"novel.work","entityKey":"plugin:/n1",
+                "hlc":{"tsMs":1000,"deviceId":"android-a"},"payload":{"title":"One"}}),
+            json!({"domain":"novels","entityType":"novel.work","entityKey":"plugin:/n2",
+                "hlc":{"tsMs":1000,"deviceId":"android-a"},"payload":{"title":"Two"}}),
+        ],
+    )
+    .await;
+    sqlx::query("DELETE FROM paired_device_scopes WHERE token_id = ? AND scope_id != ?")
+        .bind("local-authority-android-a-profile-alpha")
+        .bind("novels:profile:profile-alpha")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    // One row per page: the two comics pages come back empty after grant filtering, yet paging
+    // must still advance through them instead of stalling.
+    let (records, pages) =
+        collect_snapshot_pages(&app, &token, "includeTombstones=true", 1).await;
+    assert_eq!(pages, 4);
+    assert_eq!(entity_keys(&records), vec!["plugin:/n1", "plugin:/n2"]);
+}
+
+#[tokio::test]
+async fn v4_snapshot_first_page_honors_if_none_match_and_later_pages_do_not() {
+    let (_temp, _state, app, token, _) = build_v4_test_env().await;
+    seed_snapshot_items(
+        &app,
+        &token,
+        vec![
+            snapshot_comic_item("400:/a", 1000),
+            snapshot_comic_item("400:/b", 1000),
+            snapshot_comic_item("400:/c", 1000),
+        ],
+    )
+    .await;
+
+    let (status, headers, first) =
+        v4_request(&app, Method::GET, "/v4/snapshot?limit=2", &token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["hasMore"], json!(true));
+    let etag = headers.get(ETAG).unwrap().to_str().unwrap().to_string();
+
+    let conditional = |uri: &str| {
+        Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(CLIENT_VERSION_HEADER, "0.1.0")
+            .header(CLIENT_PROTOCOL_HEADER, "4")
+            .header("authorization", format!("Bearer {token}"))
+            .header(IF_NONE_MATCH, etag.clone())
+            .body(Body::empty())
+            .unwrap()
+    };
+    let not_modified = app
+        .clone()
+        .oneshot(conditional("/v4/snapshot?limit=2"))
+        .await
+        .unwrap();
+    assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+
+    let later_page = app
+        .clone()
+        .oneshot(conditional("/v4/snapshot?limit=2&afterSeq=2"))
+        .await
+        .unwrap();
+    assert_eq!(later_page.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn v4_capabilities_advertise_paged_snapshots() {
+    let (_temp, _state, app, token, _) = build_v4_test_env().await;
+    let (status, _, capabilities) =
+        v4_request(&app, Method::GET, "/v4/capabilities", &token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(capabilities["supportsPagedSnapshot"], json!(true));
+    assert_eq!(capabilities["maxSnapshotPageItems"], json!(5000));
+}
+
 #[tokio::test]
 #[cfg(windows)]
 async fn tracker_credentials_do_not_cross_profiles_on_either_protocol() {

@@ -194,6 +194,8 @@ pub struct V4CapabilitiesResponse {
     pub supports_conditional_bulk: bool,
     pub supports_extension_lan_cache: bool,
     pub supports_tracker_credentials: bool,
+    pub supports_paged_snapshot: bool,
+    pub max_snapshot_page_items: usize,
     pub tls_cert_sha256: String,
 }
 
@@ -220,6 +222,8 @@ pub async fn get_capabilities(
         supports_conditional_bulk: true,
         supports_extension_lan_cache: true,
         supports_tracker_credentials: tracker_credentials::is_supported(),
+        supports_paged_snapshot: true,
+        max_snapshot_page_items: v4_db::V4_MAX_SNAPSHOT_PAGE_ITEMS as usize,
         tls_cert_sha256: state.tls_cert_sha256.clone(),
     }))
 }
@@ -232,6 +236,10 @@ pub struct SnapshotQuery {
     pub domain: Option<String>,
     #[serde(default = "default_true")]
     pub include_tombstones: bool,
+    /// Exclusive cursor for a paged snapshot. Ignored unless `limit` is also present.
+    pub after_seq: Option<i64>,
+    /// Presence turns the request into one page of at most this many rows (clamped to 1..=5000).
+    pub limit: Option<i64>,
 }
 
 fn default_true() -> bool {
@@ -260,7 +268,19 @@ pub async fn get_snapshot(
         )
     };
 
-    if let Some(if_none_match) = headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
+    // `afterSeq` only means something with `limit`; without it the response is the full snapshot.
+    let page = query.limit.map(|limit| v4_db::SnapshotPage {
+        after_seq: query.after_seq.unwrap_or(0).max(0),
+        limit: limit.clamp(1, v4_db::V4_MAX_SNAPSHOT_PAGE_ITEMS),
+    });
+    // A later page is not the response its ETag names, so only a first page may answer 304.
+    let first_page = page.is_none_or(|page| page.after_seq == 0);
+
+    if let Some(if_none_match) = headers
+        .get(IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .filter(|_| first_page)
+    {
         let watermark = v4_db::load_watermark(&state.pool, &session.profile_id)
             .await
             .map_err(|err| AppError::Internal(format!("Failed to load V4 watermark: {err}")))?;
@@ -274,11 +294,12 @@ pub async fn get_snapshot(
         }
     }
 
-    let mut snapshot = v4_db::load_snapshot(
+    let mut snapshot = v4_db::load_snapshot_page(
         &state.pool,
         &session.profile_id,
         query.domain.as_deref(),
         query.include_tombstones,
+        page,
     )
     .await
     .map_err(|err| AppError::Internal(format!("Failed to load V4 snapshot: {err}")))?;

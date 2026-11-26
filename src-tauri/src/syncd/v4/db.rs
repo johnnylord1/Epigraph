@@ -22,6 +22,8 @@ pub const V4_TOMBSTONE_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 pub const V4_RECEIPT_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// Maximum records returned by one `GET /v4/changes` page.
 pub const V4_MAX_CHANGES_LIMIT: i64 = 2_000;
+/// Largest `limit` accepted by a paged `GET /v4/snapshot`.
+pub const V4_MAX_SNAPSHOT_PAGE_ITEMS: i64 = 5_000;
 /// Default page size for `GET /v4/changes`.
 pub const V4_DEFAULT_CHANGES_LIMIT: i64 = 1_000;
 /// Maximum items accepted in a single `/v4/sync/bulk` request.
@@ -104,6 +106,12 @@ pub struct V4SnapshotResponse<Payload = Value> {
     pub server_time_ms: i64,
     pub record_count: usize,
     pub records: Vec<V4WireRecord<Payload>>,
+    /// True when the page stopped at its limit and more rows follow `next_after_seq`.
+    #[serde(default)]
+    pub has_more: bool,
+    /// The last scanned row's `server_seq`, or the request cursor when the page is empty.
+    #[serde(default)]
+    pub next_after_seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -707,79 +715,73 @@ pub(super) async fn apply_v4_batch_with_bulk_state(
     })
 }
 
+/// One page of a snapshot: rows with `server_seq > after_seq`, at most `limit` of them.
+#[derive(Debug, Clone, Copy)]
+pub struct SnapshotPage {
+    pub after_seq: i64,
+    pub limit: i64,
+}
+
+/// The whole profile (or one domain) in one response, as the Suwayomi restore needs it.
 pub async fn load_snapshot(
     pool: &SqlitePool,
     profile_id: &str,
     domain_filter: Option<&str>,
     include_tombstones: bool,
 ) -> anyhow::Result<V4SnapshotResponse<Box<RawValue>>> {
+    load_snapshot_page(pool, profile_id, domain_filter, include_tombstones, None).await
+}
+
+/// `page: None` returns every row. With a page, `has_more` and `next_after_seq` describe the rows
+/// scanned in SQL, before grant filtering, so a caller that filters afterwards cannot stall.
+pub async fn load_snapshot_page(
+    pool: &SqlitePool,
+    profile_id: &str,
+    domain_filter: Option<&str>,
+    include_tombstones: bool,
+    page: Option<SnapshotPage>,
+) -> anyhow::Result<V4SnapshotResponse<Box<RawValue>>> {
     let mut tx = pool.begin().await?;
     let watermark = read_watermark(&mut *tx, profile_id).await?;
-    let rows = match (domain_filter, include_tombstones) {
-        (Some(domain), true) => {
-            sqlx::query(
-                r#"
-                SELECT server_seq, domain, entity_type, entity_key, deleted,
-                       hlc_ts_ms, hlc_counter, hlc_device_id, origin_device_id,
-                       payload_json, updated_at_ms
-                FROM v4_records
-                WHERE profile_id = ? AND domain = ?
-                ORDER BY server_seq ASC
-                "#,
-            )
-            .bind(profile_id)
-            .bind(domain)
-            .fetch_all(&mut *tx)
-            .await?
-        }
-        (Some(domain), false) => {
-            sqlx::query(
-                r#"
-                SELECT server_seq, domain, entity_type, entity_key, deleted,
-                       hlc_ts_ms, hlc_counter, hlc_device_id, origin_device_id,
-                       payload_json, updated_at_ms
-                FROM v4_records
-                WHERE profile_id = ? AND domain = ? AND deleted = 0
-                ORDER BY server_seq ASC
-                "#,
-            )
-            .bind(profile_id)
-            .bind(domain)
-            .fetch_all(&mut *tx)
-            .await?
-        }
-        (None, true) => {
-            sqlx::query(
-                r#"
-                SELECT server_seq, domain, entity_type, entity_key, deleted,
-                       hlc_ts_ms, hlc_counter, hlc_device_id, origin_device_id,
-                       payload_json, updated_at_ms
-                FROM v4_records
-                WHERE profile_id = ?
-                ORDER BY server_seq ASC
-                "#,
-            )
-            .bind(profile_id)
-            .fetch_all(&mut *tx)
-            .await?
-        }
-        (None, false) => {
-            sqlx::query(
-                r#"
-                SELECT server_seq, domain, entity_type, entity_key, deleted,
-                       hlc_ts_ms, hlc_counter, hlc_device_id, origin_device_id,
-                       payload_json, updated_at_ms
-                FROM v4_records
-                WHERE profile_id = ? AND deleted = 0
-                ORDER BY server_seq ASC
-                "#,
-            )
-            .bind(profile_id)
-            .fetch_all(&mut *tx)
-            .await?
-        }
-    };
+
+    let mut sql = String::from(
+        "SELECT server_seq, domain, entity_type, entity_key, deleted, \
+         hlc_ts_ms, hlc_counter, hlc_device_id, origin_device_id, \
+         payload_json, updated_at_ms \
+         FROM v4_records WHERE profile_id = ?",
+    );
+    if domain_filter.is_some() {
+        sql.push_str(" AND domain = ?");
+    }
+    if !include_tombstones {
+        sql.push_str(" AND deleted = 0");
+    }
+    match page {
+        // One extra row tells us whether another page exists without a second query.
+        Some(_) => sql.push_str(" AND server_seq > ? ORDER BY server_seq ASC LIMIT ?"),
+        None => sql.push_str(" ORDER BY server_seq ASC"),
+    }
+
+    let page_limit = page.map(|page| page.limit.clamp(1, V4_MAX_SNAPSHOT_PAGE_ITEMS));
+    let mut query = sqlx::query(&sql).bind(profile_id);
+    if let Some(domain) = domain_filter {
+        query = query.bind(domain);
+    }
+    if let (Some(page), Some(limit)) = (page, page_limit) {
+        query = query.bind(page.after_seq).bind(limit + 1);
+    }
+    let mut rows = query.fetch_all(&mut *tx).await?;
     tx.commit().await?;
+
+    let mut has_more = false;
+    if let Some(limit) = page_limit {
+        has_more = rows.len() as i64 > limit;
+        rows.truncate(limit as usize);
+    }
+    let next_after_seq = match rows.last() {
+        Some(row) => row.try_get("server_seq")?,
+        None => page.map_or(0, |page| page.after_seq),
+    };
 
     let mut records = Vec::with_capacity(rows.len());
     for row in rows {
@@ -810,6 +812,8 @@ pub async fn load_snapshot(
         server_time_ms: now_ms(),
         record_count,
         records,
+        has_more,
+        next_after_seq,
     })
 }
 

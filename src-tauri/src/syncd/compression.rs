@@ -7,7 +7,7 @@
 
 use std::io::{Read, Write};
 
-use axum::body::{to_bytes, Body};
+use axum::body::{to_bytes, Body, HttpBody};
 use axum::extract::Request;
 use axum::http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, VARY};
 use axum::http::{HeaderValue, StatusCode};
@@ -105,6 +105,11 @@ async fn inflate_request(request: Request) -> Result<Request, StatusCode> {
 }
 
 async fn compress_response(response: Response) -> Response {
+    compress_response_within(response, MAX_COMPRESSED_RESPONSE_BYTES).await
+}
+
+/// `max_buffered` is a parameter so tests can exercise the pass-through without 64 MiB bodies.
+async fn compress_response_within(response: Response, max_buffered: usize) -> Response {
     let is_json = response
         .headers()
         .get(CONTENT_TYPE)
@@ -114,20 +119,37 @@ async fn compress_response(response: Response) -> Response {
         return response;
     }
     let (mut parts, body) = response.into_parts();
-    let bytes = match to_bytes(body, MAX_COMPRESSED_RESPONSE_BYTES).await {
-        Ok(bytes) => bytes,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
     parts
         .headers
         .append(VARY, HeaderValue::from_static("accept-encoding"));
+    // Check the exact size before buffering: an oversized body is served as it is rather than
+    // failed, so a large library does not turn into a silent 500.
+    if body
+        .size_hint()
+        .exact()
+        .is_some_and(|len| len > max_buffered as u64)
+    {
+        return Response::from_parts(parts, body);
+    }
+    let bytes = match to_bytes(body, max_buffered).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            tracing::error!(error = %err, "failed to buffer a JSON sync response for gzip");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     if bytes.len() < MIN_COMPRESSED_RESPONSE_BYTES {
         return Response::from_parts(parts, Body::from(bytes));
     }
+    // Keep the original bytes (a cheap clone) so a failed gzip task still sends a valid body.
+    let to_compress = bytes.clone();
     let compressed = tokio::task::spawn_blocking(move || {
         // Level 3 keeps most of the ratio of the default level at a fraction of its CPU.
-        let mut encoder = GzEncoder::new(Vec::with_capacity(bytes.len() / 6), Compression::new(3));
-        encoder.write_all(&bytes).and_then(|()| encoder.finish())
+        let mut encoder = GzEncoder::new(
+            Vec::with_capacity(to_compress.len() / 6),
+            Compression::new(3),
+        );
+        encoder.write_all(&to_compress).and_then(|()| encoder.finish())
     })
     .await;
     match compressed {
@@ -138,7 +160,14 @@ async fn compress_response(response: Response) -> Response {
                 .insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
             Response::from_parts(parts, Body::from(compressed))
         }
-        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(Err(err)) => {
+            tracing::error!(error = %err, "gzip encoder failed; serving the JSON sync response uncompressed");
+            Response::from_parts(parts, Body::from(bytes))
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "gzip task failed to join; serving the JSON sync response uncompressed");
+            Response::from_parts(parts, Body::from(bytes))
+        }
     }
 }
 
@@ -156,5 +185,36 @@ mod tests {
         assert!(!accepts("deflate"));
         assert!(!accepts("x-gzip-like"));
         assert!(!header_lists_gzip(None));
+    }
+
+    fn json_response(payload: &str) -> Response {
+        Response::builder()
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn oversized_json_responses_pass_through_uncompressed() {
+        let payload = format!("[{}]", vec!["\"record\""; 400].join(","));
+        let response = compress_response_within(json_response(&payload), 1024).await;
+
+        assert!(!response.headers().contains_key(CONTENT_ENCODING));
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&bytes[..], payload.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn responses_within_the_limit_are_gzipped() {
+        let payload = format!("[{}]", vec!["\"record\""; 400].join(","));
+        let response = compress_response_within(json_response(&payload), 64 * 1024).await;
+
+        assert_eq!(response.headers()[CONTENT_ENCODING], "gzip");
+        let compressed = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let mut inflated = Vec::new();
+        GzDecoder::new(&compressed[..])
+            .read_to_end(&mut inflated)
+            .unwrap();
+        assert_eq!(inflated, payload.as_bytes());
     }
 }

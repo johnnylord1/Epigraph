@@ -18,8 +18,13 @@ Tombstones are retained for 90 days before compaction.
 
 All `/v4/*` routes require `require_v4_session`, which validates `X-Epigraph-Client-Version`, `X-Epigraph-Client-Protocol-Version: 4`, and the bearer token. `profile_id` is always derived from `AuthenticatedSession.profile_id` and never trusted from client payloads.
 
-- `GET /v4/capabilities`: protocol and feature capabilities.
+- `GET /v4/capabilities`: protocol and feature capabilities. Includes `supportsPagedSnapshot: true` and `maxSnapshotPageItems: 5000`.
 - `GET /v4/snapshot`: authoritative snapshot for cold-start hydration and `410 GONE` recovery.
+  - Query: `domain`, `includeTombstones` and the session's grant filter apply as before. Optional `limit` (i64) and `afterSeq` (i64, exclusive cursor) page the snapshot. `limit` is clamped to 1..=5000. Without `limit`, `afterSeq` is ignored and the full snapshot is returned.
+  - With `limit`, rows are ordered by `server_seq` ascending with `server_seq > afterSeq`. Paging is applied in SQL before grant filtering, so a page can hold fewer records than `limit` while `hasMore` is still true.
+  - Every response carries `hasMore` (bool) and `nextAfterSeq` (i64, the last scanned row's `server_seq`, or `afterSeq` when the page is empty). The full snapshot sends `hasMore: false`. Clients loop on `nextAfterSeq` until `hasMore` is false.
+  - `serverSeq` and `minReplayableSeq` are the watermark for the current page.
+  - `ETag` uses the unchanged formula. `If-None-Match` returns `304` only on a first page (`afterSeq` absent or `0`); later pages always return the body.
 - `GET /v4/changes?sinceSeq=...`: paginated change feed (default 1,000, max 2,000 records per page).
 - `GET /v4/events?sinceSeq=...`: persistent SSE stream for realtime updates.
 - `POST /v4/deltas`: incremental delta push (max 500 items per request).
