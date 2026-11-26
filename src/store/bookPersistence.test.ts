@@ -137,3 +137,59 @@ it("hydrateBookLibraryState sets booksStateDiskSignature and does not clobber co
   expect(store.settings.booksCategoryAssignments).toEqual({ "book:synced": ["synced-cat"] });
   expect(saved.length).toBe(before);
 });
+
+it("keeps backend-owned cover and metadata fields when adopting books from disk", async () => {
+  // Dropping them made the metadata backfill rewrite every book, the backend refill the
+  // cover fields and reload, and the cycle repeat several times per second.
+  const queuePersist = () => (store as unknown as { queuePersistBooksLibraryState(): void }).queuePersistBooksLibraryState();
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const book = {
+    id: "epub-cover",
+    assetFingerprint: "sha256:abc",
+    mimeType: "application/epub+zip",
+    byteSize: 4096,
+    title: "Cover Contract",
+    author: null,
+    description: null,
+    isbns: ["9780306406157"],
+    metadataBackfillVersion: 2,
+    coverPath: "C:/books/covers/cover-contract.jpg",
+    hardcoverBookId: 42,
+    hardcoverCoverUrl: "https://example.test/cover.jpg",
+    hasCover: true,
+    coverAssetSha256: "a".repeat(64),
+    coverAssetByteSize: 512,
+    coverAssetMimeType: "image/jpeg",
+    subtype: "epub",
+    pageCount: null,
+    createdAt: 1,
+    updatedAt: 2,
+    importPath: "D:/Books/cover-contract.epub",
+    assetPath: "C:/books/epubs/cover-contract.epub",
+  };
+  store.replaceBooksStateFromDisk({
+    books: [book],
+    bookProgress: [],
+    bookBookmarks: [],
+    booksCategories: [],
+    booksCategoryAssignments: {},
+  });
+  const adopted = store.books.find((entry) => entry.id === "epub-cover");
+  expect(adopted).toMatchObject({
+    mimeType: "application/epub+zip",
+    byteSize: 4096,
+    isbns: ["9780306406157"],
+    metadataBackfillVersion: 2,
+    hardcoverBookId: 42,
+    hardcoverCoverUrl: "https://example.test/cover.jpg",
+    hasCover: true,
+    coverAssetSha256: "a".repeat(64),
+    coverAssetByteSize: 512,
+    coverAssetMimeType: "image/jpeg",
+  });
+
+  const before = saved.length;
+  queuePersist();
+  await settle();
+  expect(saved.length).toBe(before);
+});

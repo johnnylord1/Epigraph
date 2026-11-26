@@ -25,6 +25,7 @@ import {
   canUseDesktopBookStorage,
   loadBookLibraryState,
   loadBookLibraryStateForRestore,
+  normalizeLoadedBook,
   peekBookLibraryState,
   saveBookLibraryState,
 } from "../lib/books/libraryState";
@@ -1664,31 +1665,6 @@ function clearSearchEngagedBodyClasses() {
 
 function normalizeLibrarySection(savedLibrarySection: unknown): LibrarySection {
   return savedLibrarySection === "books" ? "books" : "comics";
-}
-
-function normalizeLoadedBook(book: any): BookEntry {
-  return {
-    id: String(book?.id ?? ""),
-    assetFingerprint: typeof book?.assetFingerprint === "string" ? book.assetFingerprint : undefined,
-    title: String(book?.title ?? "Imported book"),
-    author: typeof book?.author === "string" ? book.author : null,
-    description: typeof book?.description === "string" ? book.description : null,
-    genres: Array.isArray(book?.genres) ? book.genres.filter((entry: unknown): entry is string => typeof entry === "string") : undefined,
-    coverPath: typeof book?.coverPath === "string" ? book.coverPath : null,
-    coverUrl: typeof book?.coverUrl === "string" ? book.coverUrl : undefined,
-    subtype: book?.subtype === "pdf" ? "pdf" : "epub",
-    pageCount: typeof book?.pageCount === "number" ? book.pageCount : null,
-    createdAt: typeof book?.createdAt === "number" ? book.createdAt : 0,
-    updatedAt: typeof book?.updatedAt === "number" ? book.updatedAt : 0,
-    importPath: typeof book?.importPath === "string" ? book.importPath : "",
-    assetPath: typeof book?.assetPath === "string" ? book.assetPath : "",
-    toc: Array.isArray(book?.toc) ? book.toc : undefined,
-    spine: Array.isArray(book?.spine) ? book.spine : undefined,
-    tocCount: typeof book?.tocCount === "number" ? book.tocCount : undefined,
-    spineCount: typeof book?.spineCount === "number" ? book.spineCount : undefined,
-    sectionsSummary: Array.isArray(book?.sectionsSummary) ? book.sectionsSummary : undefined,
-    sectionCount: typeof book?.sectionCount === "number" ? book.sectionCount : undefined,
-  };
 }
 
 function normalizeLoadedBookProgress(progress: any): BookProgress {

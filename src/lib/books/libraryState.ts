@@ -85,7 +85,7 @@ function createEmptyState(): PersistedBookLibraryState {
   };
 }
 
-function normalizeLoadedBook(book: any): BookEntry {
+export function normalizeLoadedBook(book: any): BookEntry {
   const hardcoverBookId = typeof book?.hardcoverBookId === "number" && Number.isFinite(book.hardcoverBookId)
     ? Math.trunc(book.hardcoverBookId)
     : null;
