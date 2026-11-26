@@ -2334,6 +2334,57 @@ async fn desktop_catalog_capture_reads_suwayomi_once_the_projection_settles() {
     assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
 }
 
+#[tokio::test]
+async fn desktop_catalog_capture_skipped_for_projection_is_retried_once_it_settles() {
+    let (_temp, state, app, token, _) = build_v4_test_env().await;
+    store_unprojected_phone_category(&app, &token).await;
+    state
+        .config
+        .set_suwayomi_proxy_test_upstream("profile-alpha", &fake_suwayomi_library().await);
+    let runtime = V4Runtime::new();
+    let pending = |runtime: &V4Runtime| {
+        runtime
+            .comic_baseline
+            .lock()
+            .unwrap()
+            .catalog_pending("profile-alpha")
+    };
+
+    // A desktop folder move made while a phone change is still reaching Suwayomi is skipped...
+    super::suwayomi::capture_local_edits_with_wait(
+        &state,
+        &runtime,
+        "profile-alpha",
+        Vec::new(),
+        Vec::new(),
+        true,
+        std::time::Duration::from_millis(50),
+    )
+    .await
+    .unwrap();
+    assert!(pending(&runtime), "a skipped category capture must stay owed");
+    assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
+
+    // ...and the projection loop keeps it owed without reading Suwayomi while it is unsettled...
+    super::suwayomi::retry_deferred_catalog_captures(&state, &runtime)
+        .await
+        .unwrap();
+    assert!(pending(&runtime));
+    assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
+
+    // ...then captures the desktop folders once Suwayomi shows every stored record.
+    settle_projection(&state).await;
+    super::suwayomi::retry_deferred_catalog_captures(&state, &runtime)
+        .await
+        .unwrap();
+    assert!(!pending(&runtime), "the retried capture must settle the debt");
+    assert_ne!(
+        stored_categories(&state).await,
+        vec![("from-phone".to_owned(), 0)],
+        "the retry must publish what the desktop Suwayomi shows"
+    );
+}
+
 /// A stand-in Suwayomi GraphQL endpoint answering the three baseline queries by operation name.
 async fn fake_suwayomi_library() -> String {
     async fn graphql(axum::Json(body): axum::Json<Value>) -> axum::Json<Value> {

@@ -157,6 +157,7 @@ pub(super) async fn capture_local_edits_with_wait(
     // change that is still waiting for projection would be undone for every device.
     let mut catalog_guard = None;
     let mut catalog_snapshot = None;
+    let capture_started = Instant::now();
     if catalog {
         let categories_query = COMIC_CATEGORY_MEMBERSHIP_QUERY;
         let library_query = COMIC_LIBRARY_QUERY;
@@ -186,12 +187,20 @@ pub(super) async fn capture_local_edits_with_wait(
             }
         }
         if catalog_snapshot.is_none() {
+            // Retried by the projection loop once Suwayomi caught up; dropping it would leave a
+            // desktop folder move or removal out of Core until the next unrelated desktop edit.
+            runtime
+                .comic_baseline
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .defer_catalog(profile, Instant::now());
             tracing::warn!(
                 %profile,
-                "V4 desktop category capture skipped: remote comic changes are still reaching Suwayomi"
+                "V4 desktop category capture deferred: remote comic changes are still reaching Suwayomi"
             );
         }
     }
+    let catalog_captured = catalog_snapshot.is_some();
     if updates.is_empty() && parents.is_empty() && catalog_snapshot.is_none() {
         return Ok(());
     }
@@ -266,6 +275,13 @@ pub(super) async fn capture_local_edits_with_wait(
         ));
     }
     if items.is_empty() {
+        if catalog_captured {
+            runtime
+                .comic_baseline
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .catalog_done(profile, capture_started);
+        }
         return Ok(());
     }
     let items = items
@@ -302,6 +318,13 @@ pub(super) async fn capture_local_edits_with_wait(
         });
     }
     wake_projection();
+    if catalog_captured {
+        runtime
+            .comic_baseline
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .catalog_done(profile, capture_started);
+    }
     Ok(())
 }
 
@@ -604,8 +627,55 @@ pub(in crate::syncd) fn spawn_projection(
                     }
                 }
             }
+            tokio::select! {
+                _ = wait_for_shutdown_request(&mut shutdown) => break,
+                result = retry_deferred_catalog_captures(&state, &runtime) => {
+                    if let Err(error) = result {
+                        tracing::warn!(error = %error, "V4 desktop category capture retry failed");
+                    }
+                }
+            }
         }
     });
+}
+
+/// Runs the desktop category captures that had to wait for remote comic changes to reach
+/// Suwayomi, once the projection has settled.
+pub(super) async fn retry_deferred_catalog_captures(
+    state: &SharedAppState,
+    runtime: &V4Runtime,
+) -> anyhow::Result<()> {
+    let now = Instant::now();
+    let due = runtime
+        .comic_baseline
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .due_catalogs(now);
+    for profile in due {
+        if !ProjectionProgress::settled(load_projection_progress(&state.pool, &profile).await?) {
+            continue;
+        }
+        // Zero wait: a projection that moved again keeps the capture deferred instead of blocking.
+        let outcome = capture_local_edits_with_wait(
+            state,
+            runtime,
+            &profile,
+            Vec::new(),
+            Vec::new(),
+            true,
+            Duration::ZERO,
+        )
+        .await;
+        if let Err(error) = outcome {
+            tracing::debug!(%profile, error = %error, "V4 desktop category capture retry deferred");
+            runtime
+                .comic_baseline
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .defer_catalog(&profile, Instant::now() + BASELINE_RETRY);
+        }
+    }
+    Ok(())
 }
 
 /// How long a profile waits before the baseline runs again after a deferral.
@@ -618,6 +688,8 @@ const BASELINE_WORKS_PER_CHAPTER_REQUEST: usize = 100;
 pub(super) struct ComicBaselineProgress {
     done: BTreeSet<String>,
     retry_after: BTreeMap<String, Instant>,
+    /// Profiles whose desktop category capture is owed: when it was first owed and when to retry.
+    catalog_retry_after: BTreeMap<String, (Instant, Instant)>,
 }
 
 impl ComicBaselineProgress {
@@ -633,6 +705,40 @@ impl ComicBaselineProgress {
     fn mark_done(&mut self, profile: &str) {
         self.done.insert(profile.to_owned());
         self.retry_after.remove(profile);
+    }
+
+    /// Keeps the earliest pending retry so repeated skips never push an owed capture back.
+    fn defer_catalog(&mut self, profile: &str, at: Instant) {
+        let owed_since = Instant::now().min(at);
+        self.catalog_retry_after
+            .entry(profile.to_owned())
+            .and_modify(|(_, retry)| *retry = at)
+            .or_insert((owed_since, at));
+    }
+
+    /// Settles the debt only when the successful capture began after it was owed: a capture that
+    /// was skipped while an earlier one was still writing stays owed.
+    fn catalog_done(&mut self, profile: &str, capture_started: Instant) {
+        if self
+            .catalog_retry_after
+            .get(profile)
+            .is_some_and(|(owed_since, _)| *owed_since <= capture_started)
+        {
+            self.catalog_retry_after.remove(profile);
+        }
+    }
+
+    fn due_catalogs(&self, now: Instant) -> Vec<String> {
+        self.catalog_retry_after
+            .iter()
+            .filter(|(_, (_, retry))| now >= *retry)
+            .map(|(profile, _)| profile.clone())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn catalog_pending(&self, profile: &str) -> bool {
+        self.catalog_retry_after.contains_key(profile)
     }
 }
 
