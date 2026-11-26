@@ -32,13 +32,22 @@ internal class V4BookDomainBridge(
     private val json = V4CoreHttpClient.DEFAULT_JSON
 
     override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock): List<V4OutgoingItem> =
+        handler.await(inTransaction = true) { buildBookDrafts().stamp(clock) }
+
+    /** Side-effect free: hashes the same drafts the export stamps. */
+    override suspend fun digestSnapshot(serverId: String, profileId: String): List<V4DigestedItem> =
         handler.await(inTransaction = true) {
+            buildBookDrafts().map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
+        }
+
+    /** Pure read of the local books. Stamps no clocks and enqueues nothing. */
+    private fun Database.buildBookDrafts(): List<V4ItemDraft> {
             val books = local_booksQueries.findAll().executeAsList()
             val folders = categoriesQueries.findAllBooks().executeAsList()
             val keys = folders.associate { it._id to it.name.trim().lowercase() }
-            buildList {
+            return buildList<V4ItemDraft> {
                 fun emit(type: String, key: String, payload: JsonObject) {
-                    add(V4OutgoingItem(domain = "books", entityType = type, entityKey = key, hlc = clock.next(), payload = payload))
+                    add(V4ItemDraft(domain = "books", entityType = type, entityKey = key, payload = payload))
                 }
                 for (folder in folders) {
                     emit(CATEGORY, keys.getValue(folder._id), buildJsonObject {
@@ -97,7 +106,7 @@ internal class V4BookDomainBridge(
                     }
                 }
             }
-        }
+    }
 
     override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) {
         val books = records.filter { it.domain == "books" }

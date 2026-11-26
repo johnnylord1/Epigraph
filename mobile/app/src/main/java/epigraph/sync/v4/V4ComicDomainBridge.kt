@@ -20,6 +20,36 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         profileId: String,
         clock: V4HlcClock,
     ): List<V4OutgoingItem> = handler.await(inTransaction = true) {
+        val build = buildComicDrafts()
+        val exported = build.drafts.stamp(clock)
+        retractVanishedRelations(
+            store = SqlDelightV4SyncStore(this),
+            serverId = serverId,
+            profileId = profileId,
+            clock = clock,
+            categoryIds = build.categoryIds,
+            assignmentWorks = build.assignmentWorks,
+            libraryWorks = build.libraryWorks,
+            exportedWorks = exported.filter { it.entityType == WORK }.associate { it.entityKey to it.hlc },
+        )
+        exported
+    }
+
+    /** Side-effect free: hashes the same drafts the export stamps, without clocks or tombstones. */
+    override suspend fun digestSnapshot(serverId: String, profileId: String): List<V4DigestedItem> =
+        handler.await(inTransaction = true) {
+            buildComicDrafts().drafts.map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
+        }
+
+    private class ComicBuild(
+        val drafts: List<V4ItemDraft>,
+        val categoryIds: Map<String, Long>,
+        val assignmentWorks: Map<String, Long>,
+        val libraryWorks: Map<String, Long>,
+    )
+
+    /** Pure read of the local comics library. Stamps no clocks and enqueues nothing. */
+    private fun Database.buildComicDrafts(): ComicBuild {
         val works = v4_syncQueries.selectV4ComicWorks(favoritesOnly = 1).executeAsList()
         // Default and Completed are each app's own folders, so neither side exports them.
         val categories = categoriesQueries.findAllComics().executeAsList()
@@ -31,9 +61,9 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         val chapterKeys = mutableMapOf<Long, String>()
         val chaptersToWorks = mutableMapOf<Long, String>()
 
-        val exported = buildList {
+        val drafts = buildList<V4ItemDraft> {
             fun emit(type: String, key: String, payload: JsonObject) {
-                add(V4OutgoingItem(domain = COMICS, entityType = type, entityKey = key, hlc = clock.next(), payload = payload))
+                add(V4ItemDraft(domain = COMICS, entityType = type, entityKey = key, payload = payload))
             }
 
             for (work in works) {
@@ -132,17 +162,12 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
                 })
             }
         }
-        retractVanishedRelations(
-            store = SqlDelightV4SyncStore(this),
-            serverId = serverId,
-            profileId = profileId,
-            clock = clock,
+        return ComicBuild(
+            drafts = drafts,
             categoryIds = categoryKeys.entries.associate { (id, key) -> key to id },
             assignmentWorks = assignmentWorks,
             libraryWorks = workKeys.entries.associate { (id, key) -> key to id },
-            exportedWorks = exported.filter { it.entityType == WORK }.associate { it.entityKey to it.hlc },
         )
-        exported
     }
 
     /**

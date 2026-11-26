@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import tachiyomi.data.Chapters
@@ -23,6 +24,35 @@ import yokai.data.memoColumnAdapter
 import java.io.File
 
 class V4BookDomainBridgeTest {
+    @Test
+    fun `two exports with different clocks give equal digests`(@TempDir root: File) = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = Database(
+                driver = driver.also { Database.Schema.create(it) },
+                chaptersAdapter = Chapters.Adapter(memoAdapter = memoColumnAdapter),
+                mangasAdapter = Mangas.Adapter(memoAdapter = memoColumnAdapter),
+            )
+            val bridge = V4BookDomainBridge(AndroidDatabaseHandler(db, driver), root)
+            val hash = "e".repeat(64)
+            bridge.applyRemoteRecords(
+                "core", "main",
+                listOf(
+                    V4WireRecord(1, "books", "book.work", hash, false, V4Hlc(1, 0, "desktop"), "desktop",
+                        buildJsonObject { put("fileSha256", hash); put("subtype", "epub"); put("title", "Digest Book") }, 1),
+                ),
+            )
+
+            val digestsBefore = bridge.digestSnapshot("core", "main")
+            val early = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone", wallClockMs = { 100L }))
+            val late = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone", wallClockMs = { 9_000_000L }))
+
+            assertTrue(digestsBefore.isNotEmpty())
+            assertTrue(early.map { it.hlc } != late.map { it.hlc }, "Test clocks must actually differ")
+            assertEquals(early.map { it.payload }, late.map { it.payload })
+            assertEquals(digestsBefore, bridge.digestSnapshot("core", "main"))
+        }
+    }
+
     @Test
     fun `book and novel folders stay separate from same named comics category`(@TempDir root: File) = runTest {
         JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->

@@ -55,6 +55,7 @@ class V4SyncEngineTest {
         }.build()
         val bridge = object : V4DomainBridge {
             override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock) = emptyList<V4OutgoingItem>()
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
             override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) { applied += records }
         }
         val endpoint = "https://127.0.0.1:4777/".toHttpUrl()
@@ -95,6 +96,7 @@ class V4SyncEngineTest {
                 V4OutgoingItem(domain = "comics", entityType = "comic.work", entityKey = "src:/work", hlc = clock.next()),
                 V4OutgoingItem(domain = "books", entityType = "book.work", entityKey = "${"b".repeat(64)}", hlc = clock.next()),
             )
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
             override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) { applied += records }
         }
         val endpoint = "https://127.0.0.1:4777/".toHttpUrl()
@@ -132,6 +134,7 @@ class V4SyncEngineTest {
         }.build()
         val bridge = object : V4DomainBridge {
             override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock) = emptyList<V4OutgoingItem>()
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
             override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) = Unit
         }
         val endpoint = "https://127.0.0.1:4777/".toHttpUrl()
@@ -173,6 +176,7 @@ class V4SyncEngineTest {
         }.build()
         val bridge = object : V4DomainBridge {
             override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock) = emptyList<V4OutgoingItem>()
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
             override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) { applied += records }
         }
         val endpoint = "https://127.0.0.1:4777/".toHttpUrl()
@@ -266,6 +270,8 @@ class V4SyncEngineTest {
             ) {
                 applied += records
             }
+
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
         }
 
         val clock = V4HlcClock("android-1", wallClockMs = { 1_000_000L })
@@ -313,6 +319,8 @@ class V4SyncEngineTest {
                 profileId: String,
                 clock: V4HlcClock,
             ): List<V4OutgoingItem> = error("Unexpected full sync")
+
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
 
             override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) {
                 applied += records
@@ -407,6 +415,7 @@ class V4SyncEngineTest {
 
         val noopBridge = object : V4DomainBridge {
             override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock) = emptyList<V4OutgoingItem>()
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
             override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) = Unit
         }
         val http = V4CoreHttpClient(mockClient, "https://127.0.0.1:4777/".toHttpUrl(), "0.1.0")
@@ -523,6 +532,7 @@ class V4SyncEngineTest {
         }.build()
         val bridge = object : V4DomainBridge {
             override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock) = emptyList<V4OutgoingItem>()
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
             override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) { applyCalls += records }
         }
         val url = "https://127.0.0.1:4777/".toHttpUrl()
@@ -637,6 +647,7 @@ class V4SyncEngineTest {
         }.build()
         val bridge = object : V4DomainBridge {
             override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock) = emptyList<V4OutgoingItem>()
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
             override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) { applied += records }
         }
         val endpoint = "https://127.0.0.1:4777/".toHttpUrl()
@@ -689,6 +700,8 @@ class V4SyncEngineTest {
                 assertFalse(initialState.initialSyncCompleted, "Replay recovery must not publish old local state as new edits")
                 return listOf(V4OutgoingItem(domain = "comics", entityType = "comic.work", entityKey = "src1:/manga/local", hlc = clock.next()))
             }
+
+            override suspend fun digestSnapshot(serverId: String, profileId: String) = emptyList<V4DigestedItem>()
 
             override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) = Unit
         }

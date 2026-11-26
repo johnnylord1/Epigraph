@@ -24,7 +24,16 @@ internal class V4NovelDomainBridge(
     private val pluginLanguages: () -> Map<String, String>,
 ) : V4DomainBridge {
     override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock): List<V4OutgoingItem> =
+        handler.await(inTransaction = true) { buildNovelDrafts().stamp(clock) }
+
+    /** Side-effect free: hashes the same drafts the export stamps. */
+    override suspend fun digestSnapshot(serverId: String, profileId: String): List<V4DigestedItem> =
         handler.await(inTransaction = true) {
+            buildNovelDrafts().map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
+        }
+
+    /** Pure read of the local novel library. Stamps no clocks and enqueues nothing. */
+    private fun Database.buildNovelDrafts(): List<V4ItemDraft> {
             val languages = pluginLanguages()
             val works = localWorks(languages, favoritesOnly = true)
             val byId = works.associateBy { it.work._id }
@@ -35,9 +44,9 @@ internal class V4NovelDomainBridge(
             val usedFolderIds = assignments.map { it.category_id }.toSet()
             val history = v4_syncQueries.selectV4FavoriteHistory().executeAsList().associateBy { it.history_chapter_id }
 
-            buildList {
+            return buildList<V4ItemDraft> {
                 fun emit(type: String, key: String, payload: JsonObject) {
-                    add(V4OutgoingItem(domain = DOMAIN, entityType = type, entityKey = key, hlc = clock.next(), payload = payload))
+                    add(V4ItemDraft(domain = DOMAIN, entityType = type, entityKey = key, payload = payload))
                 }
                 for (folder in folderRows.filter { it._id in usedFolderIds }) {
                     emit(CATEGORY, folderKeys.getValue(folder._id), buildJsonObject {
@@ -112,7 +121,7 @@ internal class V4NovelDomainBridge(
                     })
                 }
             }
-        }
+    }
 
     override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) {
         val novels = records.filter { it.domain == DOMAIN }

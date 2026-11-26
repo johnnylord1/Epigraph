@@ -84,6 +84,29 @@ class V4NovelDomainBridgeTest {
     }
 
     @Test
+    fun `two exports with different clocks give equal digests`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = database(driver)
+            val plugin = "novel-plugin"
+            db.mangasQueries.insert(
+                NovelSource.sourceIdFor(plugin, "en"), "/novel/digest", null, "Author", null, null,
+                "Digest Novel", 0, null, true, null,
+                true, 0, false, 0, 1L, null, 0, 0, 0, 0, JsonObject(emptyMap()),
+            )
+            val bridge = V4NovelDomainBridge(AndroidDatabaseHandler(db, driver)) { mapOf(plugin to "en") }
+
+            val digestsBefore = bridge.digestSnapshot("core", "main")
+            val early = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone", wallClockMs = { 100L }))
+            val late = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone", wallClockMs = { 9_000_000L }))
+
+            assertTrue(digestsBefore.isNotEmpty())
+            assertTrue(early.map { it.hlc } != late.map { it.hlc }, "Test clocks must actually differ")
+            assertEquals(early.map { it.payload }, late.map { it.payload })
+            assertEquals(digestsBefore, bridge.digestSnapshot("core", "main"))
+        }
+    }
+
+    @Test
     fun `real LNReader backup survives V4 export and application`(@TempDir root: File) = runTest {
         val path = System.getenv("EPIGRAPH_TEST_LNREADER_BACKUP")
         assumeTrue(!path.isNullOrBlank(), "Set EPIGRAPH_TEST_LNREADER_BACKUP to an LNReader export")

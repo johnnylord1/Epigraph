@@ -70,6 +70,18 @@ CREATE TABLE v4_pending_extension_prefs(
     PRIMARY KEY(kind, source_or_plugin_id, pref_key)
 );
 
+-- Last baseline digest per entity, used to upload only locally changed items (migration 68).
+CREATE TABLE v4_local_digest(
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(server_id, profile_id, domain, entity_type, entity_key)
+);
+
 selectV4SyncState:
 SELECT * FROM v4_sync_state
 WHERE server_id = :serverId AND profile_id = :profileId;
@@ -311,3 +323,28 @@ WHERE server_id != :serverId;
 clearV4PendingExtensionPrefsExceptServer:
 DELETE FROM v4_pending_extension_prefs
 WHERE kind < :scopePrefix OR kind >= :scopeLimit;
+
+selectV4LocalDigests:
+SELECT * FROM v4_local_digest
+WHERE server_id = :serverId AND profile_id = :profileId;
+
+upsertV4LocalDigest:
+INSERT INTO v4_local_digest(
+    server_id, profile_id, domain, entity_type, entity_key, digest, deleted
+) VALUES (
+    :serverId, :profileId, :domain, :entityType, :entityKey, :digest, :deleted
+)
+ON CONFLICT(server_id, profile_id, domain, entity_type, entity_key) DO UPDATE SET
+    digest = excluded.digest,
+    deleted = excluded.deleted;
+
+deleteV4LocalDigest:
+DELETE FROM v4_local_digest
+WHERE server_id = :serverId AND profile_id = :profileId
+  AND domain = :domain AND entity_type = :entityType AND entity_key = :entityKey;
+
+deleteV4LocalDigestForServer:
+DELETE FROM v4_local_digest WHERE server_id = :serverId;
+
+deleteV4LocalDigestExceptServer:
+DELETE FROM v4_local_digest WHERE server_id != :serverId;

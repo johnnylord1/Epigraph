@@ -39,20 +39,30 @@ internal class V4ExtensionInventoryBridge(
         clock: V4HlcClock,
     ): List<V4OutgoingItem> {
         val installed = installedExtensionsProvider()
-        return handler.await(inTransaction = true) {
-            val comicRepos = extension_reposQueries.findAll().executeAsList()
-            val novelRepos = novel_reposQueries.findAll().executeAsList()
+        return handler.await(inTransaction = true) { buildExtensionDrafts(installed).stamp(clock) }
+    }
 
-            buildList {
+    /** Side-effect free. The installed-extension provider runs outside the transaction, as in export. */
+    override suspend fun digestSnapshot(serverId: String, profileId: String): List<V4DigestedItem> {
+        val installed = installedExtensionsProvider()
+        return handler.await(inTransaction = true) {
+            buildExtensionDrafts(installed).map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
+        }
+    }
+
+    /** Pure read of repos and installed extensions. Stamps no clocks and enqueues nothing. */
+    private fun yokai.data.Database.buildExtensionDrafts(installed: List<V4InstalledExtensionDescriptor>): List<V4ItemDraft> {
+        val comicRepos = extension_reposQueries.findAll().executeAsList()
+        val novelRepos = novel_reposQueries.findAll().executeAsList()
+        return buildList<V4ItemDraft> {
                 for (repo in comicRepos) {
                     val baseUrl = repo.base_url.trim().trimEnd('/')
                     if (baseUrl.isEmpty()) continue
                     add(
-                        V4OutgoingItem(
+                        V4ItemDraft(
                             domain = DOMAIN,
                             entityType = REPO,
                             entityKey = "comic:$baseUrl",
-                            hlc = clock.next(),
                             payload = buildJsonObject {
                                 put("kind", "comic")
                                 put("baseUrl", baseUrl)
@@ -68,11 +78,10 @@ internal class V4ExtensionInventoryBridge(
                     val baseUrl = repo.base_url.trim().trimEnd('/')
                     if (baseUrl.isEmpty()) continue
                     add(
-                        V4OutgoingItem(
+                        V4ItemDraft(
                             domain = DOMAIN,
                             entityType = REPO,
                             entityKey = "novel:$baseUrl",
-                            hlc = clock.next(),
                             payload = buildJsonObject {
                                 put("kind", "novel")
                                 put("baseUrl", baseUrl)
@@ -85,11 +94,10 @@ internal class V4ExtensionInventoryBridge(
                     val pkg = ext.packageId.trim()
                     if (pkg.isEmpty() || (ext.kind != "comic" && ext.kind != "novel")) continue
                     add(
-                        V4OutgoingItem(
+                        V4ItemDraft(
                             domain = DOMAIN,
                             entityType = INSTALLED,
                             entityKey = "${ext.kind}:$pkg",
-                            hlc = clock.next(),
                             payload = buildJsonObject {
                                 put("kind", ext.kind)
                                 put("packageId", pkg)
@@ -105,7 +113,6 @@ internal class V4ExtensionInventoryBridge(
                     )
                 }
             }
-        }
     }
 
     override suspend fun applyRemoteRecords(

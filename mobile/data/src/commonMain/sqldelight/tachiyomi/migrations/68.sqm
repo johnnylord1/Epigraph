@@ -1,0 +1,14 @@
+-- Add v4_local_digest: per-entity baseline digests so local-edit sync uploads only changed items.
+-- Rollback note: rolling back is `DROP TABLE v4_local_digest`. Nothing else reads or writes this table,
+-- so dropping it only forces the next local-edit pass to take the empty-baseline path again.
+
+CREATE TABLE v4_local_digest(
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(server_id, profile_id, domain, entity_type, entity_key)
+);

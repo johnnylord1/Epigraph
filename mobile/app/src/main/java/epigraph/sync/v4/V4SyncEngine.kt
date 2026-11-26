@@ -48,7 +48,7 @@ private sealed interface SnapshotGather {
  * - Empty reconnects execute in 1 lightweight HTTP call (< 200 ms) with 0 internet downloads
  *   and 0 main-thread UI inflation.
  */
-class V4SyncEngine(
+internal class V4SyncEngine(
     private val serverId: String,
     private val profileId: String,
     private val deviceId: String,
@@ -58,6 +58,10 @@ class V4SyncEngine(
     private val bridge: V4DomainBridge,
     private val json: Json = V4CoreHttpClient.DEFAULT_JSON,
     private val domainProgress: V4SyncDomainProgress = MemoryV4SyncDomainProgress(),
+    /** Monotonic counter bumped by each local edit; digest baselines refresh only while it is unchanged. */
+    private val localEditGeneration: () -> Long = { 0L },
+    /** Invoked after a realtime delta is applied; the owner decides when to refresh the digest baseline. */
+    private val onRealtimeDelta: () -> Unit = {},
 ) {
     private val syncMutex = Mutex()
     @Volatile private var domainPolicy = V4SyncDomainPolicy()
@@ -165,7 +169,7 @@ class V4SyncEngine(
                         page.changes.forEach { clock.observe(it.hlc) }
                         // The Core can merge other devices' state into a record attributed to us.
                         val applicable = enabled(page.changes)
-                        if (applicable.isNotEmpty()) bridge.applyRemoteRecords(serverId, profileId, applicable)
+                        if (applicable.isNotEmpty()) applyRemoteRecordsWithBaseline(applicable)
                         appliedCount += applicable.size
                     }
                     cursor = maxOf(cursor, page.nextSeq)
@@ -199,6 +203,7 @@ class V4SyncEngine(
         if (state.serverSeq > previousSeq) {
             pruneDisabledDomains()
         }
+        refreshBaselineLocked(0L)
         val pending = store.countPendingOutbox(serverId, profileId, domainPolicy)
         V4SyncRunResult.Synced(
             serverSeq = state.serverSeq,
@@ -227,30 +232,58 @@ class V4SyncEngine(
         val catchup = bootstrapReenabledDomainsLocked(accessToken, state, clock)
         if (catchup is V4SyncRunResult.Failed) return@withLock catchup
 
-        // Upload local state changes via HLC merge so offline progress across Comics, Novels,
-        // Books, Repos, Extensions, and Prefs is guaranteed to converge cleanly on reconnect.
-        val localItems = enabled(bridge.exportLocalSnapshot(serverId, profileId, clock))
+        // Upload only items whose digest differs from the recorded baseline, so offline progress
+        // across all domains converges without re-sending unchanged state with fresh clocks.
+        val passGeneration = localEditGeneration()
+        val stored = store.loadDigests(serverId, profileId)
+        val current = bridge.digestSnapshot(serverId, profileId)
+            .filter { domainPolicy.allows(it.key.domain, it.key.entityType, it.key.entityKey, null) }
+        val exported = enabled(bridge.exportLocalSnapshot(serverId, profileId, clock))
+            .associateBy { V4DigestKey(it.domain, it.entityType, it.entityKey) }
+        val vanished = vanishedKeys(stored, current)
+        // Comic relation retractions already enqueue and mark their tombstones during export.
+        val tombstones = vanished.filter { !store.isEntityMapTombstoned(serverId, profileId, it) }
+        // Without any recorded digests, existing remote state must not be outranked: use the baseline clock.
+        val baselineMode = stored.isEmpty()
+        val outgoing = buildList {
+            for (item in current) {
+                if (stored[item.key]?.digest == item.digest) continue
+                val stamped = exported[item.key] ?: continue
+                add(if (baselineMode) stamped.copy(hlc = stamped.hlc.copy(tsMs = 1L, counter = 0L)) else stamped)
+            }
+            for (key in tombstones) {
+                add(
+                    V4OutgoingItem(
+                        domain = key.domain,
+                        entityType = key.entityType,
+                        entityKey = key.entityKey,
+                        deleted = true,
+                        hlc = if (baselineMode) V4Hlc(tsMs = 1L, counter = 0L, deviceId = deviceId) else clock.next(),
+                    ),
+                )
+            }
+        }
         var uploadedCount = 0
-        if (localItems.isNotEmpty()) {
-            val chunks = localItems.chunked(BULK_CHUNK_SIZE)
-            for ((index, chunk) in chunks.withIndex()) {
-                val isFinal = index == chunks.lastIndex
-                when (val bulkRes = http.syncBulk(accessToken, chunk, finalBatch = isFinal)) {
-                    is CoreHttpResult.Success -> {
-                        uploadedCount += bulkRes.value.acceptedCount + bulkRes.value.mergedCount
-                        state = state.copy(serverSeq = maxOf(state.serverSeq, bulkRes.value.serverSeq))
-                    }
-                    is CoreHttpResult.Failure -> {
-                        persistClock(state, clock)
-                        return@withLock V4SyncRunResult.Failed(
-                            reason = bulkRes.errorEnvelope?.error?.message ?: "HTTP ${bulkRes.statusCode}",
-                            statusCode = bulkRes.statusCode,
-                            retryable = bulkRes.statusCode >= 500 || bulkRes.statusCode == 429,
-                        )
-                    }
+        val chunks = outgoing.chunked(BULK_CHUNK_SIZE)
+        for ((index, chunk) in chunks.withIndex()) {
+            val isFinal = index == chunks.lastIndex
+            when (val bulkRes = http.syncBulk(accessToken, chunk, finalBatch = isFinal)) {
+                is CoreHttpResult.Success -> {
+                    uploadedCount += bulkRes.value.acceptedCount + bulkRes.value.mergedCount
+                    state = state.copy(serverSeq = maxOf(state.serverSeq, bulkRes.value.serverSeq))
+                }
+                is CoreHttpResult.Failure -> {
+                    persistClock(state, clock)
+                    return@withLock V4SyncRunResult.Failed(
+                        reason = bulkRes.errorEnvelope?.error?.message ?: "HTTP ${bulkRes.statusCode}",
+                        statusCode = bulkRes.statusCode,
+                        retryable = bulkRes.statusCode >= 500 || bulkRes.statusCode == 429,
+                    )
                 }
             }
         }
+        // Digests advance only after every chunk is accepted; a failed pass re-uploads its changes.
+        store.saveDigests(serverId, profileId, nextDigestRows(stored, current, vanished))
 
         val outboxRes = drainOutboxLocked(accessToken, state)
         if (outboxRes is V4SyncRunResult.Failed) {
@@ -270,7 +303,7 @@ class V4SyncEngine(
                     if (page.changes.isNotEmpty()) {
                         page.changes.forEach { clock.observe(it.hlc) }
                         val applicable = enabled(page.changes)
-                        if (applicable.isNotEmpty()) bridge.applyRemoteRecords(serverId, profileId, applicable)
+                        if (applicable.isNotEmpty()) applyRemoteRecordsWithBaseline(applicable)
                         appliedCount += applicable.size
                     }
                     cursor = maxOf(cursor, page.nextSeq)
@@ -303,6 +336,7 @@ class V4SyncEngine(
         if (state.serverSeq > previousSeq) {
             pruneDisabledDomains()
         }
+        refreshBaselineLocked(passGeneration)
         V4SyncRunResult.Synced(
             serverSeq = state.serverSeq,
             uploadedCount = uploadedCount,
@@ -310,6 +344,87 @@ class V4SyncEngine(
             pendingOutboxCount = store.countPendingOutbox(serverId, profileId, domainPolicy),
             wasNoOpReconnect = false,
         )
+    }
+
+    /**
+     * Rebuilds the digest baseline from the current local state, but only while no local edit has
+     * happened since [expectedGeneration], both before and after the digests are built.
+     */
+    suspend fun refreshBaseline(expectedGeneration: Long) {
+        syncMutex.withLock { refreshBaselineLocked(expectedGeneration) }
+    }
+
+    private suspend fun refreshBaselineLocked(expectedGeneration: Long) {
+        if (invalidated.get() || localEditGeneration() != expectedGeneration) return
+        val stored = store.loadDigests(serverId, profileId)
+        val current = bridge.digestSnapshot(serverId, profileId)
+            .filter { domainPolicy.allows(it.key.domain, it.key.entityType, it.key.entityKey, null) }
+        if (invalidated.get() || localEditGeneration() != expectedGeneration) return
+        store.saveDigests(serverId, profileId, nextDigestRows(stored, current, vanishedKeys(stored, current)))
+    }
+
+    /**
+     * Applies remote records. While a local edit is pending the baseline is not refreshed, so the
+     * digests of keys this apply changed are recorded here. Otherwise a later pass would re-upload
+     * that remote state with a fresh clock and override newer edits made on other devices.
+     */
+    private suspend fun applyRemoteRecordsWithBaseline(records: List<V4WireRecord>) {
+        val generation = localEditGeneration()
+        if (generation == 0L) {
+            bridge.applyRemoteRecords(serverId, profileId, records)
+            return
+        }
+        val before = currentDigests()
+        bridge.applyRemoteRecords(serverId, profileId, records)
+        val after = currentDigests()
+        if (invalidated.get() || localEditGeneration() != generation) return
+        val rows = HashMap<V4DigestKey, V4StoredDigest>()
+        for ((key, item) in after) {
+            val prior = before[key]
+            if (prior == null || prior.digest != item.digest || prior.deleted != item.deleted) {
+                rows[key] = V4StoredDigest(item.digest, item.deleted)
+            }
+        }
+        for (key in before.keys) {
+            if (key !in after) rows[key] = V4StoredDigest(digest = "", deleted = true)
+        }
+        if (rows.isEmpty()) return
+        store.saveDigests(serverId, profileId, rows)
+    }
+
+    private suspend fun currentDigests(): Map<V4DigestKey, V4DigestedItem> =
+        bridge.digestSnapshot(serverId, profileId)
+            .filter { domainPolicy.allows(it.key.domain, it.key.entityType, it.key.entityKey, null) }
+            .associateBy { it.key }
+
+    /** Recorded live keys (in enabled domains) that are absent from [current]. */
+    private fun vanishedKeys(
+        stored: Map<V4DigestKey, V4StoredDigest>,
+        current: List<V4DigestedItem>,
+    ): Set<V4DigestKey> {
+        val present = current.mapTo(HashSet()) { it.key }
+        return stored.filter { (key, row) ->
+            !row.deleted && key !in present && domainPolicy.allows(key.domain, key.entityType, key.entityKey, null)
+        }.keys
+    }
+
+    /**
+     * Rows to upsert so the baseline records [current] plus [vanished] tombstones. Only rows that
+     * differ from [stored] are returned: rewriting every unchanged digest would cost a full-table
+     * write (over 100k rows on a large library) on every pass. Rows for disabled domains stay.
+     */
+    private fun nextDigestRows(
+        stored: Map<V4DigestKey, V4StoredDigest>,
+        current: List<V4DigestedItem>,
+        vanished: Set<V4DigestKey>,
+    ): Map<V4DigestKey, V4StoredDigest> {
+        val rows = HashMap<V4DigestKey, V4StoredDigest>()
+        for (item in current) {
+            val next = V4StoredDigest(item.digest, item.deleted)
+            if (stored[item.key] != next) rows[item.key] = next
+        }
+        for (key in vanished) rows[key] = V4StoredDigest(digest = "", deleted = true)
+        return rows
     }
 
     /**
@@ -333,12 +448,13 @@ class V4SyncEngine(
                         val clock = buildClock(cur)
                         clock.observe(msg.record.hlc)
                         val applicable = enabled(listOf(msg.record))
-                        if (applicable.isNotEmpty()) bridge.applyRemoteRecords(serverId, profileId, applicable)
+                        if (applicable.isNotEmpty()) applyRemoteRecordsWithBaseline(applicable)
                         persistClock(
                             cur.copy(serverSeq = msg.record.serverSeq),
                             clock,
                         )
                         pruneDisabledDomains()
+                        onRealtimeDelta()
                     }
                 }
                 is V4SseMessage.BulkCommitted,
@@ -414,10 +530,11 @@ class V4SyncEngine(
         }
         val records = enabled(gathered.records, catchupPolicy)
         records.forEach { clock.observe(it.hlc) }
-        if (records.isNotEmpty()) bridge.applyRemoteRecords(serverId, profileId, records)
+        if (records.isNotEmpty()) applyRemoteRecordsWithBaseline(records)
         // Keep the cursor unchanged here. The normal changes pass must still cover mutations in
         // already-enabled domains that occurred while the scoped snapshot was being fetched.
         domainProgress.save(serverId, profileId, completed + domainPolicy.enabledKeys)
+        refreshBaselineLocked(0L)
         return null
     }
 
@@ -440,6 +557,8 @@ class V4SyncEngine(
             }
         }
 
+        // Captured before the export: a local edit made during the merge must keep its baseline gap.
+        val mergeGeneration = localEditGeneration()
         // A legacy row has no edit clock. Stage it below V4 edits and tombstones.
         // On recovery the outbox carries the actual local edits made since pairing.
         val localItems = if (initialState.initialSyncCompleted) {
@@ -510,6 +629,7 @@ class V4SyncEngine(
                 clock,
             )
             domainProgress.save(serverId, profileId, domainPolicy.enabledKeys)
+            refreshBaselineLocked(mergeGeneration)
             return V4SyncRunResult.Synced(state.serverSeq, uploadedCount, 0, pending, false)
         }
 
@@ -530,7 +650,7 @@ class V4SyncEngine(
         gathered.records.forEach { clock.observe(it.hlc) }
         val applicableSnapshotRecords = enabled(gathered.records)
         if (applicableSnapshotRecords.isNotEmpty()) {
-            bridge.applyRemoteRecords(serverId, profileId, applicableSnapshotRecords)
+            applyRemoteRecordsWithBaseline(applicableSnapshotRecords)
         }
         val state = persistClock(
             initialState.copy(
@@ -542,6 +662,7 @@ class V4SyncEngine(
             clock,
         )
         domainProgress.save(serverId, profileId, domainPolicy.enabledKeys)
+        refreshBaselineLocked(mergeGeneration)
         return V4SyncRunResult.Synced(
             serverSeq = state.serverSeq,
             uploadedCount = uploadedCount,

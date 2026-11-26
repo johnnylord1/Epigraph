@@ -28,22 +28,30 @@ internal class V4ExtensionPreferences(
     private val json = V4CoreHttpClient.DEFAULT_JSON
 
     override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock): List<V4OutgoingItem> =
+        withContext(Dispatchers.IO) { buildPreferenceDrafts().stamp(clock) }
+
+    /** Side-effect free: hashes the same drafts the export stamps. */
+    override suspend fun digestSnapshot(serverId: String, profileId: String): List<V4DigestedItem> =
         withContext(Dispatchers.IO) {
-            buildList {
-                for ((kind, store) in stores) {
-                    for ((owner, settings) in store.installedSources()) {
-                        for (setting in settings) {
-                            val value = setting.current ?: continue
-                            if (!validIdentity(kind, owner, setting.key) || !value.isSyncable()) continue
-                            add(V4OutgoingItem(
-                                domain = "preferences", entityType = "extension.pref",
-                                entityKey = "$kind:$owner:${setting.key}", hlc = clock.next(),
-                                payload = buildJsonObject {
-                                    put("valueType", value.valueType)
-                                    put("value", value.toJson())
-                                },
-                            ))
-                        }
+            buildPreferenceDrafts().map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
+        }
+
+    /** Pure read of the declared, syncable source preferences. Stamps no clocks and enqueues nothing. */
+    private suspend fun buildPreferenceDrafts(): List<V4ItemDraft> =
+        buildList<V4ItemDraft> {
+            for ((kind, store) in stores) {
+                for ((owner, settings) in store.installedSources()) {
+                    for (setting in settings) {
+                        val value = setting.current ?: continue
+                        if (!validIdentity(kind, owner, setting.key) || !value.isSyncable()) continue
+                        add(V4ItemDraft(
+                            domain = "preferences", entityType = "extension.pref",
+                            entityKey = "$kind:$owner:${setting.key}",
+                            payload = buildJsonObject {
+                                put("valueType", value.valueType)
+                                put("value", value.toJson())
+                            },
+                        ))
                     }
                 }
             }

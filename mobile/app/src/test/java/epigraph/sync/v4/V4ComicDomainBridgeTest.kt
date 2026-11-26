@@ -122,6 +122,27 @@ class V4ComicDomainBridgeTest {
     }
 
     @Test
+    fun `two exports with different clocks give equal digests`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = database(driver)
+            driver.execute(null, """
+                INSERT INTO mangas (_id, source, url, title, status, favorite, initialized, viewer, hide_title, chapter_flags)
+                VALUES (42, 123, 'https://mirror-one.example/manga/a?style=list', 'Example', 1, 1, 1, 0, 0, 0)
+            """.trimIndent(), 0)
+            val bridge = V4ComicDomainBridge(handler(db, driver))
+
+            val digestsBefore = bridge.digestSnapshot("core", "main")
+            val early = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone", wallClockMs = { 100L }))
+            val late = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone", wallClockMs = { 9_000_000L }))
+
+            assertTrue(digestsBefore.isNotEmpty())
+            assertFalse(early.map { it.hlc } == late.map { it.hlc }, "Test clocks must actually differ")
+            assertEquals(early.map { it.payload }, late.map { it.payload })
+            assertEquals(digestsBefore, bridge.digestSnapshot("core", "main"))
+        }
+    }
+
+    @Test
     fun `a deleted category does not block snapshot replay of other comics`() = runTest {
         JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
             val db = database(driver)

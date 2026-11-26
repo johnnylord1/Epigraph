@@ -253,11 +253,51 @@ class SqlDelightV4SyncStore(
 
     private fun extensionPrefsServerPrefix(serverId: String) = json.encodeToString(serverId) + "/"
 
+    /** Baseline digests last acknowledged by the Core for this server/profile. */
+    internal fun loadDigests(serverId: String, profileId: String): Map<V4DigestKey, V4StoredDigest> =
+        queries.selectV4LocalDigests(serverId, profileId).executeAsList().associate { row ->
+            V4DigestKey(row.domain, row.entity_type, row.entity_key) to V4StoredDigest(row.digest, row.deleted != 0L)
+        }
+
+    /** Writes baseline digests in one transaction. Callers pass only keys the Core has acknowledged. */
+    internal fun saveDigests(serverId: String, profileId: String, rows: Map<V4DigestKey, V4StoredDigest>) {
+        if (rows.isEmpty()) return
+        database.transaction {
+            rows.forEach { (key, stored) ->
+                queries.upsertV4LocalDigest(
+                    serverId = serverId,
+                    profileId = profileId,
+                    domain = key.domain,
+                    entityType = key.entityType,
+                    entityKey = key.entityKey,
+                    digest = stored.digest,
+                    deleted = if (stored.deleted) 1L else 0L,
+                )
+            }
+        }
+    }
+
+    /** True when the entity map already records [key] as deleted, so a tombstone must not be re-sent. */
+    internal fun isEntityMapTombstoned(serverId: String, profileId: String, key: V4DigestKey): Boolean =
+        queries.selectV4EntityMapByKey(serverId, profileId, key.entityType, key.entityKey)
+            .executeAsOneOrNull()?.deleted?.let { it != 0L } ?: false
+
+    internal fun deleteDigest(serverId: String, profileId: String, key: V4DigestKey) {
+        queries.deleteV4LocalDigest(
+            serverId = serverId,
+            profileId = profileId,
+            domain = key.domain,
+            entityType = key.entityType,
+            entityKey = key.entityKey,
+        )
+    }
+
     fun clearServerState(serverId: String, domainProgress: V4SyncDomainProgress? = null) {
         database.transaction {
             queries.deleteV4OutboxForServer(serverId)
             queries.deleteV4EntityMapForServer(serverId)
             queries.deleteV4SyncStateForServer(serverId)
+            queries.deleteV4LocalDigestForServer(serverId)
             val serverKey = json.encodeToString(serverId)
             queries.clearV4PendingExtensionPrefsForServer("$serverKey/", "$serverKey" + "0")
         }
@@ -275,6 +315,7 @@ class SqlDelightV4SyncStore(
             queries.reassignV4OutboxToServer(newServerId = newServerId, newProfileId = newProfileId)
             queries.deleteV4EntityMapExceptServer(newServerId)
             queries.deleteV4SyncStateExceptServer(newServerId)
+            queries.deleteV4LocalDigestExceptServer(newServerId)
             val serverKey = json.encodeToString(newServerId)
             queries.clearV4PendingExtensionPrefsExceptServer("$serverKey/", "${serverKey}0")
         }

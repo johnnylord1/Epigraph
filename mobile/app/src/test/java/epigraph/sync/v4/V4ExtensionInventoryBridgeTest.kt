@@ -24,6 +24,45 @@ class V4ExtensionInventoryBridgeTest {
     }
 
     @Test
+    fun `two exports with different clocks give equal digests`() = runTest {
+        val (driver, db) = createDb()
+        driver.use {
+            db.extension_reposQueries.upsert(
+                base_url = "https://raw.githubusercontent.com/keiyoushi/extensions/repo",
+                name = "Keiyoushi",
+                short_name = "Kei",
+                website = "https://keiyoushi.github.io",
+                fingerprint = "abcdef1234",
+            )
+            val bridge = V4ExtensionInventoryBridge(
+                handler = AndroidDatabaseHandler(db, driver),
+                installedExtensionsProvider = {
+                    listOf(
+                        V4InstalledExtensionDescriptor(
+                            kind = "comic",
+                            packageId = "eu.kanade.tachiyomi.extension.en.toonily",
+                            name = "Toonily",
+                            versionName = "1.4.42",
+                            versionCode = 42,
+                            lang = "en",
+                            signatureHash = "sig1",
+                        ),
+                    )
+                },
+            )
+
+            val digestsBefore = bridge.digestSnapshot("srv", "main")
+            val early = bridge.exportLocalSnapshot("srv", "main", V4HlcClock("phone-1", wallClockMs = { 100L }))
+            val late = bridge.exportLocalSnapshot("srv", "main", V4HlcClock("phone-1", wallClockMs = { 9_000_000L }))
+
+            assertTrue(digestsBefore.isNotEmpty())
+            assertTrue(early.map { it.hlc } != late.map { it.hlc }, "Test clocks must actually differ")
+            assertEquals(early.map { it.payload }, late.map { it.payload })
+            assertEquals(digestsBefore, bridge.digestSnapshot("srv", "main"))
+        }
+    }
+
+    @Test
     fun `round-trips comic repos, novel repos, and installed extension descriptors without network`() = runTest {
         val (srcDriver, srcDb) = createDb()
         val (dstDriver, dstDb) = createDb()
