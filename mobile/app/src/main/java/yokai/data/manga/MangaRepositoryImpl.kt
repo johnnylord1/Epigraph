@@ -67,6 +67,7 @@ class MangaRepositoryImpl(
         return try {
             val routed = routeFavoriteChange(update)
             partialUpdate(if (routed) update.copy(favorite = null) else update)
+            if (!routed && update.favorite != null) notifyUnroutedLibraryChange()
             true
         } catch (e: Exception) {
             Logger.e { "Failed to update manga with id '${update.id}'" }
@@ -80,6 +81,8 @@ class MangaRepositoryImpl(
                 if (routeFavoriteChange(update)) update.copy(favorite = null) else update
             }
             partialUpdate(*routedUpdates.toTypedArray())
+            // A routed update had its favorite cleared above; one still carrying it was not routed.
+            if (routedUpdates.any { it.favorite != null }) notifyUnroutedLibraryChange()
             true
         } catch (e: Exception) {
             Logger.e(e) { "Failed to bulk update manga" }
@@ -148,6 +151,17 @@ class MangaRepositoryImpl(
             createdAtEpochMillis = System.currentTimeMillis(),
         )
         return true
+    }
+
+    /**
+     * Sync V4 exports the library from local state, so a change that queued no command still
+     * starts a run: works a paired desktop sent have no Epigraph identity on this device.
+     */
+    private suspend fun notifyUnroutedLibraryChange() {
+        val router = epigraphLibraryRouter ?: return
+        val scopes = syncScopeProvider ?: return
+        if (runCatching { scopes.current() }.isFailure) return
+        router.notifyLocalEditWithoutCommand()
     }
 
     private suspend fun hasEpigraphIdentity(mangaId: Long): Boolean = handler.await {
@@ -240,6 +254,7 @@ class MangaRepositoryImpl(
                 mangas_categoriesQueries.insert(mangaId, id)
             }
         }
+        notifyUnroutedLibraryChange()
     }
 
     override suspend fun setMultipleMangaCategories(mangaIds: List<Long>, mangaCategories: List<MangaCategory>) {
@@ -259,6 +274,7 @@ class MangaRepositoryImpl(
                     mangas_categoriesQueries.insert(it.manga_id, it.category_id.toLong())
                 }
         }
+        notifyUnroutedLibraryChange()
     }
 }
 

@@ -108,6 +108,12 @@ class EpigraphLibraryMutationRouter(
     }
 
     /**
+     * Reports a committed library edit that had no Epigraph identity to carry a command, such as
+     * a work a paired desktop sent. Sync V4 publishes it from the export of the run this starts.
+     */
+    fun notifyLocalEditWithoutCommand() = coordinator.notifyLocalEditWithoutCommand()
+
+    /**
      * Applies several membership changes in one transaction, as a repair of many favorites does.
      * Each change reads what the ones before it wrote, exactly as consecutive [setMembership] calls
      * would, but the outbox rows land together and the database commits once. One failing change
