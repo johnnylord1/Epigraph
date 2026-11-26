@@ -139,16 +139,18 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             clock = clock,
             categoryIds = categoryKeys.entries.associate { (id, key) -> key to id },
             assignmentWorks = assignmentWorks,
-            libraryWorks = workKeys.values.toSet(),
+            libraryWorks = workKeys.entries.associate { (id, key) -> key to id },
+            exportedWorks = exported.filter { it.entityType == WORK }.associate { it.entityKey to it.hlc },
         )
         exported
     }
 
     /**
-     * Sends a tombstone for each folder and folder assignment this device synced before but no
-     * longer has, which is how a delete, a rename or a removal from a folder reaches the Core.
-     * Only rows this device projected or exported count, so a record it never held stays alone.
-     * The tombstones go through the outbox, which keeps them until the Core accepts them.
+     * Sends a tombstone for each work, folder and folder assignment this device synced before
+     * but no longer has, which is how a removal from the library, a folder delete, a rename or
+     * a removal from a folder reaches the Core. Only rows this device projected or exported
+     * count, so a record it never held stays alone. The tombstones go through the outbox, which
+     * keeps them until the Core accepts them.
      */
     private fun Database.retractVanishedRelations(
         store: SqlDelightV4SyncStore,
@@ -157,16 +159,24 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         clock: V4HlcClock,
         categoryIds: Map<String, Long>,
         assignmentWorks: Map<String, Long>,
-        libraryWorks: Set<String>,
+        libraryWorks: Map<String, Long>,
+        exportedWorks: Map<String, V4Hlc>,
     ) {
-        val rows = v4_syncQueries.selectV4ActiveDomainEntityMap(serverId, profileId, COMICS).executeAsList()
-            .filter { it.entity_type == CATEGORY || it.entity_type == ASSIGNMENT }
+        val all = v4_syncQueries.selectV4DomainEntityMap(serverId, profileId, COMICS).executeAsList()
+            .filter { it.entity_type == WORK || it.entity_type == CATEGORY || it.entity_type == ASSIGNMENT }
+        val rows = all.filter { it.deleted == 0L }
         val known = rows.associateBy { it.entity_type to it.entity_key }
+        val retracted = all.filter { it.deleted != 0L }.mapTo(mutableSetOf()) { it.entity_type to it.entity_key }
         // Remember what this device exported. The zero clock never outranks a remote record.
         fun remember(type: String, key: String, localId: Long) {
-            if (known[type to key]?.local_id == localId.toString()) return
-            store.upsertEntityMap(serverId, profileId, COMICS, type, key, localId.toString(), EXPORTED, deleted = false)
+            val current = known[type to key]
+            if (current?.local_id == localId.toString() || type == WORK && current != null) return
+            // A work added back after its removal synced must outrank that removal's echo,
+            // which would otherwise take it out of the library again.
+            val hlc = if (type == WORK && (type to key) in retracted) exportedWorks[key] ?: EXPORTED else EXPORTED
+            store.upsertEntityMap(serverId, profileId, COMICS, type, key, localId.toString(), hlc, deleted = false)
         }
+        libraryWorks.forEach { (key, id) -> remember(WORK, key, id) }
         categoryIds.forEach { (key, id) -> remember(CATEGORY, key, id) }
         assignmentWorks.forEach { (key, work) -> remember(ASSIGNMENT, key, work) }
 
@@ -174,6 +184,8 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             val key = row.entity_key
             if (row.local_id == null) continue
             val retract = when (row.entity_type) {
+                // The desktop takes the work out of its library, whichever of its folders holds it.
+                WORK -> key !in libraryWorks
                 CATEGORY -> key !in categoryIds && !isReservedCategory(key)
                 else -> {
                     val workKey = key.substringBeforeLast('|')

@@ -296,7 +296,7 @@ class V4ComicDomainBridgeTest {
     }
 
     @Test
-    fun `deleting a folder or taking a work out of one sends tombstones but leaving the library does not`() = runTest {
+    fun `deleting a folder or taking a work out of one sends tombstones and leaving the library removes only the work`() = runTest {
         JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
             val db = folderLibrary(driver)
             val bridge = V4ComicDomainBridge(handler(db, driver))
@@ -308,16 +308,65 @@ class V4ComicDomainBridgeTest {
             val export = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
 
             assertEquals(setOf("action"), export.keys("comic.category"))
+            assertEquals(setOf("123:/a"), export.keys("comic.work"))
             assertTrue(export.none { it.deleted })
             assertEquals(Triple(true, "comic.category", """{"name":"waketest"}"""), retracted(db, "comic.category", "waketest"))
             assertEquals(Triple(true, "comic.category_assignment", "{}"), retracted(db, "comic.category_assignment", "123:/a|waketest"))
+            assertEquals(Triple(true, "comic.work", "{}"), retracted(db, "comic.work", "123:/b"))
             assertEquals(null, retracted(db, "comic.category_assignment", "123:/b|action"))
-            assertEquals(2L, pending(db))
+            assertEquals(3L, pending(db))
 
             driver.execute(null, "UPDATE mangas SET favorite = 1 WHERE _id = 2", 0)
             db.mangas_categoriesQueries.delete(2)
             bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
             assertEquals(Triple(true, "comic.category_assignment", "{}"), retracted(db, "comic.category_assignment", "123:/b|action"))
+        }
+    }
+
+    @Test
+    fun `a work removed from the library is retracted once and comes back when added again`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = folderLibrary(driver)
+            val bridge = V4ComicDomainBridge(handler(db, driver))
+            val clock = V4HlcClock("phone")
+            bridge.exportLocalSnapshot("core", "main", clock)
+            assertEquals(0L, pending(db))
+
+            driver.execute(null, "UPDATE mangas SET favorite = 0 WHERE _id = 1", 0)
+            bridge.exportLocalSnapshot("core", "main", clock)
+            assertEquals(Triple(true, "comic.work", "{}"), retracted(db, "comic.work", "123:/a"))
+            assertEquals(1L, pending(db))
+            bridge.exportLocalSnapshot("core", "main", clock)
+            assertEquals(1L, pending(db))
+
+            // Added back before the removal's echo arrives: the echo must not remove it again.
+            val removal = echo(db, "comic.work", "123:/a")
+            driver.execute(null, "UPDATE mangas SET favorite = 1 WHERE _id = 1", 0)
+            val export = bridge.exportLocalSnapshot("core", "main", clock)
+            assertTrue("123:/a" in export.keys("comic.work"))
+            bridge.applyRemoteRecords("core", "main", listOf(removal))
+            assertEquals(setOf(1L, 2L), db.mangasQueries.findFavorites().executeAsList().map { it._id }.toSet())
+            assertEquals(1L, pending(db))
+        }
+    }
+
+    @Test
+    fun `a removal from the library made on the desktop is not sent back`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = folderLibrary(driver)
+            val bridge = V4ComicDomainBridge(handler(db, driver))
+            bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+
+            val removal = V4WireRecord(
+                1, "comics", "comic.work", "123:/b", true, V4Hlc(10, 0, "desktop"), "desktop",
+                kotlinx.serialization.json.JsonNull,
+            )
+            bridge.applyRemoteRecords("core", "main", listOf(removal))
+            assertEquals(listOf(1L), db.mangasQueries.findFavorites().executeAsList().map { it._id })
+
+            bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone"))
+            assertEquals(null, retracted(db, "comic.work", "123:/b"))
+            assertEquals(0L, pending(db))
         }
     }
 
