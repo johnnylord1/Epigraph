@@ -1184,6 +1184,19 @@ async fn project_comic_changes(
     if applied == 0 {
         restore_comic_snapshot(state, session, changes).await?;
     }
+    // A desktop library record came from Suwayomi, so Suwayomi already holds it. Projecting it back
+    // would restore Core's snapshot over a desktop edit made after it was captured: a category added
+    // and removed again within seconds came back on the desktop. Chapter records stay projected,
+    // since their merge can carry another device's progress.
+    let from_desktop = |record: &V4WireRecord| {
+        applied > 0
+            && record.origin_device_id == LOCAL_DESKTOP_ORIGIN
+            && record.entity_type != "comic.chapter"
+    };
+    let changes = changes
+        .iter()
+        .filter(|record| !from_desktop(record))
+        .collect::<Vec<_>>();
     let needs_restore = applied > 0
         && changes
             .iter()
@@ -1195,6 +1208,7 @@ async fn project_comic_changes(
     // directly; ordinary initial chapter state already arrived through the backup.
     let direct = changes
         .iter()
+        .copied()
         .filter(|record| {
             record.deleted
                 || (record.entity_type == "comic.chapter" && applied > 0)

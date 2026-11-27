@@ -2420,6 +2420,74 @@ async fn desktop_catalog_capture_reads_suwayomi_once_the_projection_settles() {
     assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
 }
 
+#[tokio::test]
+async fn the_projection_does_not_write_desktop_library_records_back_into_suwayomi() {
+    let (_temp, state, _app, _token, _) = build_v4_test_env().await;
+    // A closed port: the desktop's own records must not need Suwayomi at all.
+    state
+        .config
+        .set_suwayomi_proxy_test_upstream("profile-alpha", "http://127.0.0.1:9/");
+    let desktop = |seq: i64, entity_type: &str, key: &str, deleted: bool, payload: Value| {
+        super::db::V4IncomingItem {
+            client_mutation_id: None,
+            domain: "comics".to_owned(),
+            entity_type: entity_type.to_owned(),
+            entity_key: key.to_owned(),
+            deleted,
+            hlc: super::hlc::Hlc::new(1_000 + seq, 0, "epigraph-desktop"),
+            payload,
+        }
+    };
+    let work = super::hlc::canonical_work_key("100", "https://s/alpha");
+    let assignment = format!("{work}|dahora");
+    // The first pairing already reached Suwayomi: the next pass is incremental.
+    super::db::apply_v4_batch(
+        &state.pool,
+        "profile-alpha",
+        "phone",
+        vec![desktop(0, "comic.category", "dahora", false, json!({"name": "Dahora", "order": 1}))],
+        true,
+    )
+    .await
+    .unwrap();
+    settle_projection(&state).await;
+    // The desktop adds Alpha to Dahora and removes it again before the projection runs.
+    for (seq, deleted) in [(1, false), (2, true)] {
+        super::db::apply_v4_batch(
+            &state.pool,
+            "profile-alpha",
+            "epigraph-desktop",
+            vec![desktop(
+                seq,
+                "comic.category_assignment",
+                &assignment,
+                deleted,
+                json!({"workKey": work, "categoryKey": "dahora"}),
+            )],
+            true,
+        )
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE v4_comics_projection SET next_attempt_ms = 0 WHERE profile_id = 'profile-alpha'")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    super::suwayomi::drain_projection_once(&state).await.unwrap();
+
+    let (applied, target): (i64, i64) = sqlx::query_as(
+        "SELECT applied_seq, target_seq FROM v4_comics_projection WHERE profile_id = 'profile-alpha'",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        applied, target,
+        "Suwayomi already holds the desktop's own records; projecting them restored a stale snapshot"
+    );
+}
+
 /// A stand-in Suwayomi GraphQL endpoint answering the three baseline queries by operation name.
 async fn fake_suwayomi_library() -> String {
     fake_suwayomi_library_with_category("Reading").await
