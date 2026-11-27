@@ -440,10 +440,65 @@ pub fn managed_java_temp_dir_flag(data_dir: &Path) -> String {
     let temp_dir = managed_java_temp_dir(data_dir);
     let _ = std::fs::create_dir_all(&temp_dir);
     drop_java_caches_from_other_databases(data_dir, &temp_dir);
+    drop_leftovers_from_earlier_launches(&temp_dir, std::time::SystemTime::now());
+    if let Some(parent) = temp_dir.parent() {
+        drop_abandoned_profile_temp_dirs(parent, &temp_dir, std::time::SystemTime::now());
+    }
     format!("-Djava.io.tmpdir={}", temp_dir.display())
 }
 
 const CACHE_GENERATION_FILE: &str = "epigraph-cache-generation";
+
+/// Each Suwayomi start creates a fresh `tachidesk_network_cache<random>` folder and extracts
+/// a fresh `zstd-kmp<random>.tmp` library into its temp dir and never removes them, so they
+/// pile up by one per launch. Only one Suwayomi runs per data folder and this runs right
+/// before it starts, so anything older than a minute belongs to an earlier, finished launch.
+fn drop_leftovers_from_earlier_launches(temp_dir: &Path, now: std::time::SystemTime) {
+    let Ok(entries) = std::fs::read_dir(temp_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let per_launch = name.starts_with("tachidesk_network_cache")
+            || (name.starts_with("zstd-kmp") && name.ends_with(".tmp"));
+        if !per_launch || modified_within(&entry.path(), now, 60) {
+            continue;
+        }
+        let path = entry.path();
+        // A file still in use (a loaded library on Windows) fails here and is retried next start.
+        let _ = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+    }
+}
+
+/// Temp dirs of data folders that have not started Suwayomi for 30 days only hold caches
+/// (covers, pages, the leftovers above); a profile that comes back rebuilds them.
+fn drop_abandoned_profile_temp_dirs(parent: &Path, current: &Path, now: std::time::SystemTime) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == current || !path.is_dir() || modified_within(&path, now, 30 * 24 * 60 * 60) {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(&path);
+    }
+}
+
+fn modified_within(path: &Path, now: std::time::SystemTime, seconds: u64) -> bool {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map(|modified| {
+            now.duration_since(modified)
+                .map(|age| age.as_secs() < seconds)
+                .unwrap_or(true)
+        })
+        .unwrap_or(true)
+}
 
 /// Suwayomi names its cached covers and pages after manga ids, so the temp caches only fit
 /// the database that filled them. A recreated database hands the same ids to other works and
@@ -598,6 +653,48 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_start_drops_leftovers_of_earlier_launches_and_abandoned_profiles() {
+        let parent = tempfile::tempdir().unwrap();
+        let current = parent.path().join("current");
+        let thumbnails = current.join("Tachidesk").join("thumbnails");
+        std::fs::create_dir_all(&thumbnails).unwrap();
+        std::fs::write(thumbnails.join("126.webp"), b"cover").unwrap();
+        let network = current.join("tachidesk_network_cache123");
+        std::fs::create_dir_all(&network).unwrap();
+        std::fs::write(network.join("journal"), b"j").unwrap();
+        std::fs::write(current.join("zstd-kmp456.tmp"), b"dll").unwrap();
+        std::fs::write(current.join(CACHE_GENERATION_FILE), b"g").unwrap();
+        let other = parent.path().join("other");
+        std::fs::create_dir_all(other.join("Tachidesk")).unwrap();
+
+        // A minute after the files appeared they are an earlier launch's leftovers; the
+        // other profile is still in use.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(120);
+        drop_leftovers_from_earlier_launches(&current, later);
+        drop_abandoned_profile_temp_dirs(parent.path(), &current, later);
+        assert!(!network.exists());
+        assert!(!current.join("zstd-kmp456.tmp").exists());
+        assert!(thumbnails.join("126.webp").exists(), "covers are kept across launches");
+        assert!(current.join(CACHE_GENERATION_FILE).exists());
+        assert!(other.exists());
+
+        // Thirty-one days on, the other profile is abandoned; the current one is never dropped.
+        let month = std::time::SystemTime::now() + std::time::Duration::from_secs(31 * 24 * 60 * 60);
+        drop_abandoned_profile_temp_dirs(parent.path(), &current, month);
+        assert!(!other.exists());
+        assert!(current.exists());
+    }
+
+    #[test]
+    fn leftovers_of_a_launch_that_just_started_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let network = dir.path().join("tachidesk_network_cache789");
+        std::fs::create_dir_all(&network).unwrap();
+        drop_leftovers_from_earlier_launches(dir.path(), std::time::SystemTime::now());
+        assert!(network.exists());
+    }
 
     #[test]
     fn java_caches_survive_restarts_but_not_a_recreated_database() {
