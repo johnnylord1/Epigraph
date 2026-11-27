@@ -79,7 +79,8 @@ internal class BaselineRig(initialSyncCompleted: Boolean = true) {
     var fullDigestCalls = 0
     var scopedDigestCalls = 0
     private val uploadedItems = mutableListOf<JsonObject>()
-    private val pendingChanges = mutableListOf<String>()
+    /** Remote changes by seq. The feed serves only what follows the requested `sinceSeq`, like Core. */
+    private val changeLog = mutableListOf<Pair<Long, String>>()
 
     private val bridge = object : V4DomainBridge {
         override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock): List<V4OutgoingItem> {
@@ -144,14 +145,16 @@ internal class BaselineRig(initialSyncCompleted: Boolean = true) {
             "/v4/sync/bulk" -> {
                 val items = decodeBulkItems(request)
                 uploadedItems += items
+                // Each accepted item takes the next seq, so an upload's seq can be above a remote write made earlier.
+                serverSeq += items.size
                 okResponse(
                     request,
                     """{"serverSeq":$serverSeq,"serverTimeMs":2000000,"acceptedCount":${items.size},"mergedCount":0,"deduplicatedCount":0,"noopCount":0,"rejected":[]}""",
                 )
             }
             "/v4/changes" -> {
-                val changes = pendingChanges.joinToString(",")
-                pendingChanges.clear()
+                val sinceSeq = request.url.queryParameter("sinceSeq")?.toLong() ?: 0L
+                val changes = changeLog.filter { it.first > sinceSeq }.joinToString(",") { it.second }
                 okResponse(
                     request,
                     """{"profileId":"main","serverSeq":$serverSeq,"minReplayableSeq":0,"nextSeq":$serverSeq,"hasMore":false,"serverTimeMs":2000000,"changes":[$changes]}""",
@@ -198,14 +201,16 @@ internal class BaselineRig(initialSyncCompleted: Boolean = true) {
         return uploadedItems.toList()
     }
 
-    fun remoteUpsert(entityKey: String, title: String) =
+    /** Queues a remote write and returns its seq. */
+    fun remoteUpsert(entityKey: String, title: String): Long =
         queueChange(entityKey, deleted = false, payloadJson = """{"title":"$title"}""")
 
-    fun remoteDelete(entityKey: String) = queueChange(entityKey, deleted = true, payloadJson = "{}")
+    fun remoteDelete(entityKey: String): Long = queueChange(entityKey, deleted = true, payloadJson = "{}")
 
-    private fun queueChange(entityKey: String, deleted: Boolean, payloadJson: String) {
+    private fun queueChange(entityKey: String, deleted: Boolean, payloadJson: String): Long {
         serverSeq += 1
-        pendingChanges += """{"serverSeq":$serverSeq,"domain":"comics","entityType":"comic.work","entityKey":"$entityKey","deleted":$deleted,"originDeviceId":"desktop","hlc":{"tsMs":$serverSeq,"counter":0,"deviceId":"desktop"},"payload":$payloadJson}"""
+        changeLog += serverSeq to """{"serverSeq":$serverSeq,"domain":"comics","entityType":"comic.work","entityKey":"$entityKey","deleted":$deleted,"originDeviceId":"desktop","hlc":{"tsMs":$serverSeq,"counter":0,"deviceId":"desktop"},"payload":$payloadJson}"""
+        return serverSeq
     }
 }
 
@@ -348,6 +353,25 @@ class V4LocalEditBaselineTest {
         assertTrue(rig.engine.syncOnce("tok") is V4SyncRunResult.Synced)
 
         assertEquals(emptyList<String>(), keys(rig.pass()))
+    }
+
+    @Test
+    fun `remote write committed between a local-edit read and its upload is pulled`() = runTest {
+        val rig = BaselineRig()
+        rig.local["a"] = payload("A1")
+        rig.pass()
+
+        rig.local["a"] = payload("A2")
+        var remoteSeq = 0L
+        rig.afterRead = {
+            rig.afterRead = {}
+            // Another device commits "r" after this pass read its state but before its upload takes a seq.
+            remoteSeq = rig.remoteUpsert("r", "R")
+        }
+        assertEquals(listOf("a"), keys(rig.pass()))
+
+        assertEquals(payload("R"), rig.local["r"])
+        assertTrue(rig.store.loadState("srv-1", "main").serverSeq >= remoteSeq)
     }
 
     @Test

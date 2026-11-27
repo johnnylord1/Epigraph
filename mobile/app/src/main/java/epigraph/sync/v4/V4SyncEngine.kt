@@ -367,8 +367,10 @@ internal class V4SyncEngine(
             val isFinal = index == chunks.lastIndex
             when (val bulkRes = http.syncBulk(accessToken, chunk, finalBatch = isFinal)) {
                 is CoreHttpResult.Success -> {
+                    // The cursor stays at its pre-upload value. Another device can commit a record while this
+                    // pass reads or uploads, and that record's seq is below our upload's seq, so advancing
+                    // the cursor here would skip it. Our own echoes are harmless to re-apply.
                     uploadedCount += bulkRes.value.acceptedCount + bulkRes.value.mergedCount
-                    state = state.copy(serverSeq = maxOf(state.serverSeq, bulkRes.value.serverSeq))
                 }
                 is CoreHttpResult.Failure -> {
                     persistClock(state, clock)
