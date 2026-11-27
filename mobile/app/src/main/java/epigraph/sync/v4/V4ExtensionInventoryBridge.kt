@@ -42,6 +42,9 @@ internal class V4ExtensionInventoryBridge(
         return handler.await(inTransaction = true) { buildExtensionDrafts(installed).stamp(clock) }
     }
 
+    override suspend fun digestAffected(serverId: String, profileId: String, records: List<V4WireRecord>): List<V4DigestedItem> =
+        if (records.none { it.domain == DOMAIN }) emptyList() else digestSnapshot(serverId, profileId)
+
     /** Side-effect free. The installed-extension provider runs outside the transaction, as in export. */
     override suspend fun digestSnapshot(serverId: String, profileId: String): List<V4DigestedItem> {
         val installed = installedExtensionsProvider()

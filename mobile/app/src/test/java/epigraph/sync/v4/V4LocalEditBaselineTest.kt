@@ -70,6 +70,9 @@ private class BaselineRig(initialSyncCompleted: Boolean = true) {
     val local = linkedMapOf<String, JsonObject>()
     var onExport: () -> Unit = {}
     var onDigest: () -> Unit = {}
+    var onApply: () -> Unit = {}
+    var fullDigestCalls = 0
+    var scopedDigestCalls = 0
     private val uploadedItems = mutableListOf<JsonObject>()
     private val pendingChanges = mutableListOf<String>()
 
@@ -81,13 +84,29 @@ private class BaselineRig(initialSyncCompleted: Boolean = true) {
 
         override suspend fun digestSnapshot(serverId: String, profileId: String): List<V4DigestedItem> {
             onDigest()
+            fullDigestCalls++
             return local.map { (k, p) ->
                 val draft = V4ItemDraft("comics", "comic.work", k, p)
                 V4DigestedItem(draft.key, V4LocalDigest.of(draft), deleted = false)
             }
         }
 
+        /** Digests only the keys named by [records], as the comic bridge does; absent keys are tombstones. */
+        override suspend fun digestAffected(serverId: String, profileId: String, records: List<V4WireRecord>): List<V4DigestedItem> {
+            scopedDigestCalls++
+            return records.filter { it.domain == "comics" }.map { record ->
+                val payload = local[record.entityKey]
+                if (payload == null) {
+                    V4DigestedItem(V4DigestKey("comics", "comic.work", record.entityKey), digest = "", deleted = true)
+                } else {
+                    val draft = V4ItemDraft("comics", "comic.work", record.entityKey, payload)
+                    V4DigestedItem(draft.key, V4LocalDigest.of(draft), deleted = false)
+                }
+            }
+        }
+
         override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) {
+            onApply()
             for (record in records) {
                 if (record.deleted) {
                     local.remove(record.entityKey)
@@ -257,7 +276,7 @@ class V4LocalEditBaselineTest {
     }
 
     @Test
-    fun `a generation bump during the pass aborts the end-of-pass refresh so the edit is uploaded next pass`() = runTest {
+    fun `edit made during the export is uploaded once by that pass and its digest is recorded`() = runTest {
         val rig = BaselineRig()
         rig.local["a"] = payload("A1")
         rig.pass()
@@ -267,10 +286,80 @@ class V4LocalEditBaselineTest {
             rig.local["a"] = payload("A2")
             rig.generation = rig.generation + 1
         }
-        // The pass captured generation 0 before the export bumped it, so its refresh must not run
-        // and the stored digest stays at A1.
-        assertEquals(emptyList<String>(), keys(rig.pass()))
+        // The single export-and-digest build reads A2 for both the outgoing item and its digest,
+        // so the pass uploads it once and the following pass has nothing left to send.
         assertEquals(listOf("a"), keys(rig.pass()))
+        assertEquals(emptyList<String>(), keys(rig.pass()))
+    }
+
+    @Test
+    fun `realtime delta updates only the affected digest and runs no full digest`() = runTest {
+        val rig = BaselineRig()
+        rig.local["a"] = payload("A1")
+        rig.local["b"] = payload("B1")
+        rig.local["c"] = payload("C1")
+        rig.pass()
+        val before = rig.store.loadDigests("srv-1", "main")
+        rig.fullDigestCalls = 0
+        rig.scopedDigestCalls = 0
+
+        rig.remoteUpsert("b", "B2")
+        assertTrue(rig.engine.syncOnce("tok") is V4SyncRunResult.Synced)
+
+        assertEquals(0, rig.fullDigestCalls)
+        // One scoped digest before the apply and one after, both for the delta's keys only.
+        assertEquals(2, rig.scopedDigestCalls)
+        val after = rig.store.loadDigests("srv-1", "main")
+        val bKey = V4DigestKey("comics", "comic.work", "b")
+        assertEquals(V4StoredDigest(V4LocalDigest.of(V4ItemDraft("comics", "comic.work", "b", payload("B2"))), false), after[bKey])
+        assertEquals(before.filterKeys { it != bKey }, after.filterKeys { it != bKey })
+    }
+
+    @Test
+    fun `local-edit pass after a remote apply uploads nothing for that remote state`() = runTest {
+        val rig = BaselineRig()
+        rig.local["a"] = payload("A1")
+        rig.local["b"] = payload("B1")
+        rig.pass()
+
+        rig.remoteUpsert("b", "B2")
+        rig.remoteDelete("a")
+        assertTrue(rig.engine.syncOnce("tok") is V4SyncRunResult.Synced)
+
+        assertEquals(emptyList<String>(), keys(rig.pass()))
+    }
+
+    @Test
+    fun `local edit made before a delta arrives is still uploaded`() = runTest {
+        val rig = BaselineRig()
+        rig.local["a"] = payload("A1")
+        rig.local["b"] = payload("B1")
+        rig.pass()
+
+        rig.local["a"] = payload("A2")
+        rig.remoteUpsert("b", "B2")
+        assertTrue(rig.engine.syncOnce("tok") is V4SyncRunResult.Synced)
+
+        assertEquals(listOf("a"), keys(rig.pass()))
+    }
+
+    @Test
+    fun `local edit made while a delta is applied is still uploaded`() = runTest {
+        val rig = BaselineRig()
+        rig.local["a"] = payload("A1")
+        rig.local["b"] = payload("B1")
+        rig.pass()
+
+        rig.onApply = {
+            rig.onApply = {}
+            rig.local["a"] = payload("A2")
+            rig.generation = rig.generation + 1
+        }
+        rig.remoteUpsert("b", "B2")
+        assertTrue(rig.engine.syncOnce("tok") is V4SyncRunResult.Synced)
+
+        // The mid-apply generation change skips the digest write, so the edited item must be uploaded.
+        assertTrue("a" in keys(rig.pass()))
     }
 
     @Test

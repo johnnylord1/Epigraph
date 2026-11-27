@@ -26,6 +26,9 @@ internal class V4NovelDomainBridge(
     override suspend fun exportLocalSnapshot(serverId: String, profileId: String, clock: V4HlcClock): List<V4OutgoingItem> =
         handler.await(inTransaction = true) { buildNovelDrafts().stamp(clock) }
 
+    override suspend fun digestAffected(serverId: String, profileId: String, records: List<V4WireRecord>): List<V4DigestedItem> =
+        if (records.none { it.domain == DOMAIN }) emptyList() else digestSnapshot(serverId, profileId)
+
     /** Side-effect free: hashes the same drafts the export stamps. */
     override suspend fun digestSnapshot(serverId: String, profileId: String): List<V4DigestedItem> =
         handler.await(inTransaction = true) {

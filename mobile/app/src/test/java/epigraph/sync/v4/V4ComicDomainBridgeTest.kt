@@ -122,6 +122,37 @@ class V4ComicDomainBridgeTest {
     }
 
     @Test
+    fun `single-build export and digest match the separate export and digest`() = runTest {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            val db = database(driver)
+            driver.execute(null, """
+                INSERT INTO mangas (_id, source, url, title, status, favorite, initialized, viewer, hide_title, chapter_flags)
+                VALUES (42, 123, 'https://mirror-one.example/manga/a?style=list', 'Example', 1, 1, 1, 0, 0, 0),
+                       (43, 0, '/local/book', 'Local only', 1, 1, 1, 0, 0, 0)
+            """.trimIndent(), 0)
+            driver.execute(null, """
+                INSERT INTO chapters (_id, manga_id, url, name, read, bookmark, last_page_read, pages_left,
+                    chapter_number, source_order, date_fetch, date_upload)
+                VALUES (7, 42, 'https://mirror-one.example/ch/1/?style=list', 'Chapter 1', 1, 1, 8, 0, 1, 1, 20, 10)
+            """.trimIndent(), 0)
+            db.categoriesQueries.insert("Reading", 1, 0, "")
+            val category = db.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+            db.mangas_categoriesQueries.insert(42, category)
+            db.historyQueries.upsertSyncedLastRead(7, 100)
+            db.manga_syncQueries.insert(42, 1, 99, null, "Example", 1.0, 16, 1, 8.0, "", 0, 0)
+            val bridge = V4ComicDomainBridge(handler(db, driver))
+
+            val separateOutgoing = bridge.exportLocalSnapshot("core", "main", V4HlcClock("phone", wallClockMs = { 100L }))
+            val separateDigests = bridge.digestSnapshot("core", "main")
+            val pass = bridge.exportAndDigest("core", "main", V4HlcClock("phone", wallClockMs = { 100L }))
+
+            assertTrue(separateOutgoing.isNotEmpty())
+            assertEquals(separateOutgoing, pass.outgoing)
+            assertEquals(separateDigests, pass.digests)
+        }
+    }
+
+    @Test
     fun `two exports with different clocks give equal digests`() = runTest {
         JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
             val db = database(driver)

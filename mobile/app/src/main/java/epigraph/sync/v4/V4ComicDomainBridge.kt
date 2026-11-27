@@ -20,7 +20,23 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         profileId: String,
         clock: V4HlcClock,
     ): List<V4OutgoingItem> = handler.await(inTransaction = true) {
-        val build = buildComicDrafts()
+        exportAndRetract(serverId, profileId, clock, buildComicDrafts(scope = null))
+    }
+
+    /** One build feeds both the stamped export and the digests, so a pass reads the library once. */
+    override suspend fun exportAndDigest(serverId: String, profileId: String, clock: V4HlcClock): V4ExportPass =
+        handler.await(inTransaction = true) {
+            val build = buildComicDrafts(scope = null)
+            val outgoing = exportAndRetract(serverId, profileId, clock, build)
+            V4ExportPass(outgoing, build.drafts.map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) })
+        }
+
+    private fun Database.exportAndRetract(
+        serverId: String,
+        profileId: String,
+        clock: V4HlcClock,
+        build: ComicBuild,
+    ): List<V4OutgoingItem> {
         val exported = build.drafts.stamp(clock)
         retractVanishedRelations(
             store = SqlDelightV4SyncStore(this),
@@ -32,14 +48,88 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             libraryWorks = build.libraryWorks,
             exportedWorks = exported.filter { it.entityType == WORK }.associate { it.entityKey to it.hlc },
         )
-        exported
+        return exported
     }
 
     /** Side-effect free: hashes the same drafts the export stamps, without clocks or tombstones. */
     override suspend fun digestSnapshot(serverId: String, profileId: String): List<V4DigestedItem> =
         handler.await(inTransaction = true) {
-            buildComicDrafts().drafts.map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
+            buildComicDrafts(scope = null).drafts.map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
         }
+
+    /**
+     * Digests only the works and folders that [records] name. Stored digests under those works that
+     * no longer have a live row come back as tombstones, which covers cascades: a remote removal of
+     * a work also drops its chapters, folders and tracking from the library.
+     */
+    override suspend fun digestAffected(
+        serverId: String,
+        profileId: String,
+        records: List<V4WireRecord>,
+    ): List<V4DigestedItem> {
+        val comics = records.filter { it.domain == COMICS }
+        if (comics.isEmpty()) return emptyList()
+        return handler.await(inTransaction = true) {
+            val scope = affectedScope(serverId, profileId, comics)
+            val live = buildComicDrafts(scope).drafts
+                .associate { it.key to V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
+            val absent = storedLiveKeys(serverId, profileId, scope)
+                .filter { it !in live }
+                .map { V4DigestedItem(it, digest = "", deleted = true) }
+            live.values.toList() + absent
+        }
+    }
+
+    /** The works and folders a delta can change, resolved to local work ids where this device has them. */
+    private fun Database.affectedScope(serverId: String, profileId: String, records: List<V4WireRecord>): ComicScope {
+        val workKeys = mutableSetOf<String>()
+        val categoryKeys = mutableSetOf<String>()
+        for (record in records) {
+            val payload = record.payload as? JsonObject ?: JsonObject(emptyMap())
+            when (record.entityType) {
+                WORK, HISTORY -> workKeys += record.entityKey
+                CATEGORY -> categoryKeys += record.entityKey
+                CHAPTER, ASSIGNMENT, TRACKING ->
+                    workKeys += payload.text("workKey") ?: record.entityKey.substringBeforeLast('|')
+            }
+        }
+        if (categoryKeys.isNotEmpty()) {
+            // A folder's removal or rename takes its assignments with it. The stored digests still list them.
+            for (row in v4_syncQueries.selectV4LocalDigestsByType(serverId, profileId, COMICS, ASSIGNMENT).executeAsList()) {
+                if (row.entity_key.substringAfterLast('|') in categoryKeys) {
+                    workKeys += row.entity_key.substringBeforeLast('|')
+                }
+            }
+        }
+        val workIds = workKeys.mapNotNull { key ->
+            v4_syncQueries.selectV4EntityMapByKey(serverId, profileId, WORK, key).executeAsOneOrNull()
+                ?.local_id?.toLongOrNull()?.let { key to it }
+        }.toMap()
+        return ComicScope(workKeys = workKeys, workIds = workIds, categoryKeys = categoryKeys)
+    }
+
+    /** Live stored digest keys inside [scope], so the caller can tombstone the ones that no longer build. */
+    private fun Database.storedLiveKeys(serverId: String, profileId: String, scope: ComicScope): Set<V4DigestKey> {
+        val keys = HashSet<V4DigestKey>()
+        for (workKey in scope.workKeys) {
+            val prefix = "$workKey|"
+            for (row in v4_syncQueries.selectV4LocalDigestsForWork(
+                serverId = serverId,
+                profileId = profileId,
+                domain = COMICS,
+                workKey = workKey,
+                prefix = prefix,
+            ).executeAsList()) {
+                keys += V4DigestKey(COMICS, row.entity_type, row.entity_key)
+            }
+        }
+        if (scope.categoryKeys.isNotEmpty()) {
+            for (row in v4_syncQueries.selectV4LocalDigestsByType(serverId, profileId, COMICS, CATEGORY).executeAsList()) {
+                if (row.entity_key in scope.categoryKeys) keys += V4DigestKey(COMICS, CATEGORY, row.entity_key)
+            }
+        }
+        return keys
+    }
 
     private class ComicBuild(
         val drafts: List<V4ItemDraft>,
@@ -48,9 +138,47 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         val libraryWorks: Map<String, Long>,
     )
 
-    /** Pure read of the local comics library. Stamps no clocks and enqueues nothing. */
-    private fun Database.buildComicDrafts(): ComicBuild {
-        val works = v4_syncQueries.selectV4ComicWorks(favoritesOnly = 1).executeAsList()
+    /**
+     * The part of the library a delta names. [workIds] holds only the works this device has locally;
+     * [workKeys] also covers works it does not, so their stored digests can still be tombstoned.
+     */
+    private class ComicScope(
+        val workKeys: Set<String>,
+        val workIds: Map<String, Long>,
+        val categoryKeys: Set<String>,
+    )
+
+    /**
+     * Pure read of the local comics library, or of the part [scope] names (null = whole library).
+     * Stamps no clocks and enqueues nothing.
+     */
+    private fun Database.buildComicDrafts(scope: ComicScope?): ComicBuild {
+        val workIds = scope?.workIds?.values?.toList()
+        val works = if (workIds == null) {
+            v4_syncQueries.selectV4ComicWorks(favoritesOnly = 1).executeAsList()
+        } else {
+            workIds.mapNotNull { v4_syncQueries.selectV4ComicWorkById(it).executeAsOneOrNull() }
+        }
+        val chapterRows = if (workIds == null) {
+            v4_syncQueries.selectV4FavoriteChapters().executeAsList()
+        } else {
+            workIds.flatMap { v4_syncQueries.selectV4FavoriteChaptersForManga(it).executeAsList() }
+        }
+        val assignmentRows = if (workIds == null) {
+            v4_syncQueries.selectV4FavoriteCategoryAssignments().executeAsList()
+        } else {
+            workIds.flatMap { v4_syncQueries.selectV4FavoriteCategoryAssignmentsForManga(it).executeAsList() }
+        }
+        val historyRows = if (workIds == null) {
+            v4_syncQueries.selectV4FavoriteHistory().executeAsList()
+        } else {
+            workIds.flatMap { v4_syncQueries.selectV4FavoriteHistoryForManga(it).executeAsList() }
+        }
+        val trackRows = if (workIds == null) {
+            manga_syncQueries.getAll().executeAsList()
+        } else {
+            workIds.flatMap { manga_syncQueries.getAllByMangaId(it).executeAsList() }
+        }
         // Default and Completed are each app's own folders, so neither side exports them.
         val categories = categoriesQueries.findAllComics().executeAsList()
             .filterNot { it._id == 0L || isReservedCategory(it.name) }
@@ -84,7 +212,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
                     put("viewerFlags", work.viewer)
                 })
             }
-            for (category in categories) {
+            for (category in categories.filter { scope == null || categoryKey(it.name) in scope.categoryKeys }) {
                 emit(CATEGORY, categoryKeys.getValue(category._id), buildJsonObject {
                     put("name", category.name)
                     put("order", category.sort)
@@ -92,7 +220,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
                 })
             }
             val portableChapters = linkedMapOf<String, Chapters>()
-            for (chapter in v4_syncQueries.selectV4FavoriteChapters().executeAsList()) {
+            for (chapter in chapterRows) {
                 val workKey = workKeys[chapter.manga_id] ?: continue
                 val key = V4PortableUrl.canonicalChapterKey(workKey, chapter.url)
                 chapterKeys[chapter._id] = key
@@ -123,7 +251,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
                     put("dateUpload", chapter.date_upload)
                 })
             }
-            for (assignment in v4_syncQueries.selectV4FavoriteCategoryAssignments().executeAsList()) {
+            for (assignment in assignmentRows) {
                 val workKey = workKeys[assignment.manga_id] ?: continue
                 val categoryKey = categoryKeys[assignment.category_id] ?: continue
                 assignmentWorks["$workKey|$categoryKey"] = assignment.manga_id
@@ -132,7 +260,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
                     put("categoryKey", categoryKey)
                 })
             }
-            val latestByWork = v4_syncQueries.selectV4FavoriteHistory().executeAsList()
+            val latestByWork = historyRows
                 .filter { it.history_chapter_id in chaptersToWorks }
                 .sortedWith(compareByDescending<tachiyomi.data.History> { it.history_last_read }.thenByDescending { it.history_id })
                 .distinctBy { chaptersToWorks[it.history_chapter_id] }
@@ -144,7 +272,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
                     put("lastReadAtMs", history.history_last_read)
                 })
             }
-            for (track in manga_syncQueries.getAll().executeAsList()) {
+            for (track in trackRows) {
                 val workKey = workKeys[track.manga_id] ?: continue
                 emit(TRACKING, "$workKey|${track.sync_id}", buildJsonObject {
                     put("workKey", workKey)

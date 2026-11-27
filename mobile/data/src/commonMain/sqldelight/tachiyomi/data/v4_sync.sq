@@ -192,6 +192,34 @@ JOIN chapters AS c ON c._id = h.history_chapter_id
 JOIN mangas AS m ON m._id = c.manga_id
 WHERE m.favorite = 1 AND m.source != 0 AND h.history_last_read > 0;
 
+-- One favorite work by local id, with the same exclusions as selectV4ComicWorks.
+selectV4ComicWorkById:
+SELECT m.* FROM mangas AS m
+WHERE m._id = :mangaId AND m.favorite = 1 AND m.source != 0
+  AND NOT EXISTS (
+    SELECT 1 FROM aethon_content_identity AS i
+    WHERE i.content_type = 'NOVEL' AND i.local_reference = CAST(m._id AS TEXT)
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM aethon_portable_work_binding AS b
+    WHERE b.ecosystem = 'LNREADER' AND b.local_reference = CAST(m._id AS TEXT)
+  );
+
+-- Per-work variants of the favorite queries above, so a remote apply digests only the works it touched.
+selectV4FavoriteChaptersForManga:
+SELECT c.* FROM chapters AS c JOIN mangas AS m ON m._id = c.manga_id
+WHERE m.favorite = 1 AND m.source != 0 AND c.manga_id = :mangaId;
+
+selectV4FavoriteCategoryAssignmentsForManga:
+SELECT a.* FROM mangas_categories AS a JOIN mangas AS m ON m._id = a.manga_id
+WHERE m.favorite = 1 AND m.source != 0 AND a.manga_id = :mangaId;
+
+selectV4FavoriteHistoryForManga:
+SELECT h.* FROM history AS h
+JOIN chapters AS c ON c._id = h.history_chapter_id
+JOIN mangas AS m ON m._id = c.manga_id
+WHERE m.favorite = 1 AND m.source != 0 AND h.history_last_read > 0 AND c.manga_id = :mangaId;
+
 clearV4HistoryTimestamp:
 UPDATE history SET history_last_read = 0 WHERE history_chapter_id = :chapterId;
 
@@ -327,6 +355,19 @@ WHERE kind < :scopePrefix OR kind >= :scopeLimit;
 selectV4LocalDigests:
 SELECT * FROM v4_local_digest
 WHERE server_id = :serverId AND profile_id = :profileId;
+
+countV4LocalDigests:
+SELECT COUNT(*) FROM v4_local_digest WHERE server_id = :serverId AND profile_id = :profileId;
+
+-- Live digests of one work: the work row itself plus every key under "workKey|" (chapters, folders, tracks).
+selectV4LocalDigestsForWork:
+SELECT * FROM v4_local_digest
+WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain AND deleted = 0
+  AND (entity_key = :workKey OR instr(entity_key, :prefix) = 1);
+
+selectV4LocalDigestsByType:
+SELECT * FROM v4_local_digest
+WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain AND entity_type = :entityType AND deleted = 0;
 
 upsertV4LocalDigest:
 INSERT INTO v4_local_digest(

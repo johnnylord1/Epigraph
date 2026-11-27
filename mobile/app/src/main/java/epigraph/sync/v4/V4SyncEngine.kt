@@ -1,5 +1,6 @@
 package epigraph.sync.v4
 
+import co.touchlab.kermit.Logger
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.protocol.CoreErrorEnvelope
 import kotlinx.coroutines.sync.Mutex
@@ -58,12 +59,13 @@ internal class V4SyncEngine(
     private val bridge: V4DomainBridge,
     private val json: Json = V4CoreHttpClient.DEFAULT_JSON,
     private val domainProgress: V4SyncDomainProgress = MemoryV4SyncDomainProgress(),
-    /** Monotonic counter bumped by each local edit; digest baselines refresh only while it is unchanged. */
+    /** Monotonic counter bumped by each local edit; a baseline update skips its write if this changes mid-apply. */
     private val localEditGeneration: () -> Long = { 0L },
-    /** Invoked after a realtime delta is applied; the owner decides when to refresh the digest baseline. */
-    private val onRealtimeDelta: () -> Unit = {},
 ) {
+    private val logger = Logger.withTag("EpigraphSyncV4")
     private val syncMutex = Mutex()
+
+    private fun msSince(startNs: Long): Long = (System.nanoTime() - startNs) / 1_000_000L
     @Volatile private var domainPolicy = V4SyncDomainPolicy()
 
     fun useDomainPolicy(policy: V4SyncDomainPolicy) {
@@ -203,7 +205,8 @@ internal class V4SyncEngine(
         if (state.serverSeq > previousSeq) {
             pruneDisabledDomains()
         }
-        refreshBaselineLocked(0L)
+        // A full baseline scan is only needed when none exists yet. Applies keep it current after that.
+        if (!store.hasDigests(serverId, profileId)) refreshBaselineLocked(0L)
         val pending = store.countPendingOutbox(serverId, profileId, domainPolicy)
         V4SyncRunResult.Synced(
             serverSeq = state.serverSeq,
@@ -234,12 +237,17 @@ internal class V4SyncEngine(
 
         // Upload only items whose digest differs from the recorded baseline, so offline progress
         // across all domains converges without re-sending unchanged state with fresh clocks.
-        val passGeneration = localEditGeneration()
+        var mark = System.nanoTime()
         val stored = store.loadDigests(serverId, profileId)
-        val current = bridge.digestSnapshot(serverId, profileId)
+        val loadMs = msSince(mark)
+        mark = System.nanoTime()
+        // One library build yields both the digests and the stamped export.
+        val pass = bridge.exportAndDigest(serverId, profileId, clock)
+        val current = pass.digests
             .filter { domainPolicy.allows(it.key.domain, it.key.entityType, it.key.entityKey, null) }
-        val exported = enabled(bridge.exportLocalSnapshot(serverId, profileId, clock))
+        val exported = enabled(pass.outgoing)
             .associateBy { V4DigestKey(it.domain, it.entityType, it.entityKey) }
+        val exportMs = msSince(mark)
         val vanished = vanishedKeys(stored, current)
         // Comic relation retractions already enqueue and mark their tombstones during export.
         val tombstones = vanished.filter { !store.isEntityMapTombstoned(serverId, profileId, it) }
@@ -263,6 +271,7 @@ internal class V4SyncEngine(
                 )
             }
         }
+        mark = System.nanoTime()
         var uploadedCount = 0
         val chunks = outgoing.chunked(BULK_CHUNK_SIZE)
         for ((index, chunk) in chunks.withIndex()) {
@@ -282,8 +291,12 @@ internal class V4SyncEngine(
                 }
             }
         }
+        val uploadMs = msSince(mark)
+        mark = System.nanoTime()
         // Digests advance only after every chunk is accepted; a failed pass re-uploads its changes.
         store.saveDigests(serverId, profileId, nextDigestRows(stored, current, vanished))
+        val saveMs = msSince(mark)
+        mark = System.nanoTime()
 
         val outboxRes = drainOutboxLocked(accessToken, state)
         if (outboxRes is V4SyncRunResult.Failed) {
@@ -291,6 +304,8 @@ internal class V4SyncEngine(
             return@withLock outboxRes
         }
         uploadedCount += (outboxRes as V4SyncRunResult.Synced).uploadedCount
+        val drainMs = msSince(mark)
+        mark = System.nanoTime()
 
         var appliedCount = 0
         var cursor = state.serverSeq
@@ -336,7 +351,13 @@ internal class V4SyncEngine(
         if (state.serverSeq > previousSeq) {
             pruneDisabledDomains()
         }
-        refreshBaselineLocked(passGeneration)
+        // No full baseline scan here: the digests above plus the per-apply updates already cover this pass.
+        val pullMs = msSince(mark)
+        logger.i {
+            "local-edit pass: load ${loadMs} ms, digest+export ${exportMs} ms, upload ${uploadMs} ms, " +
+                "saveDigests ${saveMs} ms, drain ${drainMs} ms, changes pull ${pullMs} ms; " +
+                "uploaded $uploadedCount, outgoing ${outgoing.size}, applied $appliedCount"
+        }
         V4SyncRunResult.Synced(
             serverSeq = state.serverSeq,
             uploadedCount = uploadedCount,
@@ -364,36 +385,46 @@ internal class V4SyncEngine(
     }
 
     /**
-     * Applies remote records. While a local edit is pending the baseline is not refreshed, so the
-     * digests of keys this apply changed are recorded here. Otherwise a later pass would re-upload
-     * that remote state with a fresh clock and override newer edits made on other devices.
+     * Applies remote records and keeps the digest baseline current for the entities they touch.
+     * Their digests are read before and after the apply, and only the entries the apply changed are
+     * written. An entity with an unpushed local edit keeps its older digest, so the next pass still
+     * uploads it, and remote state is never sent back with a fresh clock. A local edit that starts
+     * during the apply skips the write, which leaves those keys stale until the next pass.
      */
     private suspend fun applyRemoteRecordsWithBaseline(records: List<V4WireRecord>) {
         val generation = localEditGeneration()
-        if (generation == 0L) {
-            bridge.applyRemoteRecords(serverId, profileId, records)
-            return
-        }
-        val before = currentDigests()
+        val beforeStart = System.nanoTime()
+        val before = affectedDigests(records)
+        val applyStart = System.nanoTime()
         bridge.applyRemoteRecords(serverId, profileId, records)
-        val after = currentDigests()
-        if (invalidated.get() || localEditGeneration() != generation) return
-        val rows = HashMap<V4DigestKey, V4StoredDigest>()
-        for ((key, item) in after) {
-            val prior = before[key]
-            if (prior == null || prior.digest != item.digest || prior.deleted != item.deleted) {
-                rows[key] = V4StoredDigest(item.digest, item.deleted)
+        val afterStart = System.nanoTime()
+        val after = affectedDigests(records)
+        var rowCount = 0
+        if (!invalidated.get() && localEditGeneration() == generation) {
+            val rows = HashMap<V4DigestKey, V4StoredDigest>()
+            for ((key, item) in after) {
+                val prior = before[key]
+                if (prior == null || prior.digest != item.digest || prior.deleted != item.deleted) {
+                    rows[key] = V4StoredDigest(item.digest, item.deleted)
+                }
             }
+            for (key in before.keys) {
+                if (key !in after) rows[key] = V4StoredDigest(digest = "", deleted = true)
+            }
+            if (rows.isNotEmpty()) store.saveDigests(serverId, profileId, rows)
+            rowCount = rows.size
         }
-        for (key in before.keys) {
-            if (key !in after) rows[key] = V4StoredDigest(digest = "", deleted = true)
+        val applyMs = (afterStart - applyStart) / 1_000_000L
+        val baselineMs = msSince(beforeStart) - applyMs
+        logger.i {
+            "realtime apply: ${records.size} records, apply ${applyMs} ms, " +
+                "baseline-update ${baselineMs} ms, $rowCount digest rows"
         }
-        if (rows.isEmpty()) return
-        store.saveDigests(serverId, profileId, rows)
     }
 
-    private suspend fun currentDigests(): Map<V4DigestKey, V4DigestedItem> =
-        bridge.digestSnapshot(serverId, profileId)
+    /** Digests of the entities [records] can touch, limited to enabled domains. */
+    private suspend fun affectedDigests(records: List<V4WireRecord>): Map<V4DigestKey, V4DigestedItem> =
+        bridge.digestAffected(serverId, profileId, records)
             .filter { domainPolicy.allows(it.key.domain, it.key.entityType, it.key.entityKey, null) }
             .associateBy { it.key }
 
@@ -454,7 +485,6 @@ internal class V4SyncEngine(
                             clock,
                         )
                         pruneDisabledDomains()
-                        onRealtimeDelta()
                     }
                 }
                 is V4SseMessage.BulkCommitted,

@@ -259,6 +259,10 @@ class SqlDelightV4SyncStore(
             V4DigestKey(row.domain, row.entity_type, row.entity_key) to V4StoredDigest(row.digest, row.deleted != 0L)
         }
 
+    /** True when any baseline digest exists. Counts rows instead of reading them all. */
+    internal fun hasDigests(serverId: String, profileId: String): Boolean =
+        queries.countV4LocalDigests(serverId, profileId).executeAsOne() > 0L
+
     /** Writes baseline digests in one transaction. Callers pass only keys the Core has acknowledged. */
     internal fun saveDigests(serverId: String, profileId: String, rows: Map<V4DigestKey, V4StoredDigest>) {
         if (rows.isEmpty()) return

@@ -19,12 +19,6 @@ import epigraph.sync.core.work.CoreSyncReleaseLog
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonNull
@@ -53,10 +47,7 @@ class V4ProductionSyncCoordinator(
     private val novelPreferenceStore: AndroidNovelPluginSettingStore,
     private val clientVersion: String = BuildConfig.VERSION_NAME,
     private val localEditPendingStore: V4LocalEditPendingStore = SharedPreferencesV4LocalEditPendingStore(context.applicationContext),
-    private val realtimeRefreshScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
-    private val realtimeRefreshLock = Any()
-    private var realtimeRefreshJob: Job? = null
     private val appContext = context.applicationContext
     private val logger = Logger.withTag("EpigraphSyncV4")
     private val engines = ConcurrentHashMap<EngineKey, V4SyncEngine>()
@@ -66,24 +57,6 @@ class V4ProductionSyncCoordinator(
     /** Signals that a local edit occurred (online or offline) and must be merged on next V4 pass. */
     fun markLocalEditPending() {
         localEditPendingStore.markPending()
-    }
-
-    /**
-     * Debounces a digest-baseline refresh after realtime deltas: each delta restarts the 2 s timer,
-     * and the refresh runs under the engine's lock with generation 0 (refresh only while no local edit).
-     */
-    private fun scheduleRealtimeBaselineRefresh(key: EngineKey) {
-        synchronized(realtimeRefreshLock) {
-            realtimeRefreshJob?.cancel()
-            realtimeRefreshJob = realtimeRefreshScope.launch {
-                delay(REALTIME_REFRESH_DEBOUNCE_MS)
-                val engine = engines[key] ?: return@launch
-                runCatching { engine.refreshBaseline(0L) }.onFailure { err ->
-                    if (err is CancellationException) throw err
-                    logger.w { "V4 realtime baseline refresh skipped: ${err.javaClass.simpleName}" }
-                }
-            }
-        }
     }
 
     /** Clears persisted V4 sync state and domain progress when unpairing a server. */
@@ -219,7 +192,6 @@ class V4ProductionSyncCoordinator(
                 bridge = compositeBridge,
                 domainProgress = SharedPreferencesV4SyncDomainProgress(appContext),
                 localEditGeneration = localEditPendingStore::snapshotGeneration,
-                onRealtimeDelta = { scheduleRealtimeBaselineRefresh(key) },
             )
             engines[key] = engine
             engine
@@ -369,7 +341,6 @@ class V4ProductionSyncCoordinator(
     companion object {
         private const val QUEUE_OWNER_SERVER_KEY = "server_id"
         private const val QUEUE_OWNER_PROFILE_KEY = "profile_id"
-        private const val REALTIME_REFRESH_DEBOUNCE_MS = 2_000L
 
         /**
          * Enqueues a durable `book.work` tombstone into `v4_outbox` inside the caller's active
