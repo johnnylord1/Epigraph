@@ -283,7 +283,11 @@ class LibraryPresenter(
                 // Initial setup is deferred until the Library surface is actually visible.
                 if (categories.isEmpty()) {
                     val dbCategories = getCategories.await(CategoryLibrary.COMICS)
-                    if ((dbCategories + Category.createDefault(context)).distinctBy { it.order }.size != dbCategories.size + 1) {
+                    // The default category is shown at order -1 (see createDefaultCategory). Checking it at
+                    // the model default of 0 collided with the first real folder on every launch, which
+                    // reordered and woke a full sync each time the library opened.
+                    val default = Category.createDefault(context).apply { order = -1 }
+                    if ((dbCategories + default).distinctBy { it.order }.size != dbCategories.size + 1) {
                         reorderCategories(dbCategories)
                     }
                     categories = lastCategories ?: getCategories.await(CategoryLibrary.COMICS).toMutableList()

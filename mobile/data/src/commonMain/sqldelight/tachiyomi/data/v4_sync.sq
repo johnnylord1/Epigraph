@@ -356,8 +356,9 @@ selectV4LocalDigests:
 SELECT * FROM v4_local_digest
 WHERE server_id = :serverId AND profile_id = :profileId;
 
-countV4LocalDigests:
-SELECT COUNT(*) FROM v4_local_digest WHERE server_id = :serverId AND profile_id = :profileId;
+-- Stops at the first matching row. COUNT(*) walked every digest of the profile on each open.
+hasV4LocalDigests:
+SELECT EXISTS(SELECT 1 FROM v4_local_digest WHERE server_id = :serverId AND profile_id = :profileId);
 
 -- Live digests of one work: the work row itself plus every key under "workKey|" (chapters, folders, tracks).
 selectV4LocalDigestsForWork:

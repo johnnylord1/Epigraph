@@ -225,6 +225,14 @@ class V4ProductionSyncCoordinator(
         engine.useDomainPolicy(V4SyncDomainPolicy.from(policy))
         val hasLegacyPending = hasPendingLegacyOutbox(session.profileId, policy)
         val hadLocalEdits = localEditPendingStore.snapshot().hasPending(nowEpochMillis) || hasLegacyPending
+        run {
+            val snap = localEditPendingStore.snapshot()
+            logger.i {
+                "v4 plan: localEdits=$hadLocalEdits legacy=$hasLegacyPending gen=${snap.generation} " +
+                    "fullPass=${snap.fullPass} workKeys=${snap.workKeys.size} dueAt=${snap.fullPassDueAt} " +
+                    "prepMs=${(System.nanoTime() - startedNs) / 1_000_000}"
+            }
+        }
         var planned: PlannedLocalPass? = null
         val result = session.withAccessTokenString { token ->
             if (hadLocalEdits) {

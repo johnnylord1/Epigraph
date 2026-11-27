@@ -647,6 +647,7 @@ class CoreOutboxSyncRunner(
             if (capabilities.supportsSyncV4 && v4Coordinator != null) {
                 lastRunUsedSyncV4 = true
                 val stageTime = clock?.invoke()?.coerceAtLeast(nowEpochMillis) ?: nowEpochMillis
+                val v4StartNs = System.nanoTime()
                 val outcome = v4Coordinator.syncOnce(
                     session = session,
                     openedOrigin = connection.openedOrigin,
@@ -654,6 +655,7 @@ class CoreOutboxSyncRunner(
                     nowEpochMillis = stageTime,
                     drainBookAssets = connection::drainBookAssets,
                 )
+                Log.i("EpigraphSyncV4", "exchange: v4 syncOnce ${(System.nanoTime() - v4StartNs) / 1_000_000} ms")
                 if (
                     outcome is CoreOutboxSyncOutcome.OutboxDrained ||
                     outcome is CoreOutboxSyncOutcome.OutboxDeferred

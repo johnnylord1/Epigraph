@@ -261,7 +261,7 @@ class SqlDelightV4SyncStore(
 
     /** True when any baseline digest exists. Counts rows instead of reading them all. */
     internal fun hasDigests(serverId: String, profileId: String): Boolean =
-        queries.countV4LocalDigests(serverId, profileId).executeAsOne() > 0L
+        queries.hasV4LocalDigests(serverId, profileId).executeAsOne()
 
     /** Writes baseline digests in one transaction. Callers pass only keys the Core has acknowledged. */
     internal fun saveDigests(serverId: String, profileId: String, rows: Map<V4DigestKey, V4StoredDigest>) {

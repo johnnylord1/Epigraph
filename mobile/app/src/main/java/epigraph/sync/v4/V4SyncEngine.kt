@@ -168,18 +168,23 @@ internal class V4SyncEngine(
         if (!state.initialSyncCompleted) {
             return@locked runFullMergeLocked(accessToken, state, clock)
         }
+        val phaseStartNs = System.nanoTime()
         val catchup = bootstrapReenabledDomainsLocked(accessToken, state, clock)
         if (catchup is V4SyncRunResult.Failed) return@locked catchup
+        val bootstrapMs = (System.nanoTime() - phaseStartNs) / 1_000_000
 
         // 2. Drain pending local outbox deltas.
+        val drainStartNs = System.nanoTime()
         val uploadResult = drainOutboxLocked(accessToken, state)
         if (uploadResult is V4SyncRunResult.Failed) {
             persistClock(state, clock)
             return@locked uploadResult
         }
         val uploadedCount = (uploadResult as V4SyncRunResult.Synced).uploadedCount
+        val drainMs = (System.nanoTime() - drainStartNs) / 1_000_000
 
         // 3. Pull paginated remote changes since our cursor.
+        val changesStartNs = System.nanoTime()
         var appliedCount = 0
         var cursor = state.serverSeq
         var minReplayable = state.minReplayableSeq
@@ -217,9 +222,11 @@ internal class V4SyncEngine(
             }
         }
 
+        val changesMs = (System.nanoTime() - changesStartNs) / 1_000_000
         if (invalidated.get()) {
             return@locked V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
         }
+        val tailStartNs = System.nanoTime()
         state = persistClock(
             state.copy(serverSeq = cursor, minReplayableSeq = minReplayable),
             clock,
@@ -227,9 +234,22 @@ internal class V4SyncEngine(
         if (state.serverSeq > previousSeq) {
             pruneDisabledDomains()
         }
+        val tailMs = (System.nanoTime() - tailStartNs) / 1_000_000
         // A full baseline scan is only needed when none exists yet. Applies keep it current after that.
-        if (!store.hasDigests(serverId, profileId)) refreshBaselineLocked(0L)
+        val baselineStartNs = System.nanoTime()
+        val hasDigests = store.hasDigests(serverId, profileId)
+        if (!hasDigests) refreshBaselineLocked(0L)
+        logger.i {
+            "v4 syncOnce tail: persist+prune ${tailMs} ms, hasDigests=$hasDigests " +
+                "baseline ${(System.nanoTime() - baselineStartNs) / 1_000_000} ms"
+        }
+        val pendingStartNs = System.nanoTime()
         val pending = store.countPendingOutbox(serverId, profileId, domainPolicy)
+        logger.i {
+            "v4 syncOnce phases: bootstrap ${bootstrapMs} ms, drain ${drainMs} ms, " +
+                "changes ${changesMs} ms, pendingCount ${(System.nanoTime() - pendingStartNs) / 1_000_000} ms, " +
+                "uploaded=$uploadedCount applied=$appliedCount"
+        }
         V4SyncRunResult.Synced(
             serverSeq = state.serverSeq,
             uploadedCount = uploadedCount,
