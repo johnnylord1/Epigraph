@@ -16,6 +16,7 @@ import epigraph.contract.PortableResolutionState
 import epigraph.contract.PortableWorkRef
 import epigraph.sync.portable.SqlDelightPortableBindingStore
 import epigraph.sync.portable.PortableWorkBindingRecord
+import epigraph.sync.v4.V4PortableUrl
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -132,9 +133,18 @@ class EpigraphLibraryMutationRouter(
                 envelopes = changes.flatMap { it.envelopes },
                 suwayomiMutations = changes.flatMap { it.suwayomiMutations },
                 wakesSync = changes.any { it.wakesSync },
+                // A change that publishes but names no work keeps the batch on the full pass.
+                localWorkKeys = if (changes.any { it.publishes() && it.localWorkKeys.isEmpty() }) {
+                    emptySet()
+                } else {
+                    changes.flatMapTo(mutableSetOf()) { it.localWorkKeys }
+                },
             )
         }
     }
+
+    private fun LocalMutationResult<*>.publishes(): Boolean =
+        envelopes.isNotEmpty() || suwayomiMutations.isNotEmpty() || wakesSync
 
     private suspend fun yokai.data.Database.membershipChange(
         mutation: LibraryMembershipMutation,
@@ -507,6 +517,14 @@ class EpigraphLibraryMutationRouter(
             // envelopes, so any local change starts one instead of waiting for the next scheduled run.
             wakesSync = !isNovel && mutation.origin.emitsOutbox &&
                 (membershipChanged || addedCategoryIds.isNotEmpty() || removedCategoryIds.isNotEmpty()),
+            // The comic export keys a work by source and URL, and a membership or category assignment
+            // only changes that work's own entries, so one work is enough. A novel or LNReader work
+            // (source 0) takes the full pass.
+            localWorkKeys = if (isNovel || manga.source == 0L) {
+                emptySet()
+            } else {
+                setOf(V4PortableUrl.canonicalWorkKey(manga.source.toString(), manga.url))
+            },
         )
     }
 

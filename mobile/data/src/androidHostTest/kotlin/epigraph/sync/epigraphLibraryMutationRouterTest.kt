@@ -669,6 +669,88 @@ class EpigraphLibraryMutationRouterTest {
     }
 
     @Test
+    fun `a comic library toggle hints only its own work`() = runTest {
+        val mangaId = insertManga(favorite = true)
+        bindMangaIdentity(mangaId)
+        val hints = mutableListOf<Set<String>>()
+        val router = hintingLibraryRouter(hints)
+
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = false,
+                categoryIds = emptySet(),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        assertEquals(listOf(setOf(epigraph.sync.v4.V4PortableUrl.canonicalWorkKey("1", "/comic/1"))), hints)
+    }
+
+    @Test
+    fun `a novel library toggle keeps the full pass`() = runTest {
+        val mangaId = insertManga(favorite = true)
+        bindNovelIdentity(mangaId)
+        val hints = mutableListOf<Set<String>>()
+        val router = hintingLibraryRouter(hints)
+
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = false,
+                categoryIds = emptySet(),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        assertEquals(listOf(emptySet<String>()), hints)
+    }
+
+    @Test
+    fun `a batch of comic library toggles hints each of its works once`() = runTest {
+        val first = insertManga(favorite = true, url = "/comic/1")
+        bindMangaIdentity(first)
+        val second = insertManga(favorite = true, url = "/comic/2")
+        bindMangaIdentity(second, "suwayomi:profile:main:manga:8")
+        val hints = mutableListOf<Set<String>>()
+        val router = hintingLibraryRouter(hints)
+
+        router.setMemberships(
+            listOf(first, second).map {
+                LibraryMembershipMutation(
+                    localMangaId = it,
+                    inLibrary = false,
+                    categoryIds = emptySet(),
+                    origin = EpigraphMutationOrigin.LOCAL_USER,
+                )
+            },
+            createdAtEpochMillis = 100,
+        )
+
+        assertEquals(
+            listOf(
+                setOf(
+                    epigraph.sync.v4.V4PortableUrl.canonicalWorkKey("1", "/comic/1"),
+                    epigraph.sync.v4.V4PortableUrl.canonicalWorkKey("1", "/comic/2"),
+                ),
+            ),
+            hints,
+        )
+    }
+
+    private fun hintingLibraryRouter(hints: MutableList<Set<String>>) = EpigraphLibraryMutationRouter(
+        coordinator = EpigraphMutationCoordinator(
+            AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            onLocalMutationEnqueued = { hints += it },
+        ),
+        deviceId = DeviceId("phone-a"),
+        scopeId = SyncScopeId("comics:profile:main"),
+        mutationIds = sequentialMutationIds(),
+    )
+
+    @Test
     fun `non-suwayomi legacy comic emits no Core envelope`() = runTest {
         val mangaId = insertManga(favorite = false)
         bindMangaIdentity(mangaId)

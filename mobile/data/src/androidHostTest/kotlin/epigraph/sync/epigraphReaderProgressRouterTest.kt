@@ -579,6 +579,74 @@ class EpigraphReaderProgressRouterTest {
     }
 
     @Test
+    fun `a paired chapter read hints the one comic work it belongs to`() = runTest {
+        val hints = mutableListOf<Set<String>>()
+        val manga = insertManga()
+        bindComicWork(manga, "/comic/1")
+        val chapter = insertChapter(manga)
+
+        hintingRouter(hints).setChapterStates(listOf(ChapterStateChange(chapter, read = true)))
+
+        assertEquals(listOf(setOf(epigraph.sync.v4.V4PortableUrl.canonicalWorkKey("1", "/comic/1"))), hints)
+    }
+
+    @Test
+    fun `a paired batch of chapter states hints every comic work it touches once`() = runTest {
+        val hints = mutableListOf<Set<String>>()
+        val first = insertManga(url = "/comic/1")
+        bindComicWork(first, "/comic/1")
+        val firstChapter = insertChapter(first)
+        val second = insertManga(url = "/comic/2")
+        bindComicWork(second, "/comic/2")
+        val secondChapter = insertChapter(second)
+
+        hintingRouter(hints).setChapterStates(
+            listOf(
+                ChapterStateChange(firstChapter, read = true),
+                ChapterStateChange(secondChapter, bookmarked = true),
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                setOf(
+                    epigraph.sync.v4.V4PortableUrl.canonicalWorkKey("1", "/comic/1"),
+                    epigraph.sync.v4.V4PortableUrl.canonicalWorkKey("1", "/comic/2"),
+                ),
+            ),
+            hints,
+        )
+    }
+
+    @Test
+    fun `an unbound chapter still wakes sync but keeps the full pass`() = runTest {
+        val hints = mutableListOf<Set<String>>()
+        val chapter = insertChapter(insertManga())
+
+        hintingRouter(hints).setChapterStates(listOf(ChapterStateChange(chapter, read = true)))
+
+        assertEquals(listOf(emptySet<String>()), hints)
+    }
+
+    @Test
+    fun `a chapter of unknown kind in a batch keeps the whole batch on the full pass`() = runTest {
+        val hints = mutableListOf<Set<String>>()
+        val bound = insertManga(url = "/comic/1")
+        bindComicWork(bound, "/comic/1")
+        val boundChapter = insertChapter(bound)
+        val unknown = insertChapter(insertManga(url = "/comic/unknown"))
+
+        hintingRouter(hints).setChapterStates(
+            listOf(
+                ChapterStateChange(boundChapter, read = true),
+                ChapterStateChange(unknown, read = true),
+            ),
+        )
+
+        assertEquals(listOf(emptySet<String>()), hints)
+    }
+
+    @Test
     fun `a paired unread mark queues a Sync V4 chapter reset on the Core clock`() = runTest {
         val chapter = insertChapter(insertManga())
         database.v4_syncQueries.upsertV4SyncState(
@@ -747,6 +815,35 @@ class EpigraphReaderProgressRouterTest {
 
         assertEquals(1, router.backfillComicProgress())
         assertEquals(1, queuedMutations().count { it.entity_type == "comic.chapter_state" })
+    }
+
+    private fun hintingRouter(hints: MutableList<Set<String>>) = EpigraphReaderProgressRouter(
+        coordinator = EpigraphMutationCoordinator(
+            AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            onLocalMutationEnqueued = { hints += it },
+        ),
+        deviceId = DeviceId("phone"),
+        scopeId = SyncScopeId("novels:profile:main"),
+        mutationIds = ClientMutationIdFactory { ClientMutationId("hint-${System.nanoTime()}") },
+        scopeProvider = EpigraphSyncScopeProvider {
+            EpigraphSyncScopes(SyncScopeId("novels:profile:main"), SyncScopeId("comics:profile:main"))
+        },
+    )
+
+    private fun bindComicWork(mangaId: Long, url: String) {
+        val portableWork = PortableWorkRef.Comic(DecimalSourceId("1"), ProviderOwnedKey(url))
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = PortableIdentityV3.workId(portableWork),
+                ref = portableWork,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Example",
+                providerLabelHint = "Fixture",
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
     }
 
     private fun bindReadComicChapter(): Pair<Long, Long> {

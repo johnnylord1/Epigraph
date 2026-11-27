@@ -429,6 +429,10 @@ class EpigraphReaderProgressRouter(
         return coordinator.mutateLocalBatch(createdAt) {
             val novelByManga = mutableMapOf<Long, Boolean?>()
             var changedWhilePaired = false
+            // Work keys of every changed comic chapter. One change without a scoped key (novel, unknown
+            // kind, LNReader) keeps the whole batch on the full pass, so nothing is left unscanned.
+            val touchedWorkKeys = mutableSetOf<String>()
+            var unscopedChange = false
             val envelopes = changes.flatMap { change ->
                 val before = chaptersQueries.getChaptersById(change.localChapterId).executeAsOneOrNull()
                     ?: return@flatMap emptyList()
@@ -456,6 +460,8 @@ class EpigraphReaderProgressRouter(
                 if (read == null && bookmarked == null && lastPageRead == null) return@flatMap emptyList()
                 changedWhilePaired = true
                 val knownNovel = novelByManga.getOrPut(before.manga_id) { isNovelWork(before.manga_id) }
+                val keys = if (knownNovel == false) comicLocalEditKeys(before.manga_id) else emptySet()
+                if (keys.isEmpty()) unscopedChange = true else touchedWorkKeys += keys
                 val after = chaptersQueries.getChaptersById(change.localChapterId).executeAsOne()
                 if (read == false || (lastPageRead != null && lastPageRead < before.last_page_read)) {
                     enqueueV4ChapterReset(after, knownNovel, createdAt)
@@ -485,6 +491,7 @@ class EpigraphReaderProgressRouter(
                 // Chapters bound only through Sync V4 queue no command; the next sync run publishes
                 // them from its local export, so it must know an edit happened.
                 wakesSync = changedWhilePaired,
+                localWorkKeys = if (unscopedChange) emptySet() else touchedWorkKeys,
             )
         }
     }
