@@ -482,11 +482,29 @@ fn drop_abandoned_profile_temp_dirs(parent: &Path, current: &Path, now: std::tim
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path == current || !path.is_dir() || modified_within(&path, now, 30 * 24 * 60 * 60) {
+        if path == current || !path.is_dir() || used_within(&path, now, 30 * 24 * 60 * 60, 3) {
             continue;
         }
         let _ = std::fs::remove_dir_all(&path);
     }
+}
+
+/// A folder's own time changes only when entries are added or removed right inside it, so a
+/// profile that has run for weeks without a restart can look idle while it still writes covers.
+/// Any entry a few levels down that changed recently keeps the whole profile.
+fn used_within(path: &Path, now: std::time::SystemTime, seconds: u64, depth: u8) -> bool {
+    if modified_within(path, now, seconds) {
+        return true;
+    }
+    if depth == 0 {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return false;
+    };
+    entries
+        .flatten()
+        .any(|entry| used_within(&entry.path(), now, seconds, depth - 1))
 }
 
 fn modified_within(path: &Path, now: std::time::SystemTime, seconds: u64) -> bool {
@@ -685,6 +703,29 @@ mod tests {
         drop_abandoned_profile_temp_dirs(parent.path(), &current, month);
         assert!(!other.exists());
         assert!(current.exists());
+    }
+
+    #[test]
+    fn a_profile_still_writing_covers_is_not_abandoned() {
+        let parent = tempfile::tempdir().unwrap();
+        let current = parent.path().join("current");
+        std::fs::create_dir_all(&current).unwrap();
+        let thumbnails = parent.path().join("running").join("Tachidesk").join("thumbnails");
+        std::fs::create_dir_all(&thumbnails).unwrap();
+        let cover = thumbnails.join("7.webp");
+        std::fs::write(&cover, b"cover").unwrap();
+
+        // Thirty-one days on, the profile folder itself looks idle but a cover changed yesterday.
+        let month = std::time::SystemTime::now() + std::time::Duration::from_secs(31 * 24 * 60 * 60);
+        let yesterday = month - std::time::Duration::from_secs(24 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(&cover)
+            .unwrap()
+            .set_modified(yesterday)
+            .unwrap();
+        drop_abandoned_profile_temp_dirs(parent.path(), &current, month);
+        assert!(cover.exists());
     }
 
     #[test]
