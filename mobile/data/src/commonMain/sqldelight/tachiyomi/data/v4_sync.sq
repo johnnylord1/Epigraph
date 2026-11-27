@@ -131,6 +131,12 @@ selectV4DomainEntityMap:
 SELECT * FROM v4_entity_map
 WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain;
 
+-- Entity-map rows of one type whose key lies in [fromKey, toKey), served by the primary key.
+selectV4EntityMapInKeyRange:
+SELECT * FROM v4_entity_map
+WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain
+  AND entity_type = :entityType AND entity_key >= :fromKey AND entity_key < :toKey;
+
 selectV4ActiveDomainEntityMap:
 SELECT * FROM v4_entity_map
 WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain AND deleted = 0;
@@ -369,6 +375,19 @@ WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain AND
 selectV4LocalDigestsByType:
 SELECT * FROM v4_local_digest
 WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain AND entity_type = :entityType AND deleted = 0;
+
+-- One stored digest row by its full primary key, live or tombstoned. Served by the primary key.
+selectV4LocalDigestExact:
+SELECT * FROM v4_local_digest
+WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain
+  AND entity_type = :entityType AND entity_key = :entityKey;
+
+-- Stored digest rows of one type whose key lies in [fromKey, toKey), live or tombstoned. Served by the
+-- primary key: the bounds turn a prefix into an index range instead of a scan over the profile.
+selectV4LocalDigestsInKeyRange:
+SELECT * FROM v4_local_digest
+WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain
+  AND entity_type = :entityType AND entity_key >= :fromKey AND entity_key < :toKey;
 
 upsertV4LocalDigest:
 INSERT INTO v4_local_digest(

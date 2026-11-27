@@ -49,23 +49,56 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
 
     /**
      * Reads only the works in [scope]. The build still resolves every favorite work, so retraction judges
-     * against the whole library. Stored digests outside the scope are never reported as vanished.
+     * against the whole library. The commit reads the stored digests of the same scope inside its own
+     * transaction, so they are never older than the export, and the engine never loads the whole baseline.
      */
     override suspend fun readLocalScoped(serverId: String, profileId: String, scope: V4LocalScope?): V4LocalRead {
         if (scope == null) return readLocal(serverId, profileId)
         val comicScope = ComicScope(workKeys = scope.workKeys, categoryKeys = emptySet())
-        val (build, scopeKeys) = handler.await(inTransaction = true) {
-            buildComicDrafts(comicScope) to storedLiveKeys(serverId, profileId, comicScope)
-        }
+        val build = handler.await(inTransaction = true) { buildComicDrafts(comicScope) }
         val digests = build.drafts.map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
         return V4LocalRead(
             digests = digests,
             commit = { clock ->
-                val outgoing = handler.await(inTransaction = true) { exportAndRetract(serverId, profileId, clock, build) }
-                V4ExportPass(outgoing, digests)
+                handler.await(inTransaction = true) {
+                    val stored = storedDigests(serverId, profileId, comicScope)
+                    val outgoing = exportAndRetract(serverId, profileId, clock, build)
+                    V4ExportPass(outgoing, digests, stored)
+                }
             },
-            scopeKeys = scopeKeys,
         )
+    }
+
+    /**
+     * Stored digest rows (live and tombstoned) under the works and folders of [scope], read by primary
+     * key or key range. Each work contributes its work row, its history row, and every key under
+     * "workKey|" (chapters, folder assignments, tracking). Other works' rows are never read.
+     */
+    private fun Database.storedDigests(serverId: String, profileId: String, scope: ComicScope): Map<V4DigestKey, V4StoredDigest> {
+        val stored = HashMap<V4DigestKey, V4StoredDigest>()
+        fun exact(type: String, key: String) {
+            v4_syncQueries.selectV4LocalDigestExact(serverId, profileId, COMICS, type, key).executeAsOneOrNull()
+                ?.let { stored[V4DigestKey(COMICS, type, key)] = V4StoredDigest(it.digest, it.deleted != 0L) }
+        }
+        for (workKey in scope.workKeys) {
+            exact(WORK, workKey)
+            exact(HISTORY, workKey)
+            // "workKey|" <= key < "workKey}": '|' (0x7C) and '}' (0x7D) bracket every key with that prefix.
+            for (type in listOf(CHAPTER, ASSIGNMENT, TRACKING)) {
+                for (row in v4_syncQueries.selectV4LocalDigestsInKeyRange(
+                    serverId = serverId,
+                    profileId = profileId,
+                    domain = COMICS,
+                    entityType = type,
+                    fromKey = "$workKey|",
+                    toKey = "$workKey}",
+                ).executeAsList()) {
+                    stored[V4DigestKey(COMICS, type, row.entity_key)] = V4StoredDigest(row.digest, row.deleted != 0L)
+                }
+            }
+        }
+        for (categoryKey in scope.categoryKeys) exact(CATEGORY, categoryKey)
+        return stored
     }
 
     private fun Database.exportAndRetract(
@@ -352,8 +385,25 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         exportedWorks: Map<String, V4Hlc>,
         scopeWorks: Set<String>?,
     ) {
-        val all = v4_syncQueries.selectV4DomainEntityMap(serverId, profileId, COMICS).executeAsList()
-            .filter { it.entity_type == WORK || it.entity_type == CATEGORY || it.entity_type == ASSIGNMENT }
+        // A scoped pass reads only its works' rows: their work row and folder assignments. Folders are never
+        // judged by a scoped pass, so their rows are not read either.
+        val all = if (scopeWorks == null) {
+            v4_syncQueries.selectV4DomainEntityMap(serverId, profileId, COMICS).executeAsList()
+                .filter { it.entity_type == WORK || it.entity_type == CATEGORY || it.entity_type == ASSIGNMENT }
+        } else {
+            scopeWorks.flatMap { workKey ->
+                val work = v4_syncQueries.selectV4EntityMapByKey(serverId, profileId, WORK, workKey).executeAsOneOrNull()
+                val assignments = v4_syncQueries.selectV4EntityMapInKeyRange(
+                    serverId = serverId,
+                    profileId = profileId,
+                    domain = COMICS,
+                    entityType = ASSIGNMENT,
+                    fromKey = "$workKey|",
+                    toKey = "$workKey}",
+                ).executeAsList()
+                listOfNotNull(work) + assignments
+            }
+        }
         val rows = all.filter { it.deleted == 0L }
         val known = rows.associateBy { it.entity_type to it.entity_key }
         val retracted = all.filter { it.deleted != 0L }.mapTo(mutableSetOf()) { it.entity_type to it.entity_key }

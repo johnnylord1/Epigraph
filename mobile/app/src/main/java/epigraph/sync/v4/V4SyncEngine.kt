@@ -323,25 +323,28 @@ internal class V4SyncEngine(
         // Upload only items whose digest differs from the recorded baseline, so offline progress
         // across all domains converges without re-sending unchanged state with fresh clocks.
         var mark = System.nanoTime()
-        val stored = store.loadDigests(serverId, profileId)
-        val loadMs = msSince(mark)
-        mark = System.nanoTime()
         // Stamps the read state (retractions and tombstones are written here, under the lock).
         // Digests come from the same state that is exported, so an edit between read and commit cannot
         // make the upload diff disagree with the outgoing items.
         val pass = read.commit(clock)
+        val exportMs = msSince(mark)
+        mark = System.nanoTime()
+        // A scoped commit reads the stored digests it covers in its own transaction. Otherwise the whole
+        // profile baseline is loaded here, under the lock.
+        val stored = pass.stored ?: store.loadDigests(serverId, profileId)
+        val loadMs = msSince(mark)
         val outgoingAll = pass.outgoing
         val current = pass.digests
             .filter { domainPolicy.allows(it.key.domain, it.key.entityType, it.key.entityKey, null) }
         val exported = enabled(outgoingAll)
             .associateBy { V4DigestKey(it.domain, it.entityType, it.entityKey) }
-        val exportMs = msSince(mark)
-        // A scoped pass may only report vanished the stored digests it covers; the rest are not in its read.
-        val vanished = vanishedKeys(read.scopeKeys?.let { keys -> stored.filterKeys { it in keys } } ?: stored, current)
+        // A partial stored map only holds the scope's rows, and vanishedKeys reads live rows only.
+        val vanished = vanishedKeys(stored, current)
         // Comic relation retractions already enqueue and mark their tombstones during export.
         val tombstones = vanished.filter { !store.isEntityMapTombstoned(serverId, profileId, it) }
         // Without any recorded digests, existing remote state must not be outranked: use the baseline clock.
-        val baselineMode = stored.isEmpty()
+        // This is a whole-table check, so it holds for a scoped pass too.
+        val baselineMode = !store.hasDigests(serverId, profileId)
         val outgoing = buildList {
             for (item in current) {
                 if (stored[item.key]?.digest == item.digest) continue

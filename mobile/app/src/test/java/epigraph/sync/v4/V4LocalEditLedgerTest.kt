@@ -115,9 +115,10 @@ class V4LocalEditLedgerTest {
 
         // The default scoped read covers nothing, so the scoped commit writes nothing for this domain.
         assertTrue(read.digests.isEmpty())
-        assertEquals(emptySet<V4DigestKey>(), read.scopeKeys)
         val pass = read.commit(V4HlcClock("phone"))
         assertTrue(pass.outgoing.isEmpty())
         assertTrue(pass.digests.isEmpty())
+        // A scoped commit reports its stored digests, here none: the engine must not load the whole baseline.
+        assertEquals(emptyMap<V4DigestKey, V4StoredDigest>(), pass.stored)
     }
 }

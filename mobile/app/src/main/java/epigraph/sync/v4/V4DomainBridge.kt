@@ -75,7 +75,10 @@ internal interface V4DomainBridge {
         if (scope == null) {
             readLocal(serverId, profileId)
         } else {
-            V4LocalRead(digests = emptyList(), commit = { V4ExportPass(emptyList(), emptyList()) }, scopeKeys = emptySet())
+            V4LocalRead(
+                digests = emptyList(),
+                commit = { V4ExportPass(emptyList(), emptyList(), stored = emptyMap()) },
+            )
         }
 }
 
@@ -91,21 +94,25 @@ internal data class V4LocalPlan(val generation: Long, val scope: V4LocalScope?)
 /** One entity's local digest, as computed by [V4LocalDigest.of]. */
 internal data class V4DigestedItem(val key: V4DigestKey, val digest: String, val deleted: Boolean)
 
-/** Result of [V4DomainBridge.exportAndDigest]: outgoing items plus the digests of the same local state. */
-internal data class V4ExportPass(val outgoing: List<V4OutgoingItem>, val digests: List<V4DigestedItem>)
+/**
+ * Result of [V4DomainBridge.exportAndDigest]: outgoing items plus the digests of the same local state.
+ * [stored] is the baseline digest rows a scoped commit covers (live and tombstoned, read in the same
+ * transaction as the export). Null means the engine loads the whole profile baseline itself.
+ */
+internal data class V4ExportPass(
+    val outgoing: List<V4OutgoingItem>,
+    val digests: List<V4DigestedItem>,
+    val stored: Map<V4DigestKey, V4StoredDigest>? = null,
+)
 
 /**
  * Result of [V4DomainBridge.readLocal]. [digests] describe the read state. [commit] stamps that state with
  * the given clock, applies its retractions, and returns the outgoing items together with the digests of the
  * exact state it exported. It must run under the engine's sync lock.
- *
- * [scopeKeys] limits which stored digests a commit may treat as vanished. Null means a full pass: every stored
- * key of the domain is eligible.
  */
 internal class V4LocalRead(
     val digests: List<V4DigestedItem>,
     val commit: suspend (V4HlcClock) -> V4ExportPass,
-    val scopeKeys: Set<V4DigestKey>? = null,
 )
 
 internal class CompositeV4DomainBridge(private vararg val bridges: V4DomainBridge) : V4DomainBridge {
@@ -145,24 +152,21 @@ internal class CompositeV4DomainBridge(private vararg val bridges: V4DomainBridg
      */
     override suspend fun readLocalScoped(serverId: String, profileId: String, scope: V4LocalScope?): V4LocalRead {
         val reads = bridges.map { it.readLocalScoped(serverId, profileId, scope) }
-        val scopeKeys = if (reads.any { it.scopeKeys != null }) {
-            reads.flatMapTo(HashSet()) { it.scopeKeys.orEmpty() }
-        } else {
-            null
-        }
         return V4LocalRead(
             digests = reads.flatMap { it.digests },
             commit = { clock ->
                 val outgoing = ArrayList<V4OutgoingItem>()
                 val digests = ArrayList<V4DigestedItem>()
+                // A scoped pass reports stored digests only when a bridge covered them; null keeps the full load.
+                var stored: HashMap<V4DigestKey, V4StoredDigest>? = null
                 for (read in reads) {
                     val pass = read.commit(clock)
                     outgoing += pass.outgoing
                     digests += pass.digests
+                    pass.stored?.let { stored = (stored ?: HashMap()).apply { putAll(it) } }
                 }
-                V4ExportPass(outgoing, digests)
+                V4ExportPass(outgoing, digests, stored)
             },
-            scopeKeys = scopeKeys,
         )
     }
 }
