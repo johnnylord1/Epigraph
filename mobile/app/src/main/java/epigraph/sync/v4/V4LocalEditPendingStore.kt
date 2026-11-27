@@ -20,12 +20,12 @@ data class V4LocalEditSnapshot(
     val fullPassDueAt: Long,
 ) {
     /**
-     * True when a sync must run a local-edit pass. A scheduled full pass counts even before its due time:
-     * with no new scoped marks that pass is full, so the safety net never depends on a WorkManager job
-     * that fired early (the job is KEEP while a sync runs, so nothing would re-arm it).
+     * True when a sync must run a local-edit pass. A debounced full pass counts only once it is due: an
+     * early-firing job or an unrelated sync must not start a full read of the library (a 60 s locked
+     * pass on a large library) while the debounce is still open. Unscoped marks ([fullPass]) and scoped
+     * marks ([workKeys]) count at any time, so no edit waits on the debounce.
      */
-    @Suppress("UNUSED_PARAMETER")
-    fun hasPending(nowMs: Long): Boolean = fullPass || workKeys.isNotEmpty() || fullPassDueAt != 0L
+    fun hasPending(nowMs: Long): Boolean = fullPass || workKeys.isNotEmpty() || fullPassDue(nowMs)
 
     fun fullPassDue(nowMs: Long): Boolean = fullPassDueAt in 1L..nowMs
 }

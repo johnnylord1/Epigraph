@@ -72,11 +72,33 @@ class V4LocalEditLedgerTest {
         store.scheduleFullPassAt(60_000L)
 
         val snapshot = store.snapshot()
-        // A job that fires early must still run the safety-net full pass: nothing would re-arm it.
-        assertTrue(snapshot.hasPending(nowMs = 59_999L))
+        // A debounced full pass that is not yet due does not start a sync pass by itself.
+        assertFalse(snapshot.hasPending(nowMs = 59_999L))
         assertTrue(snapshot.workKeys.isEmpty())
         assertFalse(snapshot.fullPassDue(nowMs = 59_999L))
         assertTrue(snapshot.fullPassDue(nowMs = 60_000L))
+        assertTrue(snapshot.hasPending(nowMs = 60_000L))
+    }
+
+    @Test
+    fun notDueFullPassNeverDelaysAScopedEdit() {
+        val store = MemoryV4LocalEditPendingStore()
+        store.scheduleFullPassAt(60_000L)
+        store.markWorkPending("comic:a")
+
+        val snapshot = store.snapshot()
+        assertTrue(snapshot.hasPending(nowMs = 1_000L))
+        assertEquals(setOf("comic:a"), snapshot.workKeys)
+        assertFalse(snapshot.fullPassDue(nowMs = 1_000L))
+    }
+
+    @Test
+    fun unscopedMarkStillCountsBeforeTheDebounceIsDue() {
+        val store = MemoryV4LocalEditPendingStore()
+        store.scheduleFullPassAt(60_000L)
+        store.markPending()
+
+        assertTrue(store.snapshot().hasPending(nowMs = 1_000L))
     }
 
     @Test
