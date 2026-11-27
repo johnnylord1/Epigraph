@@ -3,8 +3,12 @@ package epigraph.sync.v4
 import co.touchlab.kermit.Logger
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.protocol.CoreErrorEnvelope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import java.io.IOException
@@ -30,6 +34,12 @@ sealed interface V4SyncRunResult {
 
 /** Unlocked library reads a local-edit pass may make before it reads under the lock. */
 private const val MAX_UNLOCKED_LOCAL_READS = 3
+
+/** How long a realtime delta waits for the next queued delta before its batch is applied. */
+private const val REALTIME_COALESCE_WINDOW_MILLIS = 150L
+
+/** Upper bound on deltas applied under one lock hold. */
+private const val REALTIME_MAX_BATCH = 500
 
 private sealed interface LocalPassStep {
     /** The unlocked read raced a locked section or a local edit, so it must be redone. */
@@ -572,24 +582,37 @@ internal class V4SyncEngine(
             syncOnce(accessToken).requireSuccess()
         }
         val currentSeq = store.loadState(serverId, profileId).serverSeq
-        sse.stream(accessToken, sinceSeq = currentSeq) { msg ->
-            if (invalidated.get()) throw IOException("Engine invalidated")
+        coroutineScope {
+            // The SSE reader only queues messages, in arrival order. One consumer applies them, so deltas
+            // that arrived together become one locked batch instead of one lock and one digest pass each.
+            val inbox = Channel<V4SseMessage>(Channel.UNLIMITED)
+            val consumer = launch { consumeRealtime(accessToken, inbox) }
+            try {
+                sse.stream(accessToken, sinceSeq = currentSeq) { msg ->
+                    if (invalidated.get()) throw IOException("Engine invalidated")
+                    if (inbox.trySend(msg).isFailure) throw IOException("Realtime consumer stopped")
+                }
+            } finally {
+                inbox.close()
+            }
+            consumer.join()
+        }
+    }
+
+    /**
+     * Applies queued realtime messages in order. Consecutive deltas are gathered by [collectDeltaBatch]
+     * and applied by [applyRealtimeDeltas]; any other message flushes the batch first.
+     */
+    private suspend fun consumeRealtime(accessToken: String, inbox: Channel<V4SseMessage>) {
+        var pending: V4SseMessage? = null
+        while (true) {
+            val msg = pending ?: inbox.receiveCatching().getOrNull() ?: return
+            pending = null
             when (msg) {
                 is V4SseMessage.Delta -> {
-                    locked {
-                        if (invalidated.get()) throw IOException("Engine invalidated")
-                        val cur = store.loadState(serverId, profileId)
-                        if (msg.record.serverSeq <= cur.serverSeq) return@locked
-                        val clock = buildClock(cur)
-                        clock.observe(msg.record.hlc)
-                        val applicable = enabled(listOf(msg.record))
-                        if (applicable.isNotEmpty()) applyRemoteRecordsWithBaseline(applicable)
-                        persistClock(
-                            cur.copy(serverSeq = msg.record.serverSeq),
-                            clock,
-                        )
-                        pruneDisabledDomains()
-                    }
+                    val batch = collectDeltaBatch(inbox, msg)
+                    pending = batch.next
+                    applyRealtimeDeltas(batch.records)
                 }
                 is V4SseMessage.BulkCommitted,
                 is V4SseMessage.CatchupRequired,
@@ -608,6 +631,52 @@ internal class V4SyncEngine(
                 -> Unit
             }
         }
+    }
+
+    private class DeltaBatch(val records: List<V4WireRecord>, val next: V4SseMessage?)
+
+    /**
+     * Gathers [first] and the deltas already queued behind it. When the queue runs dry, waits up to
+     * [REALTIME_COALESCE_WINDOW_MILLIS] for more, capped at [REALTIME_MAX_BATCH] records so one lock
+     * hold stays bounded. The first non-delta message is returned as [DeltaBatch.next], not dropped.
+     */
+    private suspend fun collectDeltaBatch(inbox: Channel<V4SseMessage>, first: V4SseMessage.Delta): DeltaBatch {
+        val records = ArrayList<V4WireRecord>()
+        records += first.record
+        val deadline = System.nanoTime() + REALTIME_COALESCE_WINDOW_MILLIS * 1_000_000L
+        while (records.size < REALTIME_MAX_BATCH) {
+            val queued = inbox.tryReceive().getOrNull()
+            val msg = queued ?: run {
+                val remainingMs = (deadline - System.nanoTime()) / 1_000_000L
+                if (remainingMs <= 0L) return DeltaBatch(records, null)
+                withTimeoutOrNull(remainingMs) { inbox.receiveCatching().getOrNull() }
+            } ?: return DeltaBatch(records, null)
+            if (msg is V4SseMessage.Delta) records += msg.record else return DeltaBatch(records, msg)
+        }
+        return DeltaBatch(records, null)
+    }
+
+    /**
+     * Applies a batch of realtime deltas under one lock. Records at or below the cursor are skipped, so
+     * the cursor only moves forward; it is persisted once, at the highest applied sequence.
+     */
+    private suspend fun applyRealtimeDeltas(records: List<V4WireRecord>) = locked {
+        if (invalidated.get()) throw IOException("Engine invalidated")
+        val cur = store.loadState(serverId, profileId)
+        val clock = buildClock(cur)
+        var seq = cur.serverSeq
+        val accepted = ArrayList<V4WireRecord>(records.size)
+        for (record in records) {
+            if (record.serverSeq <= seq) continue
+            clock.observe(record.hlc)
+            accepted += record
+            seq = record.serverSeq
+        }
+        if (accepted.isEmpty()) return@locked
+        val applicable = enabled(accepted)
+        if (applicable.isNotEmpty()) applyRemoteRecordsWithBaseline(applicable)
+        persistClock(cur.copy(serverSeq = seq), clock)
+        pruneDisabledDomains()
     }
 
     private fun V4SyncRunResult.requireSuccess() {

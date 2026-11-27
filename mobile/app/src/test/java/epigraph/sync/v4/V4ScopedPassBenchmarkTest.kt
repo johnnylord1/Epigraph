@@ -3,6 +3,7 @@ package epigraph.sync.v4
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -76,6 +77,91 @@ class V4ScopedPassBenchmarkTest {
             passMs.inWholeMilliseconds < BUDGET_MS,
             "scoped pass took ${passMs.inWholeMilliseconds} ms, budget $BUDGET_MS ms",
         )
+        phone.close()
+    }
+
+    /**
+     * Realtime delta cost on the same library: each chapter delta runs the bridge work that
+     * [V4SyncEngine] performs per delta (digest before, apply, digest after). Times one delta and
+     * 150 deltas from one work, applied one at a time, and the same 150 as one batch.
+     */
+    @Test
+    fun `realtime chapter deltas on a large library`() = runTest {
+        val phone = openDatabase()
+        populateLibrary(phone.driver, works, chaptersPerWork, prefix)
+        val bridge = V4ComicDomainBridge(phone.handler)
+        val workKey = V4PortableUrl.canonicalWorkKey("123", "${prefix}1")
+        fun delta(index: Int, seq: Long) = V4WireRecord(
+            seq, "comics", "comic.chapter",
+            V4PortableUrl.canonicalChapterKey(workKey, "${prefix}1/ch/$index"), false,
+            V4Hlc(seq, 0, "desktop"), "desktop",
+            Json.parseToJsonElement(
+                """{"workKey":"$workKey","url":"${prefix}1/ch/$index","isRead":${seq % 2 == 0L}}""",
+            ),
+        )
+        suspend fun applyOne(records: List<V4WireRecord>) {
+            bridge.digestAffected("srv-1", "main", records)
+            bridge.applyRemoteRecords("srv-1", "main", records)
+            bridge.digestAffected("srv-1", "main", records)
+        }
+
+        // Warm-up so the first measured delta does not include one-time setup.
+        applyOne(listOf(delta(1, 1L)))
+        val oneMs = measureMs { applyOne(listOf(delta(2, 2L))) }
+        val sequentialMs = measureMs {
+            for (index in 1..150) applyOne(listOf(delta(index, 100L + index)))
+        }
+        val batchMs = measureMs {
+            applyOne((1..150).map { delta(it, 300L + it) })
+        }
+        println(
+            "V4 realtime-delta benchmark works=$works chapters/work=$chaptersPerWork " +
+                "oneDelta=$oneMs ms sequential150=$sequentialMs ms batch150=$batchMs ms",
+        )
+        assertTrue(
+            batchMs < REALTIME_BATCH_BUDGET_MS,
+            "150 chapter deltas as one batch took $batchMs ms, budget $REALTIME_BATCH_BUDGET_MS ms",
+        )
+        phone.close()
+    }
+
+    /**
+     * 150 deltas already queued on the SSE stream reach the engine in one burst. They must apply in a few
+     * locked batches, not 150, and the cursor must end at the last sequence.
+     */
+    @Test
+    fun `queued realtime deltas apply in one batch and the cursor ends at the last seq`() = runTest {
+        val phone = openDatabase()
+        populateLibrary(phone.driver, workCount = 1, chapters = 200, prefix = prefix)
+        val inner = V4ComicDomainBridge(phone.handler)
+        var applyCalls = 0
+        val bridge = object : V4DomainBridge by inner {
+            override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) {
+                applyCalls += 1
+                inner.applyRemoteRecords(serverId, profileId, records)
+            }
+        }
+        val workKey = V4PortableUrl.canonicalWorkKey("123", "${prefix}1")
+        val core = FakeCore(initial = emptyList())
+        core.eventsBody = (1..150).joinToString("") { index ->
+            val record = V4WireRecord(
+                index.toLong(), "comics", "comic.chapter",
+                V4PortableUrl.canonicalChapterKey(workKey, "${prefix}1/ch/$index"), false,
+                V4Hlc(index.toLong(), 0, "desktop"), "desktop",
+                Json.parseToJsonElement(
+                    """{"workKey":"$workKey","url":"${prefix}1/ch/$index","isRead":${index % 2 == 0}}""",
+                ),
+            )
+            "event: delta\ndata: ${V4CoreHttpClient.DEFAULT_JSON.encodeToString(V4WireRecord.serializer(), record)}\n\n"
+        }
+        val store = SqlDelightV4SyncStore(phone.database)
+        store.saveState(V4SyncCursorState(serverId = "srv-1", profileId = "main", initialSyncCompleted = true))
+        val engine = benchmarkEngine(store, core, bridge)
+
+        engine.runRealtimeStream("tok")
+
+        assertEquals(150L, store.loadState("srv-1", "main").serverSeq, "cursor must end at the last delta")
+        assertTrue(applyCalls in 1..3, "150 queued deltas applied in $applyCalls batches")
         phone.close()
     }
 
@@ -166,6 +252,8 @@ class V4ScopedPassBenchmarkTest {
     /** Minimal in-memory Core: capabilities, snapshot, change pages and bulk writes. */
     private class FakeCore(initial: List<V4WireRecord>) {
         val records = ArrayList<V4WireRecord>(initial)
+        /** Body served for `GET /v4/events`: a finished SSE stream, so the reader returns at its end. */
+        var eventsBody: String = ""
         private val counts = linkedMapOf<String, Int>()
         private val json = V4CoreHttpClient.DEFAULT_JSON
 
@@ -177,6 +265,8 @@ class V4ScopedPassBenchmarkTest {
             val head = records.size.toLong()
             return when (path) {
                 "/v4/capabilities" -> ok(request, CAPABILITIES.format(head))
+                "/v4/events" -> Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200)
+                    .message("OK").body(eventsBody.toResponseBody("text/event-stream".toMediaType())).build()
                 "/v4/snapshot" -> {
                     val afterSeq = request.url.queryParameter("afterSeq")?.toLong() ?: 0L
                     val limit = request.url.queryParameter("limit")?.toInt()
@@ -271,5 +361,8 @@ class V4ScopedPassBenchmarkTest {
     private companion object {
         /** A one-work scoped pass must stay under this on a 250-favorite library. */
         const val BUDGET_MS = 2_000L
+
+        /** 150 chapter deltas from one work, applied as one batch, must land within a few seconds. */
+        const val REALTIME_BATCH_BUDGET_MS = 3_000L
     }
 }
