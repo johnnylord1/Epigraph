@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, Mutex};
 
@@ -756,6 +756,71 @@ pub fn reconcile_frontend_book_write(
     serde_json::to_string(&next).map_err(|error| error.to_string())
 }
 
+fn bookmarked_novel_chapter_ids(doc: &Value) -> HashSet<String> {
+    doc.get("bookmarks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("chapterId").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The novels screen persists chapters without the fields only sync writes (`chapterNumber`,
+/// `isBookmarked`, `progress`) and may save an unknown `releaseTime` as null. Without them
+/// every chapter a sync apply touched would look edited and be republished with a fresh clock,
+/// which also reverts a chapter bookmark made on another device. Keep the stored values unless
+/// the screen changed them; a bookmark the screen added or removed still wins.
+fn carry_sync_only_novel_chapter_fields(next: &mut Value, previous: &Value) {
+    let Some(previous_chapters) = previous.get("chapters").and_then(Value::as_array) else {
+        return;
+    };
+    let previous_by_id: HashMap<&str, &Map<String, Value>> = previous_chapters
+        .iter()
+        .filter_map(|chapter| Some((chapter.get("id")?.as_str()?, chapter.as_object()?)))
+        .collect();
+    if previous_by_id.is_empty() {
+        return;
+    }
+    let previous_bookmarks = bookmarked_novel_chapter_ids(previous);
+    let next_bookmarks = bookmarked_novel_chapter_ids(next);
+    let Some(next_chapters) = next.get_mut("chapters").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for chapter in next_chapters {
+        let Some(chapter) = chapter.as_object_mut() else {
+            continue;
+        };
+        let Some(id) = chapter.get("id").and_then(Value::as_str).map(str::to_owned) else {
+            continue;
+        };
+        let Some(stored) = previous_by_id.get(id.as_str()) else {
+            continue;
+        };
+        for field in ["chapterNumber", "progress"] {
+            if !chapter.contains_key(field) {
+                if let Some(value) = stored.get(field) {
+                    chapter.insert(field.to_owned(), value.clone());
+                }
+            }
+        }
+        if chapter.get("releaseTime").is_none_or(Value::is_null) {
+            if let Some(value) = stored.get("releaseTime").filter(|value| value.is_number()) {
+                chapter.insert("releaseTime".to_owned(), value.clone());
+            }
+        }
+        if !chapter.contains_key("isBookmarked") && !chapter.contains_key("bookmark") {
+            let was_saved = previous_bookmarks.contains(&id);
+            let is_saved = next_bookmarks.contains(&id);
+            if was_saved != is_saved {
+                chapter.insert("isBookmarked".to_owned(), Value::Bool(is_saved));
+            } else if let Some(value) = stored.get("isBookmarked").filter(|value| value.is_boolean()) {
+                chapter.insert("isBookmarked".to_owned(), value.clone());
+            }
+        }
+    }
+}
+
 pub fn reconcile_frontend_novel_write(
     profile_id: Option<&str>,
     previous_contents: Option<&str>,
@@ -854,6 +919,7 @@ pub fn reconcile_frontend_novel_write(
             .collect();
         merge_array_rows(&mut next, &previous, field, id_field, &allowed);
     }
+    carry_sync_only_novel_chapter_fields(&mut next, &previous);
     let added = keyed_values(&next, "entries", Some("novels"))
         .difference(&previous_keys)
         .cloned()
@@ -2067,6 +2133,76 @@ mod tests {
         let mut existing = json!({ "entries": [], "scopeKey": "profile:other" });
         stamp_novel_library_scope(&mut existing, "main");
         assert_eq!(existing["scopeKey"], "profile:other");
+    }
+
+    #[test]
+    fn a_novel_screen_save_after_a_sync_apply_republishes_only_real_edits() {
+        let profile = "test-novel-screen-save-after-apply";
+        let entry = json!({"id":"novel-1","path":"/novel/1","title":"Novel","source":{"pluginId":"plugin.test","lang":"en"},"addedAt":1,"updatedAt":1});
+        let chapter = |index: u32| json!({
+            "id":format!("chapter-{index}"),"novelId":"novel-1","path":format!("/novel/1/{index}"),
+            "title":format!("Chapter {index}"),"order":index,"releaseTime":null,"unread":true,"updatedAt":5
+        });
+        // What a sync apply stores: sync-only fields, a phone bookmark and a known upload date.
+        let applied = |index: u32| {
+            let mut value = chapter(index);
+            let row = value.as_object_mut().unwrap();
+            row.insert("chapterNumber".into(), json!(f64::from(index) + 0.5));
+            row.insert("isBookmarked".into(), json!(index == 1 || index == 4));
+            row.insert("progress".into(), json!(if index == 2 { 0.7 } else { 0.0 }));
+            row.insert("releaseTime".into(), json!(if index == 3 { 1_700_000_000_000_i64 } else { 0 }));
+            value
+        };
+        let previous = json!({
+            "version":1,"scopeKey":"profile","entries":[entry.clone()],
+            "chapters":[applied(1),applied(2),applied(3),applied(4)],
+            "progress":[],"bookmarks":[{"novelId":"novel-1","chapterId":"chapter-4","syncId":"bookmark-4","savedAt":4}],"history":[]
+        });
+        note_novels_loaded_by_frontend(Some(profile), &previous.to_string());
+        let screen = |chapters: Vec<Value>, bookmarks: Value| json!({
+            "version":1,"scopeKey":"profile","entries":[entry.clone()],
+            "chapters":chapters,"progress":[],"bookmarks":bookmarks,"history":[]
+        });
+        let delta_for = |next: Value| {
+            let reconciled = reconcile_frontend_novel_write(Some(profile), Some(&previous.to_string()), &next.to_string()).unwrap();
+            let reconciled: Value = serde_json::from_str(&reconciled).unwrap();
+            diff_v4_items(
+                export_desktop_novels_to_v4(&previous, "desktop", 100),
+                export_desktop_novels_to_v4(&reconciled, "desktop", 100),
+                "desktop",
+                101,
+            )
+        };
+
+        let unchanged = screen(
+            (1..=4).map(chapter).collect(),
+            json!([{"novelId":"novel-1","chapterId":"chapter-4","syncId":"bookmark-4","savedAt":4}]),
+        );
+        assert!(delta_for(unchanged).is_empty(), "a save without edits must not republish chapters");
+
+        let mut read = (1..=4).map(chapter).collect::<Vec<_>>();
+        read[1]["unread"] = json!(false);
+        let delta = delta_for(screen(read, json!([{"novelId":"novel-1","chapterId":"chapter-4","syncId":"bookmark-4","savedAt":4}])));
+        assert_eq!(delta.len(), 1);
+        assert_eq!(delta[0].payload["isRead"], json!(true));
+        assert_eq!(delta[0].payload["progressPercent"], json!(0.7));
+        assert_eq!(delta[0].payload["chapterNumber"], json!(2.5));
+
+        // Saving a bookmark on chapter 2 and removing the one on chapter 4 reach sync; the
+        // phone's bookmark on chapter 1 is kept.
+        let delta = delta_for(screen(
+            (1..=4).map(chapter).collect(),
+            json!([{"novelId":"novel-1","chapterId":"chapter-2","syncId":"bookmark-2","savedAt":6}]),
+        ));
+        let bookmarked = |key: &str| {
+            delta
+                .iter()
+                .find(|item| item.entity_type == "novel.chapter" && item.entity_key.ends_with(key))
+                .map(|item| item.payload["isBookmarked"].clone())
+        };
+        assert_eq!(bookmarked("/novel/1/2"), Some(json!(true)));
+        assert_eq!(bookmarked("/novel/1/4"), Some(json!(false)));
+        assert_eq!(bookmarked("/novel/1/1"), None);
     }
 
     #[test]
