@@ -13,28 +13,58 @@ import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.koin.core.context.startKoin
+import org.koin.core.context.stopKoin
+import org.koin.dsl.module
+import yokai.domain.source.browse.filter.FilterSerializer
+import yokai.domain.source.browse.filter.interactor.GetSavedSearch
+import java.util.concurrent.atomic.AtomicBoolean
 import yokai.domain.ui.UiPreferences
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BrowseSourcePresenterTest {
     private val mainDispatcher = UnconfinedTestDispatcher()
 
+    private val savedSearchesSubscribed = AtomicBoolean(false)
+
     @BeforeEach
     fun setUp() {
         Dispatchers.setMain(mainDispatcher)
+        // Once a source is READY the presenter loads saved searches in a background coroutine, resolving
+        // GetSavedSearch and Json lazily through Koin. Provide them here so that coroutine cannot fail
+        // after the test and leak into other suites.
+        val getSavedSearch = mockk<GetSavedSearch>(relaxed = true) {
+            coEvery { awaitAllBySourceId(any()) } returns emptyList()
+            every { subscribeAllBySourceId(any()) } answers {
+                savedSearchesSubscribed.set(true)
+                emptyFlow()
+            }
+        }
+        startKoin {
+            modules(
+                module {
+                    single { getSavedSearch }
+                    single<Json> { Json }
+                    single { FilterSerializer() }
+                },
+            )
+        }
     }
 
     @AfterEach
     fun tearDown() {
+        stopKoin()
         Dispatchers.resetMain()
     }
 
@@ -78,6 +108,9 @@ class BrowseSourcePresenterTest {
             awaitUntil { presenter.sourceInitializationState == SourceInitializationState.READY }
             assertEquals(SourceInitializationState.READY, presenter.sourceInitializationState)
             assertTrue(presenter.sourceIsInitialized)
+            // Let the background saved-search load finish while Koin is still running.
+            awaitUntil { savedSearchesSubscribed.get() }
+            assertTrue(savedSearchesSubscribed.get())
         } finally {
             presenter.onDestroy()
         }

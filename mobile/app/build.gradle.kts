@@ -96,6 +96,8 @@ android {
                     "**/EpubReaderSyncProgressionTest*",
                     "**/TtsVoiceCatalogTest*",
                     "**/LocalBookReaderRestoreTest*",
+                    "**/V4ProductionSyncCoordinatorLocalEditTest*",
+                    "**/V4SyncDomainProgressHandOverTest*",
                 )
             }
         }
