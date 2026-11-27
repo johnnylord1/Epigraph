@@ -332,8 +332,13 @@ fun epigraphSyncModule(app: Application) = module {
         val serverClock = get<CoreServerClock>()
         EpigraphMutationCoordinator(
             databaseHandler = get(),
-            onLocalMutationEnqueued = {
-                get<epigraph.sync.v4.V4ProductionSyncCoordinator>().markLocalEditPending()
+            onLocalMutationEnqueued = { workKeys ->
+                val sync = get<epigraph.sync.v4.V4ProductionSyncCoordinator>()
+                if (workKeys.isEmpty()) {
+                    sync.markLocalEditPending()
+                } else {
+                    workKeys.forEach(sync::markLocalEditWorkPending)
+                }
                 get<CoreBackgroundSyncScheduler>().enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
             },
             coreTime = serverClock::toCoreTime,
@@ -488,6 +493,9 @@ fun epigraphSyncModule(app: Application) = module {
             novelPlugins = get(),
             comicPreferenceStore = get(),
             novelPreferenceStore = get(),
+            scheduleLocalEditFullPass = {
+                get<CoreBackgroundSyncScheduler>().enqueue(CoreBackgroundSyncReason.LOCAL_EDIT_FULL_PASS)
+            },
         )
     }
     single {

@@ -63,7 +63,7 @@ private fun decodeBulkItems(request: Request): List<JsonObject> {
  * Stateful fake of one comic-like domain plus a fake Core. The bridge's local state is [local];
  * remote changes are queued with [remoteUpsert] / [remoteDelete] and delivered on the next pull.
  */
-private class BaselineRig(initialSyncCompleted: Boolean = true) {
+internal class BaselineRig(initialSyncCompleted: Boolean = true) {
     val store = SqlDelightV4SyncStore(inMemoryDatabase(), wallClockMs = { 1_000_000L })
     var generation = 0L
     var serverSeq = 5L
@@ -71,6 +71,11 @@ private class BaselineRig(initialSyncCompleted: Boolean = true) {
     var onExport: () -> Unit = {}
     var onDigest: () -> Unit = {}
     var onApply: () -> Unit = {}
+
+    /** Number of unlocked library reads started by local-edit passes. */
+    var reads = 0
+    var beforeRead: suspend () -> Unit = {}
+    var afterRead: () -> Unit = {}
     var fullDigestCalls = 0
     var scopedDigestCalls = 0
     private val uploadedItems = mutableListOf<JsonObject>()
@@ -103,6 +108,22 @@ private class BaselineRig(initialSyncCompleted: Boolean = true) {
                     V4DigestedItem(draft.key, V4LocalDigest.of(draft), deleted = false)
                 }
             }
+        }
+
+        override suspend fun readLocal(serverId: String, profileId: String): V4LocalRead {
+            reads++
+            beforeRead()
+            val digests = digestSnapshot(serverId, profileId)
+            val read = V4LocalRead(digests, commit = { clock ->
+                val outgoing = exportLocalSnapshot(serverId, profileId, clock)
+                // Digest the state as it is at commit, the same state the export just read.
+                V4ExportPass(outgoing, local.map { (k, p) ->
+                    val draft = V4ItemDraft("comics", "comic.work", k, p)
+                    V4DigestedItem(draft.key, V4LocalDigest.of(draft), deleted = false)
+                })
+            })
+            afterRead()
+            return read
         }
 
         override suspend fun applyRemoteRecords(serverId: String, profileId: String, records: List<V4WireRecord>) {

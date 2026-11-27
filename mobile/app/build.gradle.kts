@@ -80,6 +80,8 @@ android {
         // Robolectric screenshot tests (Roborazzi) need the merged resources, themes and menus.
         unitTests.isIncludeAndroidResources = true
         unitTests.all { test ->
+            // The first-sync benchmark materializes a 100k-chapter library; Gradle's default 512 MB test heap is too small.
+            test.maxHeapSize = "3g"
             // `./gradlew :app:testDevDebugUnitTest -Proborazzi.record=true` writes the screenshots to
             // app/build/outputs/roborazzi; without it the screenshot tests only render.
             test.systemProperty(

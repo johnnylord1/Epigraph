@@ -541,6 +541,44 @@ class EpigraphReaderProgressRouterTest {
     }
 
     @Test
+    fun `a paired comic progress edit hints only its own work`() = runTest {
+        val hints = mutableListOf<Set<String>>()
+        val hinting = EpigraphMutationCoordinator(
+            AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            onLocalMutationEnqueued = { hints += it },
+        )
+        val manga = insertManga()
+        val chapter = insertChapter(manga)
+        // A bound comic work: an unbound manga has unknown kind and correctly takes the full pass instead.
+        val portableWork = PortableWorkRef.Comic(DecimalSourceId("1"), ProviderOwnedKey("/comic/1"))
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = PortableIdentityV3.workId(portableWork),
+                ref = portableWork,
+                localReference = manga.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Example",
+                providerLabelHint = "Fixture",
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
+        val router = EpigraphReaderProgressRouter(
+            coordinator = hinting,
+            deviceId = DeviceId("phone"),
+            scopeId = SyncScopeId("novels:profile:main"),
+            mutationIds = ClientMutationIdFactory { ClientMutationId("comic-${System.nanoTime()}") },
+            scopeProvider = EpigraphSyncScopeProvider {
+                EpigraphSyncScopes(SyncScopeId("novels:profile:main"), SyncScopeId("comics:profile:main"))
+            },
+        )
+
+        router.setComicProgress(manga, chapter, pageIndex = 2, pageCount = 10, progression = 0.2)
+
+        assertEquals(listOf(setOf(epigraph.sync.v4.V4PortableUrl.canonicalWorkKey("1", "/comic/1"))), hints)
+    }
+
+    @Test
     fun `a paired unread mark queues a Sync V4 chapter reset on the Core clock`() = runTest {
         val chapter = insertChapter(insertManga())
         database.v4_syncQueries.upsertV4SyncState(

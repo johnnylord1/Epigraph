@@ -139,6 +139,28 @@ class EpigraphMutationCoordinatorTest {
     }
 
     @Test
+    fun `a keyed batch hands its work keys to the scheduler hint`() = runTest {
+        val hints = mutableListOf<Set<String>>()
+        val keyed = EpigraphMutationCoordinator(
+            AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            onLocalMutationEnqueued = { hints += it },
+        )
+
+        keyed.mutateLocalBatch(100) {
+            LocalMutationResult(
+                value = Unit,
+                envelopes = listOf(envelope(DeviceId("phone-a"), ClientMutationId("keyed"))),
+                localWorkKeys = setOf("comic:work"),
+            )
+        }
+        keyed.mutateLocal(envelope(DeviceId("phone-a"), ClientMutationId("unkeyed")), 101) { Unit }
+        keyed.notifyLocalEditWithoutCommand()
+
+        // Only the keyed batch names its work; the unkeyed write and the bare notify stay full passes.
+        assertEquals(listOf(setOf("comic:work"), emptySet<String>(), emptySet<String>()), hints)
+    }
+
+    @Test
     fun `a local edit is stamped on the Core clock once, as its row is written`() = runTest {
         val skewed = EpigraphMutationCoordinator(
             AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),

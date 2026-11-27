@@ -9,6 +9,7 @@ import epigraph.sync.core.suwayomi.DisplacedComicRowRepair
 import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
 import epigraph.sync.EpigraphMutationCoordinator
 import epigraph.sync.EpigraphReaderProgressRouter
+import epigraph.sync.v4.V4_LOCAL_EDIT_FULL_PASS_DELAY_MILLIS
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
@@ -478,6 +479,7 @@ class EpigraphCoreSyncWorker(
     companion object {
         private const val UNIQUE_SYNC = "aethon-core-sync-immediate-v6"
         private const val UNIQUE_OUTBOX_SYNC = "aethon-core-sync-outbox-v6"
+        private const val UNIQUE_LOCAL_EDIT_FULL_PASS = "aethon-core-sync-local-full-pass-v6"
         private const val UNIQUE_DELAYED_SYNC = "aethon-core-sync-delayed-v6"
         private const val UNIQUE_DEGRADED_RETRY = "aethon-core-sync-degraded-retry-v6"
         private const val LEGACY_UNIFIED_SYNC = "aethon-core-sync-v5"
@@ -792,8 +794,11 @@ class EpigraphCoreSyncWorker(
         internal fun degradedRetryWorkPolicy(scheduledFromDegradedRetry: Boolean): ExistingWorkPolicy =
             if (scheduledFromDegradedRetry) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP
 
-        internal fun immediateWorkName(reason: CoreBackgroundSyncReason): String =
-            if (reason == CoreBackgroundSyncReason.OUTBOX_PENDING) UNIQUE_OUTBOX_SYNC else UNIQUE_SYNC
+        internal fun immediateWorkName(reason: CoreBackgroundSyncReason): String = when (reason) {
+            CoreBackgroundSyncReason.OUTBOX_PENDING -> UNIQUE_OUTBOX_SYNC
+            CoreBackgroundSyncReason.LOCAL_EDIT_FULL_PASS -> UNIQUE_LOCAL_EDIT_FULL_PASS
+            else -> UNIQUE_SYNC
+        }
 
         /** Only a sync the user asked for shows a notification; the others stay silent. */
         internal fun immediateRequestIsUserVisible(reason: CoreBackgroundSyncReason): Boolean =
@@ -806,8 +811,11 @@ class EpigraphCoreSyncWorker(
             awaitingExternalAction: Boolean,
         ): Boolean = !usesWorkManagerBackoff && !awaitingExternalAction
 
-        internal fun immediateDelayMillis(reason: CoreBackgroundSyncReason): Long =
-            if (reason == CoreBackgroundSyncReason.OUTBOX_PENDING) OUTBOX_DEBOUNCE_MILLIS else 0
+        internal fun immediateDelayMillis(reason: CoreBackgroundSyncReason): Long = when (reason) {
+            CoreBackgroundSyncReason.OUTBOX_PENDING -> OUTBOX_DEBOUNCE_MILLIS
+            CoreBackgroundSyncReason.LOCAL_EDIT_FULL_PASS -> V4_LOCAL_EDIT_FULL_PASS_DELAY_MILLIS
+            else -> 0
+        }
 
         internal fun immediateWorkPolicy(
             reason: CoreBackgroundSyncReason,

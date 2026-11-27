@@ -16,6 +16,9 @@ enum class CoreBackgroundSyncReason {
     CORE_SESSION_CHANGED,
     CORE_EVENT_GAP,
     CORE_SNAPSHOT_NEEDED,
+
+    /** The debounced full pass that follows scoped local-edit passes. Its own unique work, so it never shares a timer. */
+    LOCAL_EDIT_FULL_PASS,
 }
 
 /** Schedules durable background sync work from live-event and UI triggers. */

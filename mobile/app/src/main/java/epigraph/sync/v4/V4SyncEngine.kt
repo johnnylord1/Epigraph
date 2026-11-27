@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.min
 
 sealed interface V4SyncRunResult {
@@ -25,6 +26,16 @@ sealed interface V4SyncRunResult {
         val statusCode: Int? = null,
         val retryable: Boolean = true,
     ) : V4SyncRunResult
+}
+
+/** Unlocked library reads a local-edit pass may make before it reads under the lock. */
+private const val MAX_UNLOCKED_LOCAL_READS = 3
+
+private sealed interface LocalPassStep {
+    /** The unlocked read raced a locked section or a local edit, so it must be redone. */
+    object Retry : LocalPassStep
+
+    class Done(val result: V4SyncRunResult) : LocalPassStep
 }
 
 /** Outcome of gathering a snapshot, possibly across several pages. */
@@ -64,6 +75,17 @@ internal class V4SyncEngine(
 ) {
     private val logger = Logger.withTag("EpigraphSyncV4")
     private val syncMutex = Mutex()
+
+    /** Advances each time a locked section ends. An unlocked read that sees a change here may be stale. */
+    private val lockEpoch = AtomicLong(0L)
+
+    private suspend fun <T> locked(block: suspend () -> T): T = syncMutex.withLock {
+        try {
+            block()
+        } finally {
+            lockEpoch.incrementAndGet()
+        }
+    }
 
     private fun msSince(startNs: Long): Long = (System.nanoTime() - startNs) / 1_000_000L
     @Volatile private var domainPolicy = V4SyncDomainPolicy()
@@ -134,9 +156,9 @@ internal class V4SyncEngine(
         syncMutex.withLock { }
     }
 
-    suspend fun syncOnce(accessToken: String): V4SyncRunResult = syncMutex.withLock {
+    suspend fun syncOnce(accessToken: String): V4SyncRunResult = locked {
         if (invalidated.get()) {
-            return@withLock V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+            return@locked V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
         }
         var state = store.loadState(serverId, profileId)
         val previousSeq = state.serverSeq
@@ -144,16 +166,16 @@ internal class V4SyncEngine(
 
         // 1. Always negotiate/check capabilities & calibrate server clock first on initial sync.
         if (!state.initialSyncCompleted) {
-            return@withLock runFullMergeLocked(accessToken, state, clock)
+            return@locked runFullMergeLocked(accessToken, state, clock)
         }
         val catchup = bootstrapReenabledDomainsLocked(accessToken, state, clock)
-        if (catchup is V4SyncRunResult.Failed) return@withLock catchup
+        if (catchup is V4SyncRunResult.Failed) return@locked catchup
 
         // 2. Drain pending local outbox deltas.
         val uploadResult = drainOutboxLocked(accessToken, state)
         if (uploadResult is V4SyncRunResult.Failed) {
             persistClock(state, clock)
-            return@withLock uploadResult
+            return@locked uploadResult
         }
         val uploadedCount = (uploadResult as V4SyncRunResult.Synced).uploadedCount
 
@@ -183,10 +205,10 @@ internal class V4SyncEngine(
                 is CoreHttpResult.Failure -> {
                     if (res.statusCode == 410) {
                         // The local library can still contain records deleted during the gap.
-                        return@withLock runFullMergeLocked(accessToken, state, clock)
+                        return@locked runFullMergeLocked(accessToken, state, clock)
                     }
                     persistClock(state, clock)
-                    return@withLock V4SyncRunResult.Failed(
+                    return@locked V4SyncRunResult.Failed(
                         reason = res.errorEnvelope?.error?.message ?: "HTTP ${res.statusCode}",
                         statusCode = res.statusCode,
                         retryable = res.statusCode >= 500 || res.statusCode == 429,
@@ -196,7 +218,7 @@ internal class V4SyncEngine(
         }
 
         if (invalidated.get()) {
-            return@withLock V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+            return@locked V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
         }
         state = persistClock(
             state.copy(serverSeq = cursor, minReplayableSeq = minReplayable),
@@ -222,18 +244,61 @@ internal class V4SyncEngine(
      * with fresh HLC clocks and merging into Core, then draining outbox + pulling remote deltas.
      * Only invoked when local edits actually happened; idle reconnects stay on [syncOnce].
      */
-    suspend fun syncWithLocalEdits(accessToken: String): V4SyncRunResult = syncMutex.withLock {
-        if (invalidated.get()) {
-            return@withLock V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+    suspend fun syncWithLocalEdits(
+        accessToken: String,
+        plan: () -> V4LocalPlan = { V4LocalPlan(localEditGeneration(), scope = null) },
+    ): V4SyncRunResult {
+        // Bootstrap of newly enabled domains and first-sync handling run under the lock, before any read.
+        val early = locked<V4SyncRunResult?> {
+            if (invalidated.get()) {
+                return@locked V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+            }
+            val state = store.loadState(serverId, profileId)
+            if (!state.initialSyncCompleted) {
+                return@locked runFullMergeLocked(accessToken, state, buildClock(state))
+            }
+            val clock = buildClock(state)
+            val catchup = bootstrapReenabledDomainsLocked(accessToken, state, clock)
+            if (catchup is V4SyncRunResult.Failed) return@locked catchup
+            persistClock(state, clock)
+            null
         }
+        if (early != null) return early
+
+        // The library read runs outside the lock. A read is kept only when no locked section ran and no
+        // local edit was recorded while it ran; otherwise it is redone. After the unlocked attempts the
+        // read runs under the lock, so a busy device still converges.
+        var attempt = 0
+        while (true) {
+            attempt++
+            val unlocked = attempt <= MAX_UNLOCKED_LOCAL_READS
+            val epochBefore = lockEpoch.get()
+            // The plan's generation is read before its scope. Every mark at or below that generation is already
+            // in the library, so the read covers it. A mark recorded later is left pending by the commit.
+            val planNow = plan()
+            val preRead = if (unlocked) bridge.readLocalScoped(serverId, profileId, planNow.scope) else null
+            val step = locked<LocalPassStep> {
+                if (invalidated.get()) {
+                    return@locked LocalPassStep.Done(V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false))
+                }
+                if (preRead != null && (lockEpoch.get() != epochBefore || localEditGeneration() != planNow.generation)) {
+                    return@locked LocalPassStep.Retry
+                }
+                val read = preRead ?: bridge.readLocalScoped(serverId, profileId, planNow.scope)
+                LocalPassStep.Done(commitLocalPassLocked(accessToken, read))
+            }
+            when (step) {
+                LocalPassStep.Retry -> continue
+                is LocalPassStep.Done -> return step.result
+            }
+        }
+    }
+
+    /** Stamps and uploads [read], then drains the outbox and pulls remote changes. Runs under [syncMutex]. */
+    private suspend fun commitLocalPassLocked(accessToken: String, read: V4LocalRead): V4SyncRunResult {
         var state = store.loadState(serverId, profileId)
         val previousSeq = state.serverSeq
         val clock = buildClock(state)
-        if (!state.initialSyncCompleted) {
-            return@withLock runFullMergeLocked(accessToken, state, clock)
-        }
-        val catchup = bootstrapReenabledDomainsLocked(accessToken, state, clock)
-        if (catchup is V4SyncRunResult.Failed) return@withLock catchup
 
         // Upload only items whose digest differs from the recorded baseline, so offline progress
         // across all domains converges without re-sending unchanged state with fresh clocks.
@@ -241,14 +306,18 @@ internal class V4SyncEngine(
         val stored = store.loadDigests(serverId, profileId)
         val loadMs = msSince(mark)
         mark = System.nanoTime()
-        // One library build yields both the digests and the stamped export.
-        val pass = bridge.exportAndDigest(serverId, profileId, clock)
+        // Stamps the read state (retractions and tombstones are written here, under the lock).
+        // Digests come from the same state that is exported, so an edit between read and commit cannot
+        // make the upload diff disagree with the outgoing items.
+        val pass = read.commit(clock)
+        val outgoingAll = pass.outgoing
         val current = pass.digests
             .filter { domainPolicy.allows(it.key.domain, it.key.entityType, it.key.entityKey, null) }
-        val exported = enabled(pass.outgoing)
+        val exported = enabled(outgoingAll)
             .associateBy { V4DigestKey(it.domain, it.entityType, it.entityKey) }
         val exportMs = msSince(mark)
-        val vanished = vanishedKeys(stored, current)
+        // A scoped pass may only report vanished the stored digests it covers; the rest are not in its read.
+        val vanished = vanishedKeys(read.scopeKeys?.let { keys -> stored.filterKeys { it in keys } } ?: stored, current)
         // Comic relation retractions already enqueue and mark their tombstones during export.
         val tombstones = vanished.filter { !store.isEntityMapTombstoned(serverId, profileId, it) }
         // Without any recorded digests, existing remote state must not be outranked: use the baseline clock.
@@ -283,7 +352,7 @@ internal class V4SyncEngine(
                 }
                 is CoreHttpResult.Failure -> {
                     persistClock(state, clock)
-                    return@withLock V4SyncRunResult.Failed(
+                    return V4SyncRunResult.Failed(
                         reason = bulkRes.errorEnvelope?.error?.message ?: "HTTP ${bulkRes.statusCode}",
                         statusCode = bulkRes.statusCode,
                         retryable = bulkRes.statusCode >= 500 || bulkRes.statusCode == 429,
@@ -301,7 +370,7 @@ internal class V4SyncEngine(
         val outboxRes = drainOutboxLocked(accessToken, state)
         if (outboxRes is V4SyncRunResult.Failed) {
             persistClock(state, clock)
-            return@withLock outboxRes
+            return outboxRes
         }
         uploadedCount += (outboxRes as V4SyncRunResult.Synced).uploadedCount
         val drainMs = msSince(mark)
@@ -329,10 +398,10 @@ internal class V4SyncEngine(
                 }
                 is CoreHttpResult.Failure -> {
                     if (res.statusCode == 410) {
-                        return@withLock runFullMergeLocked(accessToken, state, clock)
+                        return runFullMergeLocked(accessToken, state, clock)
                     }
                     persistClock(state, clock)
-                    return@withLock V4SyncRunResult.Failed(
+                    return V4SyncRunResult.Failed(
                         reason = res.errorEnvelope?.error?.message ?: "HTTP ${res.statusCode}",
                         statusCode = res.statusCode,
                         retryable = res.statusCode >= 500 || res.statusCode == 429,
@@ -342,7 +411,7 @@ internal class V4SyncEngine(
         }
 
         if (invalidated.get()) {
-            return@withLock V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
+            return V4SyncRunResult.Failed(reason = "Engine invalidated", retryable = false)
         }
         state = persistClock(
             state.copy(serverSeq = cursor, minReplayableSeq = minReplayable),
@@ -358,7 +427,7 @@ internal class V4SyncEngine(
                 "saveDigests ${saveMs} ms, drain ${drainMs} ms, changes pull ${pullMs} ms; " +
                 "uploaded $uploadedCount, outgoing ${outgoing.size}, applied $appliedCount"
         }
-        V4SyncRunResult.Synced(
+        return V4SyncRunResult.Synced(
             serverSeq = state.serverSeq,
             uploadedCount = uploadedCount,
             appliedCount = appliedCount,
@@ -372,16 +441,18 @@ internal class V4SyncEngine(
      * happened since [expectedGeneration], both before and after the digests are built.
      */
     suspend fun refreshBaseline(expectedGeneration: Long) {
-        syncMutex.withLock { refreshBaselineLocked(expectedGeneration) }
+        locked { refreshBaselineLocked(expectedGeneration) }
     }
 
-    private suspend fun refreshBaselineLocked(expectedGeneration: Long) {
-        if (invalidated.get() || localEditGeneration() != expectedGeneration) return
+    /** Returns false when a local edit (or invalidation) refused the refresh, so nothing was written. */
+    private suspend fun refreshBaselineLocked(expectedGeneration: Long): Boolean {
+        if (invalidated.get() || localEditGeneration() != expectedGeneration) return false
         val stored = store.loadDigests(serverId, profileId)
         val current = bridge.digestSnapshot(serverId, profileId)
             .filter { domainPolicy.allows(it.key.domain, it.key.entityType, it.key.entityKey, null) }
-        if (invalidated.get() || localEditGeneration() != expectedGeneration) return
+        if (invalidated.get() || localEditGeneration() != expectedGeneration) return false
         store.saveDigests(serverId, profileId, nextDigestRows(stored, current, vanishedKeys(stored, current)))
+        return true
     }
 
     /**
@@ -420,6 +491,14 @@ internal class V4SyncEngine(
             "realtime apply: ${records.size} records, apply ${applyMs} ms, " +
                 "baseline-update ${baselineMs} ms, $rowCount digest rows"
         }
+    }
+
+    /**
+     * Applies records without updating the digest baseline. Used by the first sync, which builds the
+     * whole baseline once at the end instead of digesting every touched entity on every chunk.
+     */
+    private suspend fun applyRemoteRecordsOnly(records: List<V4WireRecord>) {
+        bridge.applyRemoteRecords(serverId, profileId, records)
     }
 
     /** Digests of the entities [records] can touch, limited to enabled domains. */
@@ -472,10 +551,10 @@ internal class V4SyncEngine(
             if (invalidated.get()) throw IOException("Engine invalidated")
             when (msg) {
                 is V4SseMessage.Delta -> {
-                    syncMutex.withLock {
+                    locked {
                         if (invalidated.get()) throw IOException("Engine invalidated")
                         val cur = store.loadState(serverId, profileId)
-                        if (msg.record.serverSeq <= cur.serverSeq) return@withLock
+                        if (msg.record.serverSeq <= cur.serverSeq) return@locked
                         val clock = buildClock(cur)
                         clock.observe(msg.record.hlc)
                         val applicable = enabled(listOf(msg.record))
@@ -493,7 +572,7 @@ internal class V4SyncEngine(
                     syncOnce(accessToken).requireSuccess()
                 }
                 is V4SseMessage.ReplayExpired -> {
-                    syncMutex.withLock {
+                    locked {
                         if (invalidated.get()) throw IOException("Engine invalidated")
                         val cur = store.loadState(serverId, profileId)
                         runFullMergeLocked(accessToken, cur, buildClock(cur)).requireSuccess()
@@ -604,6 +683,10 @@ internal class V4SyncEngine(
                 localItems.distinctBy { item -> item.entityType to item.entityKey }.size == localItems.size
         }
         var uploadedCount = 0
+        // Receipts are "clean" when every uploaded record was a new write and the sequence advanced
+        // exactly by the accepted count. Only then can the Core's extra records be fetched alone.
+        var cleanUpload = localItems.isNotEmpty()
+        var receiptHead = capabilities.serverSeq
         val chunks = localItems.chunked(BULK_CHUNK_SIZE)
         for ((index, chunk) in chunks.withIndex()) {
             val baseline = chunk.map { it.copy(hlc = it.hlc.copy(tsMs = 1L, counter = 0L)) }
@@ -624,6 +707,13 @@ internal class V4SyncEngine(
                         )
                     }
                     uploadedCount += summary.acceptedCount + summary.mergedCount
+                    if (summary.acceptedCount != baseline.size || summary.mergedCount != 0 ||
+                        summary.noopCount != 0 || summary.deduplicatedCount != 0 ||
+                        summary.serverSeq != receiptHead + summary.acceptedCount
+                    ) {
+                        cleanUpload = false
+                    }
+                    receiptHead = summary.serverSeq
                     seededThrough = summary.serverSeq.takeIf {
                         seededThrough != null && summary.acceptedCount == baseline.size &&
                             summary.mergedCount == 0 && summary.noopCount == 0
@@ -650,6 +740,8 @@ internal class V4SyncEngine(
         uploadedCount += outboxRes.uploadedCount
         val pending = store.countPendingOutbox(serverId, profileId, domainPolicy)
         if (seededThrough != null && outboxRes.uploadedCount == 0 && pending == 0L) {
+            // The baseline goes first: if it is refused, the flag stays unset and the merge is redone.
+            if (!refreshBaselineLocked(mergeGeneration)) return staleBaselineFailure()
             val state = persistClock(
                 initialState.copy(
                     serverSeq = seededThrough,
@@ -659,8 +751,44 @@ internal class V4SyncEngine(
                 clock,
             )
             domainProgress.save(serverId, profileId, domainPolicy.enabledKeys)
-            refreshBaselineLocked(mergeGeneration)
             return V4SyncRunResult.Synced(state.serverSeq, uploadedCount, 0, pending, false)
+        }
+
+        // Clean receipts and nothing left to drain: the phone's records are already on the Core in
+        // the expected order, so only the Core's other records need to come down.
+        if (cleanUpload && outboxRes.uploadedCount == 0 && pending == 0L) {
+            val uploadedKeys = localItems.mapTo(HashSet(localItems.size)) {
+                V4DigestKey(it.domain, it.entityType, it.entityKey)
+            }
+            // Receipts cover (preHead, receiptHead]; the cursor moves to the receipt head, so later
+            // Core writes are still pulled by the next changes pass.
+            when (val gather = applyChangesExcept(accessToken, uploadedKeys, preHead = capabilities.serverSeq, clock = clock)) {
+                is ChangeGather.Gathered -> {
+                    if (!refreshBaselineLocked(mergeGeneration)) return staleBaselineFailure()
+                    val state = persistClock(
+                        initialState.copy(
+                            serverSeq = receiptHead,
+                            minReplayableSeq = gather.minReplayableSeq,
+                            initialSyncCompleted = true,
+                        ),
+                        clock,
+                    )
+                    domainProgress.save(serverId, profileId, domainPolicy.enabledKeys)
+                    return V4SyncRunResult.Synced(
+                        serverSeq = state.serverSeq,
+                        uploadedCount = uploadedCount,
+                        appliedCount = gather.appliedCount,
+                        pendingOutboxCount = store.countPendingOutbox(serverId, profileId, domainPolicy),
+                        wasNoOpReconnect = false,
+                    )
+                }
+                // The feed ends before the pre-upload head (a Core rewind): the snapshot path decides.
+                is ChangeGather.Replayed -> Unit
+                is ChangeGather.Failed -> {
+                    persistClock(initialState, clock)
+                    return gather.failure
+                }
+            }
         }
 
         // A write receipt gives the Core's latest sequence, but only applying its snapshot
@@ -680,8 +808,9 @@ internal class V4SyncEngine(
         gathered.records.forEach { clock.observe(it.hlc) }
         val applicableSnapshotRecords = enabled(gathered.records)
         if (applicableSnapshotRecords.isNotEmpty()) {
-            applyRemoteRecordsWithBaseline(applicableSnapshotRecords)
+            applyRemoteRecordsOnly(applicableSnapshotRecords)
         }
+        if (!refreshBaselineLocked(mergeGeneration)) return staleBaselineFailure()
         val state = persistClock(
             initialState.copy(
                 serverSeq = gathered.head.serverSeq,
@@ -692,7 +821,6 @@ internal class V4SyncEngine(
             clock,
         )
         domainProgress.save(serverId, profileId, domainPolicy.enabledKeys)
-        refreshBaselineLocked(mergeGeneration)
         return V4SyncRunResult.Synced(
             serverSeq = state.serverSeq,
             uploadedCount = uploadedCount,
@@ -700,6 +828,62 @@ internal class V4SyncEngine(
             pendingOutboxCount = store.countPendingOutbox(serverId, profileId, domainPolicy),
             wasNoOpReconnect = false,
         )
+    }
+
+    private fun staleBaselineFailure(): V4SyncRunResult.Failed = V4SyncRunResult.Failed(
+        reason = "Local edits changed during the first sync; it will be retried",
+        retryable = true,
+    )
+
+    private sealed interface ChangeGather {
+        class Gathered(val minReplayableSeq: Long, val appliedCount: Int) : ChangeGather
+        object Replayed : ChangeGather
+        class Failed(val failure: V4SyncRunResult.Failed) : ChangeGather
+    }
+
+    /**
+     * Pulls only the Core's records that existed before our upload ([preHead] and below), skipping
+     * entities the phone just uploaded: those already hold the phone's accepted version. Records after
+     * [preHead] are either our own receipts or newer writes, and the next changes pass covers those.
+     */
+    private suspend fun applyChangesExcept(
+        accessToken: String,
+        uploadedKeys: Set<V4DigestKey>,
+        preHead: Long,
+        clock: V4HlcClock,
+    ): ChangeGather {
+        var cursor = 0L
+        var minReplayable = 0L
+        var applied = 0
+        while (cursor < preHead) {
+            when (val res = http.changes(accessToken, sinceSeq = cursor, limit = CHANGES_PAGE_SIZE)) {
+                is CoreHttpResult.Success -> {
+                    val page = res.value
+                    minReplayable = page.minReplayableSeq
+                    val existing = page.changes.filter { it.serverSeq <= preHead }
+                    existing.forEach { clock.observe(it.hlc) }
+                    val records = enabled(existing).filter {
+                        V4DigestKey(it.domain, it.entityType, it.entityKey) !in uploadedKeys
+                    }
+                    if (records.isNotEmpty()) applyRemoteRecordsOnly(records)
+                    applied += records.size
+                    cursor = maxOf(cursor, page.nextSeq)
+                    // The feed ended before the pre-upload head: the Core rewound, so the snapshot decides.
+                    if (!page.hasMore && cursor < preHead) return ChangeGather.Replayed
+                }
+                is CoreHttpResult.Failure -> {
+                    if (res.statusCode == 410) return ChangeGather.Replayed
+                    return ChangeGather.Failed(
+                        V4SyncRunResult.Failed(
+                            reason = res.errorEnvelope?.error?.message ?: "HTTP ${res.statusCode}",
+                            statusCode = res.statusCode,
+                            retryable = res.statusCode >= 500 || res.statusCode == 429,
+                        ),
+                    )
+                }
+            }
+        }
+        return ChangeGather.Gathered(minReplayable, applied)
     }
 
     /** Page size for snapshot paging, or null when the Core only serves the single full snapshot. */

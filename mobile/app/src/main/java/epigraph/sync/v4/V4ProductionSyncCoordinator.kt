@@ -47,6 +47,8 @@ class V4ProductionSyncCoordinator(
     private val novelPreferenceStore: AndroidNovelPluginSettingStore,
     private val clientVersion: String = BuildConfig.VERSION_NAME,
     private val localEditPendingStore: V4LocalEditPendingStore = SharedPreferencesV4LocalEditPendingStore(context.applicationContext),
+    /** Schedules the debounced full pass; the scheduler replaces any pending one, so only one timer exists. */
+    private val scheduleLocalEditFullPass: () -> Unit = {},
 ) {
     private val appContext = context.applicationContext
     private val logger = Logger.withTag("EpigraphSyncV4")
@@ -58,6 +60,14 @@ class V4ProductionSyncCoordinator(
     fun markLocalEditPending() {
         localEditPendingStore.markPending()
     }
+
+    /** Signals a local edit to one work, so the next pass may cover only that work. */
+    fun markLocalEditWorkPending(workKey: String) {
+        localEditPendingStore.markWorkPending(workKey)
+    }
+
+    /** What one local-edit pass read: the pending snapshot it was planned from, and whether it was scoped. */
+    private class PlannedLocalPass(val snapshot: V4LocalEditSnapshot, val scoped: Boolean)
 
     /** Clears persisted V4 sync state and domain progress when unpairing a server. */
     fun clearServerState(serverId: String) {
@@ -214,19 +224,35 @@ class V4ProductionSyncCoordinator(
         val engine = getOrCreateEngine(session, openedOrigin)
         engine.useDomainPolicy(V4SyncDomainPolicy.from(policy))
         val hasLegacyPending = hasPendingLegacyOutbox(session.profileId, policy)
-        val pendingGeneration = localEditPendingStore.snapshotGeneration()
-        val hadLocalEdits = pendingGeneration != 0L || hasLegacyPending
+        val hadLocalEdits = localEditPendingStore.snapshot().hasPending(nowEpochMillis) || hasLegacyPending
+        var planned: PlannedLocalPass? = null
         val result = session.withAccessTokenString { token ->
             if (hadLocalEdits) {
-                engine.syncWithLocalEdits(token)
+                engine.syncWithLocalEdits(token, plan = {
+                    // Generation first, then the scope: every work mark at or below the generation is in the scope.
+                    val snapshot = localEditPendingStore.snapshot()
+                    val full = snapshot.fullPass || snapshot.fullPassDue(nowEpochMillis) || snapshot.workKeys.isEmpty()
+                    planned = PlannedLocalPass(snapshot, scoped = !full)
+                    V4LocalPlan(snapshot.generation, if (full) null else V4LocalScope(snapshot.workKeys))
+                })
             } else {
                 engine.syncOnce(token)
             }
         }
         return when (result) {
             is V4SyncRunResult.Synced -> {
-                if (pendingGeneration != 0L) {
-                    localEditPendingStore.clearIfUnchanged(pendingGeneration)
+                planned?.let { pass ->
+                    // Clears only marks the pass read. A mark recorded during the pass stays pending.
+                    localEditPendingStore.clearUpTo(pass.snapshot.generation)
+                    if (pass.scoped) {
+                        // Debounce: each scoped pass moves the persisted full-pass due time to 60 s after itself.
+                        // The WorkManager job is KEEP while a sync runs, so it may fire before that time; a sync with
+                        // a scheduled full pass and no new scoped marks then runs the full pass right away.
+                        localEditPendingStore.scheduleFullPassAt(nowEpochMillis + V4_LOCAL_EDIT_FULL_PASS_DELAY_MILLIS)
+                        scheduleLocalEditFullPass()
+                    } else {
+                        localEditPendingStore.clearFullPassDue(pass.snapshot.fullPassDueAt)
+                    }
                 }
                 if (hasLegacyPending) {
                     clearSupersededLegacyOutbox(session.profileId, policy)

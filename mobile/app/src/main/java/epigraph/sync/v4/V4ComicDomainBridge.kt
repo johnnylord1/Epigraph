@@ -31,6 +31,43 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             V4ExportPass(outgoing, build.drafts.map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) })
         }
 
+    /**
+     * Builds the library once with no writes: the digests come from that build, and the commit stamps
+     * and retracts the same build under the sync lock. A build that goes stale is discarded by the engine.
+     */
+    override suspend fun readLocal(serverId: String, profileId: String): V4LocalRead {
+        val build = handler.await(inTransaction = true) { buildComicDrafts(scope = null) }
+        val digests = build.drafts.map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
+        return V4LocalRead(
+            digests = digests,
+            commit = { clock ->
+                val outgoing = handler.await(inTransaction = true) { exportAndRetract(serverId, profileId, clock, build) }
+                V4ExportPass(outgoing, digests)
+            },
+        )
+    }
+
+    /**
+     * Reads only the works in [scope]. The build still resolves every favorite work, so retraction judges
+     * against the whole library. Stored digests outside the scope are never reported as vanished.
+     */
+    override suspend fun readLocalScoped(serverId: String, profileId: String, scope: V4LocalScope?): V4LocalRead {
+        if (scope == null) return readLocal(serverId, profileId)
+        val comicScope = ComicScope(workKeys = scope.workKeys, categoryKeys = emptySet())
+        val (build, scopeKeys) = handler.await(inTransaction = true) {
+            buildComicDrafts(comicScope) to storedLiveKeys(serverId, profileId, comicScope)
+        }
+        val digests = build.drafts.map { V4DigestedItem(it.key, V4LocalDigest.of(it), deleted = it.deleted) }
+        return V4LocalRead(
+            digests = digests,
+            commit = { clock ->
+                val outgoing = handler.await(inTransaction = true) { exportAndRetract(serverId, profileId, clock, build) }
+                V4ExportPass(outgoing, digests)
+            },
+            scopeKeys = scopeKeys,
+        )
+    }
+
     private fun Database.exportAndRetract(
         serverId: String,
         profileId: String,
@@ -47,6 +84,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             assignmentWorks = build.assignmentWorks,
             libraryWorks = build.libraryWorks,
             exportedWorks = exported.filter { it.entityType == WORK }.associate { it.entityKey to it.hlc },
+            scopeWorks = build.scopeWorks,
         )
         return exported
     }
@@ -80,7 +118,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         }
     }
 
-    /** The works and folders a delta can change, resolved to local work ids where this device has them. */
+    /** The works and folders a delta can change. Work ids are resolved from the favorites list at build time. */
     private fun Database.affectedScope(serverId: String, profileId: String, records: List<V4WireRecord>): ComicScope {
         val workKeys = mutableSetOf<String>()
         val categoryKeys = mutableSetOf<String>()
@@ -101,11 +139,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
                 }
             }
         }
-        val workIds = workKeys.mapNotNull { key ->
-            v4_syncQueries.selectV4EntityMapByKey(serverId, profileId, WORK, key).executeAsOneOrNull()
-                ?.local_id?.toLongOrNull()?.let { key to it }
-        }.toMap()
-        return ComicScope(workKeys = workKeys, workIds = workIds, categoryKeys = categoryKeys)
+        return ComicScope(workKeys = workKeys, categoryKeys = categoryKeys)
     }
 
     /** Live stored digest keys inside [scope], so the caller can tombstone the ones that no longer build. */
@@ -131,20 +165,21 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         return keys
     }
 
+    /**
+     * [libraryWorks] is always the whole favorites library, and [categoryIds] the whole folder set, so a
+     * scoped build can still judge retractions. [scopeWorks] is null for a full build.
+     */
     private class ComicBuild(
         val drafts: List<V4ItemDraft>,
         val categoryIds: Map<String, Long>,
         val assignmentWorks: Map<String, Long>,
         val libraryWorks: Map<String, Long>,
+        val scopeWorks: Set<String>?,
     )
 
-    /**
-     * The part of the library a delta names. [workIds] holds only the works this device has locally;
-     * [workKeys] also covers works it does not, so their stored digests can still be tombstoned.
-     */
+    /** The part of the library a delta or a local edit names. [workKeys] may include works this device lacks. */
     private class ComicScope(
         val workKeys: Set<String>,
-        val workIds: Map<String, Long>,
         val categoryKeys: Set<String>,
     )
 
@@ -153,12 +188,11 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
      * Stamps no clocks and enqueues nothing.
      */
     private fun Database.buildComicDrafts(scope: ComicScope?): ComicBuild {
-        val workIds = scope?.workIds?.values?.toList()
-        val works = if (workIds == null) {
-            v4_syncQueries.selectV4ComicWorks(favoritesOnly = 1).executeAsList()
-        } else {
-            workIds.mapNotNull { v4_syncQueries.selectV4ComicWorkById(it).executeAsOneOrNull() }
-        }
+        val favorites = v4_syncQueries.selectV4ComicWorks(favoritesOnly = 1).executeAsList()
+        // The desktop names a folder by its lowercase name, so a rename is a new key there too.
+        val workKeys = favorites.associate { it._id to V4PortableUrl.canonicalWorkKey(it.source.toString(), it.url) }
+        val works = if (scope == null) favorites else favorites.filter { workKeys.getValue(it._id) in scope.workKeys }
+        val workIds = if (scope == null) null else works.map { it._id }
         val chapterRows = if (workIds == null) {
             v4_syncQueries.selectV4FavoriteChapters().executeAsList()
         } else {
@@ -182,8 +216,6 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         // Default and Completed are each app's own folders, so neither side exports them.
         val categories = categoriesQueries.findAllComics().executeAsList()
             .filterNot { it._id == 0L || isReservedCategory(it.name) }
-        val workKeys = works.associate { it._id to V4PortableUrl.canonicalWorkKey(it.source.toString(), it.url) }
-        // The desktop names a folder by its lowercase name, so a rename is a new key there too.
         val categoryKeys = categories.associate { it._id to categoryKey(it.name) }
         val assignmentWorks = mutableMapOf<String, Long>()
         val chapterKeys = mutableMapOf<Long, String>()
@@ -295,6 +327,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             categoryIds = categoryKeys.entries.associate { (id, key) -> key to id },
             assignmentWorks = assignmentWorks,
             libraryWorks = workKeys.entries.associate { (id, key) -> key to id },
+            scopeWorks = scope?.workKeys,
         )
     }
 
@@ -304,6 +337,9 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
      * a removal from a folder reaches the Core. Only rows this device projected or exported
      * count, so a record it never held stays alone. The tombstones go through the outbox, which
      * keeps them until the Core accepts them.
+     *
+     * With [scopeWorks] (a scoped pass), only works in that set and their folder assignments are judged.
+     * Folders are never judged by a scoped pass, because a scoped build does not see every assignment.
      */
     private fun Database.retractVanishedRelations(
         store: SqlDelightV4SyncStore,
@@ -314,6 +350,7 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
         assignmentWorks: Map<String, Long>,
         libraryWorks: Map<String, Long>,
         exportedWorks: Map<String, V4Hlc>,
+        scopeWorks: Set<String>?,
     ) {
         val all = v4_syncQueries.selectV4DomainEntityMap(serverId, profileId, COMICS).executeAsList()
             .filter { it.entity_type == WORK || it.entity_type == CATEGORY || it.entity_type == ASSIGNMENT }
@@ -329,13 +366,21 @@ internal class V4ComicDomainBridge(private val handler: DatabaseHandler) : V4Dom
             val hlc = if (type == WORK && (type to key) in retracted) exportedWorks[key] ?: EXPORTED else EXPORTED
             store.upsertEntityMap(serverId, profileId, COMICS, type, key, localId.toString(), hlc, deleted = false)
         }
-        libraryWorks.forEach { (key, id) -> remember(WORK, key, id) }
-        categoryIds.forEach { (key, id) -> remember(CATEGORY, key, id) }
+        libraryWorks.forEach { (key, id) -> if (scopeWorks == null || key in scopeWorks) remember(WORK, key, id) }
+        if (scopeWorks == null) categoryIds.forEach { (key, id) -> remember(CATEGORY, key, id) }
         assignmentWorks.forEach { (key, work) -> remember(ASSIGNMENT, key, work) }
 
         for (row in rows) {
             val key = row.entity_key
             if (row.local_id == null) continue
+            if (scopeWorks != null) {
+                val inScope = when (row.entity_type) {
+                    WORK -> key in scopeWorks
+                    ASSIGNMENT -> key.substringBeforeLast('|') in scopeWorks
+                    else -> false
+                }
+                if (!inScope) continue
+            }
             val retract = when (row.entity_type) {
                 // The desktop takes the work out of its library, whichever of its folders holds it.
                 WORK -> key !in libraryWorks

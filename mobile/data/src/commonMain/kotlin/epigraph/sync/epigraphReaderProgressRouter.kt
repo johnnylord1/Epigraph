@@ -410,6 +410,7 @@ class EpigraphReaderProgressRouter(
                     chapterEntityId = chapterEntityId,
                 ),
                 envelopes = listOfNotNull(historyEnvelope, chapterStateEnvelope),
+                localWorkKeys = comicLocalEditKeys(localMangaId),
             )
         }
     }
@@ -878,6 +879,17 @@ class EpigraphReaderProgressRouter(
                 createdAtMs = createdAt,
             )
         }
+    }
+
+    /**
+     * The sync work key of a comic edit, which the Sync V4 comic export keys the same way. Empty
+     * for a novel, an LNReader work (source 0), or a work whose kind is unknown: those take a full pass.
+     */
+    private fun Database.comicLocalEditKeys(localMangaId: Long): Set<String> {
+        if (isNovelWork(localMangaId) != false) return emptySet()
+        val manga = mangasQueries.findById(localMangaId).executeAsOneOrNull() ?: return emptySet()
+        if (manga.source == 0L) return emptySet()
+        return setOf(V4PortableUrl.canonicalWorkKey(manga.source.toString(), manga.url))
     }
 
     /** A bound V3 work decides the content type; otherwise the legacy identity does. Null stays local. */

@@ -32,8 +32,11 @@ class EpigraphMutationCoordinator(
         encodeDefaults = true
         ignoreUnknownKeys = false
     },
-    /** Best-effort notification used by Android to wake the Core worker immediately. */
-    private val onLocalMutationEnqueued: (() -> Unit)? = null,
+    /**
+     * Best-effort notification used by Android to wake the Core worker immediately. Receives the
+     * [LocalMutationResult.localWorkKeys] of the batch: empty means the edit may touch any work.
+     */
+    private val onLocalMutationEnqueued: ((Set<String>) -> Unit)? = null,
     /**
      * Moves a local edit's time onto the paired Core's clock, which settles concurrent edits by
      * time. Applied once, as the row is written, so every resend carries the same clock.
@@ -93,14 +96,16 @@ class EpigraphMutationCoordinator(
                     nextAttemptAt = intent.createdAtEpochMillis,
                 )
             }
-            mutation.value to (
-                mutation.envelopes.isNotEmpty() || mutation.suwayomiMutations.isNotEmpty() || mutation.wakesSync
+            Triple(
+                mutation.value,
+                mutation.envelopes.isNotEmpty() || mutation.suwayomiMutations.isNotEmpty() || mutation.wakesSync,
+                mutation.localWorkKeys,
             )
         }
         // The domain write and outbox insert are already durable. A scheduler failure must not
         // turn a successful local mutation into an error or cause the caller to retry it twice.
         if (transactionResult.second) {
-            notifyLocalMutationEnqueued()
+            notifyLocalMutationEnqueued(transactionResult.third)
         }
         return transactionResult.first
     }
@@ -122,7 +127,7 @@ class EpigraphMutationCoordinator(
         }
         database.transaction {
             database.enqueueEnvelopesInTransaction(envelopes, emptyMap(), createdAtEpochMillis)
-            afterCommit(::notifyLocalMutationEnqueued)
+            afterCommit { notifyLocalMutationEnqueued(emptySet()) }
         }
     }
 
@@ -130,11 +135,11 @@ class EpigraphMutationCoordinator(
      * Reports a committed local edit that queued no command, such as a chapter only Sync V4 knows.
      * The next sync run then exports local state instead of treating the reconnect as idle.
      */
-    fun notifyLocalEditWithoutCommand() = notifyLocalMutationEnqueued()
+    fun notifyLocalEditWithoutCommand() = notifyLocalMutationEnqueued(emptySet())
 
-    /** Wakes the sync scheduler after a transaction that called [enqueueInTransaction] committed. */
-    private fun notifyLocalMutationEnqueued() {
-        runCatching { onLocalMutationEnqueued?.invoke() }
+    /** Wakes the sync scheduler after a committed local edit; [workKeys] is empty when it may touch any work. */
+    private fun notifyLocalMutationEnqueued(workKeys: Set<String>) {
+        runCatching { onLocalMutationEnqueued?.invoke(workKeys) }
     }
 
     private fun Database.enqueueEnvelopesInTransaction(
@@ -777,6 +782,11 @@ data class LocalMutationResult<T>(
      * writes by this time, so progress recorded before pairing never beats a newer edit elsewhere.
      */
     val envelopeCreatedAt: Map<ClientMutationId, Long> = emptyMap(),
+    /**
+     * The works this batch can change, as sync work keys, when the caller can name them all. Empty
+     * (the default) means unknown: the sync run then covers every work.
+     */
+    val localWorkKeys: Set<String> = emptySet(),
 )
 
 data class EpigraphMutationAcknowledgement(
