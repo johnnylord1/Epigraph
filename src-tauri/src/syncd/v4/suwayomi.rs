@@ -34,12 +34,11 @@ const WORK_PAGE_SIZE: usize = 500;
 const CHAPTER_PAGE_SIZE: usize = 2_000;
 const COMIC_PROJECTION_TOKEN: &str = "epigraph-v4-comics-projection";
 const LOCAL_DESKTOP_ORIGIN: &str = "epigraph-desktop";
-/// How long a catalog capture waits for remote comic records to reach Suwayomi.
-const CATALOG_PROJECTION_WAIT: Duration = Duration::from_secs(30);
-const CATALOG_PROJECTION_POLL: Duration = Duration::from_millis(200);
 /// Snapshots retried when another device commits between the snapshot and the write gate.
 const CATALOG_CAPTURE_ATTEMPTS: usize = 3;
 
+/// Captures desktop edits into Core. A catalog capture does not wait for remote comic records that
+/// Suwayomi has not received yet; it leaves out only what those records change and stays owed.
 pub(in crate::syncd) async fn capture_local_edits(
     state: &SharedAppState,
     runtime: &V4Runtime,
@@ -47,27 +46,6 @@ pub(in crate::syncd) async fn capture_local_edits(
     work_ids: Vec<i64>,
     chapter_ids: Vec<i64>,
     catalog: bool,
-) -> anyhow::Result<()> {
-    capture_local_edits_with_wait(
-        state,
-        runtime,
-        profile,
-        work_ids,
-        chapter_ids,
-        catalog,
-        CATALOG_PROJECTION_WAIT,
-    )
-    .await
-}
-
-pub(super) async fn capture_local_edits_with_wait(
-    state: &SharedAppState,
-    runtime: &V4Runtime,
-    profile: &str,
-    work_ids: Vec<i64>,
-    chapter_ids: Vec<i64>,
-    catalog: bool,
-    projection_wait: Duration,
 ) -> anyhow::Result<()> {
     // Only project local edits onto V4 profiles after that protocol has initialized.
     if db::load_watermark(&state.pool, profile).await?.current_seq == 0 {
@@ -152,21 +130,20 @@ pub(super) async fn capture_local_edits_with_wait(
             parents.entry(work).or_insert(payload);
         }
     }
-    // The catalog diff tombstones what Suwayomi lacks and re-sends what differs, so it may only
-    // read a Suwayomi that already shows every stored comic record. Otherwise a phone's category
-    // change that is still waiting for projection would be undone for every device.
+    // The catalog diff tombstones what Suwayomi lacks and re-sends what differs. Remote comic records
+    // still waiting for projection are not in Suwayomi yet, so the diff leaves out the keys they
+    // touch; reading those keys back would undo a phone's change for every device.
     let mut catalog_guard = None;
     let mut catalog_snapshot = None;
+    let mut catalog_pending = BTreeSet::new();
     let capture_started = Instant::now();
     if catalog {
         let categories_query = COMIC_CATEGORY_MEMBERSHIP_QUERY;
         let library_query = COMIC_LIBRARY_QUERY;
         for _ in 0..CATALOG_CAPTURE_ATTEMPTS {
-            let Some(before) =
-                wait_for_settled_projection(&state.pool, profile, projection_wait).await?
-            else {
-                break;
-            };
+            // The pending keys are read from the same cursor the snapshot must still match.
+            let before = load_projection_progress(&state.pool, profile).await?;
+            let pending = load_pending_remote_comic_keys(&state.pool, profile, before).await?;
             let categories = read_nodes(
                 state,
                 &session,
@@ -180,9 +157,10 @@ pub(super) async fn capture_local_edits_with_wait(
                 read_nodes(state, &session, library_query, "mangas", 500, json!({})).await?;
             let guard = runtime.write_gate.lock().await;
             let after = load_projection_progress(&state.pool, profile).await?;
-            if catalog_snapshot_is_current(before, after) {
+            if before == after {
                 catalog_guard = Some(guard);
                 catalog_snapshot = Some((categories, library_works));
+                catalog_pending = pending;
                 break;
             }
         }
@@ -253,6 +231,7 @@ pub(super) async fn capture_local_edits_with_wait(
     for (entity_type, key, payload) in updates {
         items.push((entity_type, key, payload, false));
     }
+    let mut excluded_catalog_edits = false;
     if let Some((categories, library_works)) = catalog_snapshot {
         let existing_categories: Vec<(String, String)> = sqlx::query_as(
             "SELECT entity_key, payload_json FROM v4_records WHERE profile_id = ? AND entity_type = 'comic.category' AND deleted = 0",
@@ -266,21 +245,23 @@ pub(super) async fn capture_local_edits_with_wait(
         .bind(profile)
         .fetch_all(&state.pool)
         .await?;
-        items.extend(plan_catalog_category_edits(
+        for edit in plan_catalog_category_edits(
             &categories,
             &library_works,
             &existing_categories,
             &existing_assignments,
             &known,
-        ));
+        ) {
+            if is_pending_edit(&catalog_pending, edit.0, &edit.1, edit.3) {
+                excluded_catalog_edits = true;
+            } else {
+                items.push(edit);
+            }
+        }
     }
     if items.is_empty() {
         if catalog_captured {
-            runtime
-                .comic_baseline
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .catalog_done(profile, capture_started);
+            settle_catalog_capture(runtime, profile, capture_started, excluded_catalog_edits);
         }
         return Ok(());
     }
@@ -319,11 +300,7 @@ pub(super) async fn capture_local_edits_with_wait(
     }
     wake_projection();
     if catalog_captured {
-        runtime
-            .comic_baseline
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .catalog_done(profile, capture_started);
+        settle_catalog_capture(runtime, profile, capture_started, excluded_catalog_edits);
     }
     Ok(())
 }
@@ -375,24 +352,64 @@ async fn load_projection_progress(
     Ok(row.map(|(applied, target)| ProjectionProgress { applied, target }))
 }
 
-/// Waits until Suwayomi shows every stored comic record of the profile. Returns the settled
-/// cursor (`None` inside when the profile never projected), or `None` when the wait ran out.
-async fn wait_for_settled_projection(
+/// Remote comic records in `(applied, target]` that Suwayomi has not received, as
+/// `(entity_type, entity_key)`. The desktop's own records are left out: Suwayomi already has them.
+async fn load_pending_remote_comic_keys(
     pool: &sqlx::SqlitePool,
     profile: &str,
-    timeout: Duration,
-) -> anyhow::Result<Option<Option<ProjectionProgress>>> {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let progress = load_projection_progress(pool, profile).await?;
-        if ProjectionProgress::settled(progress) {
-            return Ok(Some(progress));
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Ok(None);
-        }
-        wake_projection();
-        tokio::time::sleep(CATALOG_PROJECTION_POLL.min(timeout)).await;
+    progress: Option<ProjectionProgress>,
+) -> anyhow::Result<BTreeSet<(String, String)>> {
+    let Some(progress) = progress.filter(|progress| progress.applied < progress.target) else {
+        return Ok(BTreeSet::new());
+    };
+    Ok(
+        db::load_changed_comics(pool, profile, progress.applied, progress.target)
+            .await?
+            .into_iter()
+            .filter(|record| record.origin_device_id != LOCAL_DESKTOP_ORIGIN)
+            .map(|record| (record.entity_type, record.entity_key))
+            .collect(),
+    )
+}
+
+/// Whether a planned catalog edit touches a pending remote record. A pending assignment also holds
+/// back the tombstones of its work's other assignments, since they would undo its category move.
+fn is_pending_edit(
+    pending: &BTreeSet<(String, String)>,
+    entity_type: &str,
+    key: &str,
+    deleted: bool,
+) -> bool {
+    if pending.contains(&(entity_type.to_owned(), key.to_owned())) {
+        return true;
+    }
+    entity_type == "comic.category_assignment"
+        && deleted
+        && pending.iter().any(|(kind, pending_key)| {
+            kind == "comic.category_assignment" && work_of(pending_key) == work_of(key)
+        })
+}
+
+/// The work part of an assignment key `{work_key}|{category_key}`.
+fn work_of(assignment_key: &str) -> &str {
+    assignment_key.split('|').next().unwrap_or(assignment_key)
+}
+
+/// Ends a catalog capture. Whatever it left out stays owed and runs again once the projection
+/// settles, so a held-back edit is never dropped.
+fn settle_catalog_capture(
+    runtime: &V4Runtime,
+    profile: &str,
+    capture_started: Instant,
+    left_out: bool,
+) {
+    let mut baseline = runtime
+        .comic_baseline
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    baseline.catalog_done(profile, capture_started);
+    if left_out {
+        baseline.defer_catalog(profile, Instant::now());
     }
 }
 
@@ -655,17 +672,8 @@ pub(super) async fn retry_deferred_catalog_captures(
         if !ProjectionProgress::settled(load_projection_progress(&state.pool, &profile).await?) {
             continue;
         }
-        // Zero wait: a projection that moved again keeps the capture deferred instead of blocking.
-        let outcome = capture_local_edits_with_wait(
-            state,
-            runtime,
-            &profile,
-            Vec::new(),
-            Vec::new(),
-            true,
-            Duration::ZERO,
-        )
-        .await;
+        let outcome =
+            capture_local_edits(state, runtime, &profile, Vec::new(), Vec::new(), true).await;
         if let Err(error) = outcome {
             tracing::debug!(%profile, error = %error, "V4 desktop category capture retry deferred");
             runtime
@@ -1280,7 +1288,7 @@ const COMIC_WORKS_QUERY: &str = r#"
 const COMIC_CHAPTERS_QUERY: &str = r#"
   query EpigraphV4ComicChapters($ids: [Int!]!, $first: Int!, $offset: Int!) {
     chapters(filter: { mangaId: { in: $ids } }, orderBy: ID, orderByType: ASC, first: $first, offset: $offset) {
-      nodes { id mangaId url name chapterNumber scanlator isRead isBookmarked lastPageRead }
+      nodes { id mangaId url name chapterNumber scanlator isRead isBookmarked lastPageRead pageCount }
       pageInfo { hasNextPage }
     }
   }
@@ -1344,7 +1352,7 @@ const UNBIND_TRACK: &str = r#"
 "#;
 
 /// Returns the Suwayomi ids of the works it changed.
-async fn apply_direct_updates(
+pub(super) async fn apply_direct_updates(
     state: &SharedAppState,
     session: &AuthenticatedSession,
     records: &[&V4WireRecord],
@@ -1468,10 +1476,14 @@ async fn apply_direct_updates(
                 } else {
                     record.payload["isBookmarked"].as_bool()
                 };
+                // Suwayomi keeps lastPageRead within the chapter's pages. A chapter whose pages
+                // are unknown (pageCount -1) can hold only page 0, so expect what it will store.
                 let page = if record.deleted {
                     Some(0)
                 } else {
-                    record.payload["lastPageRead"].as_i64()
+                    record.payload["lastPageRead"]
+                        .as_i64()
+                        .map(|page| page.clamp(0, last_page_read_limit(node)))
                 };
                 let read = read.filter(|value| node["isRead"].as_bool() != Some(*value));
                 let bookmark =
@@ -1514,6 +1526,14 @@ async fn apply_direct_updates(
     touched.sort_unstable();
     touched.dedup();
     Ok(touched)
+}
+
+/// The highest `lastPageRead` Suwayomi stores for a chapter; unknown page counts allow only page 0.
+fn last_page_read_limit(chapter: &Value) -> i64 {
+    chapter["pageCount"]
+        .as_i64()
+        .filter(|count| *count > 0)
+        .map_or(0, |count| count - 1)
 }
 
 fn chapter_by_number<'a>(chapters: &[&'a Value], fields: &Value) -> Option<&'a Value> {

@@ -2279,29 +2279,116 @@ async fn stored_categories(state: &SharedAppState) -> Vec<(String, i64)> {
     .unwrap()
 }
 
-#[tokio::test]
-async fn desktop_catalog_capture_skips_while_a_phone_category_awaits_projection() {
-    let (_temp, state, app, token, _) = build_v4_test_env().await;
-    store_unprojected_phone_category(&app, &token).await;
-    // A closed port: never reach a real Suwayomi from a test.
-    state
-        .config
-        .set_suwayomi_proxy_test_upstream("profile-alpha", "http://127.0.0.1:9/");
-    let runtime = V4Runtime::new();
-    // No Suwayomi answers here: reading it would fail, so Ok proves the capture never diffed a
-    // Suwayomi that lacks the phone's category, and the category must survive untouched.
-    super::suwayomi::capture_local_edits_with_wait(
-        &state,
-        &runtime,
-        "profile-alpha",
-        Vec::new(),
-        Vec::new(),
-        true,
-        std::time::Duration::from_millis(50),
+/// Live category names of the work Alpha, read through the category records Core stores.
+async fn live_alpha_category_names(state: &SharedAppState) -> Vec<String> {
+    let work_key = super::hlc::canonical_work_key("100", "https://s/alpha");
+    let assignments: Vec<(String,)> = sqlx::query_as(
+        "SELECT payload_json FROM v4_records
+         WHERE profile_id = 'profile-alpha' AND entity_type = 'comic.category_assignment'
+           AND deleted = 0 AND entity_key LIKE ?",
     )
+    .bind(format!("{work_key}|%"))
+    .fetch_all(&state.pool)
     .await
     .unwrap();
-    assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
+    let mut names = Vec::new();
+    for (payload,) in assignments {
+        let assignment: Value = serde_json::from_str(&payload).unwrap();
+        let (category,): (String,) = sqlx::query_as(
+            "SELECT payload_json FROM v4_records
+             WHERE profile_id = 'profile-alpha' AND entity_type = 'comic.category'
+               AND deleted = 0 AND entity_key = ?",
+        )
+        .bind(assignment["categoryKey"].as_str().unwrap())
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        let category: Value = serde_json::from_str(&category).unwrap();
+        names.push(category["name"].as_str().unwrap().to_owned());
+    }
+    names.sort();
+    names
+}
+
+fn catalog_capture_owed(runtime: &V4Runtime) -> bool {
+    runtime
+        .comic_baseline
+        .lock()
+        .unwrap()
+        .catalog_pending("profile-alpha")
+}
+
+/// Core holds Alpha in Reading, then the desktop moves it to Dahora in Suwayomi while a phone
+/// category is still on its way there. Returns the runtime and the upstream-free state.
+async fn desktop_move_during_phone_projection(
+    state: &SharedAppState,
+    app: &axum::Router,
+    token: &str,
+) -> V4Runtime {
+    state
+        .config
+        .set_suwayomi_proxy_test_upstream("profile-alpha", &fake_suwayomi_library().await);
+    settle_projection(state).await;
+    let runtime = V4Runtime::new();
+    assert!(super::suwayomi::capture_comic_library_baseline(state, &runtime, "profile-alpha")
+        .await
+        .unwrap());
+    assert!(live_alpha_category_names(state).await.contains(&"Reading".to_owned()));
+
+    store_unprojected_phone_category(app, token).await;
+    state.config.set_suwayomi_proxy_test_upstream(
+        "profile-alpha",
+        &fake_suwayomi_library_with_category("Dahora").await,
+    );
+    runtime
+}
+
+#[tokio::test]
+async fn a_desktop_category_move_is_captured_while_a_phone_category_awaits_projection() {
+    let (_temp, state, app, token, _) = build_v4_test_env().await;
+    let runtime = desktop_move_during_phone_projection(&state, &app, &token).await;
+
+    super::suwayomi::capture_local_edits(&state, &runtime, "profile-alpha", Vec::new(), Vec::new(), true)
+        .await
+        .unwrap();
+
+    let names = live_alpha_category_names(&state).await;
+    assert!(names.contains(&"Dahora".to_owned()), "the move must be captured now: {names:?}");
+    assert!(!names.contains(&"Reading".to_owned()), "the move must not be undone: {names:?}");
+}
+
+#[tokio::test]
+async fn a_pending_phone_key_is_left_out_of_the_catalog_diff_and_stays_owed() {
+    let (_temp, state, app, token, _) = build_v4_test_env().await;
+    let runtime = desktop_move_during_phone_projection(&state, &app, &token).await;
+
+    super::suwayomi::capture_local_edits(&state, &runtime, "profile-alpha", Vec::new(), Vec::new(), true)
+        .await
+        .unwrap();
+
+    // Suwayomi does not show the phone's category yet, but the diff must not tombstone it.
+    assert_eq!(stored_categories(&state).await.iter().filter(|c| c.0 == "from-phone" && c.1 == 0).count(), 1);
+    assert!(catalog_capture_owed(&runtime), "the held-back part of the diff must stay owed");
+}
+
+#[tokio::test]
+async fn a_held_back_catalog_edit_is_captured_once_the_projection_settles() {
+    let (_temp, state, app, token, _) = build_v4_test_env().await;
+    let runtime = desktop_move_during_phone_projection(&state, &app, &token).await;
+    super::suwayomi::capture_local_edits(&state, &runtime, "profile-alpha", Vec::new(), Vec::new(), true)
+        .await
+        .unwrap();
+    assert!(catalog_capture_owed(&runtime));
+
+    // Still unsettled: the projection loop does not run the held-back part yet.
+    super::suwayomi::retry_deferred_catalog_captures(&state, &runtime).await.unwrap();
+    assert!(catalog_capture_owed(&runtime));
+
+    settle_projection(&state).await;
+    super::suwayomi::retry_deferred_catalog_captures(&state, &runtime).await.unwrap();
+    assert!(!catalog_capture_owed(&runtime), "the settled retry must clear the debt");
+    let names = live_alpha_category_names(&state).await;
+    assert!(names.contains(&"Dahora".to_owned()) && !names.contains(&"Reading".to_owned()), "{names:?}");
 }
 
 #[tokio::test]
@@ -2320,74 +2407,27 @@ async fn desktop_catalog_capture_reads_suwayomi_once_the_projection_settles() {
     .unwrap();
     let runtime = V4Runtime::new();
     // Settled: the capture goes on to read Suwayomi, which is unreachable in this test.
-    let result = super::suwayomi::capture_local_edits_with_wait(
+    let result = super::suwayomi::capture_local_edits(
         &state,
         &runtime,
         "profile-alpha",
         Vec::new(),
         Vec::new(),
         true,
-        std::time::Duration::from_millis(50),
     )
     .await;
     assert!(result.is_err(), "a settled projection must let the catalog capture read Suwayomi");
     assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
 }
 
-#[tokio::test]
-async fn desktop_catalog_capture_skipped_for_projection_is_retried_once_it_settles() {
-    let (_temp, state, app, token, _) = build_v4_test_env().await;
-    store_unprojected_phone_category(&app, &token).await;
-    state
-        .config
-        .set_suwayomi_proxy_test_upstream("profile-alpha", &fake_suwayomi_library().await);
-    let runtime = V4Runtime::new();
-    let pending = |runtime: &V4Runtime| {
-        runtime
-            .comic_baseline
-            .lock()
-            .unwrap()
-            .catalog_pending("profile-alpha")
-    };
-
-    // A desktop folder move made while a phone change is still reaching Suwayomi is skipped...
-    super::suwayomi::capture_local_edits_with_wait(
-        &state,
-        &runtime,
-        "profile-alpha",
-        Vec::new(),
-        Vec::new(),
-        true,
-        std::time::Duration::from_millis(50),
-    )
-    .await
-    .unwrap();
-    assert!(pending(&runtime), "a skipped category capture must stay owed");
-    assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
-
-    // ...and the projection loop keeps it owed without reading Suwayomi while it is unsettled...
-    super::suwayomi::retry_deferred_catalog_captures(&state, &runtime)
-        .await
-        .unwrap();
-    assert!(pending(&runtime));
-    assert_eq!(stored_categories(&state).await, vec![("from-phone".to_owned(), 0)]);
-
-    // ...then captures the desktop folders once Suwayomi shows every stored record.
-    settle_projection(&state).await;
-    super::suwayomi::retry_deferred_catalog_captures(&state, &runtime)
-        .await
-        .unwrap();
-    assert!(!pending(&runtime), "the retried capture must settle the debt");
-    assert_ne!(
-        stored_categories(&state).await,
-        vec![("from-phone".to_owned(), 0)],
-        "the retry must publish what the desktop Suwayomi shows"
-    );
-}
-
 /// A stand-in Suwayomi GraphQL endpoint answering the three baseline queries by operation name.
 async fn fake_suwayomi_library() -> String {
-    async fn graphql(axum::Json(body): axum::Json<Value>) -> axum::Json<Value> {
+    fake_suwayomi_library_with_category("Reading").await
+}
+
+/// The stand-in of `fake_suwayomi_library`, with Alpha in the category named `alpha_category`.
+async fn fake_suwayomi_library_with_category(alpha_category: &str) -> String {
+    fn graphql(body: &Value, alpha_category: &str) -> Value {
         let query = body["query"].as_str().unwrap_or_default();
         let data = if query.contains("EpigraphV4ComicLibrary") {
             json!({"mangas": {
@@ -2406,7 +2446,7 @@ async fn fake_suwayomi_library() -> String {
                 "nodes": [
                     {"id": 0, "name": "Default", "order": 0, "mangas": {"nodes": [alpha.clone(), default_only]}},
                     {"id": -2, "name": "Completed", "order": 1, "mangas": {"nodes": [completed_only]}},
-                    {"id": 7, "name": "Reading", "order": 2, "mangas": {"nodes": [alpha]}}
+                    {"id": 7, "name": alpha_category, "order": 2, "mangas": {"nodes": [alpha]}}
                 ],
                 "pageInfo": {"hasNextPage": false}
             }})
@@ -2420,17 +2460,183 @@ async fn fake_suwayomi_library() -> String {
                 "pageInfo": {"hasNextPage": false}
             }})
         } else {
-            return axum::Json(json!({"errors": [{"message": "unexpected operation"}]}));
+            return json!({"errors": [{"message": "unexpected operation"}]});
         };
-        axum::Json(json!({"data": data}))
+        json!({"data": data})
     }
-    let app = axum::Router::new().route("/api/graphql", axum::routing::post(graphql));
+    let alpha_category = alpha_category.to_owned();
+    let app = axum::Router::new().route(
+        "/api/graphql",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let alpha_category = alpha_category.clone();
+            async move { axum::Json(graphql(&body, &alpha_category)) }
+        }),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
     format!("http://{address}/")
+}
+
+fn progress_session() -> crate::syncd::models::AuthenticatedSession {
+    crate::syncd::models::AuthenticatedSession {
+        token_id: "token".to_owned(),
+        device_id: "device".to_owned(),
+        profile_id: "profile-alpha".to_owned(),
+        scopes: Default::default(),
+        mutation_receipt: None,
+    }
+}
+
+fn progress_record(url: &str, payload: Value) -> super::db::V4WireRecord {
+    let work_key = super::hlc::canonical_work_key("100", "https://s/alpha");
+    super::db::V4WireRecord {
+        server_seq: 1,
+        domain: "comics".to_owned(),
+        entity_type: "comic.chapter".to_owned(),
+        entity_key: super::hlc::canonical_chapter_key(&work_key, url),
+        deleted: false,
+        hlc: super::hlc::Hlc::new(1, 0, "phone"),
+        origin_device_id: "phone".to_owned(),
+        payload,
+        updated_at_ms: 1,
+    }
+}
+
+fn progress_chapter(id: i64, url: &str, page_count: i64) -> Value {
+    json!({
+        "id": id, "mangaId": 1, "url": url, "name": "Chapter", "chapterNumber": id,
+        "scanlator": null, "isRead": false, "isBookmarked": false, "lastPageRead": 0,
+        "pageCount": page_count,
+    })
+}
+
+/// Stand-in for Suwayomi's chapter progress: `lastPageRead` is clamped to the chapter's pages,
+/// and a chapter with unknown pages (-1) stores only page 0. `ignore_is_read` makes it drop
+/// `isRead` patches, a genuine rejection. Every progress mutation is recorded in `requests`.
+async fn fake_suwayomi_chapter_progress(
+    ignore_is_read: bool,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Value>>>) {
+    fn chapters() -> Vec<Value> {
+        vec![
+            progress_chapter(216874, "https://s/alpha/78", -1),
+            progress_chapter(300, "https://s/alpha/2", 20),
+            progress_chapter(301, "https://s/alpha/3", 20),
+        ]
+    }
+    fn respond(
+        requests: &std::sync::Mutex<Vec<Value>>,
+        ignore_is_read: bool,
+        body: &Value,
+    ) -> Value {
+        let query = body["query"].as_str().unwrap_or_default();
+        if query.contains("EpigraphV4ComicWorks") {
+            let nodes = json!([{"id": 1, "sourceId": "100", "url": "https://s/alpha"}]);
+            return json!({"data": {"mangas": {"nodes": nodes, "pageInfo": {"hasNextPage": false}}}});
+        }
+        if query.contains("EpigraphV4ComicChapters") {
+            let nodes = Value::Array(chapters());
+            return json!({"data": {"chapters": {"nodes": nodes, "pageInfo": {"hasNextPage": false}}}});
+        }
+        if query.contains("UpdateChaptersProgress") {
+            let variables = body["variables"].clone();
+            requests.lock().unwrap().push(variables.clone());
+            let updated: Vec<Value> = variables["ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| {
+                    let chapter = chapters().into_iter().find(|c| c["id"] == *id).unwrap();
+                    let last_page = chapter["pageCount"]
+                        .as_i64()
+                        .filter(|count| *count > 0)
+                        .map_or(0, |count| count - 1);
+                    let page = variables["lastPageRead"].as_i64().map_or(0, |p| p.clamp(0, last_page));
+                    json!({
+                        "id": id,
+                        "isRead": !ignore_is_read && variables["isRead"].as_bool().unwrap_or(false),
+                        "isBookmarked": variables["isBookmarked"].as_bool().unwrap_or(false),
+                        "lastPageRead": page,
+                    })
+                })
+                .collect();
+            return json!({"data": {"updateChapters": {"chapters": updated}}});
+        }
+        json!({"errors": [{"message": "unexpected operation"}]})
+    }
+    let requests: std::sync::Arc<std::sync::Mutex<Vec<Value>>> = Default::default();
+    let seen = requests.clone();
+    let app = axum::Router::new().route(
+        "/api/graphql",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let seen = seen.clone();
+            async move { axum::Json(respond(&seen, ignore_is_read, &body)) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}/"), requests)
+}
+
+#[tokio::test]
+async fn a_page_on_a_chapter_with_unknown_pages_settles_at_the_page_suwayomi_stores() {
+    let (_temp, state, _app, _token, _) = build_v4_test_env().await;
+    let (upstream, requests) = fake_suwayomi_chapter_progress(false).await;
+    state.config.set_suwayomi_proxy_test_upstream("profile-alpha", &upstream);
+
+    // Page only: Suwayomi already stores 0 for pageCount -1, so nothing needs sending.
+    let page_only = progress_record("https://s/alpha/78", json!({"lastPageRead": 78}));
+    let touched = super::suwayomi::apply_direct_updates(&state, &progress_session(), &[&page_only])
+        .await
+        .unwrap();
+    assert_eq!(touched, vec![1]);
+    assert!(requests.lock().unwrap().is_empty());
+
+    // A read change on the same chapter applies, and the unstorable page is not sent.
+    let read = progress_record("https://s/alpha/78", json!({"isRead": true, "lastPageRead": 78}));
+    super::suwayomi::apply_direct_updates(&state, &progress_session(), &[&read])
+        .await
+        .unwrap();
+    let sent = requests.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["isRead"], json!(true));
+    assert!(sent[0]["lastPageRead"].is_null(), "{sent:?}");
+}
+
+#[tokio::test]
+async fn a_page_on_a_chapter_with_known_pages_is_clamped_to_its_last_page() {
+    let (_temp, state, _app, _token, _) = build_v4_test_env().await;
+    let (upstream, requests) = fake_suwayomi_chapter_progress(false).await;
+    state.config.set_suwayomi_proxy_test_upstream("profile-alpha", &upstream);
+
+    let record = progress_record("https://s/alpha/2", json!({"lastPageRead": 78}));
+    super::suwayomi::apply_direct_updates(&state, &progress_session(), &[&record])
+        .await
+        .unwrap();
+    let sent = requests.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["lastPageRead"], json!(19), "pageCount 20 holds pages 0..=19");
+}
+
+#[tokio::test]
+async fn a_read_change_that_suwayomi_does_not_apply_still_fails() {
+    let (_temp, state, _app, _token, _) = build_v4_test_env().await;
+    let (upstream, _requests) = fake_suwayomi_chapter_progress(true).await;
+    state.config.set_suwayomi_proxy_test_upstream("profile-alpha", &upstream);
+
+    let record = progress_record("https://s/alpha/3", json!({"isRead": true, "lastPageRead": 4}));
+    let error = super::suwayomi::apply_direct_updates(&state, &progress_session(), &[&record])
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("did not apply V4 chapter progress"),
+        "{error:#}"
+    );
 }
 
 async fn live_record_counts(state: &SharedAppState) -> Vec<(String, i64)> {
