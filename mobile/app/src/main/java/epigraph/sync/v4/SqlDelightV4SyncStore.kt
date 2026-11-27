@@ -24,6 +24,9 @@ data class V4SyncCursorState(
     val initialSyncCompleted: Boolean = false,
 )
 
+/** Digest rows per keyset page. At typical key lengths a page is well under the 2 MB CursorWindow. */
+internal const val V4_DIGEST_PAGE_ROWS = 1_000L
+
 /**
  * Single durable SQLDelight store for Sync V4 state, identity mappings, transactional outbox,
  * and deferred extension preferences. Replaces the legacy 3 outboxes and 10 identity tables.
@@ -253,11 +256,37 @@ class SqlDelightV4SyncStore(
 
     private fun extensionPrefsServerPrefix(serverId: String) = json.encodeToString(serverId) + "/"
 
-    /** Baseline digests last acknowledged by the Core for this server/profile. */
-    internal fun loadDigests(serverId: String, profileId: String): Map<V4DigestKey, V4StoredDigest> =
-        queries.selectV4LocalDigests(serverId, profileId).executeAsList().associate { row ->
-            V4DigestKey(row.domain, row.entity_type, row.entity_key) to V4StoredDigest(row.digest, row.deleted != 0L)
+    /**
+     * Baseline digests last acknowledged by the Core for this server/profile.
+     *
+     * Read in keyset pages of [pageRows] per (domain, entity type). One unpaged `executeAsList` over a
+     * large library makes Android refill its 2 MB CursorWindow from the start of the result on every
+     * window, so the cost grows with the square of the row count. Each page here is an index seek on the
+     * primary key, and the result map is the same as the unpaged read.
+     */
+    internal fun loadDigests(
+        serverId: String,
+        profileId: String,
+        pageRows: Long = V4_DIGEST_PAGE_ROWS,
+    ): Map<V4DigestKey, V4StoredDigest> {
+        val out = HashMap<V4DigestKey, V4StoredDigest>()
+        for (type in queries.selectV4LocalDigestTypes(serverId, profileId).executeAsList()) {
+            var page = queries.selectV4LocalDigestsFirstPage(
+                serverId, profileId, type.domain, type.entity_type, pageRows,
+            ).executeAsList()
+            while (page.isNotEmpty()) {
+                for (row in page) {
+                    out[V4DigestKey(row.domain, row.entity_type, row.entity_key)] =
+                        V4StoredDigest(row.digest, row.deleted != 0L)
+                }
+                if (page.size < pageRows) break
+                page = queries.selectV4LocalDigestsAfterKey(
+                    serverId, profileId, type.domain, type.entity_type, page.last().entity_key, pageRows,
+                ).executeAsList()
+            }
         }
+        return out
+    }
 
     /** True when any baseline digest exists. Counts rows instead of reading them all. */
     internal fun hasDigests(serverId: String, profileId: String): Boolean =

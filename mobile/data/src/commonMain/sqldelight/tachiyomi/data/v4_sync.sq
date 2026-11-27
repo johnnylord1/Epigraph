@@ -362,6 +362,26 @@ selectV4LocalDigests:
 SELECT * FROM v4_local_digest
 WHERE server_id = :serverId AND profile_id = :profileId;
 
+-- The (domain, entity_type) pairs that have digests. A few rows, used to page the digest table.
+selectV4LocalDigestTypes:
+SELECT DISTINCT domain, entity_type FROM v4_local_digest
+WHERE server_id = :serverId AND profile_id = :profileId;
+
+-- Keyset pages over one (domain, entity_type), in primary-key order. Each page is an index seek, and a
+-- page stays far below the Android 2 MB CursorWindow, so the table is never read by one large cursor.
+selectV4LocalDigestsFirstPage:
+SELECT * FROM v4_local_digest
+WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain AND entity_type = :entityType
+ORDER BY entity_key
+LIMIT :pageRows;
+
+selectV4LocalDigestsAfterKey:
+SELECT * FROM v4_local_digest
+WHERE server_id = :serverId AND profile_id = :profileId AND domain = :domain AND entity_type = :entityType
+  AND entity_key > :afterKey
+ORDER BY entity_key
+LIMIT :pageRows;
+
 -- Stops at the first matching row. COUNT(*) walked every digest of the profile on each open.
 hasV4LocalDigests:
 SELECT EXISTS(SELECT 1 FROM v4_local_digest WHERE server_id = :serverId AND profile_id = :profileId);
